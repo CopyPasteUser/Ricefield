@@ -897,7 +897,10 @@ mod tests {
     fn mountinfo_paths_keep_non_utf8_bytes() {
         use std::os::unix::ffi::OsStringExt;
         let expected = PathBuf::from(OsString::from_vec(b"/media/\xff".to_vec()));
-        assert_eq!(decode_mountinfo_path(b"/media/\xff"), Some(expected.clone()));
+        assert_eq!(
+            decode_mountinfo_path(b"/media/\xff"),
+            Some(expected.clone())
+        );
         assert_eq!(decode_mountinfo_path(b"/media/\\377"), Some(expected));
     }
 

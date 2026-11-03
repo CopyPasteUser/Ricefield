@@ -152,18 +152,25 @@ impl Theme {
     }
 
     pub fn top_components(&self) -> Vec<ChromeComponent> {
-        self.shell.top.clone().unwrap_or_else(|| match self.layout {
-            Layout::Classic => vec![
+        self.shell.top.clone().unwrap_or_else(|| match self.shell_kind() {
+            ShellKind::Classic | ShellKind::Luna => vec![
                 ChromeComponent::MenuBar,
                 ChromeComponent::Tabs,
                 ChromeComponent::Navigation,
             ],
-            Layout::Aero => vec![
+            ShellKind::Aero | ShellKind::Aqua => vec![
                 ChromeComponent::Tabs,
                 ChromeComponent::Navigation,
                 ChromeComponent::CommandBar,
             ],
-            Layout::Modern => vec![ChromeComponent::Tabs, ChromeComponent::Navigation],
+            ShellKind::Ribbon | ShellKind::Finder => vec![
+                ChromeComponent::Tabs,
+                ChromeComponent::CommandBar,
+                ChromeComponent::Navigation,
+            ],
+            ShellKind::Chromeos | ShellKind::Modern => {
+                vec![ChromeComponent::Tabs, ChromeComponent::Navigation]
+            }
         })
     }
 
@@ -350,8 +357,23 @@ mod tests {
         theme.shell.top = Some(vec![ChromeComponent::Tabs, ChromeComponent::Tabs]);
         assert!(theme.validate().is_err());
 
-        let bad_component = include_str!("../themes/win7.toml")
-            .replace("\"command-bar\"", "\"unknown-component\"");
+        let bad_component =
+            include_str!("../themes/win7.toml").replace("\"command-bar\"", "\"unknown-component\"");
         assert!(toml::from_str::<Theme>(&bad_component).is_err());
+    }
+
+    #[test]
+    fn explicit_shell_kind_works_without_a_top_list() {
+        let mut theme = Theme::builtin("win98").unwrap();
+        theme.shell.kind = Some(ShellKind::Finder);
+        theme.shell.top = None;
+        assert_eq!(
+            theme.top_components(),
+            vec![
+                ChromeComponent::Tabs,
+                ChromeComponent::CommandBar,
+                ChromeComponent::Navigation,
+            ]
+        );
     }
 }

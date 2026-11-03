@@ -74,11 +74,10 @@ These profiles are *inspired by* their respective interface eras; they're not pi
 Copy a file from [`themes/`](themes/) and edit its colors and metrics. Launch it with `--theme-file`. All colors use 6-digit `#RRGGBB`; layout is `classic`, `aero` or `modern`. The external profile controls window surfaces, selection, folder/file icons, radius, list density, tile width and sidebar width. Invalid custom themes produce an error and fall back to the bundled Windows 7 profile.
 
 Theme schema 1 also supports a composable shell. Change the component order
-without recompiling, for example by adding this to an existing theme:
+without recompiling. Put `schema_version = 1` with the top-level theme
+fields (before `[palette]`), then add the shell section at the end:
 
 ```toml
-schema_version = 1
-
 [shell]
 kind = "finder"
 top = ["tabs", "command-bar", "navigation"]

@@ -958,80 +958,78 @@ impl Explorer {
 
     fn command_bar(&mut self, ui: &mut egui::Ui, theme: &Theme) {
         let has_selection = !self.current().selected.is_empty();
-        ui.horizontal_wrapped(|ui| {
-            match theme.shell_kind() {
-                ShellKind::Ribbon | ShellKind::Finder => {
-                    let finder = theme.shell_kind() == ShellKind::Finder;
-                    ui.label(
-                        egui::RichText::new(if finder { "FINDER" } else { "HOME" })
-                            .small()
-                            .strong()
-                            .color(theme.palette.text()),
-                    );
-                    ui.separator();
-                    if ui.small_button("New folder").clicked() {
-                        self.dialog = Some(Dialog::Name {
-                            mode: NameMode::Folder(self.current().path.clone()),
-                            value: String::new(),
-                        });
-                    }
-                    if ui
-                        .add_enabled(has_selection, egui::Button::new("Copy"))
-                        .clicked()
-                    {
-                        self.copy_selection(false);
-                    }
-                    if !finder
-                        && ui
-                            .add_enabled(has_selection, egui::Button::new("Cut"))
-                            .clicked()
-                    {
-                        self.copy_selection(true);
-                    }
-                    if ui.small_button("Paste").clicked() {
-                        self.paste();
-                    }
-                    if ui
-                        .add_enabled(has_selection, egui::Button::new("Rename"))
-                        .clicked()
-                    {
-                        self.rename_selected();
-                    }
-                    if finder {
-                        if ui
-                            .add_enabled(has_selection, egui::Button::new("Info"))
-                            .clicked()
-                            && let Some(path) = self.selected_paths().first().cloned()
-                        {
-                            self.open_properties(path);
-                        }
-                    } else if ui
-                        .add_enabled(has_selection, egui::Button::new("Trash"))
-                        .clicked()
-                    {
-                        self.ask_trash();
-                    }
+        ui.horizontal_wrapped(|ui| match theme.shell_kind() {
+            ShellKind::Ribbon | ShellKind::Finder => {
+                let finder = theme.shell_kind() == ShellKind::Finder;
+                ui.label(
+                    egui::RichText::new(if finder { "FINDER" } else { "HOME" })
+                        .small()
+                        .strong()
+                        .color(theme.palette.text()),
+                );
+                ui.separator();
+                if ui.small_button("New folder").clicked() {
+                    self.dialog = Some(Dialog::Name {
+                        mode: NameMode::Folder(self.current().path.clone()),
+                        value: String::new(),
+                    });
                 }
-                _ => {
-                    ui.label(
-                        egui::RichText::new("ORGANIZE")
-                            .small()
-                            .strong()
-                            .color(theme.palette.text()),
-                    );
-                    ui.separator();
-                    if ui.small_button("New folder").clicked() {
-                        self.dialog = Some(Dialog::Name {
-                            mode: NameMode::Folder(self.current().path.clone()),
-                            value: String::new(),
-                        });
+                if ui
+                    .add_enabled(has_selection, egui::Button::new("Copy"))
+                    .clicked()
+                {
+                    self.copy_selection(false);
+                }
+                if !finder
+                    && ui
+                        .add_enabled(has_selection, egui::Button::new("Cut"))
+                        .clicked()
+                {
+                    self.copy_selection(true);
+                }
+                if ui.small_button("Paste").clicked() {
+                    self.paste();
+                }
+                if ui
+                    .add_enabled(has_selection, egui::Button::new("Rename"))
+                    .clicked()
+                {
+                    self.rename_selected();
+                }
+                if finder {
+                    if ui
+                        .add_enabled(has_selection, egui::Button::new("Info"))
+                        .clicked()
+                        && let Some(path) = self.selected_paths().first().cloned()
+                    {
+                        self.open_properties(path);
                     }
-                    if ui.small_button("Add to favorites").clicked() {
-                        self.toggle_bookmark();
-                    }
-                    if ui.small_button("Refresh").clicked() {
-                        self.scan(self.active);
-                    }
+                } else if ui
+                    .add_enabled(has_selection, egui::Button::new("Trash"))
+                    .clicked()
+                {
+                    self.ask_trash();
+                }
+            }
+            _ => {
+                ui.label(
+                    egui::RichText::new("ORGANIZE")
+                        .small()
+                        .strong()
+                        .color(theme.palette.text()),
+                );
+                ui.separator();
+                if ui.small_button("New folder").clicked() {
+                    self.dialog = Some(Dialog::Name {
+                        mode: NameMode::Folder(self.current().path.clone()),
+                        value: String::new(),
+                    });
+                }
+                if ui.small_button("Add to favorites").clicked() {
+                    self.toggle_bookmark();
+                }
+                if ui.small_button("Refresh").clicked() {
+                    self.scan(self.active);
                 }
             }
         });
