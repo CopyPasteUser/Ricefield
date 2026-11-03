@@ -984,7 +984,7 @@ impl Explorer {
                                         .selectable_label(self.theme.id == *id, profile.name)
                                         .clicked()
                                     {
-                                        self.set_theme(context, id);
+                                        self.set_theme(ui.ctx(), id);
                                     }
                                 }
                             });
