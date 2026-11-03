@@ -954,7 +954,7 @@ impl Explorer {
                     .unwrap_or_else(|| "/".into());
                 let selected = self.active == index;
                 if ui
-                    .add(egui::Button::new(format!("▣  {label}")).selected(selected))
+                    .add(egui::Button::new(label).selected(selected))
                     .clicked()
                 {
                     action = Some((false, index));
@@ -983,27 +983,27 @@ impl Explorer {
     fn navigation_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             if ui
-                .add_enabled(!self.current().back.is_empty(), egui::Button::new("◀"))
+                .add_enabled(!self.current().back.is_empty(), egui::Button::new("<"))
                 .on_hover_text("Back (Alt+Left)")
                 .clicked()
             {
                 self.history(true);
             }
             if ui
-                .add_enabled(!self.current().forward.is_empty(), egui::Button::new("▶"))
+                .add_enabled(!self.current().forward.is_empty(), egui::Button::new(">"))
                 .on_hover_text("Forward (Alt+Right)")
                 .clicked()
             {
                 self.history(false);
             }
             if ui
-                .button("↑")
+                .button("Up")
                 .on_hover_text("Parent folder (Alt+Up)")
                 .clicked()
             {
                 self.parent();
             }
-            if ui.button("⌂").on_hover_text("Home").clicked() {
+            if ui.button("Home").on_hover_text("Home").clicked() {
                 self.navigate(config::home());
             }
 
@@ -1026,7 +1026,7 @@ impl Explorer {
                 let value = self.current().address.clone();
                 self.navigate(PathBuf::from(value));
             }
-            if ui.button("↻").on_hover_text("Refresh (Ctrl+R)").clicked() {
+            if ui.button("Reload").on_hover_text("Refresh (Ctrl+R)").clicked() {
                 self.scan(self.active);
             }
 
@@ -1059,11 +1059,7 @@ impl Explorer {
                 ui.memory_mut(|memory| memory.request_focus(search.id));
             }
             if ui
-                .small_button(if self.current().recursive_search {
-                    "☑ Subfolders"
-                } else {
-                    "□ Subfolders"
-                })
+                .add(egui::Button::new("Subfolders").selected(self.current().recursive_search))
                 .on_hover_text("Search filenames recursively (maximum 20,000 matches)")
                 .clicked()
             {
@@ -1100,14 +1096,14 @@ impl Explorer {
                     ui.add_space(8.0);
                     let home = config::home();
                     for (label, path) in [
-                        ("⌂  Home", home.clone()),
-                        ("▤  Desktop", home.join("Desktop")),
-                        ("▤  Documents", home.join("Documents")),
-                        ("↓  Downloads", home.join("Downloads")),
-                        ("♫  Music", home.join("Music")),
-                        ("▧  Pictures", home.join("Pictures")),
-                        ("▣  Videos", home.join("Videos")),
-                        ("▣  Filesystem", PathBuf::from("/")),
+                        ("Home", home.clone()),
+                        ("Desktop", home.join("Desktop")),
+                        ("Documents", home.join("Documents")),
+                        ("Downloads", home.join("Downloads")),
+                        ("Music", home.join("Music")),
+                        ("Pictures", home.join("Pictures")),
+                        ("Videos", home.join("Videos")),
+                        ("Filesystem", PathBuf::from("/")),
                     ] {
                         if path.is_dir()
                             && ui
@@ -1134,7 +1130,7 @@ impl Explorer {
                         if ui
                             .add_sized(
                                 [ui.available_width(), 29.0],
-                                egui::Button::new(format!("★  {label}"))
+                                egui::Button::new(format!("Favorite: {label}"))
                                     .selected(self.current().path == path),
                             )
                             .clicked()
@@ -1155,10 +1151,10 @@ impl Explorer {
                     );
                     for path in self.volumes.clone() {
                         let label = if path == Path::new("/") {
-                            "▣  System disk".to_owned()
+                            "System disk".to_owned()
                         } else {
                             format!(
-                                "▤  {}",
+                                "Volume: {}",
                                 path.file_name().unwrap_or_default().to_string_lossy()
                             )
                         };
@@ -1265,7 +1261,7 @@ impl Explorer {
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
-                            .small_button("◧")
+                            .small_button("Preview")
                             .on_hover_text("Preview selected item (Space)")
                             .clicked()
                             && let Some(path) = self.selected_paths().first()
@@ -1273,7 +1269,7 @@ impl Explorer {
                             self.open_preview(path.clone());
                         }
                         if ui
-                            .small_button("☰")
+                            .small_button("Places")
                             .on_hover_text("Toggle sidebar")
                             .clicked()
                         {
@@ -1281,7 +1277,7 @@ impl Explorer {
                             self.dirty_config = true;
                         }
                         if ui
-                            .add(egui::Button::new("▦").selected(self.config.view == "grid"))
+                            .add(egui::Button::new("Grid").selected(self.config.view == "grid"))
                             .on_hover_text("Icon view")
                             .clicked()
                         {
@@ -1289,7 +1285,7 @@ impl Explorer {
                             self.dirty_config = true;
                         }
                         if ui
-                            .add(egui::Button::new("≡").selected(self.config.view == "list"))
+                            .add(egui::Button::new("List").selected(self.config.view == "list"))
                             .on_hover_text("List view")
                             .clicked()
                         {
@@ -1300,7 +1296,7 @@ impl Explorer {
                 });
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    ui.menu_button("＋ New", |ui| {
+                    ui.menu_button("New", |ui| {
                         if ui.button("New folder  Ctrl+N").clicked() {
                             self.dialog = Some(Dialog::Name {
                                 mode: NameMode::Folder,
@@ -1416,7 +1412,7 @@ impl Explorer {
                         }
                     }
                     if ui
-                        .small_button(if self.config.descending { "↓" } else { "↑" })
+                        .small_button(if self.config.descending { "Desc" } else { "Asc" })
                         .on_hover_text("Reverse sort")
                         .clicked()
                     {
@@ -1428,11 +1424,7 @@ impl Explorer {
                     }
                     ui.separator();
                     if ui
-                        .small_button(if self.config.show_hidden {
-                            "● Hidden"
-                        } else {
-                            "○ Hidden"
-                        })
+                        .add(egui::Button::new("Hidden").selected(self.config.show_hidden))
                         .on_hover_text("Toggle hidden files (Ctrl+H)")
                         .clicked()
                     {
@@ -2078,13 +2070,13 @@ fn paint_file_icon(painter: &egui::Painter, rect: Rect, file: &Entry, theme: &Th
         painter.rect_filled(body, round, theme.palette.file());
         let short = match file.kind() {
             "Image" => "IMG",
-            "Audio" => "♪",
+            "Audio" => "AUD",
             "Video" => "VID",
             "Archive" => "ZIP",
             "PDF" => "PDF",
             "Code" => "</>",
-            "Link" => "↗",
-            _ => "—",
+            "Link" => "LNK",
+            _ => "FILE",
         };
         painter.text(
             body.center(),
