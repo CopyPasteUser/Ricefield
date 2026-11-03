@@ -19,10 +19,16 @@ mkdir -p "$fixture_dir/Documents" "$fixture_dir/Pictures" screenshots
 printf 'RiceExplorer native GUI smoke test\n' > "$fixture_dir/Readme.txt"
 printf '# Markdown preview test\n' > "$fixture_dir/Documents/Example.md"
 cp assets/rice-explorer.png "$fixture_dir/Pictures/icon.png"
+cp themes/win7.toml "$fixture_dir/custom-theme.toml"
+printf '\n[shell.sidebar]\nposition = "right"\nwidth = 270\nsections = ["volumes", "favorites"]\n' >> "$fixture_dir/custom-theme.toml"
 
 export LIBGL_ALWAYS_SOFTWARE=1
-for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos; do
-  ./target/release/rice-explorer --theme "$theme" "$fixture_dir" > "$fixture_dir/app.log" 2>&1 &
+for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sidebar; do
+  if [[ "$theme" == custom-sidebar ]]; then
+    ./target/release/rice-explorer --theme-file "$fixture_dir/custom-theme.toml" "$fixture_dir" > "$fixture_dir/app.log" 2>&1 &
+  else
+    ./target/release/rice-explorer --theme "$theme" "$fixture_dir" > "$fixture_dir/app.log" 2>&1 &
+  fi
   app_pid=$!
   sleep 5
   if ! kill -0 "$app_pid" 2>/dev/null; then
@@ -43,4 +49,4 @@ for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos; do
   wait "$app_pid" 2>/dev/null || true
   app_pid=''
 done
-echo 'Native GUI smoke checks passed for all seven RiceBowl themes (window startup and screenshots only).'
+echo 'Native GUI smoke checks passed for seven bundled themes and one custom sidebar (window startup and screenshots only).'
