@@ -1,6 +1,7 @@
 id = "win10"
 name = "Windows 10 · Fluent"
 layout = "modern"
+schema_version = 1
 [palette]
 background = "#f3f3f3"
 chrome = "#f8f8f8"
@@ -19,3 +20,7 @@ row_height = 33
 tile_width = 126
 sidebar_width = 205
 icon_size = 25
+
+[shell]
+kind = "ribbon"
+top = ["tabs", "command-bar", "navigation"]

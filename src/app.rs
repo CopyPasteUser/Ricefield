@@ -3,7 +3,7 @@ use crate::{
     config::{self, Config},
     filesystem::{self, Action, Entry, Progress},
     preview,
-    theme::{BUILTIN_IDS, Layout, Theme},
+    theme::{BUILTIN_IDS, ChromeComponent, Layout, ShellKind, Theme},
 };
 use eframe::egui::{
     self, Align2, Color32, FontId, Key, Modifiers, Pos2, Rect, Sense, Stroke, Vec2,
@@ -20,6 +20,8 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime},
 };
+
+const SEARCH_DEBOUNCE: Duration = Duration::from_millis(350);
 
 struct Tab {
     id: u64,
@@ -63,6 +65,13 @@ impl Tab {
             search_pending: None,
         }
     }
+}
+
+fn next_search_repaint_delay(tabs: &[Tab], now: Instant) -> Option<Duration> {
+    tabs.iter()
+        .filter_map(|tab| tab.search_pending)
+        .map(|started| SEARCH_DEBOUNCE.saturating_sub(now.saturating_duration_since(started)))
+        .min()
 }
 
 struct ScanResult {
@@ -847,6 +856,7 @@ impl Explorer {
 
     fn top_bar(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme.clone();
+        let components = theme.top_components();
         egui::Panel::top("chrome")
             .frame(
                 egui::Frame::new()
@@ -854,111 +864,177 @@ impl Explorer {
                     .inner_margin(egui::Margin::same(7)),
             )
             .show(ui, |ui| {
-                if theme.layout == Layout::Classic {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new("RiceExplorer")
-                                .color(Color32::WHITE)
-                                .strong(),
-                        );
-                        ui.separator();
-                        ui.menu_button(egui::RichText::new("File").color(Color32::WHITE), |ui| {
-                            if ui.button("New folder  Ctrl+N").clicked() {
-                                self.dialog = Some(Dialog::Name {
-                                    mode: NameMode::Folder(self.current().path.clone()),
-                                    value: String::new(),
-                                });
-                                ui.close();
-                            }
-                            if ui.button("New empty file").clicked() {
-                                self.dialog = Some(Dialog::Name {
-                                    mode: NameMode::File(self.current().path.clone()),
-                                    value: String::new(),
-                                });
-                                ui.close();
-                            }
-                            if ui.button("New tab  Ctrl+T").clicked() {
-                                self.new_tab(self.current().path.clone());
-                                ui.close();
-                            }
-                        });
-                        ui.menu_button(egui::RichText::new("Edit").color(Color32::WHITE), |ui| {
-                            if ui.button("Copy  Ctrl+C").clicked() {
-                                self.copy_selection(false);
-                                ui.close();
-                            }
-                            if ui.button("Cut  Ctrl+X").clicked() {
-                                self.copy_selection(true);
-                                ui.close();
-                            }
-                            if ui.button("Paste  Ctrl+V").clicked() {
-                                self.paste();
-                                ui.close();
-                            }
-                            if ui.button("Rename  F2").clicked() {
-                                self.rename_selected();
-                                ui.close();
-                            }
-                            if ui.button("Move to Trash  Delete").clicked() {
-                                self.ask_trash();
-                                ui.close();
-                            }
-                        });
-                        ui.menu_button(egui::RichText::new("View").color(Color32::WHITE), |ui| {
-                            if ui.button("List").clicked() {
-                                self.config.view = "list".into();
-                                self.dirty_config = true;
-                                ui.close();
-                            }
-                            if ui.button("Icons").clicked() {
-                                self.config.view = "grid".into();
-                                self.dirty_config = true;
-                                ui.close();
-                            }
-                            if ui.button("Show hidden files").clicked() {
-                                self.config.show_hidden = !self.config.show_hidden;
-                                for index in 0..self.tabs.len() {
-                                    if self.tabs[index].recursive_search {
-                                        self.scan(index);
-                                    } else {
-                                        self.rebuild_visible(index);
-                                    }
-                                }
-                                self.dirty_config = true;
-                                ui.close();
-                            }
-                        });
-                    });
-                    ui.separator();
-                }
-                self.tabs_bar(ui);
-                ui.add_space(4.0);
-                self.navigation_bar(ui);
-                if theme.layout == Layout::Aero {
-                    ui.add_space(3.0);
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new("ORGANIZE")
-                                .small()
-                                .strong()
-                                .color(theme.palette.text()),
-                        );
-                        ui.separator();
-                        if ui.small_button("New folder").clicked() {
-                            self.dialog = Some(Dialog::Name {
-                                mode: NameMode::Folder(self.current().path.clone()),
-                                value: String::new(),
-                            });
-                        }
-                        if ui.small_button("Add to favorites").clicked() {
-                            self.toggle_bookmark();
-                        }
-                        if ui.small_button("Refresh").clicked() {
-                            self.scan(self.active);
-                        }
-                    });
+                for (index, component) in components.iter().enumerate() {
+                    if index != 0 {
+                        ui.add_space(3.0);
+                    }
+                    match component {
+                        ChromeComponent::MenuBar => self.menu_bar(ui),
+                        ChromeComponent::Tabs => self.tabs_bar(ui),
+                        ChromeComponent::Navigation => self.navigation_bar(ui),
+                        ChromeComponent::CommandBar => self.command_bar(ui, &theme),
+                    }
                 }
             });
+    }
+
+    fn menu_bar(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("RiceExplorer")
+                    .color(Color32::WHITE)
+                    .strong(),
+            );
+            ui.separator();
+            ui.menu_button(egui::RichText::new("File").color(Color32::WHITE), |ui| {
+                if ui.button("New folder  Ctrl+N").clicked() {
+                    self.dialog = Some(Dialog::Name {
+                        mode: NameMode::Folder(self.current().path.clone()),
+                        value: String::new(),
+                    });
+                    ui.close();
+                }
+                if ui.button("New empty file").clicked() {
+                    self.dialog = Some(Dialog::Name {
+                        mode: NameMode::File(self.current().path.clone()),
+                        value: String::new(),
+                    });
+                    ui.close();
+                }
+                if ui.button("New tab  Ctrl+T").clicked() {
+                    self.new_tab(self.current().path.clone());
+                    ui.close();
+                }
+            });
+            ui.menu_button(egui::RichText::new("Edit").color(Color32::WHITE), |ui| {
+                if ui.button("Copy  Ctrl+C").clicked() {
+                    self.copy_selection(false);
+                    ui.close();
+                }
+                if ui.button("Cut  Ctrl+X").clicked() {
+                    self.copy_selection(true);
+                    ui.close();
+                }
+                if ui.button("Paste  Ctrl+V").clicked() {
+                    self.paste();
+                    ui.close();
+                }
+                if ui.button("Rename  F2").clicked() {
+                    self.rename_selected();
+                    ui.close();
+                }
+                if ui.button("Move to Trash  Delete").clicked() {
+                    self.ask_trash();
+                    ui.close();
+                }
+            });
+            ui.menu_button(egui::RichText::new("View").color(Color32::WHITE), |ui| {
+                if ui.button("List").clicked() {
+                    self.config.view = "list".into();
+                    self.dirty_config = true;
+                    ui.close();
+                }
+                if ui.button("Icons").clicked() {
+                    self.config.view = "grid".into();
+                    self.dirty_config = true;
+                    ui.close();
+                }
+                if ui.button("Show hidden files").clicked() {
+                    self.config.show_hidden = !self.config.show_hidden;
+                    for index in 0..self.tabs.len() {
+                        if self.tabs[index].recursive_search {
+                            self.scan(index);
+                        } else {
+                            self.rebuild_visible(index);
+                        }
+                    }
+                    self.dirty_config = true;
+                    ui.close();
+                }
+            });
+        });
+        ui.separator();
+    }
+
+    fn command_bar(&mut self, ui: &mut egui::Ui, theme: &Theme) {
+        let has_selection = !self.current().selected.is_empty();
+        ui.horizontal_wrapped(|ui| {
+            match theme.shell_kind() {
+                ShellKind::Ribbon | ShellKind::Finder => {
+                    let finder = theme.shell_kind() == ShellKind::Finder;
+                    ui.label(
+                        egui::RichText::new(if finder { "FINDER" } else { "HOME" })
+                            .small()
+                            .strong()
+                            .color(theme.palette.text()),
+                    );
+                    ui.separator();
+                    if ui.small_button("New folder").clicked() {
+                        self.dialog = Some(Dialog::Name {
+                            mode: NameMode::Folder(self.current().path.clone()),
+                            value: String::new(),
+                        });
+                    }
+                    if ui
+                        .add_enabled(has_selection, egui::Button::new("Copy"))
+                        .clicked()
+                    {
+                        self.copy_selection(false);
+                    }
+                    if !finder
+                        && ui
+                            .add_enabled(has_selection, egui::Button::new("Cut"))
+                            .clicked()
+                    {
+                        self.copy_selection(true);
+                    }
+                    if ui.small_button("Paste").clicked() {
+                        self.paste();
+                    }
+                    if ui
+                        .add_enabled(has_selection, egui::Button::new("Rename"))
+                        .clicked()
+                    {
+                        self.rename_selected();
+                    }
+                    if finder {
+                        if ui
+                            .add_enabled(has_selection, egui::Button::new("Info"))
+                            .clicked()
+                            && let Some(path) = self.selected_paths().first().cloned()
+                        {
+                            self.open_properties(path);
+                        }
+                    } else if ui
+                        .add_enabled(has_selection, egui::Button::new("Trash"))
+                        .clicked()
+                    {
+                        self.ask_trash();
+                    }
+                }
+                _ => {
+                    ui.label(
+                        egui::RichText::new("ORGANIZE")
+                            .small()
+                            .strong()
+                            .color(theme.palette.text()),
+                    );
+                    ui.separator();
+                    if ui.small_button("New folder").clicked() {
+                        self.dialog = Some(Dialog::Name {
+                            mode: NameMode::Folder(self.current().path.clone()),
+                            value: String::new(),
+                        });
+                    }
+                    if ui.small_button("Add to favorites").clicked() {
+                        self.toggle_bookmark();
+                    }
+                    if ui.small_button("Refresh").clicked() {
+                        self.scan(self.active);
+                    }
+                }
+            }
+        });
     }
 
     fn tabs_bar(&mut self, ui: &mut egui::Ui) {
@@ -1974,7 +2050,7 @@ impl eframe::App for Explorer {
         for index in 0..self.tabs.len() {
             if self.tabs[index]
                 .search_pending
-                .is_some_and(|when| when.elapsed() >= Duration::from_millis(350))
+                .is_some_and(|when| when.elapsed() >= SEARCH_DEBOUNCE)
             {
                 self.tabs[index].search_pending = None;
                 self.scan(index);
@@ -2034,11 +2110,14 @@ impl eframe::App for Explorer {
             }
             self.dirty_config = false;
         }
-        if self.busy || self.tabs.iter().any(|tab| tab.loading) {
-            context.request_repaint_after(Duration::from_millis(90));
+        let idle_delay = if self.busy || self.tabs.iter().any(|tab| tab.loading) {
+            Duration::from_millis(90)
         } else {
-            context.request_repaint_after(Duration::from_secs(3));
-        }
+            Duration::from_secs(3)
+        };
+        let delay = next_search_repaint_delay(&self.tabs, Instant::now())
+            .map_or(idle_delay, |search_delay| search_delay.min(idle_delay));
+        context.request_repaint_after(delay);
     }
 }
 
@@ -2103,8 +2182,9 @@ fn paint_file_icon(painter: &egui::Painter, rect: Rect, file: &Entry, theme: &Th
 
 #[cfg(test)]
 mod tests {
-    use super::{Action, NameMode};
+    use super::{Action, NameMode, Tab, next_search_repaint_delay};
     use std::path::PathBuf;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn name_dialog_actions_keep_the_original_paths() {
@@ -2126,5 +2206,24 @@ mod tests {
             Action::Rename { source: target, name }
                 if target == source && name == "renamed.txt"
         ));
+    }
+
+    #[test]
+    fn pending_search_in_an_inactive_tab_wakes_the_ui_on_time() {
+        let now = Instant::now();
+        let active = Tab::new(1, PathBuf::from("/active"));
+        let mut inactive = Tab::new(2, PathBuf::from("/inactive"));
+        inactive.search_pending = Some(now - Duration::from_millis(200));
+        assert_eq!(
+            next_search_repaint_delay(&[active, inactive], now),
+            Some(Duration::from_millis(150))
+        );
+
+        let mut overdue = Tab::new(3, PathBuf::from("/overdue"));
+        overdue.search_pending = Some(now - Duration::from_millis(400));
+        assert_eq!(
+            next_search_repaint_delay(&[overdue], now),
+            Some(Duration::ZERO)
+        );
     }
 }

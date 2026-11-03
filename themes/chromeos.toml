@@ -1,6 +1,7 @@
 id = "chromeos"
 name = "ChromeOS · Files"
 layout = "modern"
+schema_version = 1
 [palette]
 background = "#f7f9fc"
 chrome = "#eef2f8"
@@ -19,3 +20,7 @@ row_height = 37
 tile_width = 132
 sidebar_width = 218
 icon_size = 28
+
+[shell]
+kind = "chromeos"
+top = ["navigation", "tabs"]

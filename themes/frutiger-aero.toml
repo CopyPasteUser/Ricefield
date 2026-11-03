@@ -1,6 +1,7 @@
 id = "frutiger-aero"
 name = "Frutiger Aero · Vista Dreams"
 layout = "aero"
+schema_version = 1
 [palette]
 background = "#e0f5f8"
 chrome = "#75c5d7"
@@ -19,3 +20,7 @@ row_height = 34
 tile_width = 128
 sidebar_width = 217
 icon_size = 26
+
+[shell]
+kind = "aqua"
+top = ["tabs", "navigation", "command-bar"]

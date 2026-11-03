@@ -73,6 +73,24 @@ These profiles are *inspired by* their respective interface eras; they're not pi
 
 Copy a file from [`themes/`](themes/) and edit its colors and metrics. Launch it with `--theme-file`. All colors use 6-digit `#RRGGBB`; layout is `classic`, `aero` or `modern`. The external profile controls window surfaces, selection, folder/file icons, radius, list density, tile width and sidebar width. Invalid custom themes produce an error and fall back to the bundled Windows 7 profile.
 
+Theme schema 1 also supports a composable shell. Change the component order
+without recompiling, for example by adding this to an existing theme:
+
+```toml
+schema_version = 1
+
+[shell]
+kind = "finder"
+top = ["tabs", "command-bar", "navigation"]
+```
+
+`kind` selects `classic`, `luna`, `aero`, `ribbon`, `aqua`,
+`chromeos`, `finder` or `modern`. The `top` list controls order and
+visibility of `menu-bar`, `tabs`, `navigation` and `command-bar`.
+Older TOML themes without these fields retain their previous layout.
+This is the first modular shell layer; a full visual editor, per-panel
+layout and custom Rust component registry are still on the roadmap.
+
 Per-user settings are stored in `~/.config/rice-explorer/config.toml` (or `$XDG_CONFIG_HOME/rice-explorer/config.toml`). You can customize bookmarks, current profile, hidden files, sidebar, view and sorting. Settings are written with a temporary file and rename.
 
 ### Shortcuts

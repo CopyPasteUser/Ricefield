@@ -37,7 +37,8 @@ At baseline commit `214e585`, `main` and
 | P1 | Explorer functions | Split view, session restore, drag-out, folder tree, context actions and robust keyboard interaction |
 | P1 | Preview and search | Bounded thumbnails, PDF/media/code/archive preview, metadata, filters and cancellable search |
 | P1 | Linux integration | MIME/Open With, real URI opening, FileManager1, portals, X11/Wayland and i18n |
-| P2 | RiceBowl polish | Seven distinctive but consistent shells, live theme IPC, editor, imports and accessibility refinement |
+| P1 | Composable rice architecture | Versioned TOML shell composition, shared actions, independently replaceable UI panels; no core rewrite |
+| P2 | RiceBowl polish | Seven distinctive shells, live theme IPC, editor, custom Rust component registration and accessibility refinement |
 | P2 | Organization extras | Saved searches, duplicate detection, optional index/tags, ACLs and extended attributes |
 
 ## Version gates
@@ -51,6 +52,8 @@ Untested hardware and GUI behavior is reported as **outstanding**, not done.
 - [x] Initial CI workflow, worker operations and progress reporting.
 - [ ] Fix name-collision byte preservation, dialog target snapshots,
   launcher path handling and seven-theme smoke coverage.
+- [ ] Establish a versioned shell schema, component selection and ordering
+  without breaking legacy themes or file operations.
 - [ ] Test remaining baseline safety and UI defects.
 - [ ] Complete real Linux Mint X11 keyboard/mouse/visual acceptance.
 
@@ -94,6 +97,8 @@ devices produce clear errors without frozen UI or silent data loss.
 ### 0.6 — Everyday navigation and quick actions
 
 - [ ] Split view, tab duplicate/reorder/restore and multiple windows.
+- [ ] Extract shared navigation, file list, toolbar, sidebar and dialog
+  primitives so new shell renderers consume a common command dispatcher.
 - [ ] Real drag in/out, context menus, toolbar actions and keyboard shortcuts.
 - [ ] Folder tree, enhanced details/grid views, natural sorting and filters.
 - [ ] Responsive accessible dialogs, robust error/empty/loading states.
@@ -121,6 +126,9 @@ devices produce clear errors without frozen UI or silent data loss.
 - [ ] MIME/Open With, FileManager1, portals, URI and clipboard interoperability.
 - [ ] Live RiceBowl theme sync, TOML editor/import/export and safe fallback.
 - [ ] Seven distinct shells and matching icons, controls and layouts.
+- [ ] Confirm Windows 98, Windows 7 and macOS render three materially
+  different component structures; support custom Rust components via a
+  compile-time registry without an unsafe runtime plugin loader.
 - [ ] German/English localization, HiDPI, multi-monitor, accessibility review.
 
 **Gate:** complete Mint X11 and Wayland functional/visual matrix passes.
@@ -133,6 +141,8 @@ devices produce clear errors without frozen UI or silent data loss.
 - [ ] Verify install, update, uninstall, rollback and recoverability.
 - [ ] Ship current README, changelog, actual screenshots and release assets.
 - [ ] Resolve critical bugs and obtain real Linux Mint user sign-off.
+- [ ] Verify that a new rice can be assembled from configured components
+  without changing the file-management core or interrupting transfers.
 
 **Definition of done:** dependable daily file management for explicitly
 supported devices and protocols, recoverable failure modes, accurate

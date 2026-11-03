@@ -32,9 +32,17 @@ Only one mutation worker runs at a time; folder reads may proceed concurrently. 
 - **Feedback:** `Explorer::status_bar`; persistent until the next result.
 - **Operations:** `filesystem::perform`; worker response includes actual completion result.
 - **Theme:** `Theme::apply` and runtime TOML files; no theme-specific copy/move behavior.
+- **Shell composition:** `Theme::shell_kind` and `Theme::top_components` select
+  existing controls and their order. A shell may change the interface, never
+  the semantics or safety checks of copy/move/Trash.
 - **Settings:** XDG config TOML, transactional replacement, recoverable defaults for invalid content.
 
 Accessibility target is WCAG 2.2 AA. Explicit known gap in v0.1: egui's native screen-reader semantics and modal focus trapping need end-to-end accessibility testing before accessibility compliance can be claimed. Future releases must address it rather than stating compliance prematurely.
+
+Changing the active shell must preserve tabs, selection, bookmarks and any
+running operation. Unsupported theme schema versions or unknown UI components
+must fail validation and fall back safely. Every visible quick action performs
+the same underlying operation across all shell identities.
 
 ## Verification
 

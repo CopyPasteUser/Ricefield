@@ -8,6 +8,9 @@
 - Extend Xvfb startup/screenshots to all seven bundled themes.
 - Add an uninstall script that preserves user configuration.
 - Expand the roadmap with P0/P1/P2 priorities and measurable release gates.
+- Introduce versioned shell profiles and configurable top-level UI component
+  order for all seven built-in rices, reusing the same file operations.
+- Improve search debounce repaint timing and Linux mountinfo path decoding.
 
 **Validation pending:** Rust format, Clippy, unit tests, GUI smoke in CI,
 and real Linux Mint acceptance. These changes are not a v1.0 release.

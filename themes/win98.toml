@@ -1,6 +1,7 @@
 id = "win98"
 name = "Windows 98 · Classic"
 layout = "classic"
+schema_version = 1
 [palette]
 background = "#c0c0c0"
 chrome = "#000080"
@@ -19,3 +20,7 @@ row_height = 27
 tile_width = 106
 sidebar_width = 192
 icon_size = 23
+
+[shell]
+kind = "classic"
+top = ["menu-bar", "navigation", "tabs"]

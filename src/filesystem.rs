@@ -515,27 +515,65 @@ pub fn property_lines(path: &Path) -> io::Result<Vec<(String, String)>> {
     Ok(rows)
 }
 
+/// Decode the octal escapes in Linux mountinfo paths without changing non-UTF-8 bytes.
+/// Invalid escapes (including NUL) are rejected instead of guessing a different path.
+#[cfg(target_os = "linux")]
+fn decode_mountinfo_path(raw: &[u8]) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStringExt;
+
+    let mut decoded = Vec::with_capacity(raw.len());
+    let mut index = 0;
+    while index < raw.len() {
+        if raw[index] != b'\\' {
+            decoded.push(raw[index]);
+            index += 1;
+            continue;
+        }
+        let digits = raw.get(index + 1..index + 4)?;
+        if !digits.iter().all(|byte| (b'0'..=b'7').contains(byte)) {
+            return None;
+        }
+        let value = u16::from(digits[0] - b'0') * 64
+            + u16::from(digits[1] - b'0') * 8
+            + u16::from(digits[2] - b'0');
+        if value == 0 || value > u16::from(u8::MAX) {
+            return None;
+        }
+        decoded.push(value as u8);
+        index += 4;
+    }
+    Some(PathBuf::from(OsString::from_vec(decoded)))
+}
+
 /// Mount points useful to a desktop user, without presenting /proc and other pseudo-filesystems.
 pub fn mounted_volumes() -> Vec<PathBuf> {
     let mut paths = std::collections::BTreeSet::new();
     paths.insert(PathBuf::from("/"));
     #[cfg(target_os = "linux")]
-    if let Ok(contents) = fs::read_to_string("/proc/self/mountinfo") {
-        for line in contents.lines() {
-            let mut parts = line.split(" - ");
-            let before = parts.next().unwrap_or("");
-            let after = parts.next().unwrap_or("");
-            let mount = before.split_whitespace().nth(4).unwrap_or("");
-            let fs_type = after.split_whitespace().next().unwrap_or("");
-            let desktop_path = mount.starts_with("/media/")
-                || mount.starts_with("/run/media/")
-                || mount.starts_with("/mnt/");
+    if let Ok(contents) = fs::read("/proc/self/mountinfo") {
+        for line in contents.split(|byte| *byte == b'\n') {
+            let Some(separator) = line.windows(3).position(|bytes| bytes == b" - ") else {
+                continue;
+            };
+            let Some(mount) = line[..separator].split(|byte| *byte == b' ').nth(4) else {
+                continue;
+            };
+            let fs_type = line[separator + 3..]
+                .split(|byte| *byte == b' ')
+                .next()
+                .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                .unwrap_or("");
+            let desktop_path = mount.starts_with(b"/media/")
+                || mount.starts_with(b"/run/media/")
+                || mount.starts_with(b"/mnt/");
             let remote = matches!(
                 fs_type,
                 "nfs" | "nfs4" | "cifs" | "fuse.sshfs" | "fuse.rclone" | "fuse.gvfsd-fuse"
             );
             if (desktop_path || remote) && !mount.is_empty() {
-                let path = PathBuf::from(mount.replace("\\040", " ").replace("\\134", "\\"));
+                let Some(path) = decode_mountinfo_path(mount) else {
+                    continue;
+                };
                 if path.is_dir() {
                     if fs_type == "fuse.gvfsd-fuse"
                         && let Ok(entries) = fs::read_dir(&path)
@@ -835,6 +873,47 @@ pub fn age(modified: Option<SystemTime>) -> String {
 mod tests {
     use super::*;
     use std::time::UNIX_EPOCH;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn mountinfo_paths_decode_spaces_backslashes_tabs_and_newlines() {
+        assert_eq!(
+            decode_mountinfo_path(b"/media/My\\040Drive"),
+            Some(PathBuf::from("/media/My Drive"))
+        );
+        assert_eq!(
+            decode_mountinfo_path(b"/mnt/a\\134b\\011tab\\012line"),
+            Some(PathBuf::from("/mnt/a\\b\ttab\nline"))
+        );
+        // Escapes are decoded exactly once: a literal backslash followed by 040 stays so.
+        assert_eq!(
+            decode_mountinfo_path(b"/mnt/a\\134040"),
+            Some(PathBuf::from("/mnt/a\\040"))
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn mountinfo_paths_keep_non_utf8_bytes() {
+        use std::os::unix::ffi::OsStringExt;
+        let expected = PathBuf::from(OsString::from_vec(b"/media/\xff".to_vec()));
+        assert_eq!(decode_mountinfo_path(b"/media/\xff"), Some(expected.clone()));
+        assert_eq!(decode_mountinfo_path(b"/media/\\377"), Some(expected));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn mountinfo_paths_reject_malformed_or_nul_escapes() {
+        for malformed in [
+            b"/mnt/bad\\".as_slice(),
+            b"/mnt/bad\\04",
+            b"/mnt/bad\\08x",
+            b"/mnt/bad\\777",
+            b"/mnt/bad\\000",
+        ] {
+            assert_eq!(decode_mountinfo_path(malformed), None);
+        }
+    }
 
     fn test_root() -> PathBuf {
         let nonce = SystemTime::now()

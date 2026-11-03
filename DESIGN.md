@@ -38,11 +38,11 @@ components:
 
 ## Overview
 
-RiceExplorer is a workbench for files, not a dashboard. It should feel like the exact operating-system era the user chooses—without abandoning recognizable navigation or file safety. The signature is a **swappable explorer shell**: classic, Aero and modern families alter the spatial structure as well as color. Its restrained, always-familiar file grid/list remains the stable center.
+RiceExplorer is a workbench for files, not a dashboard. It should feel like the exact operating-system era the user chooses—without abandoning recognizable navigation or file safety. The signature is a **composable explorer shell**: classic, Luna, Aero, Ribbon, Aqua, ChromeOS and Finder identities can select and arrange their UI components while sharing the same file operations and navigation state. Its restrained file grid/list remains the stable center.
 
 Audience: people using RiceBowl on Linux X11/Wayland, including older ThinkPads and small desktops. Product register, English UI in v0.1, WCAG 2.2 AA as the target. Do not use decorative gradients, large marketing cards or gratuitous animation.
 
-**Token ownership:** The TOML files under `themes/` are runtime-canonical values. The frontmatter documents the default `win7` mapping and shape/density range; `src/theme.rs` parses each profile into the same strongly typed renderer. Changes to `win7.toml` must update this frontmatter. A custom file changes runtime tokens without changing the maintained default.
+**Token ownership:** The TOML files under `themes/` are runtime-canonical values. The frontmatter documents the default `win7` mapping and shape/density range; `src/theme.rs` parses colors, metrics, schema version and shell composition. Changes to `win7.toml` must update this frontmatter. A custom file changes runtime tokens without changing the maintained default.
 
 ## Colors
 
@@ -57,6 +57,13 @@ The renderer uses egui's bundled system-like proportional font, with a technical
 - Classic: menu bar and familiar tool row, squared or gently beveled UI, narrower dense rows.
 - Aero: layered navigation and separate command bar, deliberate cool surface contrast.
 - Modern: tab-first condensed navigation, roomy rows and rounded surfaces.
+- The optional `[shell]` TOML table selects a shell identity and orders the
+  upper `menu-bar`, `tabs`, `navigation` and `command-bar` components.
+  Legacy themes without it use the established layout-family defaults.
+- Renderers select shared UI actions; filesystem mutations, open tabs,
+  selection and running jobs never belong to a theme-specific implementation.
+- This is the first layout-configuration seam. Sidebars, detail panes,
+  dialogs and user-authored Rust components still need modular adapters.
 - Main directory area uses virtualized rows; width determines icon-grid column count.
 - Sidebar can be collapsed and resized independently; it does not obscure the file list.
 - Layout responds to small windows by shrinking search/path fields before losing controls.
