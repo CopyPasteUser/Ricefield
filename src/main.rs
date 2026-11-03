@@ -13,16 +13,20 @@ fn main() -> eframe::Result {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--help" | "-h" => {
-                println!("RiceExplorer 0.1\nUsage: rice-explorer [--theme ID] [--theme-file FILE] [FOLDER ...]\n\n--list-themes    Show bundled profiles\n--theme ID       Select a RiceBowl visual profile\n--theme-file FILE  Load an external editable TOML theme\n\nKeyboard: Ctrl+L path, Ctrl+F search, Ctrl+T/W tabs, Ctrl+C/X/V copy/cut/paste, F2 rename, Delete trash, Ctrl+H hidden, Ctrl+R refresh.");
+                println!(
+                    "RiceExplorer 0.1\nUsage: rice-explorer [--theme ID] [--theme-file FILE] [FOLDER ...]\n\n--list-themes    Show bundled profiles\n--theme ID       Select a RiceBowl visual profile\n--theme-file FILE  Load an external editable TOML theme\n\nKeyboard: Ctrl+L path, Ctrl+F search, Ctrl+T/W tabs, Ctrl+C/X/V copy/cut/paste, F2 rename, Delete trash, Ctrl+H hidden, Ctrl+R refresh."
+                );
                 return Ok(());
             }
             "--list-themes" => {
-                for id in theme::BUILTIN_IDS { println!("{id}"); }
+                for id in theme::BUILTIN_IDS {
+                    println!("{id}");
+                }
                 return Ok(());
             }
             "--theme" => selected_theme = args.next(),
             "--theme-file" => theme_file = args.next().map(PathBuf::from),
-            "--" => locations.extend(args.map(PathBuf::from)),
+            "--" => locations.extend(args.by_ref().map(PathBuf::from)),
             _ if arg.starts_with('-') => {
                 eprintln!("Unknown argument: {arg}. See --help.");
                 return Ok(());
@@ -34,7 +38,11 @@ fn main() -> eframe::Result {
         .expect("embedded PNG icon")
         .to_rgba8();
     let (width, height) = icon.dimensions();
-    let icon = eframe::egui::IconData { rgba: icon.into_raw(), width, height };
+    let icon = eframe::egui::IconData {
+        rgba: icon.into_raw(),
+        width,
+        height,
+    };
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Glow,
         viewport: eframe::egui::ViewportBuilder::default()
