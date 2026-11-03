@@ -8,8 +8,9 @@
 - [x] Safe new/rename/copy/move-to-same-volume/Trash operations
 - [x] Configuration, bookmarks, Linux desktop integration, SVG icon
 - [x] Unit tests and Linux CI workflow defined
-- [ ] First verified build and Mint X11 visual/keyboard acceptance
-- [ ] Publish under a new, dedicated GitHub repository
+- [x] Linux CI: format, Clippy, unit tests and optimized build
+- [x] Publish under a dedicated GitHub repository
+- [ ] Linux Mint X11 visual/keyboard acceptance on real hardware
 
 ## v0.2 — desktop-native integration
 
