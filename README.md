@@ -6,11 +6,11 @@ RiceExplorer is designed as the file-management companion to [RiceBowl](https://
 
 ![RiceExplorer icon](assets/rice-explorer.svg)
 
-## Current features — v0.2 development
+## Current features — v0.2
 
 - Native Rust GUI with GPU-accelerated drawing; no Electron, browser or persistent background daemon.
 - Seven bundled visual profiles: `win98`, `xp-luna`, `win7`, `win10`, `frutiger-aero`, `chromeos` and `macos`.
-- Three interface families: classic menu/toolbar, Aero command bar, modern condensed navigation.
+- Three interface families: classic menu/toolbar, Aero command bar, modern condensed navigation. A universal actions menu exposes core file operations on every profile.
 - Multiple tabs, history, path entry, home/parent navigation, bookmarks, mount-point navigation and a collapsible sidebar.
 - List and icon layouts, local and bounded recursive filename search, hidden-file toggle and sorting by name, kind, size or modification time.
 - Multiple selection (Ctrl/Shift/Ctrl+A), copy, cut, paste, duplicate, rename, new folder/file, symbolic links, desktop Trash and confirmed permanent deletion.
@@ -27,7 +27,7 @@ RiceExplorer is designed as the file-management companion to [RiceBowl](https://
 You need a current Rust/Cargo toolchain, `xdg-open` and the usual X11/OpenGL development libraries. On Ubuntu/Mint:
 
 ```bash
-sudo apt install build-essential pkg-config libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libgl1-mesa-dev xdg-utils
+sudo apt install build-essential pkg-config libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-0 libssl-dev libgl1-mesa-dev xdg-utils
 git clone https://github.com/CopyPasteUser/riceExplorer.git
 cd riceExplorer
 bash install.sh
@@ -89,7 +89,7 @@ Per-user settings are stored in `~/.config/rice-explorer/config.toml` (or `$XDG_
 
 File copy creates new destination files without overwriting. Name collisions generate ` (copy)` suffixes; copying a directory into itself is rejected. Symbolic links are reproduced as links without following them; special device files are blocked. Across filesystems a move copies first, verifies every copied byte and only then removes the source (extra I/O is intentional). Cancelling a copy cleans its partial destination; a cancellation cannot undo earlier completed items. Normal deletion uses the desktop Trash; permanent deletion requires a separate confirmation. File names are never interpolated into shell commands.
 
-Scanning, searching, copying and Trash operations run on worker threads. Views render only visible rows. Recursive search is bounded to protect small machines; it is not a full-text or indexed search. Thumbnail previews, drag-out, advanced mount management, undo and a complete GUI integration test remain outstanding. Until these are verified, keep Thunar available as a fallback.
+Scanning, searching, copying and Trash operations run on worker threads. Views render only visible rows. Recursive search is bounded to protect small machines; it is not a full-text or indexed search. Image thumbnail previews are implemented; drag-out, advanced mount management, undo and full interactive desktop integration tests remain outstanding. Until these are verified on your Mint laptop, keep Thunar available as a fallback.
 
 ## Development
 

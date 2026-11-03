@@ -1157,10 +1157,8 @@ impl Explorer {
                     }
                 }
                 ui.separator();
-                if let Ok(properties) = filesystem::property_lines(&path) {
-                    for (name, value) in properties.into_iter().take(4) {
-                        ui.label(format!("{name}: {value}"));
-                    }
+                if ui.button("Properties").clicked() {
+                    self.open_properties(path.clone());
                 }
                 if ui.button("Open").clicked() {
                     if path.is_dir() {
@@ -1229,6 +1227,72 @@ impl Explorer {
                 });
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
+                    ui.menu_button("＋ New", |ui| {
+                        if ui.button("New folder  Ctrl+N").clicked() {
+                            self.dialog = Some(Dialog::Name {
+                                mode: NameMode::Folder,
+                                value: String::new(),
+                            });
+                            ui.close();
+                        }
+                        if ui.button("Empty file").clicked() {
+                            self.dialog = Some(Dialog::Name {
+                                mode: NameMode::File,
+                                value: String::new(),
+                            });
+                            ui.close();
+                        }
+                    });
+                    ui.menu_button("Actions", |ui| {
+                        let has_selection = !self.current().selected.is_empty();
+                        if ui.add_enabled(has_selection, egui::Button::new("Copy  Ctrl+C")).clicked() {
+                            self.copy_selection(false);
+                            ui.close();
+                        }
+                        if ui.add_enabled(has_selection, egui::Button::new("Cut  Ctrl+X")).clicked() {
+                            self.copy_selection(true);
+                            ui.close();
+                        }
+                        if ui.button("Paste  Ctrl+V").clicked() {
+                            self.paste();
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.add_enabled(has_selection, egui::Button::new("Rename  F2")).clicked() {
+                            self.rename_selected();
+                            ui.close();
+                        }
+                        if ui.add_enabled(has_selection, egui::Button::new("Duplicate  Ctrl+D")).clicked() {
+                            self.run_action(Action::Copy {
+                                sources: self.selected_paths(),
+                                destination: self.current().path.clone(),
+                            });
+                            ui.close();
+                        }
+                        if ui.add_enabled(has_selection, egui::Button::new("Move to Trash  Delete")).clicked() {
+                            self.ask_trash();
+                            ui.close();
+                        }
+                        if ui.add_enabled(has_selection, egui::Button::new("Delete permanently…  Shift+Delete")).clicked() {
+                            self.ask_delete();
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button("Select all  Ctrl+A").clicked() {
+                            let selected: std::collections::BTreeSet<_> = self.current().visible.iter()
+                                .map(|&index| self.current().entries[index].path.clone())
+                                .collect();
+                            self.current_mut().selected = selected;
+                            ui.close();
+                        }
+                        if ui.add_enabled(self.current().selected.len() == 1, egui::Button::new("Properties  Alt+Enter")).clicked() {
+                            if let Some(path) = self.selected_paths().first() {
+                                self.open_properties(path.clone());
+                            }
+                            ui.close();
+                        }
+                    });
+                    ui.separator();
                     ui.label(egui::RichText::new("Sort:").color(theme.palette.muted()));
                     let old_sort = self.config.sort_by.clone();
                     egui::ComboBox::from_id_salt("sort_by")

@@ -16,7 +16,7 @@ fn main() -> eframe::Result {
         match arg.as_str() {
             "--help" | "-h" => {
                 println!(
-                    "RiceExplorer 0.1\nUsage: rice-explorer [--theme ID] [--theme-file FILE] [FOLDER ...]\n\n--list-themes    Show bundled profiles\n--theme ID       Select a RiceBowl visual profile\n--theme-file FILE  Load an external editable TOML theme\n\nKeyboard: Ctrl+L path, Ctrl+F search, Ctrl+T/W tabs, Ctrl+C/X/V copy/cut/paste, F2 rename, Delete trash, Ctrl+H hidden, Ctrl+R refresh."
+                    "RiceExplorer 0.2\nUsage: rice-explorer [--theme ID] [--theme-file FILE] [FOLDER ...]\n\n--list-themes    Show bundled profiles\n--theme ID       Select a RiceBowl visual profile\n--theme-file FILE  Load an external editable TOML theme\n\nKeyboard: Ctrl+L path, Ctrl+F search, Ctrl+T/W tabs, Ctrl+C/X/V copy/cut/paste, F2 rename, Delete trash, Shift+Delete permanent delete, Ctrl+A select all, Ctrl+D duplicate, Alt+Enter properties, Space preview, Ctrl+H hidden, Ctrl+R refresh."
                 );
                 return Ok(());
             }

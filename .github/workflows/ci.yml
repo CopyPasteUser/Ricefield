@@ -20,6 +20,10 @@ jobs:
           name: formatted-rust-source
           path: src
       - run: cargo clippy --all-targets -- -D warnings
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cargo-lockfile
+          path: Cargo.lock
       - run: cargo test --all-targets
       - run: cargo build --release
       - name: CLI smoke
@@ -28,7 +32,7 @@ jobs:
           target/release/rice-explorer --list-themes
       - name: Native GUI smoke (Xvfb software GL)
         run: |
-          sudo apt-get install -y xvfb xauth imagemagick libgl1-mesa-dri
+          sudo apt-get install -y xvfb xauth imagemagick libgl1-mesa-dri libxkbcommon-x11-0
           xvfb-run -a -s '-screen 0 1280x800x24' bash scripts/gui_smoke.sh
       - uses: actions/upload-artifact@v4
         with:
