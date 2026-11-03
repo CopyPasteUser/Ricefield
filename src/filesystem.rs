@@ -274,13 +274,18 @@ pub fn perform_with_progress(
         Action::Trash { paths } | Action::Delete { paths } => paths,
         _ => &[],
     };
-    let estimated: Vec<u64> = if matches!(action, Action::Copy { .. } | Action::Move { .. }) {
-        sources
+    let estimated: Vec<u64> = match action {
+        Action::Copy { .. } => sources
             .iter()
             .map(|path| estimate_bytes(path, cancelled, 0))
-            .collect::<io::Result<_>>()?
-    } else {
-        Vec::new()
+            .collect::<io::Result<_>>()?,
+        Action::Move { .. } => sources
+            .iter()
+            .map(|path| fs::symlink_metadata(path).map(|metadata| {
+                if metadata.is_dir() { 0 } else { metadata.len() }
+            }))
+            .collect::<io::Result<_>>()?,
+        _ => Vec::new(),
     };
     let total = estimated.iter().fold(0u64, |sum, bytes| sum.saturating_add(*bytes));
     let mut transfer = Transfer {
@@ -359,6 +364,10 @@ pub fn perform_with_progress(
                 match rename_without_overwrite(source, &target) {
                     Ok(()) => transfer.advance(*bytes, &target),
                     Err(error) if error.raw_os_error() == Some(libc::EXDEV) => {
+                        // Only traverse a directory when the atomic rename is impossible.
+                        let actual_bytes = estimate_bytes(source, cancelled, 0)?;
+                        transfer.total = transfer.total.saturating_add(actual_bytes.saturating_sub(*bytes));
+                        transfer.report(source);
                         copy_tree(source, &target, 0, &mut transfer)?;
                         transfer.phase = "Verifying";
                         transfer.report(source);
