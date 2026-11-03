@@ -118,8 +118,8 @@ fn main() -> eframe::Result {
             }
             Some("--") => {
                 for location in args.by_ref() {
-                    let path = location_argument(location)
-                        .unwrap_or_else(|error| invalid_argument(error));
+                    let path =
+                        location_argument(location).unwrap_or_else(|error| invalid_argument(error));
                     locations.push(path);
                 }
             }
