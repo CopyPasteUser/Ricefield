@@ -116,9 +116,8 @@ pub fn search(root: &Path, query: &str, show_hidden: bool) -> io::Result<Vec<Ent
     while let Some((directory, depth)) = pending.pop_front() {
         let entries = match fs::read_dir(&directory) {
             Ok(entries) => entries,
-            Err(error) if directory != root => {
+            Err(_) if directory.as_path() != root => {
                 // An inaccessible child must not hide all the accessible results.
-                let _ = error;
                 continue;
             }
             Err(error) => return Err(error),
@@ -182,6 +181,13 @@ pub enum Action {
     },
     Trash {
         paths: Vec<PathBuf>,
+    },
+    Delete {
+        paths: Vec<PathBuf>,
+    },
+    Link {
+        sources: Vec<PathBuf>,
+        destination: PathBuf,
     },
     SetMode {
         path: PathBuf,
@@ -253,7 +259,7 @@ pub fn perform_with_progress(
 ) -> io::Result<String> {
     let sources: &[PathBuf] = match action {
         Action::Copy { sources, .. } | Action::Move { sources, .. } => sources,
-        Action::Trash { paths } => paths,
+        Action::Trash { paths } | Action::Delete { paths } => paths,
         _ => &[],
     };
     let estimated: Vec<u64> = if matches!(action, Action::Copy { .. } | Action::Move { .. }) {
@@ -363,6 +369,34 @@ pub fn perform_with_progress(
                 trash::delete(path).map_err(io::Error::other)?;
             }
             Ok(format!("Moved {} item(s) to Trash", paths.len()))
+        }
+        Action::Delete { paths } => {
+            for path in paths {
+                transfer.check()?;
+                remove_created(path)?;
+            }
+            Ok(format!("Permanently deleted {} item(s)", paths.len()))
+        }
+        Action::Link { sources, destination } => {
+            for source in sources {
+                transfer.check()?;
+                let target = free_destination(destination, source.file_name().ok_or_else(invalid_name)?)?;
+                #[cfg(unix)]
+                {
+                    let absolute = if source.is_absolute() {
+                        source.clone()
+                    } else {
+                        std::env::current_dir()?.join(source)
+                    };
+                    std::os::unix::fs::symlink(absolute, target)?;
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = target;
+                    return Err(io::Error::new(io::ErrorKind::Unsupported, "Unix links only"));
+                }
+            }
+            Ok(format!("Created {} link(s)", sources.len()))
         }
         Action::SetMode { path, mode } => {
             transfer.check()?;
@@ -781,6 +815,23 @@ mod tests {
         let link = root.join("link");
         symlink(&item, &link).unwrap();
         assert!(perform(&Action::SetMode { path: link, mode: 0o777 }).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delete_link_never_deletes_its_target() {
+        let root = test_root();
+        let original = root.join("real-file");
+        fs::write(&original, b"keep").unwrap();
+        perform(&Action::Link {
+            sources: vec![original.clone()],
+            destination: root.clone(),
+        }).unwrap();
+        let link = root.join("real-file (copy)");
+        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        perform(&Action::Delete { paths: vec![link] }).unwrap();
+        assert_eq!(fs::read(original).unwrap(), b"keep");
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -28,6 +28,7 @@ struct Tab {
     back: Vec<PathBuf>,
     forward: Vec<PathBuf>,
     entries: Vec<Entry>,
+    folded_names: Vec<String>,
     visible: Vec<usize>,
     selected: BTreeSet<PathBuf>,
     last_selected: Option<usize>,
@@ -49,6 +50,7 @@ impl Tab {
             back: Vec::new(),
             forward: Vec::new(),
             entries: Vec::new(),
+            folded_names: Vec::new(),
             visible: Vec::new(),
             selected: BTreeSet::new(),
             last_selected: None,
@@ -67,6 +69,11 @@ struct ScanResult {
     generation: u64,
     result: std::io::Result<Vec<Entry>>,
     dir_mtime: Option<SystemTime>,
+}
+
+struct RefreshResult {
+    folders: Vec<(u64, PathBuf, Option<SystemTime>)>,
+    volumes: Vec<PathBuf>,
 }
 
 struct OperationResult {
@@ -94,6 +101,7 @@ enum NameMode {
 enum Dialog {
     Name { mode: NameMode, value: String },
     Trash(Vec<PathBuf>),
+    Delete(Vec<PathBuf>),
     Properties { path: PathBuf, mode: String },
 }
 
@@ -105,6 +113,8 @@ pub struct Explorer {
     next_tab: u64,
     scan_sender: Sender<ScanResult>,
     scan_receiver: Receiver<ScanResult>,
+    refresh_sender: Sender<RefreshResult>,
+    refresh_receiver: Receiver<RefreshResult>,
     op_sender: Sender<OperationEvent>,
     op_receiver: Receiver<OperationEvent>,
     clipboard: Option<Clipboard>,
@@ -115,6 +125,7 @@ pub struct Explorer {
     cancel: Arc<AtomicBool>,
     volumes: Vec<PathBuf>,
     last_refresh_check: Instant,
+    refresh_in_flight: bool,
     dirty_config: bool,
     focus_address: bool,
     focus_search: bool,
@@ -146,6 +157,7 @@ impl Explorer {
         theme.apply(context);
 
         let (scan_sender, scan_receiver) = mpsc::channel();
+        let (refresh_sender, refresh_receiver) = mpsc::channel();
         let (op_sender, op_receiver) = mpsc::channel();
         let mut explorer = Self {
             config,
@@ -155,6 +167,8 @@ impl Explorer {
             next_tab: 1,
             scan_sender,
             scan_receiver,
+            refresh_sender,
+            refresh_receiver,
             op_sender,
             op_receiver,
             clipboard: None,
@@ -163,8 +177,9 @@ impl Explorer {
             busy: false,
             progress: None,
             cancel: Arc::new(AtomicBool::new(false)),
-            volumes: filesystem::mounted_volumes(),
-            last_refresh_check: Instant::now(),
+            volumes: vec![PathBuf::from("/")],
+            last_refresh_check: Instant::now() - Duration::from_secs(3),
+            refresh_in_flight: false,
             dirty_config: false,
             focus_address: false,
             focus_search: false,
@@ -305,7 +320,7 @@ impl Explorer {
             .filter(|&index| {
                 let entry = &tab.entries[index];
                 (config.show_hidden || !entry.name.starts_with('.'))
-                    && entry.name.to_lowercase().contains(&search)
+                    && tab.folded_names[index].contains(&search)
             })
             .collect();
         let sort = config.sort_by.as_str();
@@ -320,19 +335,31 @@ impl Explorer {
                 "size" => a.size.cmp(&b.size),
                 "type" => a.kind().cmp(b.kind()),
                 "modified" => a.modified.cmp(&b.modified),
-                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                _ => tab.folded_names[*left].cmp(&tab.folded_names[*right]),
             };
             let ordered = if config.descending {
                 comparison.reverse()
             } else {
                 comparison
             };
-            ordered.then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            ordered.then_with(|| tab.folded_names[*left].cmp(&tab.folded_names[*right]))
         });
         tab.last_selected = None;
     }
 
     fn poll_background(&mut self) {
+        while let Ok(result) = self.refresh_receiver.try_recv() {
+            self.refresh_in_flight = false;
+            self.volumes = result.volumes;
+            for (tab_id, path, modified) in result.folders {
+                if let Some(index) = self.tabs.iter().position(|tab| tab.id == tab_id && tab.path == path)
+                    && !self.tabs[index].loading
+                    && self.tabs[index].dir_mtime != modified
+                {
+                    self.scan(index);
+                }
+            }
+        }
         while let Ok(message) = self.scan_receiver.try_recv() {
             if let Some(index) = self
                 .tabs
@@ -344,6 +371,7 @@ impl Explorer {
                 tab.dir_mtime = message.dir_mtime;
                 match message.result {
                     Ok(entries) => {
+                        tab.folded_names = entries.iter().map(|entry| entry.name.to_lowercase()).collect();
                         tab.entries = entries;
                         tab.error = None;
                         tab.selected
@@ -352,6 +380,7 @@ impl Explorer {
                     }
                     Err(error) => {
                         tab.entries.clear();
+                        tab.folded_names.clear();
                         tab.visible.clear();
                         tab.error = Some(error.to_string());
                     }
@@ -586,10 +615,10 @@ impl Explorer {
                     });
                 }
             }
-            if alt && enter && self.current().selected.len() == 1 {
-                if let Some(path) = self.selected_paths().first() {
-                    self.open_properties(path.clone());
-                }
+            if alt && enter && self.current().selected.len() == 1
+                && let Some(path) = self.selected_paths().first()
+            {
+                self.open_properties(path.clone());
             }
             if ctrl && n {
                 self.dialog = Some(Dialog::Name {
@@ -601,7 +630,11 @@ impl Explorer {
                 self.rename_selected();
             }
             if delete {
-                self.ask_trash();
+                if context.input(|input| input.modifiers.shift) {
+                    self.ask_delete();
+                } else {
+                    self.ask_trash();
+                }
             }
             if enter && !alt
                 && self.current().selected.len() == 1
@@ -661,6 +694,13 @@ impl Explorer {
         let selected = self.selected_paths();
         if !selected.is_empty() {
             self.dialog = Some(Dialog::Trash(selected));
+        }
+    }
+
+    fn ask_delete(&mut self) {
+        let selected = self.selected_paths();
+        if !selected.is_empty() {
+            self.dialog = Some(Dialog::Delete(selected));
         }
     }
 
@@ -1360,11 +1400,25 @@ impl Explorer {
                 }
                 ui.close();
             }
+            if ui.button("Create symbolic link").clicked() {
+                self.run_action(Action::Link {
+                    sources: vec![entry.path.clone()],
+                    destination: self.current().path.clone(),
+                });
+                ui.close();
+            }
             if ui.button("Move to Trash").clicked() {
                 if !self.current().selected.contains(&entry.path) {
                     self.select_entry(entry, index, Modifiers::default());
                 }
                 self.ask_trash();
+                ui.close();
+            }
+            if ui.button("Delete permanently…").clicked() {
+                if !self.current().selected.contains(&entry.path) {
+                    self.select_entry(entry, index, Modifiers::default());
+                }
+                self.ask_delete();
                 ui.close();
             }
             if ui.button("Properties").clicked() {
@@ -1521,6 +1575,27 @@ impl Explorer {
                             });
                         });
                 }
+                Dialog::Delete(paths) => {
+                    egui::Window::new("Permanently delete items?")
+                        .collapsible(false)
+                        .resizable(false)
+                        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+                        .show(context, |ui| {
+                            ui.colored_label(Color32::RED, format!(
+                                "Delete {} item(s) permanently?", paths.len()
+                            ));
+                            ui.label("This bypasses Trash. There is no undo.");
+                            ui.horizontal(|ui| {
+                                if ui.button("Cancel").clicked() {
+                                    dismiss = true;
+                                }
+                                if ui.button("Delete permanently").clicked() {
+                                    action = Some(Action::Delete { paths: paths.clone() });
+                                    dismiss = true;
+                                }
+                            });
+                        });
+                }
                 Dialog::Properties { path, mode } => {
                     egui::Window::new("Properties")
                         .collapsible(false)
@@ -1587,19 +1662,20 @@ impl eframe::App for Explorer {
                 self.scan(index);
             }
         }
-        if self.last_refresh_check.elapsed() >= Duration::from_secs(3) {
-            self.volumes = filesystem::mounted_volumes();
-            if !self.busy {
-                for index in 0..self.tabs.len() {
-                    let tab = &self.tabs[index];
-                    if !tab.loading
-                        && std::fs::metadata(&tab.path).and_then(|m| m.modified()).ok()
-                            != tab.dir_mtime
-                    {
-                        self.scan(index);
-                    }
-                }
-            }
+        if !self.refresh_in_flight && self.last_refresh_check.elapsed() >= Duration::from_secs(3) {
+            let folders: Vec<_> = self.tabs.iter().map(|tab| (tab.id, tab.path.clone())).collect();
+            let sender = self.refresh_sender.clone();
+            self.refresh_in_flight = true;
+            thread::spawn(move || {
+                let folders = folders.into_iter().map(|(id, path)| {
+                    let modified = std::fs::metadata(&path).and_then(|meta| meta.modified()).ok();
+                    (id, path, modified)
+                }).collect();
+                let _ = sender.send(RefreshResult {
+                    folders,
+                    volumes: filesystem::mounted_volumes(),
+                });
+            });
             self.last_refresh_check = Instant::now();
         }
         let dropped: Vec<PathBuf> = context.input(|input| {

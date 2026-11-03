@@ -6,21 +6,24 @@ RiceExplorer is designed as the file-management companion to [RiceBowl](https://
 
 ![RiceExplorer icon](assets/rice-explorer.svg)
 
-## Current features — v0.1
+## Current features — v0.2 development
 
 - Native Rust GUI with GPU-accelerated drawing; no Electron, browser or persistent background daemon.
 - Seven bundled visual profiles: `win98`, `xp-luna`, `win7`, `win10`, `frutiger-aero`, `chromeos` and `macos`.
 - Three interface families: classic menu/toolbar, Aero command bar, modern condensed navigation.
-- Multiple tabs, history, path entry, home/parent navigation, bookmarks and a collapsible sidebar.
-- List and icon layouts, per-folder search, hidden-file toggle and sorting by name, kind, size or modification time.
-- Multiple selection (Ctrl/Shift), copy, cut, paste, rename, new folder/file and move to desktop Trash with confirmation.
+- Multiple tabs, history, path entry, home/parent navigation, bookmarks, mount-point navigation and a collapsible sidebar.
+- List and icon layouts, local and bounded recursive filename search, hidden-file toggle and sorting by name, kind, size or modification time.
+- Multiple selection (Ctrl/Shift/Ctrl+A), copy, cut, paste, duplicate, rename, new folder/file, symbolic links, desktop Trash and confirmed permanent deletion.
+- Native GTK file clipboard interoperability (when `xclip` or `wl-clipboard` is installed); otherwise use the internal file clipboard.
+- Cross-device moves with copy-first semantics, symlink-preserving copies, transfer progress and cancellation.
+- File properties and editable Unix permission bits; external changes to folder contents are detected.
 - Background folder scanning and file operations; stale scan results cannot replace newer navigation results. Virtualized file listing for large directories.
 - Copy files into the open folder by dragging them from the desktop or another file manager.
 - External TOML themes and persistent user settings. A single executable works with all rices.
 
 ### Install on Linux Mint / Xfce
 
-You need Rust/Cargo, `xdg-open` and the usual X11/OpenGL development libraries. On Ubuntu/Mint:
+You need a current Rust/Cargo toolchain, `xdg-open` and the usual X11/OpenGL development libraries. On Ubuntu/Mint:
 
 ```bash
 sudo apt install build-essential pkg-config libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libgl1-mesa-dev xdg-utils
@@ -28,6 +31,8 @@ git clone https://github.com/CopyPasteUser/riceExplorer.git
 cd riceExplorer
 bash install.sh
 ```
+
+For file copy/paste interoperability with other file managers, install `xclip` on X11 or `wl-clipboard` on Wayland. Without them RiceExplorer still supports copy and paste between its own tabs.
 
 Or run directly from source: `cargo run --release -- --theme win7 "$HOME"`.
 
@@ -74,13 +79,15 @@ Per-user settings are stored in `~/.config/rice-explorer/config.toml` (or `$XDG_
 | Ctrl+R / Ctrl+H | Refresh / hidden files |
 | Ctrl+C / Ctrl+X / Ctrl+V | Copy / cut / paste selected files |
 | Ctrl+N / F2 / Delete | New folder / rename / move to Trash |
+| Shift+Delete | Permanently delete (requires confirmation) |
+| Ctrl+A / Ctrl+D / Alt+Enter | Select all / duplicate / properties |
 | Ctrl-click / Shift-click | Extend selection / select range |
 
 ## Safety and performance
 
-File copy creates new destination files without overwriting. Name collisions generate ` (copy)` suffixes; copying a directory into itself is rejected. Copying symlinks or special device files is intentionally blocked until safe native handling is implemented. Moving across filesystems currently reports an error rather than risking source deletion after a partial copy. Trash uses the platform Trash API, never permanent deletion. The application does not run shell commands with interpolated filenames.
+File copy creates new destination files without overwriting. Name collisions generate ` (copy)` suffixes; copying a directory into itself is rejected. Symbolic links are reproduced as links without following them; special device files are blocked. Across filesystems a move copies first and removes the source only after the copy succeeds. Cancelling a copy cleans its partial destination; a cancellation cannot undo earlier completed items. Trash uses the platform Trash API, never permanent deletion. The application does not run shell commands with interpolated filenames.
 
-Scanning, file copying and Trash operations run on worker threads. Views render only visible rows. The first release does not include thumbnails or recursive indexers, avoiding idle disk scanning on low-power laptops. Dragging files **out of** the window and desktop clipboard integration are planned, not yet implemented.
+Scanning, searching, copying and Trash operations run on worker threads. Views render only visible rows. Recursive search is bounded to protect small machines; it is not a full-text or indexed search. Thumbnail previews, drag-out, advanced mount management, undo and a complete GUI integration test remain outstanding. Until these are verified, keep Thunar available as a fallback.
 
 ## Development
 

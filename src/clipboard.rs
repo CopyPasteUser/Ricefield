@@ -127,10 +127,10 @@ pub fn paste_files() -> Option<Files> {
         if !result.status.success() {
             continue;
         }
-        if let Ok(text) = String::from_utf8(result.stdout) {
-            if let Some(files) = parse_files(&text) {
-                return Some(files);
-            }
+        if let Ok(text) = String::from_utf8(result.stdout)
+            && let Some(files) = parse_files(&text)
+        {
+            return Some(files);
         }
     }
     None

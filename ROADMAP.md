@@ -14,11 +14,14 @@
 
 ## v0.2 — desktop-native integration
 
-- [ ] Desktop file clipboard interoperability and drag/drop **out** of RiceExplorer (drop imports already work)
-- [ ] Cross-volume move with verified copy, progress, cancellation and rollback
-- [ ] Symlink-safe copy and contextual link operations
+- [x] Desktop file clipboard interoperability with optional X11/Wayland helpers
+- [ ] Drag/drop **out** of RiceExplorer (drop imports already work)
+- [x] Cross-volume copy-first moves, transfer progress and cancellation
+- [x] Symlink-preserving copy and link creation (link editing remains open)
 - [ ] True system MIME icons and thumbnail cache with limits
-- [ ] Native mounted-device, removable-media and network-share navigation via GIO
+- [x] Mounted-device paths in the sidebar; recursive filename search
+- [ ] Network-share management and mounted-device actions via GIO
+- [x] File properties and Unix-mode editing
 - [ ] Proper focus-trapped dialogs, screen reader pass and i18n foundation
 
 ## v0.3 — RiceBowl deep integration
