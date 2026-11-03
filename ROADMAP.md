@@ -50,9 +50,9 @@ Untested hardware and GUI behavior is reported as **outstanding**, not done.
 
 - [x] Local file manager and seven bundled profiles.
 - [x] Initial CI workflow, worker operations and progress reporting.
-- [ ] Fix name-collision byte preservation, dialog target snapshots,
+- [x] Fix name-collision byte preservation, dialog target snapshots,
   launcher path handling and seven-theme smoke coverage.
-- [ ] Establish a versioned shell schema, component selection and ordering
+- [x] Establish a versioned shell schema, component selection and ordering
   without breaking legacy themes or file operations.
 - [ ] Test remaining baseline safety and UI defects.
 - [ ] Complete real Linux Mint X11 keyboard/mouse/visual acceptance.
