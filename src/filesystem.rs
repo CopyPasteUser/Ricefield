@@ -1470,7 +1470,10 @@ mod tests {
         assert!(injected, "test did not reach the EXDEV finishing phase");
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read(source.join("original.txt")).unwrap(), b"before");
-        assert_eq!(fs::read(source.join("newly-created.txt")).unwrap(), b"after");
+        assert_eq!(
+            fs::read(source.join("newly-created.txt")).unwrap(),
+            b"after"
+        );
         assert_eq!(
             fs::read(target.join("source-dir/original.txt")).unwrap(),
             b"before"

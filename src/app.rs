@@ -3,7 +3,9 @@ use crate::{
     config::{self, Config},
     filesystem::{self, Action, Entry, Progress},
     preview,
-    theme::{BUILTIN_IDS, ChromeComponent, Layout, ShellKind, SidebarPosition, SidebarSection, Theme},
+    theme::{
+        BUILTIN_IDS, ChromeComponent, Layout, ShellKind, SidebarPosition, SidebarSection, Theme,
+    },
 };
 use eframe::egui::{
     self, Align2, Color32, FontId, Key, Modifiers, Pos2, Rect, Sense, Stroke, Vec2,
@@ -1252,7 +1254,8 @@ impl Explorer {
                             }
                             SidebarSection::Favorites => {
                                 for path in self.config.bookmarks.clone() {
-                                    let label = path.file_name().unwrap_or_default().to_string_lossy();
+                                    let label =
+                                        path.file_name().unwrap_or_default().to_string_lossy();
                                     if ui
                                         .add_sized(
                                             [ui.available_width(), 29.0],
