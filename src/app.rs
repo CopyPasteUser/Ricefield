@@ -1026,7 +1026,11 @@ impl Explorer {
                 let value = self.current().address.clone();
                 self.navigate(PathBuf::from(value));
             }
-            if ui.button("Reload").on_hover_text("Refresh (Ctrl+R)").clicked() {
+            if ui
+                .button("Reload")
+                .on_hover_text("Refresh (Ctrl+R)")
+                .clicked()
+            {
                 self.scan(self.active);
             }
 
@@ -1412,7 +1416,11 @@ impl Explorer {
                         }
                     }
                     if ui
-                        .small_button(if self.config.descending { "Desc" } else { "Asc" })
+                        .small_button(if self.config.descending {
+                            "Desc"
+                        } else {
+                            "Asc"
+                        })
                         .on_hover_text("Reverse sort")
                         .clicked()
                     {
