@@ -549,6 +549,20 @@ impl Explorer {
         ));
     }
 
+    fn copy_selected_paths(&mut self, context: &egui::Context) {
+        let paths = self.selected_paths();
+        if paths.is_empty() {
+            return;
+        }
+        let text = paths
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        context.copy_text(text);
+        self.status = Some((format!("Copied {} path(s) as text", paths.len()), false));
+    }
+
     fn paste(&mut self) {
         let available = clipboard::paste_files()
             .map(|files| Clipboard {
@@ -718,7 +732,11 @@ impl Explorer {
                 self.current_mut().selected = paths.into_iter().collect();
             }
             if ctrl && c {
-                self.copy_selection(false);
+                if context.input(|input| input.modifiers.shift) {
+                    self.copy_selected_paths(context);
+                } else {
+                    self.copy_selection(false);
+                }
             }
             if ctrl && x {
                 self.copy_selection(true);
@@ -1419,6 +1437,16 @@ impl Explorer {
                             ui.close();
                         }
                         if ui
+                            .add_enabled(
+                                has_selection,
+                                egui::Button::new("Copy path  Ctrl+Shift+C"),
+                            )
+                            .clicked()
+                        {
+                            self.copy_selected_paths(ui.ctx());
+                            ui.close();
+                        }
+                        if ui
                             .add_enabled(has_selection, egui::Button::new("Cut  Ctrl+X"))
                             .clicked()
                         {
@@ -1760,6 +1788,13 @@ impl Explorer {
                     self.select_entry(entry, index, Modifiers::default());
                 }
                 self.copy_selection(false);
+                ui.close();
+            }
+            if ui.button("Copy path").clicked() {
+                if !self.current().selected.contains(&entry.path) {
+                    self.select_entry(entry, index, Modifiers::default());
+                }
+                self.copy_selected_paths(ui.ctx());
                 ui.close();
             }
             if ui.button("Cut").clicked() {

@@ -101,6 +101,7 @@ Per-user settings are stored in `~/.config/rice-explorer/config.toml` (or `$XDG_
 | Ctrl+L / Ctrl+F | Path / folder search |
 | Ctrl+R / Ctrl+H | Refresh / hidden files |
 | Ctrl+C / Ctrl+X / Ctrl+V | Copy / cut / paste selected files |
+| Ctrl+Shift+C | Copy selected file paths as plain text |
 | Ctrl+N / F2 / Delete | New folder / rename / move to Trash |
 | Shift+Delete | Permanently delete (requires confirmation) |
 | Ctrl+A / Ctrl+D / Alt+Enter | Select all / duplicate / properties |
@@ -109,7 +110,7 @@ Per-user settings are stored in `~/.config/rice-explorer/config.toml` (or `$XDG_
 
 ## Safety and performance
 
-File copy creates new destination files without overwriting. Name collisions generate ` (copy)` suffixes; copying a directory into itself is rejected. Symbolic links are reproduced as links without following them; special device files are blocked. Across filesystems a move copies first, verifies every copied byte and only then removes the source (extra I/O is intentional). Cancelling a copy cleans its partial destination; a cancellation cannot undo earlier completed items. Normal deletion uses the desktop Trash; permanent deletion requires a separate confirmation. File names are never interpolated into shell commands.
+File copy uses a private hidden staging directory on the destination filesystem and publishes the completed item with an atomic no-overwrite rename. Name collisions generate ` (copy)` suffixes; copying a directory into itself is rejected. Symbolic links are reproduced as links without following them; special device files are blocked. Across filesystems a move copies first, verifies every copied byte and only then removes the source (extra I/O is intentional). Cancelling a copy cleans its partial destination when possible; a cancellation cannot undo earlier completed items. A process crash may leave a hidden `.rice-explorer-staging-*` directory; automated recovery and power-loss durability are not yet implemented. Normal deletion uses the desktop Trash; permanent deletion requires a separate confirmation. File names are never interpolated into shell commands.
 
 Scanning, searching, copying and Trash operations run on worker threads. Views render only visible rows. Recursive search is bounded to protect small machines; it is not a full-text or indexed search. Image thumbnail previews are implemented; drag-out, advanced mount management, undo and full interactive desktop integration tests remain outstanding. Until these are verified on your Mint laptop, keep Thunar available as a fallback.
 

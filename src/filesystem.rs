@@ -354,7 +354,7 @@ pub fn perform_with_progress(
                 transfer.check()?;
                 let target =
                     free_destination(destination, source.file_name().ok_or_else(invalid_name)?)?;
-                copy_tree(source, &target, 0, &mut transfer)?;
+                stage_and_publish(source, &target, false, &mut transfer)?;
             }
             Ok(format!("Copied {} item(s)", sources.len()))
         }
@@ -383,20 +383,11 @@ pub fn perform_with_progress(
                             .total
                             .saturating_add(actual_bytes.saturating_sub(*bytes));
                         transfer.report(source);
-                        copy_tree(source, &target, 0, &mut transfer)?;
-                        transfer.phase = "Verifying";
-                        transfer.report(source);
-                        if let Err(error) = verify_tree(source, &target, 0, &mut transfer) {
-                            remove_created(&target)?;
-                            return Err(error);
-                        }
-                        if let Err(error) = transfer.check() {
-                            remove_created(&target)?;
-                            return Err(error);
-                        }
+                        stage_and_publish(source, &target, true, &mut transfer)?;
+                        transfer.check()?;
                         transfer.phase = "Finishing";
                         transfer.report(source);
-                        // If deletion fails the copy is deliberately kept for recovery.
+                        // If deletion fails, the fully published copy remains for recovery.
                         remove_source(source)?;
                         transfer.phase = "Copying";
                     }
@@ -679,6 +670,82 @@ fn remove_source(path: &Path) -> io::Result<()> {
     remove_created(path)
 }
 
+fn create_staging_dir(parent: &Path) -> io::Result<PathBuf> {
+    use std::time::UNIX_EPOCH;
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    for attempt in 0..128 {
+        let path = parent.join(format!(
+            ".rice-explorer-staging-{}-{nonce}-{attempt}",
+            std::process::id()
+        ));
+        let mut builder = fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        match builder.create(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "Unable to reserve a unique staging directory",
+    ))
+}
+
+/// Copy into a private, hidden directory on the destination filesystem, then publish
+/// only a complete payload with an atomic, no-overwrite rename. A killed process may
+/// leave an abandoned staging directory; a durable recovery journal and directory
+/// fsync are still needed for power-loss guarantees.
+fn stage_and_publish(
+    source: &Path,
+    destination: &Path,
+    verify: bool,
+    transfer: &mut Transfer<'_>,
+) -> io::Result<()> {
+    transfer.check()?;
+    ensure_outside_source(source, destination)?;
+    let staging_dir = create_staging_dir(destination.parent().ok_or_else(invalid_name)?)?;
+    let staged = staging_dir.join("payload");
+    let result = (|| {
+        transfer.phase = "Copying";
+        copy_tree(source, &staged, 0, transfer)?;
+        if verify {
+            transfer.phase = "Verifying";
+            transfer.report(source);
+            verify_tree(source, &staged, 0, transfer)?;
+        }
+        transfer.check()?;
+        transfer.phase = "Publishing";
+        transfer.report(destination);
+        rename_without_overwrite(&staged, destination)
+    })();
+    match result {
+        Ok(()) => {
+            // Publication is committed; a failed cleanup must not report it as failed.
+            if let Err(error) = fs::remove_dir(&staging_dir) {
+                eprintln!(
+                    "RiceExplorer: published copy, but cannot remove staging directory: {error}"
+                );
+            }
+            Ok(())
+        }
+        Err(error) => {
+            if let Err(cleanup_error) = remove_created(&staging_dir) {
+                eprintln!("RiceExplorer: cannot clean staging directory: {cleanup_error}");
+            }
+            Err(error)
+        }
+    }
+}
+
 /// Check every copied byte before a cross-filesystem move deletes its source.
 /// This intentionally costs extra I/O for moves across drives.
 fn verify_tree(
@@ -945,6 +1012,124 @@ mod tests {
         assert_eq!(fs::read(dst.join("note.txt")).unwrap(), b"existing");
         assert_eq!(fs::read(dst.join("note (copy).txt")).unwrap(), b"original");
         assert_eq!(fs::read(source).unwrap(), b"original");
+        assert_eq!(fs::read_dir(&dst).unwrap().count(), 2);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn staged_copy_publishes_files_and_directories_without_residue() {
+        let root = test_root();
+        let folder = root.join("folder");
+        fs::create_dir(&folder).unwrap();
+        fs::write(folder.join("nested.txt"), b"nested").unwrap();
+        let file = root.join("file.txt");
+        fs::write(&file, b"original").unwrap();
+        let output = root.join("output");
+        fs::create_dir(&output).unwrap();
+
+        perform(&Action::Copy {
+            sources: vec![folder, file],
+            destination: output.clone(),
+        })
+        .unwrap();
+
+        assert_eq!(fs::read(output.join("file.txt")).unwrap(), b"original");
+        assert_eq!(
+            fs::read(output.join("folder/nested.txt")).unwrap(),
+            b"nested"
+        );
+        assert_eq!(fs::read_dir(&output).unwrap().count(), 2);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn publication_never_overwrites_file_created_during_copy() {
+        let root = test_root();
+        let source = root.join("large.bin");
+        fs::write(&source, vec![42u8; 8 * 1024 * 1024]).unwrap();
+        let output = root.join("output");
+        fs::create_dir(&output).unwrap();
+        let cancelled = AtomicBool::new(false);
+        let mut inserted = false;
+        let result = perform_with_progress(
+            &Action::Copy {
+                sources: vec![source.clone()],
+                destination: output.clone(),
+            },
+            &cancelled,
+            &mut |progress| {
+                if !inserted && progress.transferred >= 4 * 1024 * 1024 {
+                    fs::write(output.join("large.bin"), b"other writer").unwrap();
+                    inserted = true;
+                }
+            },
+        );
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(output.join("large.bin")).unwrap(), b"other writer");
+        assert_eq!(fs::metadata(source).unwrap().len(), 8 * 1024 * 1024);
+        assert_eq!(fs::read_dir(&output).unwrap().count(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_copy_cleans_staging_and_preserves_unsupported_source() {
+        use std::os::unix::net::UnixListener;
+
+        let root = test_root();
+        let socket = root.join("unix-socket");
+        let _listener = UnixListener::bind(&socket).unwrap();
+        let output = root.join("output");
+        fs::create_dir(&output).unwrap();
+
+        let error = perform(&Action::Copy {
+            sources: vec![socket.clone()],
+            destination: output.clone(),
+        })
+        .unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+        assert!(fs::symlink_metadata(socket).is_ok());
+        assert_eq!(fs::read_dir(&output).unwrap().count(), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_verification_never_publishes_and_keeps_source() {
+        let root = test_root();
+        let source = root.join("source.txt");
+        fs::write(&source, b"ORIGINAL").unwrap();
+        let output = root.join("output");
+        fs::create_dir(&output).unwrap();
+        let cancelled = AtomicBool::new(false);
+        let mut corrupted = false;
+        let mut callback = |progress: Progress| {
+            if progress.phase == "Verifying" && !corrupted {
+                let staging_dir = fs::read_dir(&output)
+                    .unwrap()
+                    .next()
+                    .unwrap()
+                    .unwrap()
+                    .path();
+                fs::write(staging_dir.join("payload"), b"CORRUPTX").unwrap();
+                corrupted = true;
+            }
+        };
+        let mut transfer = Transfer {
+            cancelled: &cancelled,
+            notify: &mut callback,
+            transferred: 0,
+            total: 8,
+            last_report: Instant::now(),
+            last_reported_bytes: 0,
+            phase: "Copying",
+        };
+
+        let result = stage_and_publish(&source, &output.join("source.txt"), true, &mut transfer);
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert!(corrupted);
+        assert_eq!(fs::read(source).unwrap(), b"ORIGINAL");
+        assert_eq!(fs::read_dir(&output).unwrap().count(), 0);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1101,6 +1286,7 @@ mod tests {
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Interrupted);
         assert!(!dest.join("large.bin").exists());
         assert_eq!(fs::metadata(original).unwrap().len(), 12 * 1024 * 1024);
+        assert_eq!(fs::read_dir(&dest).unwrap().count(), 0);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1194,6 +1380,7 @@ mod tests {
         .unwrap();
         assert!(!source.exists());
         assert_eq!(fs::read(target.join("move.txt")).unwrap(), b"cross-device");
+        assert_eq!(fs::read_dir(&target).unwrap().count(), 1);
         fs::remove_dir_all(&target).unwrap();
         fs::remove_dir_all(root).unwrap();
     }

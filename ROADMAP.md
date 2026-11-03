@@ -62,6 +62,8 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
 
 ### 0.3 — Reliable file operations
 
+- [ ] Verify initial hidden staging and atomic no-overwrite publication for
+  local copies and cross-device moves in CI and on Linux Mint.
 - [ ] Bounded queue with operation IDs and per-item results.
 - [ ] Preflight, conflict choices (replace/skip/keep both/rename/compare,
   apply to all), user-facing error recovery.

@@ -11,6 +11,9 @@
 - Introduce versioned shell profiles and configurable top-level UI component
   order for all seven built-in rices, reusing the same file operations.
 - Improve search debounce repaint timing and Linux mountinfo path decoding.
+- Add Copy Path to the actions/context menus and Ctrl+Shift+C.
+- Stage local copies and cross-device moves under hidden temporary paths,
+  verifying cross-device transfers before atomic no-overwrite publication.
 
 **Validation pending:** Rust format, Clippy, unit tests, GUI smoke in CI,
 and real Linux Mint acceptance. These changes are not a v1.0 release.
