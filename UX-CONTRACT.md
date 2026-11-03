@@ -1,0 +1,41 @@
+# RiceExplorer UX contract
+
+## Scope
+
+Linux desktop file management for RiceBowl users. v0.1 interface English; runtime GUI built in egui. Visual language is owned by [DESIGN.md](DESIGN.md) and `themes/*.toml`. The filesystem module is the canonical owner for file mutation.
+
+## Navigation and selection
+
+- Tabs preserve their own path, back/forward history, search query, selection and pending scan generation.
+- Entering a new location clears local search and selection, but not bookmarks or preferences.
+- Sorting always groups directories before files. Filters operate only on the current folder; no unrequested recursive search/indexing.
+- Shift selects a contiguous visible range; Ctrl toggles one item. Navigation history is independent of filesystem mutation history.
+- Keyboard shortcuts do not copy/cut/paste files while a text field has focus.
+
+## Mutations
+
+| Action | Pending | Success | Failure |
+| --- | --- | --- | --- |
+| New file/folder | Background worker | Refresh all tabs; status message | Keep existing folder; error in status |
+| Rename | Background worker | Refresh tabs; status message | Existing target remains; error in status |
+| Copy | Background worker | Unique new destination; status | Partial new output cleaned when possible; source intact |
+| Move | Background worker | Rename within volume; status | Original remains for failed individual move; report error |
+| Trash | Explicit confirmation, then worker | Platform Trash; status | Report error; refresh tabs to show partial state |
+
+Only one mutation worker runs at a time; folder reads may proceed concurrently. There is no fake optimistic success. Copy/cut uses an application-local file clipboard for v0.1, not the desktop MIME clipboard. The Trash confirmation is deliberately conservative even though desktop Trash is recoverable.
+
+## Ownership and recovery
+
+- **File list/table:** `Explorer::file_listing`, shared for all themes; virtualized rows.
+- **Search and clear:** `Explorer::navigation_bar`/`rebuild_visible`.
+- **Dialog/confirmation:** `Explorer::dialogs`; no system-wide native dialog side effects.
+- **Feedback:** `Explorer::status_bar`; persistent until the next result.
+- **Operations:** `filesystem::perform`; worker response includes actual completion result.
+- **Theme:** `Theme::apply` and runtime TOML files; no theme-specific copy/move behavior.
+- **Settings:** XDG config TOML, transactional replacement, recoverable defaults for invalid content.
+
+Accessibility target is WCAG 2.2 AA. Explicit known gap in v0.1: egui's native screen-reader semantics and modal focus trapping need end-to-end accessibility testing before accessibility compliance can be claimed. Future releases must address it rather than stating compliance prematurely.
+
+## Verification
+
+Unit tests for theme parsing, self-copy rejection, collision-free copying, protected rename. Cargo formatting, Clippy and tests run in CI. Manual checks on Mint X11 and Wayland remain required before a stable release, including keyboard, narrow window, inaccessible folder, long filenames, large directories, theme switching and Trash recovery.

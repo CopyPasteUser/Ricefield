@@ -1,0 +1,21 @@
+id = "macos"
+name = "macOS · Finder-inspired"
+layout = "modern"
+[palette]
+background = "#edf0f3"
+chrome = "#e4e6eb"
+panel = "#ffffff"
+sidebar = "#e8ebef"
+text = "#252b34"
+muted = "#636d79"
+accent = "#307cda"
+selection = "#d2e6ff"
+border = "#cbd0d9"
+folder = "#64abed"
+file = "#a2b6cc"
+[metrics]
+rounding = 9
+row_height = 33
+tile_width = 125
+sidebar_width = 205
+icon_size = 27

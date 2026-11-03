@@ -1,0 +1,21 @@
+id = "xp-luna"
+name = "Windows XP · Luna"
+layout = "classic"
+[palette]
+background = "#f0eee3"
+chrome = "#245edb"
+panel = "#ffffff"
+sidebar = "#d6e5fb"
+text = "#233050"
+muted = "#5a7095"
+accent = "#236bdf"
+selection = "#b1d1ff"
+border = "#7f9dcb"
+folder = "#ffc650"
+file = "#78b3ec"
+[metrics]
+rounding = 6
+row_height = 30
+tile_width = 115
+sidebar_width = 218
+icon_size = 25

@@ -1,0 +1,21 @@
+id = "win10"
+name = "Windows 10 · Fluent"
+layout = "modern"
+[palette]
+background = "#f3f3f3"
+chrome = "#f8f8f8"
+panel = "#ffffff"
+sidebar = "#f1f3f5"
+text = "#1c1c1c"
+muted = "#686868"
+accent = "#0078d4"
+selection = "#d9efff"
+border = "#d2d2d2"
+folder = "#ecc24b"
+file = "#7ab3d5"
+[metrics]
+rounding = 2
+row_height = 33
+tile_width = 126
+sidebar_width = 205
+icon_size = 25

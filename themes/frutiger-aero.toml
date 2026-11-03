@@ -1,0 +1,21 @@
+id = "frutiger-aero"
+name = "Frutiger Aero · Vista Dreams"
+layout = "aero"
+[palette]
+background = "#e0f5f8"
+chrome = "#75c5d7"
+panel = "#faffff"
+sidebar = "#d5f1ee"
+text = "#194b59"
+muted = "#3b7079"
+accent = "#1c9e9f"
+selection = "#b1e8e5"
+border = "#8ac7cf"
+folder = "#f7d47a"
+file = "#4cc3bb"
+[metrics]
+rounding = 11
+row_height = 34
+tile_width = 128
+sidebar_width = 217
+icon_size = 26

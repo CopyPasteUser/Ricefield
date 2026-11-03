@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=RiceExplorer
+GenericName=File Manager
+Comment=Customizable Rust file explorer for RiceBowl
+Exec=rice-explorer %U
+Icon=rice-explorer
+Terminal=false
+Categories=System;FileTools;FileManager;Utility;
+MimeType=inode/directory;
+StartupNotify=true

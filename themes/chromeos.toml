@@ -1,0 +1,21 @@
+id = "chromeos"
+name = "ChromeOS · Files"
+layout = "modern"
+[palette]
+background = "#f7f9fc"
+chrome = "#eef2f8"
+panel = "#ffffff"
+sidebar = "#f1f5fb"
+text = "#263445"
+muted = "#64748b"
+accent = "#2368c9"
+selection = "#d9e8fc"
+border = "#e0e7ef"
+folder = "#7eaceb"
+file = "#7fa3c9"
+[metrics]
+rounding = 12
+row_height = 37
+tile_width = 132
+sidebar_width = 218
+icon_size = 28

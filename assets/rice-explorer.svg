@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="RiceExplorer folder icon">
+  <defs>
+    <linearGradient id="folder" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#b4e9ff"/>
+      <stop offset="0.54" stop-color="#5caeea"/>
+      <stop offset="1" stop-color="#2878ca"/>
+    </linearGradient>
+    <linearGradient id="inside" x1="0" y1="0" x2="0.7" y2="1">
+      <stop stop-color="#f8fdff"/>
+      <stop offset="1" stop-color="#c2e4fa"/>
+    </linearGradient>
+  </defs>
+  <rect x="20" y="20" width="216" height="216" rx="52" fill="#15365d"/>
+  <path d="M42 103V75c0-11 9-20 20-20h48c8 0 12 3 17 10l10 14h57c12 0 21 9 21 21v70H42Z" fill="#d0eaff"/>
+  <path d="M42 107h172v91c0 12-9 21-21 21H63c-12 0-21-9-21-21z" fill="url(#folder)"/>
+  <path d="M56 120h144l-13 83H70z" fill="url(#inside)" opacity=".95"/>
+  <path d="M76 158h54M76 179h77" stroke="#5c9acc" stroke-width="10" stroke-linecap="round" opacity=".72"/>
+  <path d="m149 115 18 21-35 47-22-17 39-51Z" fill="#2e7fd1"/>
+  <path d="m146 129 10 10-26 34-10-8z" fill="#e9f8ff"/>
+  <path d="M41 110h174" stroke="#fff" stroke-opacity=".65" stroke-width="5"/>
+  <path d="M42 183v14c0 12 9 22 21 22h130c12 0 21-10 21-22v-14c-43 10-123 12-172 0Z" fill="#1a65af" opacity=".54"/>
+  <path d="M67 69h42" stroke="#fff" stroke-opacity=".8" stroke-width="5" stroke-linecap="round"/>
+</svg>

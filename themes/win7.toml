@@ -1,0 +1,21 @@
+id = "win7"
+name = "Windows 7 · Aero"
+layout = "aero"
+[palette]
+background = "#eaf4fb"
+chrome = "#b7d8ef"
+panel = "#f8fcff"
+sidebar = "#e8f2f9"
+text = "#193147"
+muted = "#536b80"
+accent = "#176ab7"
+selection = "#c6e6fa"
+border = "#8db6d2"
+folder = "#f2c45d"
+file = "#78b1d7"
+[metrics]
+rounding = 5
+row_height = 31
+tile_width = 120
+sidebar_width = 216
+icon_size = 25
