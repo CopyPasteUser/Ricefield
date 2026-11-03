@@ -804,14 +804,20 @@ fn verify_tree(
             "Folder nesting is too deep",
         ));
     }
-    let source_meta = fs::symlink_metadata(source)?;
-    let target_meta = fs::symlink_metadata(destination)?;
     let mismatch = || {
         io::Error::new(
             io::ErrorKind::InvalidData,
             "Move verification failed; source is untouched",
         )
     };
+    let source_meta = fs::symlink_metadata(source)?;
+    let target_meta = fs::symlink_metadata(destination).map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            mismatch()
+        } else {
+            error
+        }
+    })?;
     if source_meta.file_type().is_symlink() {
         if !target_meta.file_type().is_symlink()
             || fs::read_link(source)? != fs::read_link(destination)?
