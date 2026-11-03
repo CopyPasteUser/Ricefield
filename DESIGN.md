@@ -60,10 +60,12 @@ The renderer uses egui's bundled system-like proportional font, with a technical
 - The optional `[shell]` TOML table selects a shell identity and orders the
   upper `menu-bar`, `tabs`, `navigation` and `command-bar` components.
   Legacy themes without it use the established layout-family defaults.
+- `[shell.sidebar]` selects left/right placement, width and ordered visible
+  `places`, `favorites` and `volumes` sections. `[shell].status_bar` is optional.
 - Renderers select shared UI actions; filesystem mutations, open tabs,
   selection and running jobs never belong to a theme-specific implementation.
-- This is the first layout-configuration seam. Sidebars, detail panes,
-  dialogs and user-authored Rust components still need modular adapters.
+- Detail panes, dialogs, a complete shell-component registry and user-authored
+  Rust components still need modular adapters.
 - Main directory area uses virtualized rows; width determines icon-grid column count.
 - Sidebar can be collapsed and resized independently; it does not obscure the file list.
 - Layout responds to small windows by shrinking search/path fields before losing controls.

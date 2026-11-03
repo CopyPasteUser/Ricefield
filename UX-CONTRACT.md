@@ -35,6 +35,9 @@ Only one mutation worker runs at a time; folder reads may proceed concurrently. 
 - **Shell composition:** `Theme::shell_kind` and `Theme::top_components` select
   existing controls and their order. A shell may change the interface, never
   the semantics or safety checks of copy/move/Trash.
+- **Sidebar composition:** `Theme::sidebar_sections`, `sidebar_position` and
+  `sidebar_width` provide per-rice layout without altering bookmarks, mount
+  discovery or navigation semantics.
 - **Settings:** XDG config TOML, transactional replacement, recoverable defaults for invalid content.
 
 Accessibility target is WCAG 2.2 AA. Explicit known gap in v0.1: egui's native screen-reader semantics and modal focus trapping need end-to-end accessibility testing before accessibility compliance can be claimed. Future releases must address it rather than stating compliance prematurely.

@@ -64,6 +64,8 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
 
 - [ ] Verify initial hidden staging and atomic no-overwrite publication for
   local copies and cross-device moves in CI and on Linux Mint.
+- [ ] Eliminate the remaining cross-device source mutation race and preserve
+  timestamp, owner, ACL, xattr and hardlink metadata before production use.
 - [ ] Bounded queue with operation IDs and per-item results.
 - [ ] Preflight, conflict choices (replace/skip/keep both/rename/compare,
   apply to all), user-facing error recovery.

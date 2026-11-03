@@ -387,8 +387,12 @@ pub fn perform_with_progress(
                         transfer.check()?;
                         transfer.phase = "Finishing";
                         transfer.report(source);
-                        // If deletion fails, the fully published copy remains for recovery.
-                        remove_source(source)?;
+                        // Another process may have modified the source while it was
+                        // copied. Recheck after publication before unlinking anything.
+                        // If deletion fails, the published destination remains for
+                        // recovery; no unverified new directory entries are removed.
+                        verify_tree(source, &target, 0, &mut transfer)?;
+                        remove_verified_tree(source, &target, 0, &mut transfer)?;
                         transfer.phase = "Copying";
                     }
                     Err(error) => return Err(error),
@@ -666,8 +670,47 @@ fn remove_created(path: &Path) -> io::Result<()> {
     }
 }
 
-fn remove_source(path: &Path) -> io::Result<()> {
-    remove_created(path)
+/// Delete only source entries that have a matching published destination.
+/// Unlike remove_dir_all, a concurrent writer adding an unexpected entry
+/// prevents the final rmdir and leaves that entry available for recovery.
+fn remove_verified_tree(
+    source: &Path,
+    destination: &Path,
+    depth: usize,
+    transfer: &mut Transfer<'_>,
+) -> io::Result<()> {
+    transfer.check()?;
+    if depth > 128 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Folder nesting is too deep",
+        ));
+    }
+    let metadata = fs::symlink_metadata(source)?;
+    if metadata.is_dir() {
+        if !fs::symlink_metadata(destination)?.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Published destination differs from source",
+            ));
+        }
+        for entry in fs::read_dir(destination)? {
+            let entry = entry?;
+            remove_verified_tree(
+                &source.join(entry.file_name()),
+                &entry.path(),
+                depth + 1,
+                transfer,
+            )?;
+        }
+        fs::remove_dir(source)
+    } else {
+        // Reverify each file immediately before unlinking it. The final
+        // source path still may be mutated by another process; crash-safe
+        // identity tracking and journaling remain required for a 1.0 gate.
+        verify_tree(source, destination, depth, transfer)?;
+        fs::remove_file(source)
+    }
 }
 
 fn create_staging_dir(parent: &Path) -> io::Result<PathBuf> {
@@ -1382,6 +1425,58 @@ mod tests {
         assert_eq!(fs::read(target.join("move.txt")).unwrap(), b"cross-device");
         assert_eq!(fs::read_dir(&target).unwrap().count(), 1);
         fs::remove_dir_all(&target).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cross_device_move_keeps_new_source_files_created_after_publication() {
+        use std::os::unix::fs::MetadataExt;
+        let root = test_root();
+        let shared = Path::new("/dev/shm");
+        if !shared.is_dir()
+            || fs::metadata(&root).unwrap().dev() == fs::metadata(shared).unwrap().dev()
+        {
+            fs::remove_dir_all(root).unwrap();
+            return;
+        }
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let target = shared.join(format!("rice-explorer-race-{}-{nonce}", std::process::id()));
+        if fs::create_dir(&target).is_err() {
+            fs::remove_dir_all(root).unwrap();
+            return;
+        }
+        let source = root.join("source-dir");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("original.txt"), b"before").unwrap();
+        let cancelled = AtomicBool::new(false);
+        let mut injected = false;
+        let result = perform_with_progress(
+            &Action::Move {
+                sources: vec![source.clone()],
+                destination: target.clone(),
+            },
+            &cancelled,
+            &mut |progress: Progress| {
+                if progress.phase == "Finishing" && !injected {
+                    fs::write(source.join("newly-created.txt"), b"after").unwrap();
+                    injected = true;
+                }
+            },
+        );
+        assert!(injected, "test did not reach the EXDEV finishing phase");
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(source.join("original.txt")).unwrap(), b"before");
+        assert_eq!(fs::read(source.join("newly-created.txt")).unwrap(), b"after");
+        assert_eq!(
+            fs::read(target.join("source-dir/original.txt")).unwrap(),
+            b"before"
+        );
+        assert!(!target.join("source-dir/newly-created.txt").exists());
+        fs::remove_dir_all(target).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
 

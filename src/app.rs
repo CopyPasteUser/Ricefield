@@ -3,7 +3,7 @@ use crate::{
     config::{self, Config},
     filesystem::{self, Action, Entry, Progress},
     preview,
-    theme::{BUILTIN_IDS, ChromeComponent, Layout, ShellKind, Theme},
+    theme::{BUILTIN_IDS, ChromeComponent, Layout, ShellKind, SidebarPosition, SidebarSection, Theme},
 };
 use eframe::egui::{
     self, Align2, Color32, FontId, Key, Modifiers, Pos2, Rect, Sense, Stroke, Vec2,
@@ -1191,9 +1191,13 @@ impl Explorer {
             return;
         }
         let theme = self.theme.clone();
-        egui::Panel::left("places")
+        let panel = match theme.sidebar_position() {
+            SidebarPosition::Left => egui::Panel::left("places"),
+            SidebarPosition::Right => egui::Panel::right("places"),
+        };
+        panel
             .resizable(true)
-            .default_size(theme.metrics.sidebar_width)
+            .default_size(theme.sidebar_width())
             .min_size(132.0)
             .frame(
                 egui::Frame::new()
@@ -1202,86 +1206,91 @@ impl Explorer {
             )
             .show(ui, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.label(
-                        egui::RichText::new("PLACES")
-                            .small()
-                            .strong()
-                            .color(theme.palette.muted()),
-                    );
-                    ui.add_space(8.0);
-                    let home = config::home();
-                    for (label, path) in [
-                        ("Home", home.clone()),
-                        ("Desktop", home.join("Desktop")),
-                        ("Documents", home.join("Documents")),
-                        ("Downloads", home.join("Downloads")),
-                        ("Music", home.join("Music")),
-                        ("Pictures", home.join("Pictures")),
-                        ("Videos", home.join("Videos")),
-                        ("Filesystem", PathBuf::from("/")),
-                    ] {
-                        if path.is_dir()
-                            && ui
-                                .add_sized(
-                                    [ui.available_width(), 29.0],
-                                    egui::Button::new(label).selected(self.current().path == path),
-                                )
-                                .clicked()
-                        {
-                            self.navigate(path);
+                    let sections = theme.sidebar_sections();
+                    for (index, section) in sections.into_iter().enumerate() {
+                        if index > 0 {
+                            ui.add_space(14.0);
+                            ui.separator();
                         }
-                    }
-                    ui.add_space(14.0);
-                    ui.separator();
-                    ui.label(
-                        egui::RichText::new("FAVORITES")
-                            .small()
-                            .strong()
-                            .color(theme.palette.muted()),
-                    );
-                    let bookmarks = self.config.bookmarks.clone();
-                    for path in bookmarks {
-                        let label = path.file_name().unwrap_or_default().to_string_lossy();
-                        if ui
-                            .add_sized(
-                                [ui.available_width(), 29.0],
-                                egui::Button::new(format!("Favorite: {label}"))
-                                    .selected(self.current().path == path),
-                            )
-                            .clicked()
-                        {
-                            self.navigate(path);
-                        }
-                    }
-                    if ui.small_button("+  Bookmark current folder").clicked() {
-                        self.toggle_bookmark();
-                    }
-                    ui.add_space(14.0);
-                    ui.separator();
-                    ui.label(
-                        egui::RichText::new("VOLUMES")
-                            .small()
-                            .strong()
-                            .color(theme.palette.muted()),
-                    );
-                    for path in self.volumes.clone() {
-                        let label = if path == Path::new("/") {
-                            "System disk".to_owned()
-                        } else {
-                            format!(
-                                "Volume: {}",
-                                path.file_name().unwrap_or_default().to_string_lossy()
-                            )
+                        let title = match section {
+                            SidebarSection::Places => "PLACES",
+                            SidebarSection::Favorites => "FAVORITES",
+                            SidebarSection::Volumes => "VOLUMES",
                         };
-                        if ui
-                            .add_sized(
-                                [ui.available_width(), 29.0],
-                                egui::Button::new(label).selected(self.current().path == path),
-                            )
-                            .on_hover_text(path.display().to_string())
-                            .clicked()
-                        {
-                            self.navigate(path);
+                        ui.label(
+                            egui::RichText::new(title)
+                                .small()
+                                .strong()
+                                .color(theme.palette.muted()),
+                        );
+                        match section {
+                            SidebarSection::Places => {
+                                ui.add_space(8.0);
+                                let home = config::home();
+                                for (label, path) in [
+                                    ("Home", home.clone()),
+                                    ("Desktop", home.join("Desktop")),
+                                    ("Documents", home.join("Documents")),
+                                    ("Downloads", home.join("Downloads")),
+                                    ("Music", home.join("Music")),
+                                    ("Pictures", home.join("Pictures")),
+                                    ("Videos", home.join("Videos")),
+                                    ("Filesystem", PathBuf::from("/")),
+                                ] {
+                                    if path.is_dir()
+                                        && ui
+                                            .add_sized(
+                                                [ui.available_width(), 29.0],
+                                                egui::Button::new(label)
+                                                    .selected(self.current().path == path),
+                                            )
+                                            .clicked()
+                                    {
+                                        self.navigate(path);
+                                    }
+                                }
+                            }
+                            SidebarSection::Favorites => {
+                                for path in self.config.bookmarks.clone() {
+                                    let label = path.file_name().unwrap_or_default().to_string_lossy();
+                                    if ui
+                                        .add_sized(
+                                            [ui.available_width(), 29.0],
+                                            egui::Button::new(format!("Favorite: {label}"))
+                                                .selected(self.current().path == path),
+                                        )
+                                        .clicked()
+                                    {
+                                        self.navigate(path);
+                                    }
+                                }
+                                if ui.small_button("+  Bookmark current folder").clicked() {
+                                    self.toggle_bookmark();
+                                }
+                            }
+                            SidebarSection::Volumes => {
+                                for path in self.volumes.clone() {
+                                    let label = if path == Path::new("/") {
+                                        "System disk".to_owned()
+                                    } else {
+                                        format!(
+                                            "Volume: {}",
+                                            path.file_name().unwrap_or_default().to_string_lossy()
+                                        )
+                                    };
+                                    if ui
+                                        .add_sized(
+                                            [ui.available_width(), 29.0],
+                                            egui::Button::new(label)
+                                                .selected(self.current().path == path),
+                                        )
+                                        .on_hover_text(path.display().to_string())
+                                        .clicked()
+                                    {
+                                        self.navigate(path);
+                                    }
+                                }
+                            }
                         }
                     }
                 });
@@ -2132,7 +2141,9 @@ impl eframe::App for Explorer {
             self.keyboard(&context);
         }
         self.top_bar(ui);
-        self.status_bar(ui);
+        if self.theme.shell.status_bar.unwrap_or(true) {
+            self.status_bar(ui);
+        }
         self.sidebar(ui);
         self.preview_panel(ui);
         self.main_panel(ui);

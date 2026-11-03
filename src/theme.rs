@@ -59,10 +59,35 @@ pub enum ChromeComponent {
     CommandBar,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SidebarPosition {
+    Left,
+    Right,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SidebarSection {
+    Places,
+    Favorites,
+    Volumes,
+}
+
+#[derive(Clone, Default, Deserialize)]
+pub struct SidebarConfig {
+    pub position: Option<SidebarPosition>,
+    pub width: Option<f32>,
+    pub sections: Option<Vec<SidebarSection>>,
+}
+
 #[derive(Clone, Default, Deserialize)]
 pub struct ShellConfig {
     pub kind: Option<ShellKind>,
     pub top: Option<Vec<ChromeComponent>>,
+    #[serde(default)]
+    pub sidebar: SidebarConfig,
+    pub status_bar: Option<bool>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -177,6 +202,27 @@ impl Theme {
             })
     }
 
+    pub fn sidebar_sections(&self) -> Vec<SidebarSection> {
+        self.shell.sidebar.sections.clone().unwrap_or_else(|| {
+            vec![
+                SidebarSection::Places,
+                SidebarSection::Favorites,
+                SidebarSection::Volumes,
+            ]
+        })
+    }
+
+    pub fn sidebar_position(&self) -> SidebarPosition {
+        self.shell.sidebar.position.unwrap_or(SidebarPosition::Left)
+    }
+
+    pub fn sidebar_width(&self) -> f32 {
+        self.shell
+            .sidebar
+            .width
+            .unwrap_or(self.metrics.sidebar_width)
+    }
+
     pub fn builtin(id: &str) -> Option<Self> {
         let source = match id {
             "win7" => include_str!("../themes/win7.toml"),
@@ -216,6 +262,26 @@ impl Theme {
             {
                 return Err("Duplicate shell top components".into());
             }
+        }
+        if let Some(sections) = &self.shell.sidebar.sections {
+            if sections.is_empty() {
+                return Err("Sidebar must contain at least one section".into());
+            }
+            if sections
+                .iter()
+                .enumerate()
+                .any(|(index, item)| sections[..index].contains(item))
+            {
+                return Err("Duplicate sidebar sections".into());
+            }
+        }
+        if self
+            .shell
+            .sidebar
+            .width
+            .is_some_and(|width| !(120.0..=420.0).contains(&width))
+        {
+            return Err("Sidebar width outside supported range".into());
         }
         if self.id.trim().is_empty() || self.name.trim().is_empty() {
             return Err("Theme id and name must not be empty".into());
@@ -378,5 +444,30 @@ mod tests {
                 ChromeComponent::Navigation,
             ]
         );
+    }
+
+    #[test]
+    fn custom_sidebar_and_status_bar_are_validated() {
+        let source = include_str!("../themes/win7.toml");
+        let with_sidebar = format!(
+            "{source}\n[shell.sidebar]\nposition = 'right'\nwidth = 280\nsections = ['volumes', 'places']\n"
+        );
+        let theme: Theme = toml::from_str(&with_sidebar).unwrap();
+        assert_eq!(theme.sidebar_position(), SidebarPosition::Right);
+        assert_eq!(theme.sidebar_width(), 280.0);
+        assert_eq!(
+            theme.sidebar_sections(),
+            vec![SidebarSection::Volumes, SidebarSection::Places]
+        );
+        theme.validate().unwrap();
+
+        let mut invalid = theme.clone();
+        invalid.shell.sidebar.width = Some(999.0);
+        assert!(invalid.validate().is_err());
+        invalid.shell.sidebar.width = Some(200.0);
+        invalid.shell.sidebar.sections = Some(vec![SidebarSection::Places, SidebarSection::Places]);
+        assert!(invalid.validate().is_err());
+        invalid.shell.sidebar.sections = Some(Vec::new());
+        assert!(invalid.validate().is_err());
     }
 }

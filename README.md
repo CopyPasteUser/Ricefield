@@ -81,13 +81,22 @@ fields (before `[palette]`), then add the shell section at the end:
 [shell]
 kind = "finder"
 top = ["tabs", "command-bar", "navigation"]
+status_bar = true
+
+[shell.sidebar]
+position = "left"
+width = 230
+sections = ["places", "favorites", "volumes"]
 ```
 
 `kind` selects `classic`, `luna`, `aero`, `ribbon`, `aqua`,
 `chromeos`, `finder` or `modern`. The `top` list controls order and
 visibility of `menu-bar`, `tabs`, `navigation` and `command-bar`.
+The sidebar independently supports left/right placement, width (120–420)
+and section ordering/visibility; `status_bar = false` hides the bottom bar.
+The main content stays available regardless of the configured sections.
 Older TOML themes without these fields retain their previous layout.
-This is the first modular shell layer; a full visual editor, per-panel
+This is an evolving modular shell layer; a full visual editor, per-panel
 layout and custom Rust component registry are still on the roadmap.
 
 Per-user settings are stored in `~/.config/rice-explorer/config.toml` (or `$XDG_CONFIG_HOME/rice-explorer/config.toml`). You can customize bookmarks, current profile, hidden files, sidebar, view and sorting. Settings are written with a temporary file and rename.
@@ -110,7 +119,7 @@ Per-user settings are stored in `~/.config/rice-explorer/config.toml` (or `$XDG_
 
 ## Safety and performance
 
-File copy uses a private hidden staging directory on the destination filesystem and publishes the completed item with an atomic no-overwrite rename. Name collisions generate ` (copy)` suffixes; copying a directory into itself is rejected. Symbolic links are reproduced as links without following them; special device files are blocked. Across filesystems a move copies first, verifies every copied byte and only then removes the source (extra I/O is intentional). Cancelling a copy cleans its partial destination when possible; a cancellation cannot undo earlier completed items. A process crash may leave a hidden `.rice-explorer-staging-*` directory; automated recovery and power-loss durability are not yet implemented. Normal deletion uses the desktop Trash; permanent deletion requires a separate confirmation. File names are never interpolated into shell commands.
+File copy uses a private hidden staging directory on the destination filesystem and publishes the completed item with an atomic no-overwrite rename. Name collisions generate ` (copy)` suffixes; copying a directory into itself is rejected. Symbolic links are reproduced as links without following them; special device files are blocked. Across filesystems a move copies first, verifies every copied byte and checks again before removing only matching source entries (extra I/O is intentional). Concurrent writers can still cause a partial move; the complete published destination is retained for recovery if source cleanup fails. Cross-filesystem moves do **not** yet preserve every timestamp, ACL, xattr, owner or hardlink relationship and are **not** production-safe for critical data. Cancelling a copy cleans its partial destination when possible; a cancellation cannot undo earlier completed items. A process crash may leave a hidden `.rice-explorer-staging-*` directory; automated recovery and power-loss durability are not yet implemented. Normal deletion uses the desktop Trash; permanent deletion requires a separate confirmation. File names are never interpolated into shell commands.
 
 Scanning, searching, copying and Trash operations run on worker threads. Views render only visible rows. Recursive search is bounded to protect small machines; it is not a full-text or indexed search. Image thumbnail previews are implemented; drag-out, advanced mount management, undo and full interactive desktop integration tests remain outstanding. Until these are verified on your Mint laptop, keep Thunar available as a fallback.
 

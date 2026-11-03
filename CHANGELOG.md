@@ -14,6 +14,10 @@
 - Add Copy Path to the actions/context menus and Ctrl+Shift+C.
 - Stage local copies and cross-device moves under hidden temporary paths,
   verifying cross-device transfers before atomic no-overwrite publication.
+- Allow custom rice profiles to configure sidebar side, width and sections,
+  plus visibility of the status bar, without changing the file core.
+- Reverify a published cross-device copy before source cleanup, and delete
+  only individually checked entries; add concurrent-source-mutation regression.
 
 **Validation pending:** Rust format, Clippy, unit tests, GUI smoke in CI,
 and real Linux Mint acceptance. These changes are not a v1.0 release.
