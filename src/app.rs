@@ -1,6 +1,7 @@
 use crate::{
+    clipboard,
     config::{self, Config},
-    filesystem::{self, Action, Entry},
+    filesystem::{self, Action, Entry, Progress},
     theme::{BUILTIN_IDS, Layout, Theme},
 };
 use eframe::egui::{
@@ -10,9 +11,13 @@ use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
     process::Command,
-    sync::mpsc::{self, Receiver, Sender},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, Sender},
+    },
     thread,
-    time::Duration,
+    time::{Duration, Instant, SystemTime},
 };
 
 struct Tab {
@@ -29,6 +34,9 @@ struct Tab {
     generation: u64,
     loading: bool,
     error: Option<String>,
+    dir_mtime: Option<SystemTime>,
+    recursive_search: bool,
+    search_pending: Option<Instant>,
 }
 
 impl Tab {
@@ -47,6 +55,9 @@ impl Tab {
             generation: 0,
             loading: false,
             error: None,
+            dir_mtime: None,
+            recursive_search: false,
+            search_pending: None,
         }
     }
 }
@@ -55,11 +66,17 @@ struct ScanResult {
     tab: u64,
     generation: u64,
     result: std::io::Result<Vec<Entry>>,
+    dir_mtime: Option<SystemTime>,
 }
 
 struct OperationResult {
     result: std::io::Result<String>,
     clear_clipboard: bool,
+}
+
+enum OperationEvent {
+    Progress(Progress),
+    Finished(OperationResult),
 }
 
 #[derive(Clone)]
@@ -77,6 +94,7 @@ enum NameMode {
 enum Dialog {
     Name { mode: NameMode, value: String },
     Trash(Vec<PathBuf>),
+    Properties { path: PathBuf, mode: String },
 }
 
 pub struct Explorer {
@@ -87,12 +105,16 @@ pub struct Explorer {
     next_tab: u64,
     scan_sender: Sender<ScanResult>,
     scan_receiver: Receiver<ScanResult>,
-    op_sender: Sender<OperationResult>,
-    op_receiver: Receiver<OperationResult>,
+    op_sender: Sender<OperationEvent>,
+    op_receiver: Receiver<OperationEvent>,
     clipboard: Option<Clipboard>,
     dialog: Option<Dialog>,
     status: Option<(String, bool)>,
     busy: bool,
+    progress: Option<Progress>,
+    cancel: Arc<AtomicBool>,
+    volumes: Vec<PathBuf>,
+    last_refresh_check: Instant,
     dirty_config: bool,
     focus_address: bool,
     focus_search: bool,
@@ -139,6 +161,10 @@ impl Explorer {
             dialog: None,
             status,
             busy: false,
+            progress: None,
+            cancel: Arc::new(AtomicBool::new(false)),
+            volumes: filesystem::mounted_volumes(),
+            last_refresh_check: Instant::now(),
             dirty_config: false,
             focus_address: false,
             focus_search: false,
@@ -193,12 +219,20 @@ impl Explorer {
         tab.loading = true;
         tab.error = None;
         let task = (tab.id, tab.generation, tab.path.clone());
+        let recursive = tab.recursive_search && !tab.query.is_empty();
+        let query = tab.query.clone();
+        let show_hidden = self.config.show_hidden;
         let sender = self.scan_sender.clone();
         thread::spawn(move || {
             let _ = sender.send(ScanResult {
                 tab: task.0,
                 generation: task.1,
-                result: filesystem::scan(&task.2),
+                result: if recursive {
+                    filesystem::search(&task.2, &query, show_hidden)
+                } else {
+                    filesystem::scan(&task.2)
+                },
+                dir_mtime: std::fs::metadata(&task.2).and_then(|meta| meta.modified()).ok(),
             });
         });
     }
@@ -228,6 +262,7 @@ impl Explorer {
         tab.path = path;
         tab.address = tab.path.display().to_string();
         tab.query.clear();
+        tab.search_pending = None;
         tab.selected.clear();
         tab.last_selected = None;
         self.scan(self.active);
@@ -249,6 +284,7 @@ impl Explorer {
             tab.path = destination;
             tab.address = tab.path.display().to_string();
             tab.query.clear();
+            tab.search_pending = None;
             tab.selected.clear();
             tab.last_selected = None;
             self.scan(self.active);
@@ -305,6 +341,7 @@ impl Explorer {
             {
                 let tab = &mut self.tabs[index];
                 tab.loading = false;
+                tab.dir_mtime = message.dir_mtime;
                 match message.result {
                     Ok(entries) => {
                         tab.entries = entries;
@@ -321,18 +358,27 @@ impl Explorer {
                 }
             }
         }
-        while let Ok(message) = self.op_receiver.try_recv() {
-            self.busy = false;
-            match message.result {
-                Ok(success) => {
-                    self.status = Some((success, false));
-                    if message.clear_clipboard {
-                        self.clipboard = None;
+        while let Ok(event) = self.op_receiver.try_recv() {
+            match event {
+                OperationEvent::Progress(progress) => self.progress = Some(progress),
+                OperationEvent::Finished(message) => {
+                    self.busy = false;
+                    self.progress = None;
+                    match message.result {
+                        Ok(success) => {
+                            self.status = Some((success, false));
+                            if message.clear_clipboard {
+                                self.clipboard = None;
+                            }
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
+                            self.status = Some(("Cancelled. Previously completed items remain in place.".into(), false));
+                        }
+                        Err(error) => self.status = Some((format!("Operation failed: {error}"), true)),
                     }
+                    self.refresh_all();
                 }
-                Err(error) => self.status = Some((format!("Operation failed: {error}"), true)),
             }
-            self.refresh_all();
         }
     }
 
@@ -342,14 +388,19 @@ impl Explorer {
             return;
         }
         self.busy = true;
+        self.progress = None;
+        self.cancel = Arc::new(AtomicBool::new(false));
+        let cancel = Arc::clone(&self.cancel);
         let clear_clipboard = matches!(action, Action::Move { .. });
         let sender = self.op_sender.clone();
         thread::spawn(move || {
-            let result = filesystem::perform(&action);
-            let _ = sender.send(OperationResult {
+            let result = filesystem::perform_with_progress(&action, &cancel, &mut |progress| {
+                let _ = sender.send(OperationEvent::Progress(progress));
+            });
+            let _ = sender.send(OperationEvent::Finished(OperationResult {
                 result,
                 clear_clipboard,
-            });
+            }));
         });
     }
 
@@ -362,22 +413,28 @@ impl Explorer {
         if paths.is_empty() {
             return;
         }
+        let desktop_clipboard = clipboard::copy_files(&paths, cut);
         self.clipboard = Some(Clipboard {
             paths: paths.clone(),
             cut,
         });
         self.status = Some((
             format!(
-                "{} {} item(s)",
+                "{} {} item(s){}",
                 if cut { "Cut" } else { "Copied" },
-                paths.len()
+                paths.len(),
+                if desktop_clipboard.is_ok() { "" } else { " (internal clipboard)" }
             ),
             false,
         ));
     }
 
     fn paste(&mut self) {
-        if let Some(clipboard) = self.clipboard.clone() {
+        let available = clipboard::paste_files().map(|files| Clipboard {
+            paths: files.paths,
+            cut: files.cut,
+        }).or_else(|| self.clipboard.clone());
+        if let Some(clipboard) = available {
             if clipboard.cut {
                 self.run_action(Action::Move {
                     sources: clipboard.paths,
@@ -485,9 +542,12 @@ impl Explorer {
                 input.key_pressed(Key::ArrowLeft),
                 input.key_pressed(Key::ArrowRight),
                 input.key_pressed(Key::ArrowUp),
+                input.key_pressed(Key::A),
+                input.key_pressed(Key::D),
+                input.key_pressed(Key::Enter),
             )
         });
-        let (ctrl, alt, l, f, t, w, c, x, v, h, r, n, f2, delete, left, right, up) = keys;
+        let (ctrl, alt, l, f, t, w, c, x, v, h, r, n, f2, delete, left, right, up, a, d, enter) = keys;
         if ctrl && l {
             self.focus_address = true;
         }
@@ -503,6 +563,11 @@ impl Explorer {
         // Text inputs must keep their normal copy/cut/paste shortcuts.
         let typing = context.egui_wants_keyboard_input();
         if !typing {
+            if ctrl && a {
+                let paths: Vec<_> = self.current().visible.iter()
+                    .map(|&index| self.current().entries[index].path.clone()).collect();
+                self.current_mut().selected = paths.into_iter().collect();
+            }
             if ctrl && c {
                 self.copy_selection(false);
             }
@@ -511,6 +576,20 @@ impl Explorer {
             }
             if ctrl && v {
                 self.paste();
+            }
+            if ctrl && d {
+                let sources = self.selected_paths();
+                if !sources.is_empty() {
+                    self.run_action(Action::Copy {
+                        sources,
+                        destination: self.current().path.clone(),
+                    });
+                }
+            }
+            if alt && enter && self.current().selected.len() == 1 {
+                if let Some(path) = self.selected_paths().first() {
+                    self.open_properties(path.clone());
+                }
             }
             if ctrl && n {
                 self.dialog = Some(Dialog::Name {
@@ -524,7 +603,7 @@ impl Explorer {
             if delete {
                 self.ask_trash();
             }
-            if context.input(|input| input.key_pressed(Key::Enter))
+            if enter && !alt
                 && self.current().selected.len() == 1
             {
                 let selected = self.selected_paths();
@@ -543,7 +622,11 @@ impl Explorer {
             self.config.show_hidden = !self.config.show_hidden;
             self.dirty_config = true;
             for index in 0..self.tabs.len() {
-                self.rebuild_visible(index);
+                if self.tabs[index].recursive_search {
+                    self.scan(index);
+                } else {
+                    self.rebuild_visible(index);
+                }
             }
         }
         if ctrl && r {
@@ -579,6 +662,19 @@ impl Explorer {
         if !selected.is_empty() {
             self.dialog = Some(Dialog::Trash(selected));
         }
+    }
+
+    fn open_properties(&mut self, path: PathBuf) {
+        #[cfg(unix)]
+        let mode = {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::symlink_metadata(&path)
+                .map(|metadata| format!("{:03o}", metadata.permissions().mode() & 0o777))
+                .unwrap_or_default()
+        };
+        #[cfg(not(unix))]
+        let mode = String::new();
+        self.dialog = Some(Dialog::Properties { path, mode });
     }
 
     fn top_bar(&mut self, ui: &mut egui::Ui) {
@@ -654,7 +750,11 @@ impl Explorer {
                             if ui.button("Show hidden files").clicked() {
                                 self.config.show_hidden = !self.config.show_hidden;
                                 for index in 0..self.tabs.len() {
-                                    self.rebuild_visible(index);
+                                    if self.tabs[index].recursive_search {
+                                        self.scan(index);
+                                    } else {
+                                        self.rebuild_visible(index);
+                                    }
                                 }
                                 self.dirty_config = true;
                                 ui.close();
@@ -763,7 +863,7 @@ impl Explorer {
             } else {
                 190.0
             };
-            let address_width = (ui.available_width() - search_width - 174.0).max(105.0);
+            let address_width = (ui.available_width() - search_width - 268.0).max(90.0);
             let address = ui.add_sized(
                 [address_width, 28.0],
                 egui::TextEdit::singleline(&mut self.current_mut().address)
@@ -792,14 +892,32 @@ impl Explorer {
             }
             if search.changed() {
                 self.current_mut().selected.clear();
-                self.rebuild_visible(self.active);
+                if self.current().recursive_search {
+                    self.current_mut().search_pending = Some(Instant::now());
+                } else {
+                    self.rebuild_visible(self.active);
+                }
             }
             if !self.current().query.is_empty()
                 && ui.small_button("×").on_hover_text("Clear search").clicked()
             {
                 self.current_mut().query.clear();
-                self.rebuild_visible(self.active);
+                if self.current().recursive_search {
+                    self.scan(self.active);
+                } else {
+                    self.rebuild_visible(self.active);
+                }
                 ui.memory_mut(|memory| memory.request_focus(search.id));
+            }
+            if ui.small_button(if self.current().recursive_search {
+                "☑ Subfolders"
+            } else {
+                "□ Subfolders"
+            }).on_hover_text("Search filenames recursively (maximum 20,000 matches)").clicked() {
+                let next = !self.current().recursive_search;
+                self.current_mut().recursive_search = next;
+                self.current_mut().search_pending = None;
+                self.scan(self.active);
             }
         });
     }
@@ -819,6 +937,7 @@ impl Explorer {
                     .inner_margin(egui::Margin::same(10)),
             )
             .show(ui, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.label(
                     egui::RichText::new("PLACES")
                         .small()
@@ -873,6 +992,28 @@ impl Explorer {
                 if ui.small_button("+  Bookmark current folder").clicked() {
                     self.toggle_bookmark();
                 }
+                ui.add_space(14.0);
+                ui.separator();
+                ui.label(
+                    egui::RichText::new("VOLUMES")
+                        .small()
+                        .strong()
+                        .color(theme.palette.muted()),
+                );
+                for path in self.volumes.clone() {
+                    let label = if path == Path::new("/") {
+                        "▣  System disk".to_owned()
+                    } else {
+                        format!("▤  {}", path.file_name().unwrap_or_default().to_string_lossy())
+                    };
+                    if ui.add_sized(
+                        [ui.available_width(), 29.0],
+                        egui::Button::new(label).selected(self.current().path == path),
+                    ).on_hover_text(path.display().to_string()).clicked() {
+                        self.navigate(path);
+                    }
+                }
+                });
             });
     }
 
@@ -970,7 +1111,11 @@ impl Explorer {
                         self.config.show_hidden = !self.config.show_hidden;
                         self.dirty_config = true;
                         for i in 0..self.tabs.len() {
-                            self.rebuild_visible(i);
+                            if self.tabs[i].recursive_search {
+                                self.scan(i);
+                            } else {
+                                self.rebuild_visible(i);
+                            }
                         }
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1206,11 +1351,24 @@ impl Explorer {
                 });
                 ui.close();
             }
+            if ui.button("Duplicate").clicked() {
+                if let Some(parent) = entry.path.parent() {
+                    self.run_action(Action::Copy {
+                        sources: vec![entry.path.clone()],
+                        destination: parent.to_path_buf(),
+                    });
+                }
+                ui.close();
+            }
             if ui.button("Move to Trash").clicked() {
                 if !self.current().selected.contains(&entry.path) {
                     self.select_entry(entry, index, Modifiers::default());
                 }
                 self.ask_trash();
+                ui.close();
+            }
+            if ui.button("Properties").clicked() {
+                self.open_properties(entry.path.clone());
                 ui.close();
             }
             ui.separator();
@@ -1244,7 +1402,28 @@ impl Explorer {
                     ));
                     if tab.loading || self.busy {
                         ui.add(egui::Spinner::new());
-                        ui.label("Working…");
+                        if let Some(progress) = &self.progress {
+                            if progress.total > 0 {
+                                ui.add_sized(
+                                    [155.0, 16.0],
+                                    egui::ProgressBar::new(
+                                        (progress.transferred as f32 / progress.total as f32)
+                                            .clamp(0.0, 1.0),
+                                    )
+                                    .show_percentage(),
+                                );
+                                ui.label(filesystem::human_size(progress.transferred));
+                            } else {
+                                ui.label("Preparing…");
+                            }
+                            let filename = progress.current.file_name().unwrap_or_default().to_string_lossy();
+                            ui.label(shorten(&filename, 28));
+                        } else {
+                            ui.label("Working…");
+                        }
+                        if self.busy && ui.small_button("Cancel").clicked() {
+                            self.cancel.store(true, Ordering::Relaxed);
+                        }
                     }
                     if let Some((message, failed)) = &self.status {
                         ui.separator();
@@ -1342,6 +1521,51 @@ impl Explorer {
                             });
                         });
                 }
+                Dialog::Properties { path, mode } => {
+                    egui::Window::new("Properties")
+                        .collapsible(false)
+                        .resizable(true)
+                        .default_width(460.0)
+                        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+                        .show(context, |ui| {
+                            match filesystem::property_lines(path) {
+                                Ok(lines) => {
+                                    for (name, value) in lines {
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.strong(format!("{name}:"));
+                                            ui.label(value);
+                                        });
+                                    }
+                                }
+                                Err(error) => {
+                                    ui.colored_label(Color32::RED, format!("Cannot read properties: {error}"));
+                                }
+                            }
+                            #[cfg(unix)]
+                            {
+                                ui.separator();
+                                ui.horizontal(|ui| {
+                                    ui.label("Mode (octal):");
+                                    ui.add_sized([100.0, 25.0], egui::TextEdit::singleline(mode));
+                                    let parsed = u32::from_str_radix(mode.trim(), 8)
+                                        .ok()
+                                        .filter(|number| *number <= 0o777);
+                                    let symlink = std::fs::symlink_metadata(&*path)
+                                        .is_ok_and(|metadata| metadata.file_type().is_symlink());
+                                    if ui.add_enabled(parsed.is_some() && !symlink, egui::Button::new("Apply")).clicked() {
+                                        action = Some(Action::SetMode {
+                                            path: path.clone(),
+                                            mode: parsed.expect("button only enabled for valid mode"),
+                                        });
+                                        dismiss = true;
+                                    }
+                                });
+                            }
+                            if ui.button("Close").clicked() {
+                                dismiss = true;
+                            }
+                        });
+                }
             }
         }
         if dismiss {
@@ -1357,6 +1581,27 @@ impl eframe::App for Explorer {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let context = ui.ctx().clone();
         self.poll_background();
+        for index in 0..self.tabs.len() {
+            if self.tabs[index].search_pending.is_some_and(|when| when.elapsed() >= Duration::from_millis(350)) {
+                self.tabs[index].search_pending = None;
+                self.scan(index);
+            }
+        }
+        if self.last_refresh_check.elapsed() >= Duration::from_secs(3) {
+            self.volumes = filesystem::mounted_volumes();
+            if !self.busy {
+                for index in 0..self.tabs.len() {
+                    let tab = &self.tabs[index];
+                    if !tab.loading
+                        && std::fs::metadata(&tab.path).and_then(|m| m.modified()).ok()
+                            != tab.dir_mtime
+                    {
+                        self.scan(index);
+                    }
+                }
+            }
+            self.last_refresh_check = Instant::now();
+        }
         let dropped: Vec<PathBuf> = context.input(|input| {
             input
                 .raw
@@ -1387,6 +1632,8 @@ impl eframe::App for Explorer {
         }
         if self.busy || self.tabs.iter().any(|tab| tab.loading) {
             context.request_repaint_after(Duration::from_millis(90));
+        } else {
+            context.request_repaint_after(Duration::from_secs(3));
         }
     }
 }
