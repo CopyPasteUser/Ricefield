@@ -152,26 +152,29 @@ impl Theme {
     }
 
     pub fn top_components(&self) -> Vec<ChromeComponent> {
-        self.shell.top.clone().unwrap_or_else(|| match self.shell_kind() {
-            ShellKind::Classic | ShellKind::Luna => vec![
-                ChromeComponent::MenuBar,
-                ChromeComponent::Tabs,
-                ChromeComponent::Navigation,
-            ],
-            ShellKind::Aero | ShellKind::Aqua => vec![
-                ChromeComponent::Tabs,
-                ChromeComponent::Navigation,
-                ChromeComponent::CommandBar,
-            ],
-            ShellKind::Ribbon | ShellKind::Finder => vec![
-                ChromeComponent::Tabs,
-                ChromeComponent::CommandBar,
-                ChromeComponent::Navigation,
-            ],
-            ShellKind::Chromeos | ShellKind::Modern => {
-                vec![ChromeComponent::Tabs, ChromeComponent::Navigation]
-            }
-        })
+        self.shell
+            .top
+            .clone()
+            .unwrap_or_else(|| match self.shell_kind() {
+                ShellKind::Classic | ShellKind::Luna => vec![
+                    ChromeComponent::MenuBar,
+                    ChromeComponent::Tabs,
+                    ChromeComponent::Navigation,
+                ],
+                ShellKind::Aero | ShellKind::Aqua => vec![
+                    ChromeComponent::Tabs,
+                    ChromeComponent::Navigation,
+                    ChromeComponent::CommandBar,
+                ],
+                ShellKind::Ribbon | ShellKind::Finder => vec![
+                    ChromeComponent::Tabs,
+                    ChromeComponent::CommandBar,
+                    ChromeComponent::Navigation,
+                ],
+                ShellKind::Chromeos | ShellKind::Modern => {
+                    vec![ChromeComponent::Tabs, ChromeComponent::Navigation]
+                }
+            })
     }
 
     pub fn builtin(id: &str) -> Option<Self> {
