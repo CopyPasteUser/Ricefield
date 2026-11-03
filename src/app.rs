@@ -270,7 +270,9 @@ impl Explorer {
                 } else {
                     filesystem::scan(&task.2)
                 },
-                dir_mtime: std::fs::metadata(&task.2).and_then(|meta| meta.modified()).ok(),
+                dir_mtime: std::fs::metadata(&task.2)
+                    .and_then(|meta| meta.modified())
+                    .ok(),
             });
         });
     }
@@ -375,8 +377,13 @@ impl Explorer {
             if self.preview_path.as_ref() == Some(&message.path) {
                 self.preview_loading = false;
                 self.preview_content = Some(match message.result {
-                    Ok(preview::Preview::Image { rgba, width, height }) => {
-                        let image = egui::ColorImage::from_rgba_unmultiplied([width, height], &rgba);
+                    Ok(preview::Preview::Image {
+                        rgba,
+                        width,
+                        height,
+                    }) => {
+                        let image =
+                            egui::ColorImage::from_rgba_unmultiplied([width, height], &rgba);
                         PreviewContent::Image(context.load_texture(
                             "rice-preview",
                             image,
@@ -393,7 +400,10 @@ impl Explorer {
             self.refresh_in_flight = false;
             self.volumes = result.volumes;
             for (tab_id, path, modified) in result.folders {
-                if let Some(index) = self.tabs.iter().position(|tab| tab.id == tab_id && tab.path == path)
+                if let Some(index) = self
+                    .tabs
+                    .iter()
+                    .position(|tab| tab.id == tab_id && tab.path == path)
                     && !self.tabs[index].loading
                     && self.tabs[index].dir_mtime != modified
                 {
@@ -412,7 +422,10 @@ impl Explorer {
                 tab.dir_mtime = message.dir_mtime;
                 match message.result {
                     Ok(entries) => {
-                        tab.folded_names = entries.iter().map(|entry| entry.name.to_lowercase()).collect();
+                        tab.folded_names = entries
+                            .iter()
+                            .map(|entry| entry.name.to_lowercase())
+                            .collect();
                         tab.entries = entries;
                         tab.error = None;
                         tab.selected
@@ -442,9 +455,14 @@ impl Explorer {
                             }
                         }
                         Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
-                            self.status = Some(("Cancelled. Previously completed items remain in place.".into(), false));
+                            self.status = Some((
+                                "Cancelled. Previously completed items remain in place.".into(),
+                                false,
+                            ));
                         }
-                        Err(error) => self.status = Some((format!("Operation failed: {error}"), true)),
+                        Err(error) => {
+                            self.status = Some((format!("Operation failed: {error}"), true))
+                        }
                     }
                     self.refresh_all();
                 }
@@ -493,17 +511,23 @@ impl Explorer {
                 "{} {} item(s){}",
                 if cut { "Cut" } else { "Copied" },
                 paths.len(),
-                if desktop_clipboard.is_ok() { "" } else { " (internal clipboard)" }
+                if desktop_clipboard.is_ok() {
+                    ""
+                } else {
+                    " (internal clipboard)"
+                }
             ),
             false,
         ));
     }
 
     fn paste(&mut self) {
-        let available = clipboard::paste_files().map(|files| Clipboard {
-            paths: files.paths,
-            cut: files.cut,
-        }).or_else(|| self.clipboard.clone());
+        let available = clipboard::paste_files()
+            .map(|files| Clipboard {
+                paths: files.paths,
+                cut: files.cut,
+            })
+            .or_else(|| self.clipboard.clone());
         if let Some(clipboard) = available {
             if clipboard.cut {
                 self.run_action(Action::Move {
@@ -618,7 +642,29 @@ impl Explorer {
                 input.key_pressed(Key::Space),
             )
         });
-        let (ctrl, alt, l, f, t, w, c, x, v, h, r, n, f2, delete, left, right, up, a, d, enter, space) = keys;
+        let (
+            ctrl,
+            alt,
+            l,
+            f,
+            t,
+            w,
+            c,
+            x,
+            v,
+            h,
+            r,
+            n,
+            f2,
+            delete,
+            left,
+            right,
+            up,
+            a,
+            d,
+            enter,
+            space,
+        ) = keys;
         if ctrl && l {
             self.focus_address = true;
         }
@@ -635,8 +681,12 @@ impl Explorer {
         let typing = context.egui_wants_keyboard_input();
         if !typing {
             if ctrl && a {
-                let paths: Vec<_> = self.current().visible.iter()
-                    .map(|&index| self.current().entries[index].path.clone()).collect();
+                let paths: Vec<_> = self
+                    .current()
+                    .visible
+                    .iter()
+                    .map(|&index| self.current().entries[index].path.clone())
+                    .collect();
                 self.current_mut().selected = paths.into_iter().collect();
             }
             if ctrl && c {
@@ -657,12 +707,15 @@ impl Explorer {
                     });
                 }
             }
-            if space && self.current().selected.len() == 1
+            if space
+                && self.current().selected.len() == 1
                 && let Some(path) = self.selected_paths().first()
             {
                 self.open_preview(path.clone());
             }
-            if alt && enter && self.current().selected.len() == 1
+            if alt
+                && enter
+                && self.current().selected.len() == 1
                 && let Some(path) = self.selected_paths().first()
             {
                 self.open_properties(path.clone());
@@ -683,9 +736,7 @@ impl Explorer {
                     self.ask_trash();
                 }
             }
-            if enter && !alt
-                && self.current().selected.len() == 1
-            {
+            if enter && !alt && self.current().selected.len() == 1 {
                 let selected = self.selected_paths();
                 if let Some(entry) = self
                     .current()
@@ -1007,11 +1058,15 @@ impl Explorer {
                 }
                 ui.memory_mut(|memory| memory.request_focus(search.id));
             }
-            if ui.small_button(if self.current().recursive_search {
-                "☑ Subfolders"
-            } else {
-                "□ Subfolders"
-            }).on_hover_text("Search filenames recursively (maximum 20,000 matches)").clicked() {
+            if ui
+                .small_button(if self.current().recursive_search {
+                    "☑ Subfolders"
+                } else {
+                    "□ Subfolders"
+                })
+                .on_hover_text("Search filenames recursively (maximum 20,000 matches)")
+                .clicked()
+            {
                 let next = !self.current().recursive_search;
                 self.current_mut().recursive_search = next;
                 self.current_mut().search_pending = None;
@@ -1036,81 +1091,88 @@ impl Explorer {
             )
             .show(ui, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.label(
-                    egui::RichText::new("PLACES")
-                        .small()
-                        .strong()
-                        .color(theme.palette.muted()),
-                );
-                ui.add_space(8.0);
-                let home = config::home();
-                for (label, path) in [
-                    ("⌂  Home", home.clone()),
-                    ("▤  Desktop", home.join("Desktop")),
-                    ("▤  Documents", home.join("Documents")),
-                    ("↓  Downloads", home.join("Downloads")),
-                    ("♫  Music", home.join("Music")),
-                    ("▧  Pictures", home.join("Pictures")),
-                    ("▣  Videos", home.join("Videos")),
-                    ("▣  Filesystem", PathBuf::from("/")),
-                ] {
-                    if path.is_dir()
-                        && ui
+                    ui.label(
+                        egui::RichText::new("PLACES")
+                            .small()
+                            .strong()
+                            .color(theme.palette.muted()),
+                    );
+                    ui.add_space(8.0);
+                    let home = config::home();
+                    for (label, path) in [
+                        ("⌂  Home", home.clone()),
+                        ("▤  Desktop", home.join("Desktop")),
+                        ("▤  Documents", home.join("Documents")),
+                        ("↓  Downloads", home.join("Downloads")),
+                        ("♫  Music", home.join("Music")),
+                        ("▧  Pictures", home.join("Pictures")),
+                        ("▣  Videos", home.join("Videos")),
+                        ("▣  Filesystem", PathBuf::from("/")),
+                    ] {
+                        if path.is_dir()
+                            && ui
+                                .add_sized(
+                                    [ui.available_width(), 29.0],
+                                    egui::Button::new(label).selected(self.current().path == path),
+                                )
+                                .clicked()
+                        {
+                            self.navigate(path);
+                        }
+                    }
+                    ui.add_space(14.0);
+                    ui.separator();
+                    ui.label(
+                        egui::RichText::new("FAVORITES")
+                            .small()
+                            .strong()
+                            .color(theme.palette.muted()),
+                    );
+                    let bookmarks = self.config.bookmarks.clone();
+                    for path in bookmarks {
+                        let label = path.file_name().unwrap_or_default().to_string_lossy();
+                        if ui
+                            .add_sized(
+                                [ui.available_width(), 29.0],
+                                egui::Button::new(format!("★  {label}"))
+                                    .selected(self.current().path == path),
+                            )
+                            .clicked()
+                        {
+                            self.navigate(path);
+                        }
+                    }
+                    if ui.small_button("+  Bookmark current folder").clicked() {
+                        self.toggle_bookmark();
+                    }
+                    ui.add_space(14.0);
+                    ui.separator();
+                    ui.label(
+                        egui::RichText::new("VOLUMES")
+                            .small()
+                            .strong()
+                            .color(theme.palette.muted()),
+                    );
+                    for path in self.volumes.clone() {
+                        let label = if path == Path::new("/") {
+                            "▣  System disk".to_owned()
+                        } else {
+                            format!(
+                                "▤  {}",
+                                path.file_name().unwrap_or_default().to_string_lossy()
+                            )
+                        };
+                        if ui
                             .add_sized(
                                 [ui.available_width(), 29.0],
                                 egui::Button::new(label).selected(self.current().path == path),
                             )
+                            .on_hover_text(path.display().to_string())
                             .clicked()
-                    {
-                        self.navigate(path);
+                        {
+                            self.navigate(path);
+                        }
                     }
-                }
-                ui.add_space(14.0);
-                ui.separator();
-                ui.label(
-                    egui::RichText::new("FAVORITES")
-                        .small()
-                        .strong()
-                        .color(theme.palette.muted()),
-                );
-                let bookmarks = self.config.bookmarks.clone();
-                for path in bookmarks {
-                    let label = path.file_name().unwrap_or_default().to_string_lossy();
-                    if ui
-                        .add_sized(
-                            [ui.available_width(), 29.0],
-                            egui::Button::new(format!("★  {label}"))
-                                .selected(self.current().path == path),
-                        )
-                        .clicked()
-                    {
-                        self.navigate(path);
-                    }
-                }
-                if ui.small_button("+  Bookmark current folder").clicked() {
-                    self.toggle_bookmark();
-                }
-                ui.add_space(14.0);
-                ui.separator();
-                ui.label(
-                    egui::RichText::new("VOLUMES")
-                        .small()
-                        .strong()
-                        .color(theme.palette.muted()),
-                );
-                for path in self.volumes.clone() {
-                    let label = if path == Path::new("/") {
-                        "▣  System disk".to_owned()
-                    } else {
-                        format!("▤  {}", path.file_name().unwrap_or_default().to_string_lossy())
-                    };
-                    if ui.add_sized(
-                        [ui.available_width(), 29.0],
-                        egui::Button::new(label).selected(self.current().path == path),
-                    ).on_hover_text(path.display().to_string()).clicked() {
-                        self.navigate(path);
-                    }
-                }
                 });
             });
     }
@@ -1129,7 +1191,11 @@ impl Explorer {
                         &path.file_name().unwrap_or_default().to_string_lossy(),
                         27,
                     ));
-                    if ui.small_button("×").on_hover_text("Close preview").clicked() {
+                    if ui
+                        .small_button("×")
+                        .on_hover_text("Close preview")
+                        .clicked()
+                    {
                         self.preview_path = None;
                         self.preview_content = None;
                     }
@@ -1143,13 +1209,17 @@ impl Explorer {
                         PreviewContent::Image(texture) => {
                             let size = texture.size_vec2();
                             let ratio = ((ui.available_width() - 8.0) / size.x).min(1.0);
-                            ui.add(egui::Image::new((texture.id(), size))
-                                .fit_to_exact_size(size * ratio.max(0.1)));
+                            ui.add(
+                                egui::Image::new((texture.id(), size))
+                                    .fit_to_exact_size(size * ratio.max(0.1)),
+                            );
                         }
                         PreviewContent::Text(contents) => {
-                            egui::ScrollArea::vertical().max_height(480.0).show(ui, |ui| {
-                                ui.label(egui::RichText::new(contents).monospace());
-                            });
+                            egui::ScrollArea::vertical()
+                                .max_height(480.0)
+                                .show(ui, |ui| {
+                                    ui.label(egui::RichText::new(contents).monospace());
+                                });
                         }
                         PreviewContent::Info(contents) => {
                             ui.label(contents);
@@ -1194,7 +1264,10 @@ impl Explorer {
                         egui::RichText::new(format!("{count} items")).color(theme.palette.muted()),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.small_button("◧").on_hover_text("Preview selected item (Space)").clicked()
+                        if ui
+                            .small_button("◧")
+                            .on_hover_text("Preview selected item (Space)")
+                            .clicked()
                             && let Some(path) = self.selected_paths().first()
                         {
                             self.open_preview(path.clone());
@@ -1245,11 +1318,17 @@ impl Explorer {
                     });
                     ui.menu_button("Actions", |ui| {
                         let has_selection = !self.current().selected.is_empty();
-                        if ui.add_enabled(has_selection, egui::Button::new("Copy  Ctrl+C")).clicked() {
+                        if ui
+                            .add_enabled(has_selection, egui::Button::new("Copy  Ctrl+C"))
+                            .clicked()
+                        {
                             self.copy_selection(false);
                             ui.close();
                         }
-                        if ui.add_enabled(has_selection, egui::Button::new("Cut  Ctrl+X")).clicked() {
+                        if ui
+                            .add_enabled(has_selection, egui::Button::new("Cut  Ctrl+X"))
+                            .clicked()
+                        {
                             self.copy_selection(true);
                             ui.close();
                         }
@@ -1258,34 +1337,58 @@ impl Explorer {
                             ui.close();
                         }
                         ui.separator();
-                        if ui.add_enabled(has_selection, egui::Button::new("Rename  F2")).clicked() {
+                        if ui
+                            .add_enabled(has_selection, egui::Button::new("Rename  F2"))
+                            .clicked()
+                        {
                             self.rename_selected();
                             ui.close();
                         }
-                        if ui.add_enabled(has_selection, egui::Button::new("Duplicate  Ctrl+D")).clicked() {
+                        if ui
+                            .add_enabled(has_selection, egui::Button::new("Duplicate  Ctrl+D"))
+                            .clicked()
+                        {
                             self.run_action(Action::Copy {
                                 sources: self.selected_paths(),
                                 destination: self.current().path.clone(),
                             });
                             ui.close();
                         }
-                        if ui.add_enabled(has_selection, egui::Button::new("Move to Trash  Delete")).clicked() {
+                        if ui
+                            .add_enabled(has_selection, egui::Button::new("Move to Trash  Delete"))
+                            .clicked()
+                        {
                             self.ask_trash();
                             ui.close();
                         }
-                        if ui.add_enabled(has_selection, egui::Button::new("Delete permanently…  Shift+Delete")).clicked() {
+                        if ui
+                            .add_enabled(
+                                has_selection,
+                                egui::Button::new("Delete permanently…  Shift+Delete"),
+                            )
+                            .clicked()
+                        {
                             self.ask_delete();
                             ui.close();
                         }
                         ui.separator();
                         if ui.button("Select all  Ctrl+A").clicked() {
-                            let selected: std::collections::BTreeSet<_> = self.current().visible.iter()
+                            let selected: std::collections::BTreeSet<_> = self
+                                .current()
+                                .visible
+                                .iter()
                                 .map(|&index| self.current().entries[index].path.clone())
                                 .collect();
                             self.current_mut().selected = selected;
                             ui.close();
                         }
-                        if ui.add_enabled(self.current().selected.len() == 1, egui::Button::new("Properties  Alt+Enter")).clicked() {
+                        if ui
+                            .add_enabled(
+                                self.current().selected.len() == 1,
+                                egui::Button::new("Properties  Alt+Enter"),
+                            )
+                            .clicked()
+                        {
                             if let Some(path) = self.selected_paths().first() {
                                 self.open_properties(path.clone());
                             }
@@ -1660,7 +1763,11 @@ impl Explorer {
                                 ui.label("Preparing…");
                             }
                             ui.label(progress.phase);
-                            let filename = progress.current.file_name().unwrap_or_default().to_string_lossy();
+                            let filename = progress
+                                .current
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy();
                             ui.label(shorten(&filename, 28));
                         } else {
                             ui.label("Working…");
@@ -1771,16 +1878,19 @@ impl Explorer {
                         .resizable(false)
                         .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
                         .show(context, |ui| {
-                            ui.colored_label(Color32::RED, format!(
-                                "Delete {} item(s) permanently?", paths.len()
-                            ));
+                            ui.colored_label(
+                                Color32::RED,
+                                format!("Delete {} item(s) permanently?", paths.len()),
+                            );
                             ui.label("This bypasses Trash. There is no undo.");
                             ui.horizontal(|ui| {
                                 if ui.button("Cancel").clicked() {
                                     dismiss = true;
                                 }
                                 if ui.button("Delete permanently").clicked() {
-                                    action = Some(Action::Delete { paths: paths.clone() });
+                                    action = Some(Action::Delete {
+                                        paths: paths.clone(),
+                                    });
                                     dismiss = true;
                                 }
                             });
@@ -1803,7 +1913,10 @@ impl Explorer {
                                     }
                                 }
                                 Err(error) => {
-                                    ui.colored_label(Color32::RED, format!("Cannot read properties: {error}"));
+                                    ui.colored_label(
+                                        Color32::RED,
+                                        format!("Cannot read properties: {error}"),
+                                    );
                                 }
                             }
                             #[cfg(unix)]
@@ -1817,10 +1930,17 @@ impl Explorer {
                                         .filter(|number| *number <= 0o777);
                                     let symlink = std::fs::symlink_metadata(&*path)
                                         .is_ok_and(|metadata| metadata.file_type().is_symlink());
-                                    if ui.add_enabled(parsed.is_some() && !symlink, egui::Button::new("Apply")).clicked() {
+                                    if ui
+                                        .add_enabled(
+                                            parsed.is_some() && !symlink,
+                                            egui::Button::new("Apply"),
+                                        )
+                                        .clicked()
+                                    {
                                         action = Some(Action::SetMode {
                                             path: path.clone(),
-                                            mode: parsed.expect("button only enabled for valid mode"),
+                                            mode: parsed
+                                                .expect("button only enabled for valid mode"),
                                         });
                                         dismiss = true;
                                     }
@@ -1847,20 +1967,32 @@ impl eframe::App for Explorer {
         let context = ui.ctx().clone();
         self.poll_background(&context);
         for index in 0..self.tabs.len() {
-            if self.tabs[index].search_pending.is_some_and(|when| when.elapsed() >= Duration::from_millis(350)) {
+            if self.tabs[index]
+                .search_pending
+                .is_some_and(|when| when.elapsed() >= Duration::from_millis(350))
+            {
                 self.tabs[index].search_pending = None;
                 self.scan(index);
             }
         }
         if !self.refresh_in_flight && self.last_refresh_check.elapsed() >= Duration::from_secs(3) {
-            let folders: Vec<_> = self.tabs.iter().map(|tab| (tab.id, tab.path.clone())).collect();
+            let folders: Vec<_> = self
+                .tabs
+                .iter()
+                .map(|tab| (tab.id, tab.path.clone()))
+                .collect();
             let sender = self.refresh_sender.clone();
             self.refresh_in_flight = true;
             thread::spawn(move || {
-                let folders = folders.into_iter().map(|(id, path)| {
-                    let modified = std::fs::metadata(&path).and_then(|meta| meta.modified()).ok();
-                    (id, path, modified)
-                }).collect();
+                let folders = folders
+                    .into_iter()
+                    .map(|(id, path)| {
+                        let modified = std::fs::metadata(&path)
+                            .and_then(|meta| meta.modified())
+                            .ok();
+                        (id, path, modified)
+                    })
+                    .collect();
                 let _ = sender.send(RefreshResult {
                     folders,
                     volumes: filesystem::mounted_volumes(),

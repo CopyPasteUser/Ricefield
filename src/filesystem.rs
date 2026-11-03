@@ -29,7 +29,10 @@ struct Transfer<'a> {
 impl Transfer<'_> {
     fn check(&self) -> io::Result<()> {
         if self.cancelled.load(Ordering::Relaxed) {
-            Err(io::Error::new(io::ErrorKind::Interrupted, "Operation cancelled"))
+            Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Operation cancelled",
+            ))
         } else {
             Ok(())
         }
@@ -274,20 +277,25 @@ pub fn perform_with_progress(
         Action::Trash { paths } | Action::Delete { paths } => paths,
         _ => &[],
     };
-    let estimated: Vec<u64> = match action {
-        Action::Copy { .. } => sources
-            .iter()
-            .map(|path| estimate_bytes(path, cancelled, 0))
-            .collect::<io::Result<_>>()?,
-        Action::Move { .. } => sources
-            .iter()
-            .map(|path| fs::symlink_metadata(path).map(|metadata| {
-                if metadata.is_dir() { 0 } else { metadata.len() }
-            }))
-            .collect::<io::Result<_>>()?,
-        _ => Vec::new(),
-    };
-    let total = estimated.iter().fold(0u64, |sum, bytes| sum.saturating_add(*bytes));
+    let estimated: Vec<u64> =
+        match action {
+            Action::Copy { .. } => sources
+                .iter()
+                .map(|path| estimate_bytes(path, cancelled, 0))
+                .collect::<io::Result<_>>()?,
+            Action::Move { .. } => sources
+                .iter()
+                .map(|path| {
+                    fs::symlink_metadata(path).map(|metadata| {
+                        if metadata.is_dir() { 0 } else { metadata.len() }
+                    })
+                })
+                .collect::<io::Result<_>>()?,
+            _ => Vec::new(),
+        };
+    let total = estimated
+        .iter()
+        .fold(0u64, |sum, bytes| sum.saturating_add(*bytes));
     let mut transfer = Transfer {
         cancelled,
         notify,
@@ -297,7 +305,12 @@ pub fn perform_with_progress(
         last_reported_bytes: 0,
         phase: "Copying",
     };
-    transfer.report(sources.first().map(PathBuf::as_path).unwrap_or(Path::new("")));
+    transfer.report(
+        sources
+            .first()
+            .map(PathBuf::as_path)
+            .unwrap_or(Path::new("")),
+    );
     match action {
         Action::NewFolder { parent, name } => {
             transfer.check()?;
@@ -366,7 +379,9 @@ pub fn perform_with_progress(
                     Err(error) if error.raw_os_error() == Some(libc::EXDEV) => {
                         // Only traverse a directory when the atomic rename is impossible.
                         let actual_bytes = estimate_bytes(source, cancelled, 0)?;
-                        transfer.total = transfer.total.saturating_add(actual_bytes.saturating_sub(*bytes));
+                        transfer.total = transfer
+                            .total
+                            .saturating_add(actual_bytes.saturating_sub(*bytes));
                         transfer.report(source);
                         copy_tree(source, &target, 0, &mut transfer)?;
                         transfer.phase = "Verifying";
@@ -404,10 +419,14 @@ pub fn perform_with_progress(
             }
             Ok(format!("Permanently deleted {} item(s)", paths.len()))
         }
-        Action::Link { sources, destination } => {
+        Action::Link {
+            sources,
+            destination,
+        } => {
             for source in sources {
                 transfer.check()?;
-                let target = free_destination(destination, source.file_name().ok_or_else(invalid_name)?)?;
+                let target =
+                    free_destination(destination, source.file_name().ok_or_else(invalid_name)?)?;
                 #[cfg(unix)]
                 {
                     let absolute = if source.is_absolute() {
@@ -420,7 +439,10 @@ pub fn perform_with_progress(
                 #[cfg(not(unix))]
                 {
                     let _ = target;
-                    return Err(io::Error::new(io::ErrorKind::Unsupported, "Unix links only"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        "Unix links only",
+                    ));
                 }
             }
             Ok(format!("Created {} link(s)", sources.len()))
@@ -428,7 +450,10 @@ pub fn perform_with_progress(
         Action::SetMode { path, mode } => {
             transfer.check()?;
             if *mode > 0o777 || fs::symlink_metadata(path)?.file_type().is_symlink() {
-                return Err(io::Error::new(io::ErrorKind::InvalidInput, "Invalid permissions or symlink"));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Invalid permissions or symlink",
+                ));
             }
             #[cfg(unix)]
             {
@@ -438,7 +463,10 @@ pub fn perform_with_progress(
             }
             #[cfg(not(unix))]
             {
-                Err(io::Error::new(io::ErrorKind::Unsupported, "Unix permissions only"))
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "Unix permissions only",
+                ))
             }
         }
     }
@@ -458,19 +486,31 @@ pub fn property_lines(path: &Path) -> io::Result<Vec<(String, String)>> {
     let mut rows = vec![
         ("Location".into(), path.display().to_string()),
         ("Type".into(), kind.into()),
-        ("Size".into(), format!("{} ({} bytes)", human_size(metadata.len()), metadata.len())),
+        (
+            "Size".into(),
+            format!("{} ({} bytes)", human_size(metadata.len()), metadata.len()),
+        ),
         ("Modified".into(), age(metadata.modified().ok())),
-        ("Read-only".into(), metadata.permissions().readonly().to_string()),
+        (
+            "Read-only".into(),
+            metadata.permissions().readonly().to_string(),
+        ),
     ];
     #[cfg(unix)]
     {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
-        rows.push(("Permissions".into(), format!("{:04o}", metadata.permissions().mode() & 0o7777)));
+        rows.push((
+            "Permissions".into(),
+            format!("{:04o}", metadata.permissions().mode() & 0o7777),
+        ));
         rows.push(("Owner UID".into(), metadata.uid().to_string()));
         rows.push(("Group GID".into(), metadata.gid().to_string()));
     }
     if metadata.file_type().is_symlink() {
-        rows.push(("Link target".into(), fs::read_link(path)?.display().to_string()));
+        rows.push((
+            "Link target".into(),
+            fs::read_link(path)?.display().to_string(),
+        ));
     }
     Ok(rows)
 }
@@ -490,7 +530,10 @@ pub fn mounted_volumes() -> Vec<PathBuf> {
             let desktop_path = mount.starts_with("/media/")
                 || mount.starts_with("/run/media/")
                 || mount.starts_with("/mnt/");
-            let remote = matches!(fs_type, "nfs" | "nfs4" | "cifs" | "fuse.sshfs" | "fuse.rclone" | "fuse.gvfsd-fuse");
+            let remote = matches!(
+                fs_type,
+                "nfs" | "nfs4" | "cifs" | "fuse.sshfs" | "fuse.rclone" | "fuse.gvfsd-fuse"
+            );
             if (desktop_path || remote) && !mount.is_empty() {
                 let path = PathBuf::from(mount.replace("\\040", " ").replace("\\134", "\\"));
                 if path.is_dir() {
@@ -543,10 +586,16 @@ fn free_destination(parent: &Path, original: &std::ffi::OsStr) -> io::Result<Pat
 
 fn estimate_bytes(path: &Path, cancelled: &AtomicBool, depth: usize) -> io::Result<u64> {
     if cancelled.load(Ordering::Relaxed) {
-        return Err(io::Error::new(io::ErrorKind::Interrupted, "Operation cancelled"));
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "Operation cancelled",
+        ));
     }
     if depth > 128 {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Folder nesting is too deep"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Folder nesting is too deep",
+        ));
     }
     let metadata = fs::symlink_metadata(path)?;
     if metadata.is_dir() {
@@ -601,13 +650,23 @@ fn verify_tree(
 ) -> io::Result<()> {
     transfer.check()?;
     if depth > 128 {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Folder nesting is too deep"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Folder nesting is too deep",
+        ));
     }
     let source_meta = fs::symlink_metadata(source)?;
     let target_meta = fs::symlink_metadata(destination)?;
-    let mismatch = || io::Error::new(io::ErrorKind::InvalidData, "Move verification failed; source is untouched");
+    let mismatch = || {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Move verification failed; source is untouched",
+        )
+    };
     if source_meta.file_type().is_symlink() {
-        if !target_meta.file_type().is_symlink() || fs::read_link(source)? != fs::read_link(destination)? {
+        if !target_meta.file_type().is_symlink()
+            || fs::read_link(source)? != fs::read_link(destination)?
+        {
             return Err(mismatch());
         }
     } else if source_meta.is_dir() {
@@ -618,7 +677,12 @@ fn verify_tree(
         for entry in fs::read_dir(source)? {
             let entry = entry?;
             count += 1;
-            verify_tree(&entry.path(), &destination.join(entry.file_name()), depth + 1, transfer)?;
+            verify_tree(
+                &entry.path(),
+                &destination.join(entry.file_name()),
+                depth + 1,
+                transfer,
+            )?;
         }
         if count != fs::read_dir(destination)?.count() {
             return Err(mismatch());
@@ -643,7 +707,8 @@ fn verify_tree(
             }
         }
         let after = fs::metadata(source)?;
-        if source_meta.len() != after.len() || source_meta.modified().ok() != after.modified().ok() {
+        if source_meta.len() != after.len() || source_meta.modified().ok() != after.modified().ok()
+        {
             return Err(mismatch());
         }
     } else {
@@ -674,7 +739,10 @@ fn copy_tree(
             return Ok(());
         }
         #[cfg(not(unix))]
-        return Err(io::Error::new(io::ErrorKind::Unsupported, "Symlink copy unavailable"));
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Symlink copy unavailable",
+        ));
     }
     if metadata.is_dir() {
         ensure_outside_source(source, destination)?;
@@ -859,8 +927,12 @@ mod tests {
         perform(&Action::Copy {
             sources: vec![source.join("broken")],
             destination: output.clone(),
-        }).unwrap();
-        assert_eq!(fs::read_link(output.join("broken")).unwrap(), PathBuf::from("../missing-target"));
+        })
+        .unwrap();
+        assert_eq!(
+            fs::read_link(output.join("broken")).unwrap(),
+            PathBuf::from("../missing-target")
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -873,7 +945,10 @@ mod tests {
         fs::create_dir(&dest).unwrap();
         let cancelled = AtomicBool::new(false);
         let result = perform_with_progress(
-            &Action::Copy { sources: vec![original.clone()], destination: dest.clone() },
+            &Action::Copy {
+                sources: vec![original.clone()],
+                destination: dest.clone(),
+            },
             &cancelled,
             &mut |progress| {
                 if progress.transferred >= 4 * 1024 * 1024 {
@@ -907,11 +982,24 @@ mod tests {
         let root = test_root();
         let item = root.join("ordinary");
         fs::write(&item, b"content").unwrap();
-        perform(&Action::SetMode { path: item.clone(), mode: 0o640 }).unwrap();
-        assert_eq!(fs::metadata(&item).unwrap().permissions().mode() & 0o777, 0o640);
+        perform(&Action::SetMode {
+            path: item.clone(),
+            mode: 0o640,
+        })
+        .unwrap();
+        assert_eq!(
+            fs::metadata(&item).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
         let link = root.join("link");
         symlink(&item, &link).unwrap();
-        assert!(perform(&Action::SetMode { path: link, mode: 0o777 }).is_err());
+        assert!(
+            perform(&Action::SetMode {
+                path: link,
+                mode: 0o777
+            })
+            .is_err()
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -924,9 +1012,15 @@ mod tests {
         perform(&Action::Link {
             sources: vec![original.clone()],
             destination: root.clone(),
-        }).unwrap();
+        })
+        .unwrap();
         let link = root.join("real-file (copy)");
-        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
         perform(&Action::Delete { paths: vec![link] }).unwrap();
         assert_eq!(fs::read(original).unwrap(), b"keep");
         fs::remove_dir_all(root).unwrap();
@@ -938,7 +1032,9 @@ mod tests {
         use std::os::unix::fs::MetadataExt;
         let root = test_root();
         let shared = Path::new("/dev/shm");
-        if !shared.is_dir() || fs::metadata(&root).unwrap().dev() == fs::metadata(shared).unwrap().dev() {
+        if !shared.is_dir()
+            || fs::metadata(&root).unwrap().dev() == fs::metadata(shared).unwrap().dev()
+        {
             fs::remove_dir_all(root).unwrap();
             return;
         }
@@ -949,7 +1045,11 @@ mod tests {
         }
         let source = root.join("move.txt");
         fs::write(&source, b"cross-device").unwrap();
-        perform(&Action::Move { sources: vec![source.clone()], destination: target.clone() }).unwrap();
+        perform(&Action::Move {
+            sources: vec![source.clone()],
+            destination: target.clone(),
+        })
+        .unwrap();
         assert!(!source.exists());
         assert_eq!(fs::read(target.join("move.txt")).unwrap(), b"cross-device");
         fs::remove_dir_all(&target).unwrap();
@@ -975,7 +1075,9 @@ mod tests {
             phase: "Verifying",
         };
         assert_eq!(
-            verify_tree(&original, &copy, 0, &mut transfer).unwrap_err().kind(),
+            verify_tree(&original, &copy, 0, &mut transfer)
+                .unwrap_err()
+                .kind(),
             io::ErrorKind::InvalidData
         );
         assert_eq!(fs::read(&original).unwrap(), b"ABCDEF");

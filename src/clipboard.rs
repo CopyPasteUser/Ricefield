@@ -65,12 +65,30 @@ fn handlers() -> Vec<(&'static str, Vec<&'static str>, Vec<&'static str>)> {
     let wayland = (
         "wl-copy",
         vec!["--type", "x-special/gnome-copied-files"],
-        vec!["wl-paste", "--no-newline", "--type", "x-special/gnome-copied-files"],
+        vec![
+            "wl-paste",
+            "--no-newline",
+            "--type",
+            "x-special/gnome-copied-files",
+        ],
     );
     let x11 = (
         "xclip",
-        vec!["-selection", "clipboard", "-t", "x-special/gnome-copied-files", "-i"],
-        vec!["xclip", "-selection", "clipboard", "-t", "x-special/gnome-copied-files", "-o"],
+        vec![
+            "-selection",
+            "clipboard",
+            "-t",
+            "x-special/gnome-copied-files",
+            "-i",
+        ],
+        vec![
+            "xclip",
+            "-selection",
+            "clipboard",
+            "-t",
+            "x-special/gnome-copied-files",
+            "-o",
+        ],
     );
     if std::env::var_os("WAYLAND_DISPLAY").is_some() {
         vec![wayland, x11]
@@ -142,7 +160,10 @@ fn parse_files(text: &str) -> Option<Files> {
     let (cut, urls): (bool, Vec<&str>) = match first {
         "cut" => (true, lines.collect()),
         "copy" => (false, lines.collect()),
-        _ => (false, text.lines().filter(|line| !line.starts_with('#')).collect()),
+        _ => (
+            false,
+            text.lines().filter(|line| !line.starts_with('#')).collect(),
+        ),
     };
     let paths: Vec<_> = urls.into_iter().filter_map(decode_uri).collect();
     if paths.is_empty() {
