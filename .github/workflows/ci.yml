@@ -24,7 +24,7 @@ jobs:
           target/release/rice-explorer --list-themes
       - name: Native GUI smoke (Xvfb software GL)
         run: |
-          sudo apt-get install -y xvfb xauth imagemagick libgl1-mesa-dri libxkbcommon-x11-0
+          sudo apt-get install -y xvfb xauth xdotool imagemagick libgl1-mesa-dri libxkbcommon-x11-0
           xvfb-run -a -s '-screen 0 1280x800x24' bash scripts/gui_smoke.sh
       - uses: actions/upload-artifact@v4
         with:

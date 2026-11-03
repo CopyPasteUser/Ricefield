@@ -39,6 +39,11 @@ Or run directly from source: `cargo run --release -- --theme win7 "$HOME"`.
 
 The installer places the executable at `~/.local/bin/rice-explorer`, a scalable icon under `~/.local/share/icons/hicolor/` and a `.desktop` launcher under `~/.local/share/applications/`. It does **not** change your default file manager or Xfce associations. It doesn't touch Thunar.
 
+To uninstall the application files, run `bash uninstall.sh` from the
+repository. This leaves personal settings and themes intact; it does not
+uninstall Thunar or change file associations. Re-running `bash install.sh`
+updates the application from the checked-out source.
+
 ## Select a rice
 
 ```bash
@@ -100,6 +105,6 @@ cargo test --all-targets
 cargo run --release -- --theme win7
 ```
 
-The included GitHub Actions workflow is configured to perform these checks and produce a Linux x86-64 executable artifact once the repository is published. See [DESIGN.md](DESIGN.md), [UX-CONTRACT.md](UX-CONTRACT.md) and [ROADMAP.md](ROADMAP.md).
+The included GitHub Actions workflow is configured to perform these checks and produce a Linux x86-64 executable artifact. Its GUI startup smoke is not a substitute for mouse, keyboard, storage, or data-integrity testing on Linux Mint. See [DESIGN.md](DESIGN.md), [UX-CONTRACT.md](UX-CONTRACT.md), [ROADMAP.md](ROADMAP.md) and [CHANGELOG.md](CHANGELOG.md).
 
 License: MIT. Not affiliated with Microsoft, Apple or Google.

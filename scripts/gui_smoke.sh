@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run under xvfb-run. Exercise three distinct RiceBowl layouts without touching the host desktop.
+# Run under xvfb-run. Smoke-test all bundled RiceBowl layouts without touching the host desktop.
 fixture_dir="$(mktemp -d)"
 app_pid=''
 cleanup() {
@@ -21,7 +21,7 @@ printf '# Markdown preview test\n' > "$fixture_dir/Documents/Example.md"
 cp assets/rice-explorer.png "$fixture_dir/Pictures/icon.png"
 
 export LIBGL_ALWAYS_SOFTWARE=1
-for theme in win7 xp-luna chromeos; do
+for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos; do
   ./target/release/rice-explorer --theme "$theme" "$fixture_dir" > "$fixture_dir/app.log" 2>&1 &
   app_pid=$!
   sleep 5
@@ -30,9 +30,17 @@ for theme in win7 xp-luna chromeos; do
     sed -n '1,100p' "$fixture_dir/app.log" >&2
     exit 1
   fi
-  import -window root "screenshots/$theme.png"
+  # Capture the application, not merely an empty Xvfb root window.
+  window_id="$(xdotool search --onlyvisible --name '^RiceExplorer$' | head -n 1 || true)"
+  if [[ -z "$window_id" ]]; then
+    echo "No visible RiceExplorer window for theme $theme" >&2
+    sed -n '1,100p' "$fixture_dir/app.log" >&2
+    exit 1
+  fi
+  import -window "$window_id" "screenshots/$theme.png"
+  identify -format '%wx%h\n' "screenshots/$theme.png"
   kill "$app_pid" 2>/dev/null || true
   wait "$app_pid" 2>/dev/null || true
   app_pid=''
 done
-echo 'Native GUI smoke checks passed for Windows 7, XP and ChromeOS profiles.'
+echo 'Native GUI smoke checks passed for all seven RiceBowl themes (window startup and screenshots only).'

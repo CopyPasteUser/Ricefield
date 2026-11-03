@@ -105,9 +105,28 @@ struct Clipboard {
 }
 
 enum NameMode {
-    Folder,
-    File,
+    Folder(PathBuf),
+    File(PathBuf),
     Rename(PathBuf),
+}
+
+impl NameMode {
+    fn action(&self, name: String) -> Action {
+        match self {
+            Self::Folder(parent) => Action::NewFolder {
+                parent: parent.clone(),
+                name,
+            },
+            Self::File(parent) => Action::NewFile {
+                parent: parent.clone(),
+                name,
+            },
+            Self::Rename(source) => Action::Rename {
+                source: source.clone(),
+                name,
+            },
+        }
+    }
 }
 
 enum Dialog {
@@ -722,7 +741,7 @@ impl Explorer {
             }
             if ctrl && n {
                 self.dialog = Some(Dialog::Name {
-                    mode: NameMode::Folder,
+                    mode: NameMode::Folder(self.current().path.clone()),
                     value: String::new(),
                 });
             }
@@ -846,14 +865,14 @@ impl Explorer {
                         ui.menu_button(egui::RichText::new("File").color(Color32::WHITE), |ui| {
                             if ui.button("New folder  Ctrl+N").clicked() {
                                 self.dialog = Some(Dialog::Name {
-                                    mode: NameMode::Folder,
+                                    mode: NameMode::Folder(self.current().path.clone()),
                                     value: String::new(),
                                 });
                                 ui.close();
                             }
                             if ui.button("New empty file").clicked() {
                                 self.dialog = Some(Dialog::Name {
-                                    mode: NameMode::File,
+                                    mode: NameMode::File(self.current().path.clone()),
                                     value: String::new(),
                                 });
                                 ui.close();
@@ -927,7 +946,7 @@ impl Explorer {
                         ui.separator();
                         if ui.small_button("New folder").clicked() {
                             self.dialog = Some(Dialog::Name {
-                                mode: NameMode::Folder,
+                                mode: NameMode::Folder(self.current().path.clone()),
                                 value: String::new(),
                             });
                         }
@@ -1303,14 +1322,14 @@ impl Explorer {
                     ui.menu_button("New", |ui| {
                         if ui.button("New folder  Ctrl+N").clicked() {
                             self.dialog = Some(Dialog::Name {
-                                mode: NameMode::Folder,
+                                mode: NameMode::Folder(self.current().path.clone()),
                                 value: String::new(),
                             });
                             ui.close();
                         }
                         if ui.button("Empty file").clicked() {
                             self.dialog = Some(Dialog::Name {
-                                mode: NameMode::File,
+                                mode: NameMode::File(self.current().path.clone()),
                                 value: String::new(),
                             });
                             ui.close();
@@ -1796,15 +1815,14 @@ impl Explorer {
             self.dialog = None;
             return;
         }
-        let current_path = self.current().path.clone();
         let mut action = None;
         let mut dismiss = false;
         if let Some(dialog) = self.dialog.as_mut() {
             match dialog {
                 Dialog::Name { mode, value } => {
                     let title = match mode {
-                        NameMode::Folder => "New folder",
-                        NameMode::File => "New empty file",
+                        NameMode::Folder(_) => "New folder",
+                        NameMode::File(_) => "New empty file",
                         NameMode::Rename(_) => "Rename item",
                     };
                     egui::Window::new(title)
@@ -1832,20 +1850,7 @@ impl Explorer {
                                         && ui.input(|i| i.key_pressed(Key::Enter)))
                                 {
                                     let name = value.clone();
-                                    action = Some(match mode {
-                                        NameMode::Folder => Action::NewFolder {
-                                            parent: current_path.clone(),
-                                            name,
-                                        },
-                                        NameMode::File => Action::NewFile {
-                                            parent: current_path.clone(),
-                                            name,
-                                        },
-                                        NameMode::Rename(source) => Action::Rename {
-                                            source: source.clone(),
-                                            name,
-                                        },
-                                    });
+                                    action = Some(mode.action(name));
                                     dismiss = true;
                                 }
                             });
@@ -2093,5 +2098,33 @@ fn paint_file_icon(painter: &egui::Painter, rect: Rect, file: &Entry, theme: &Th
             FontId::proportional((rect.width() * 0.29).clamp(8.0, 13.0)),
             Color32::WHITE,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Action, NameMode};
+    use std::path::PathBuf;
+
+    #[test]
+    fn name_dialog_actions_keep_the_original_paths() {
+        let parent = PathBuf::from("/initial/folder");
+        let source = parent.join("old.txt");
+
+        assert!(matches!(
+            NameMode::Folder(parent.clone()).action("new".into()),
+            Action::NewFolder { parent: target, name }
+                if target == parent && name == "new"
+        ));
+        assert!(matches!(
+            NameMode::File(parent.clone()).action("file.txt".into()),
+            Action::NewFile { parent: target, name }
+                if target == parent && name == "file.txt"
+        ));
+        assert!(matches!(
+            NameMode::Rename(source.clone()).action("renamed.txt".into()),
+            Action::Rename { source: target, name }
+                if target == source && name == "renamed.txt"
+        ));
     }
 }

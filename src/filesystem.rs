@@ -560,18 +560,19 @@ fn free_destination(parent: &Path, original: &std::ffi::OsStr) -> io::Result<Pat
         return Ok(first);
     }
     let name = Path::new(original);
-    let stem = name.file_stem().unwrap_or(original).to_string_lossy();
-    let extension = name.extension().map(|value| value.to_string_lossy());
+    let stem = name.file_stem().unwrap_or(original);
+    let extension = name.extension();
     for index in 1..10_000 {
         let suffix = if index == 1 {
             " (copy)".to_owned()
         } else {
             format!(" (copy {index})")
         };
-        let mut candidate = OsString::from(format!("{stem}{suffix}"));
-        if let Some(extension) = &extension {
+        let mut candidate = OsString::from(stem);
+        candidate.push(suffix);
+        if let Some(extension) = extension {
             candidate.push(".");
-            candidate.push(extension.as_ref());
+            candidate.push(extension);
         }
         let candidate = parent.join(candidate);
         if !occupied(&candidate)? {
@@ -910,6 +911,65 @@ mod tests {
         assert_eq!(
             fs::read_link(root.join("link")).unwrap(),
             root.join("absent")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn colliding_non_utf8_filename_keeps_original_bytes() {
+        use std::os::unix::ffi::OsStringExt;
+        let root = test_root();
+        let name = OsString::from_vec(b"report-\xff.txt".to_vec());
+        let source = root.join(&name);
+        fs::write(&source, b"original").unwrap();
+        let output = root.join("output");
+        fs::create_dir(&output).unwrap();
+        fs::write(output.join(&name), b"existing").unwrap();
+
+        perform(&Action::Copy {
+            sources: vec![source.clone()],
+            destination: output.clone(),
+        })
+        .unwrap();
+
+        assert_eq!(fs::read(output.join(&name)).unwrap(), b"existing");
+        let duplicate = OsString::from_vec(b"report-\xff (copy).txt".to_vec());
+        assert_eq!(fs::read(output.join(duplicate)).unwrap(), b"original");
+        assert_eq!(fs::read(source).unwrap(), b"original");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn colliding_broken_symlink_preserves_name_and_both_targets() {
+        use std::{os::unix::ffi::OsStringExt, os::unix::fs::symlink};
+        let root = test_root();
+        let name = OsString::from_vec(b"link-\xfe".to_vec());
+        let source = root.join(&name);
+        symlink("missing-original", &source).unwrap();
+        let output = root.join("output");
+        fs::create_dir(&output).unwrap();
+        symlink("missing-existing", output.join(&name)).unwrap();
+
+        perform(&Action::Copy {
+            sources: vec![source.clone()],
+            destination: output.clone(),
+        })
+        .unwrap();
+
+        assert_eq!(
+            fs::read_link(output.join(&name)).unwrap(),
+            PathBuf::from("missing-existing")
+        );
+        let duplicate = OsString::from_vec(b"link-\xfe (copy)".to_vec());
+        assert_eq!(
+            fs::read_link(output.join(duplicate)).unwrap(),
+            PathBuf::from("missing-original")
+        );
+        assert_eq!(
+            fs::read_link(source).unwrap(),
+            PathBuf::from("missing-original")
         );
         fs::remove_dir_all(root).unwrap();
     }
