@@ -2,6 +2,7 @@ mod app;
 mod clipboard;
 mod config;
 mod filesystem;
+mod preview;
 mod theme;
 
 use std::{env, path::PathBuf};

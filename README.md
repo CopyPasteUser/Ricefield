@@ -15,8 +15,9 @@ RiceExplorer is designed as the file-management companion to [RiceBowl](https://
 - List and icon layouts, local and bounded recursive filename search, hidden-file toggle and sorting by name, kind, size or modification time.
 - Multiple selection (Ctrl/Shift/Ctrl+A), copy, cut, paste, duplicate, rename, new folder/file, symbolic links, desktop Trash and confirmed permanent deletion.
 - Native GTK file clipboard interoperability (when `xclip` or `wl-clipboard` is installed); otherwise use the internal file clipboard.
-- Cross-device moves with copy-first semantics, symlink-preserving copies, transfer progress and cancellation.
+- Cross-device moves with copy-first semantics and byte-for-byte verification, symlink-preserving copies, transfer progress and cancellation.
 - File properties and editable Unix permission bits; external changes to folder contents are detected.
+- On-demand preview pane for bounded image and text previews, decoded off the UI thread.
 - Background folder scanning and file operations; stale scan results cannot replace newer navigation results. Virtualized file listing for large directories.
 - Copy files into the open folder by dragging them from the desktop or another file manager.
 - External TOML themes and persistent user settings. A single executable works with all rices.
@@ -81,11 +82,12 @@ Per-user settings are stored in `~/.config/rice-explorer/config.toml` (or `$XDG_
 | Ctrl+N / F2 / Delete | New folder / rename / move to Trash |
 | Shift+Delete | Permanently delete (requires confirmation) |
 | Ctrl+A / Ctrl+D / Alt+Enter | Select all / duplicate / properties |
+| Space | Preview selected file |
 | Ctrl-click / Shift-click | Extend selection / select range |
 
 ## Safety and performance
 
-File copy creates new destination files without overwriting. Name collisions generate ` (copy)` suffixes; copying a directory into itself is rejected. Symbolic links are reproduced as links without following them; special device files are blocked. Across filesystems a move copies first and removes the source only after the copy succeeds. Cancelling a copy cleans its partial destination; a cancellation cannot undo earlier completed items. Trash uses the platform Trash API, never permanent deletion. The application does not run shell commands with interpolated filenames.
+File copy creates new destination files without overwriting. Name collisions generate ` (copy)` suffixes; copying a directory into itself is rejected. Symbolic links are reproduced as links without following them; special device files are blocked. Across filesystems a move copies first, verifies every copied byte and only then removes the source (extra I/O is intentional). Cancelling a copy cleans its partial destination; a cancellation cannot undo earlier completed items. Normal deletion uses the desktop Trash; permanent deletion requires a separate confirmation. File names are never interpolated into shell commands.
 
 Scanning, searching, copying and Trash operations run on worker threads. Views render only visible rows. Recursive search is bounded to protect small machines; it is not a full-text or indexed search. Thumbnail previews, drag-out, advanced mount management, undo and a complete GUI integration test remain outstanding. Until these are verified, keep Thunar available as a fallback.
 

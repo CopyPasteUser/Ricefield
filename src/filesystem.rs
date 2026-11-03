@@ -13,6 +13,7 @@ pub struct Progress {
     pub transferred: u64,
     pub total: u64,
     pub current: PathBuf,
+    pub phase: &'static str,
 }
 
 struct Transfer<'a> {
@@ -22,6 +23,7 @@ struct Transfer<'a> {
     total: u64,
     last_report: Instant,
     last_reported_bytes: u64,
+    phase: &'static str,
 }
 
 impl Transfer<'_> {
@@ -43,10 +45,20 @@ impl Transfer<'_> {
                 transferred: self.transferred,
                 total: self.total,
                 current: path.to_path_buf(),
+                phase: self.phase,
             });
             self.last_report = Instant::now();
             self.last_reported_bytes = self.transferred;
         }
+    }
+
+    fn report(&mut self, path: &Path) {
+        (self.notify)(Progress {
+            transferred: self.transferred,
+            total: self.total,
+            current: path.to_path_buf(),
+            phase: self.phase,
+        });
     }
 }
 
@@ -278,12 +290,9 @@ pub fn perform_with_progress(
         total,
         last_report: Instant::now(),
         last_reported_bytes: 0,
+        phase: "Copying",
     };
-    (transfer.notify)(Progress {
-        transferred: 0,
-        total,
-        current: sources.first().cloned().unwrap_or_default(),
-    });
+    transfer.report(sources.first().map(PathBuf::as_path).unwrap_or(Path::new("")));
     match action {
         Action::NewFolder { parent, name } => {
             transfer.check()?;
@@ -351,12 +360,21 @@ pub fn perform_with_progress(
                     Ok(()) => transfer.advance(*bytes, &target),
                     Err(error) if error.raw_os_error() == Some(libc::EXDEV) => {
                         copy_tree(source, &target, 0, &mut transfer)?;
+                        transfer.phase = "Verifying";
+                        transfer.report(source);
+                        if let Err(error) = verify_tree(source, &target, 0, &mut transfer) {
+                            remove_created(&target)?;
+                            return Err(error);
+                        }
                         if let Err(error) = transfer.check() {
                             remove_created(&target)?;
                             return Err(error);
                         }
+                        transfer.phase = "Finishing";
+                        transfer.report(source);
                         // If deletion fails the copy is deliberately kept for recovery.
                         remove_source(source)?;
+                        transfer.phase = "Copying";
                     }
                     Err(error) => return Err(error),
                 }
@@ -463,10 +481,19 @@ pub fn mounted_volumes() -> Vec<PathBuf> {
             let desktop_path = mount.starts_with("/media/")
                 || mount.starts_with("/run/media/")
                 || mount.starts_with("/mnt/");
-            let remote = matches!(fs_type, "nfs" | "nfs4" | "cifs" | "fuse.sshfs" | "fuse.rclone");
+            let remote = matches!(fs_type, "nfs" | "nfs4" | "cifs" | "fuse.sshfs" | "fuse.rclone" | "fuse.gvfsd-fuse");
             if (desktop_path || remote) && !mount.is_empty() {
                 let path = PathBuf::from(mount.replace("\\040", " ").replace("\\134", "\\"));
                 if path.is_dir() {
+                    if fs_type == "fuse.gvfsd-fuse"
+                        && let Ok(entries) = fs::read_dir(&path)
+                    {
+                        for entry in entries.flatten() {
+                            if entry.path().is_dir() {
+                                paths.insert(entry.path());
+                            }
+                        }
+                    }
                     paths.insert(path);
                 }
             }
@@ -553,6 +580,67 @@ fn remove_created(path: &Path) -> io::Result<()> {
 
 fn remove_source(path: &Path) -> io::Result<()> {
     remove_created(path)
+}
+
+/// Check every copied byte before a cross-filesystem move deletes its source.
+/// This intentionally costs extra I/O for moves across drives.
+fn verify_tree(
+    source: &Path,
+    destination: &Path,
+    depth: usize,
+    transfer: &mut Transfer<'_>,
+) -> io::Result<()> {
+    transfer.check()?;
+    if depth > 128 {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Folder nesting is too deep"));
+    }
+    let source_meta = fs::symlink_metadata(source)?;
+    let target_meta = fs::symlink_metadata(destination)?;
+    let mismatch = || io::Error::new(io::ErrorKind::InvalidData, "Move verification failed; source is untouched");
+    if source_meta.file_type().is_symlink() {
+        if !target_meta.file_type().is_symlink() || fs::read_link(source)? != fs::read_link(destination)? {
+            return Err(mismatch());
+        }
+    } else if source_meta.is_dir() {
+        if !target_meta.is_dir() {
+            return Err(mismatch());
+        }
+        let mut count = 0usize;
+        for entry in fs::read_dir(source)? {
+            let entry = entry?;
+            count += 1;
+            verify_tree(&entry.path(), &destination.join(entry.file_name()), depth + 1, transfer)?;
+        }
+        if count != fs::read_dir(destination)?.count() {
+            return Err(mismatch());
+        }
+    } else if source_meta.is_file() {
+        if !target_meta.is_file() || source_meta.len() != target_meta.len() {
+            return Err(mismatch());
+        }
+        let mut source_reader = File::open(source)?;
+        let mut target_reader = File::open(destination)?;
+        let mut a = [0u8; 256 * 1024];
+        let mut b = [0u8; 256 * 1024];
+        loop {
+            transfer.check()?;
+            let count = source_reader.read(&mut a)?;
+            if count == 0 {
+                break;
+            }
+            target_reader.read_exact(&mut b[..count])?;
+            if a[..count] != b[..count] {
+                return Err(mismatch());
+            }
+        }
+        let after = fs::metadata(source)?;
+        if source_meta.len() != after.len() || source_meta.modified().ok() != after.modified().ok() {
+            return Err(mismatch());
+        }
+    } else {
+        return Err(mismatch());
+    }
+    Ok(())
 }
 
 fn copy_tree(
@@ -856,6 +944,32 @@ mod tests {
         assert!(!source.exists());
         assert_eq!(fs::read(target.join("move.txt")).unwrap(), b"cross-device");
         fs::remove_dir_all(&target).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn verification_detects_equal_size_corruption() {
+        let root = test_root();
+        let original = root.join("source");
+        let copy = root.join("copy");
+        fs::write(&original, b"ABCDEF").unwrap();
+        fs::write(&copy, b"ABCDEX").unwrap();
+        let cancelled = AtomicBool::new(false);
+        let mut callback = |_progress: Progress| {};
+        let mut transfer = Transfer {
+            cancelled: &cancelled,
+            notify: &mut callback,
+            transferred: 0,
+            total: 6,
+            last_report: Instant::now(),
+            last_reported_bytes: 0,
+            phase: "Verifying",
+        };
+        assert_eq!(
+            verify_tree(&original, &copy, 0, &mut transfer).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(fs::read(&original).unwrap(), b"ABCDEF");
         fs::remove_dir_all(root).unwrap();
     }
 }

@@ -2,6 +2,7 @@ use crate::{
     clipboard,
     config::{self, Config},
     filesystem::{self, Action, Entry, Progress},
+    preview,
     theme::{BUILTIN_IDS, Layout, Theme},
 };
 use eframe::egui::{
@@ -76,6 +77,17 @@ struct RefreshResult {
     volumes: Vec<PathBuf>,
 }
 
+struct PreviewResult {
+    path: PathBuf,
+    result: std::io::Result<preview::Preview>,
+}
+
+enum PreviewContent {
+    Image(egui::TextureHandle),
+    Text(String),
+    Info(String),
+}
+
 struct OperationResult {
     result: std::io::Result<String>,
     clear_clipboard: bool,
@@ -115,6 +127,8 @@ pub struct Explorer {
     scan_receiver: Receiver<ScanResult>,
     refresh_sender: Sender<RefreshResult>,
     refresh_receiver: Receiver<RefreshResult>,
+    preview_sender: Sender<PreviewResult>,
+    preview_receiver: Receiver<PreviewResult>,
     op_sender: Sender<OperationEvent>,
     op_receiver: Receiver<OperationEvent>,
     clipboard: Option<Clipboard>,
@@ -126,6 +140,9 @@ pub struct Explorer {
     volumes: Vec<PathBuf>,
     last_refresh_check: Instant,
     refresh_in_flight: bool,
+    preview_path: Option<PathBuf>,
+    preview_loading: bool,
+    preview_content: Option<PreviewContent>,
     dirty_config: bool,
     focus_address: bool,
     focus_search: bool,
@@ -158,6 +175,7 @@ impl Explorer {
 
         let (scan_sender, scan_receiver) = mpsc::channel();
         let (refresh_sender, refresh_receiver) = mpsc::channel();
+        let (preview_sender, preview_receiver) = mpsc::channel();
         let (op_sender, op_receiver) = mpsc::channel();
         let mut explorer = Self {
             config,
@@ -169,6 +187,8 @@ impl Explorer {
             scan_receiver,
             refresh_sender,
             refresh_receiver,
+            preview_sender,
+            preview_receiver,
             op_sender,
             op_receiver,
             clipboard: None,
@@ -180,6 +200,9 @@ impl Explorer {
             volumes: vec![PathBuf::from("/")],
             last_refresh_check: Instant::now() - Duration::from_secs(3),
             refresh_in_flight: false,
+            preview_path: None,
+            preview_loading: false,
+            preview_content: None,
             dirty_config: false,
             focus_address: false,
             focus_search: false,
@@ -347,7 +370,25 @@ impl Explorer {
         tab.last_selected = None;
     }
 
-    fn poll_background(&mut self) {
+    fn poll_background(&mut self, context: &egui::Context) {
+        while let Ok(message) = self.preview_receiver.try_recv() {
+            if self.preview_path.as_ref() == Some(&message.path) {
+                self.preview_loading = false;
+                self.preview_content = Some(match message.result {
+                    Ok(preview::Preview::Image { rgba, width, height }) => {
+                        let image = egui::ColorImage::from_rgba_unmultiplied([width, height], &rgba);
+                        PreviewContent::Image(context.load_texture(
+                            "rice-preview",
+                            image,
+                            egui::TextureOptions::LINEAR,
+                        ))
+                    }
+                    Ok(preview::Preview::Text(text)) => PreviewContent::Text(text),
+                    Ok(preview::Preview::Info(text)) => PreviewContent::Info(text),
+                    Err(error) => PreviewContent::Info(format!("Preview unavailable: {error}")),
+                });
+            }
+        }
         while let Ok(result) = self.refresh_receiver.try_recv() {
             self.refresh_in_flight = false;
             self.volumes = result.volumes;
@@ -574,9 +615,10 @@ impl Explorer {
                 input.key_pressed(Key::A),
                 input.key_pressed(Key::D),
                 input.key_pressed(Key::Enter),
+                input.key_pressed(Key::Space),
             )
         });
-        let (ctrl, alt, l, f, t, w, c, x, v, h, r, n, f2, delete, left, right, up, a, d, enter) = keys;
+        let (ctrl, alt, l, f, t, w, c, x, v, h, r, n, f2, delete, left, right, up, a, d, enter, space) = keys;
         if ctrl && l {
             self.focus_address = true;
         }
@@ -614,6 +656,11 @@ impl Explorer {
                         destination: self.current().path.clone(),
                     });
                 }
+            }
+            if space && self.current().selected.len() == 1
+                && let Some(path) = self.selected_paths().first()
+            {
+                self.open_preview(path.clone());
             }
             if alt && enter && self.current().selected.len() == 1
                 && let Some(path) = self.selected_paths().first()
@@ -715,6 +762,17 @@ impl Explorer {
         #[cfg(not(unix))]
         let mode = String::new();
         self.dialog = Some(Dialog::Properties { path, mode });
+    }
+
+    fn open_preview(&mut self, path: PathBuf) {
+        self.preview_path = Some(path.clone());
+        self.preview_content = None;
+        self.preview_loading = true;
+        let sender = self.preview_sender.clone();
+        thread::spawn(move || {
+            let result = preview::load(&path);
+            let _ = sender.send(PreviewResult { path, result });
+        });
     }
 
     fn top_bar(&mut self, ui: &mut egui::Ui) {
@@ -1057,6 +1115,64 @@ impl Explorer {
             });
     }
 
+    fn preview_panel(&mut self, ui: &mut egui::Ui) {
+        let Some(path) = self.preview_path.clone() else {
+            return;
+        };
+        egui::Panel::right("preview")
+            .resizable(true)
+            .default_size(300.0)
+            .min_size(210.0)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.strong(shorten(
+                        &path.file_name().unwrap_or_default().to_string_lossy(),
+                        27,
+                    ));
+                    if ui.small_button("×").on_hover_text("Close preview").clicked() {
+                        self.preview_path = None;
+                        self.preview_content = None;
+                    }
+                });
+                ui.separator();
+                if self.preview_loading {
+                    ui.add(egui::Spinner::new());
+                    ui.label("Loading preview…");
+                } else if let Some(content) = &self.preview_content {
+                    match content {
+                        PreviewContent::Image(texture) => {
+                            let size = texture.size_vec2();
+                            let ratio = ((ui.available_width() - 8.0) / size.x).min(1.0);
+                            ui.add(egui::Image::new((texture.id(), size))
+                                .fit_to_exact_size(size * ratio.max(0.1)));
+                        }
+                        PreviewContent::Text(contents) => {
+                            egui::ScrollArea::vertical().max_height(480.0).show(ui, |ui| {
+                                ui.label(egui::RichText::new(contents).monospace());
+                            });
+                        }
+                        PreviewContent::Info(contents) => {
+                            ui.label(contents);
+                        }
+                    }
+                }
+                ui.separator();
+                if let Ok(properties) = filesystem::property_lines(&path) {
+                    for (name, value) in properties.into_iter().take(4) {
+                        ui.label(format!("{name}: {value}"));
+                    }
+                }
+                if ui.button("Open").clicked() {
+                    if path.is_dir() {
+                        self.navigate(path.clone());
+                        self.preview_path = None;
+                    } else if let Err(error) = Command::new("xdg-open").arg(&path).spawn() {
+                        self.status = Some((format!("Cannot open previewed file: {error}"), true));
+                    }
+                }
+            });
+    }
+
     fn main_panel(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme.clone();
         egui::CentralPanel::default()
@@ -1080,6 +1196,11 @@ impl Explorer {
                         egui::RichText::new(format!("{count} items")).color(theme.palette.muted()),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("◧").on_hover_text("Preview selected item (Space)").clicked()
+                            && let Some(path) = self.selected_paths().first()
+                        {
+                            self.open_preview(path.clone());
+                        }
                         if ui
                             .small_button("☰")
                             .on_hover_text("Toggle sidebar")
@@ -1363,6 +1484,10 @@ impl Explorer {
                 self.activate(entry);
                 ui.close();
             }
+            if ui.button("Preview").clicked() {
+                self.open_preview(entry.path.clone());
+                ui.close();
+            }
             if ui.button("Open in new tab").clicked() {
                 if entry.path.is_dir() {
                     self.new_tab(entry.path.clone());
@@ -1470,6 +1595,7 @@ impl Explorer {
                             } else {
                                 ui.label("Preparing…");
                             }
+                            ui.label(progress.phase);
                             let filename = progress.current.file_name().unwrap_or_default().to_string_lossy();
                             ui.label(shorten(&filename, 28));
                         } else {
@@ -1655,7 +1781,7 @@ impl Explorer {
 impl eframe::App for Explorer {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let context = ui.ctx().clone();
-        self.poll_background();
+        self.poll_background(&context);
         for index in 0..self.tabs.len() {
             if self.tabs[index].search_pending.is_some_and(|when| when.elapsed() >= Duration::from_millis(350)) {
                 self.tabs[index].search_pending = None;
@@ -1698,6 +1824,7 @@ impl eframe::App for Explorer {
         self.top_bar(ui);
         self.status_bar(ui);
         self.sidebar(ui);
+        self.preview_panel(ui);
         self.main_panel(ui);
         self.dialogs(&context);
         if self.dirty_config {

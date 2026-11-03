@@ -22,6 +22,7 @@
 - [x] Mounted-device paths in the sidebar; recursive filename search
 - [ ] Network-share management and mounted-device actions via GIO
 - [x] File properties and Unix-mode editing
+- [x] Bounded image/text preview on a worker thread
 - [ ] Proper focus-trapped dialogs, screen reader pass and i18n foundation
 
 ## v0.3 — RiceBowl deep integration
