@@ -1,6 +1,7 @@
 id = "win7"
 name = "Windows 7 · Aero"
 layout = "aero"
+schema_version = 1
 [palette]
 background = "#eaf4fb"
 chrome = "#b7d8ef"
@@ -19,3 +20,7 @@ row_height = 31
 tile_width = 120
 sidebar_width = 216
 icon_size = 25
+
+[shell]
+kind = "aero"
+top = ["tabs", "navigation", "command-bar"]

@@ -2,14 +2,18 @@ use crate::{
     clipboard,
     config::{self, Config},
     filesystem::{self, Action, Entry, Progress},
+    journal::{self, Record as JournalRecord, State as JournalState},
+    operation_queue::OperationQueue,
     preview,
-    theme::{BUILTIN_IDS, Layout, Theme},
+    theme::{
+        BUILTIN_IDS, ChromeComponent, Layout, ShellKind, SidebarPosition, SidebarSection, Theme,
+    },
 };
 use eframe::egui::{
     self, Align2, Color32, FontId, Key, Modifiers, Pos2, Rect, Sense, Stroke, Vec2,
 };
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, VecDeque},
     path::{Path, PathBuf},
     process::Command,
     sync::{
@@ -20,6 +24,9 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime},
 };
+
+const SEARCH_DEBOUNCE: Duration = Duration::from_millis(350);
+const MAX_RECENT_OPERATIONS: usize = 64;
 
 struct Tab {
     id: u64,
@@ -65,6 +72,13 @@ impl Tab {
     }
 }
 
+fn next_search_repaint_delay(tabs: &[Tab], now: Instant) -> Option<Duration> {
+    tabs.iter()
+        .filter_map(|tab| tab.search_pending)
+        .map(|started| SEARCH_DEBOUNCE.saturating_sub(now.saturating_duration_since(started)))
+        .min()
+}
+
 struct ScanResult {
     tab: u64,
     generation: u64,
@@ -89,8 +103,24 @@ enum PreviewContent {
 }
 
 struct OperationResult {
+    id: u64,
     result: std::io::Result<String>,
-    clear_clipboard: bool,
+    moved_paths: Option<Vec<PathBuf>>,
+}
+
+struct CompletedOperation {
+    id: u64,
+    label: String,
+    summary: String,
+    outcome: OperationOutcome,
+    finished_at: SystemTime,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OperationOutcome {
+    Succeeded,
+    Cancelled,
+    Failed,
 }
 
 enum OperationEvent {
@@ -105,9 +135,28 @@ struct Clipboard {
 }
 
 enum NameMode {
-    Folder,
-    File,
+    Folder(PathBuf),
+    File(PathBuf),
     Rename(PathBuf),
+}
+
+impl NameMode {
+    fn action(&self, name: String) -> Action {
+        match self {
+            Self::Folder(parent) => Action::NewFolder {
+                parent: parent.clone(),
+                name,
+            },
+            Self::File(parent) => Action::NewFile {
+                parent: parent.clone(),
+                name,
+            },
+            Self::Rename(source) => Action::Rename {
+                source: source.clone(),
+                name,
+            },
+        }
+    }
 }
 
 enum Dialog {
@@ -131,6 +180,18 @@ pub struct Explorer {
     preview_receiver: Receiver<PreviewResult>,
     op_sender: Sender<OperationEvent>,
     op_receiver: Receiver<OperationEvent>,
+    operation_queue: OperationQueue,
+    active_operation: Option<(u64, String)>,
+    queue_paused: bool,
+    show_operations: bool,
+    recent_operations: VecDeque<CompletedOperation>,
+    recovery_sender: Sender<(u64, std::io::Result<Vec<JournalRecord>>)>,
+    recovery_receiver: Receiver<(u64, std::io::Result<Vec<JournalRecord>>)>,
+    recovery_generation: u64,
+    recovery_records: Vec<JournalRecord>,
+    recovery_error: Option<String>,
+    recovery_loading: bool,
+    recovery_open: bool,
     clipboard: Option<Clipboard>,
     dialog: Option<Dialog>,
     status: Option<(String, bool)>,
@@ -177,6 +238,7 @@ impl Explorer {
         let (refresh_sender, refresh_receiver) = mpsc::channel();
         let (preview_sender, preview_receiver) = mpsc::channel();
         let (op_sender, op_receiver) = mpsc::channel();
+        let (recovery_sender, recovery_receiver) = mpsc::channel();
         let mut explorer = Self {
             config,
             theme,
@@ -191,6 +253,18 @@ impl Explorer {
             preview_receiver,
             op_sender,
             op_receiver,
+            operation_queue: OperationQueue::default(),
+            active_operation: None,
+            queue_paused: false,
+            show_operations: false,
+            recent_operations: VecDeque::new(),
+            recovery_sender,
+            recovery_receiver,
+            recovery_generation: 0,
+            recovery_records: Vec::new(),
+            recovery_error: None,
+            recovery_loading: false,
+            recovery_open: false,
             clipboard: None,
             dialog: None,
             status,
@@ -220,7 +294,20 @@ impl Explorer {
             }
             explorer.active = 0;
         }
+        explorer.check_unfinished_moves();
         explorer
+    }
+
+    /// Journal inspection is read-only and never blocks the UI thread.
+    fn check_unfinished_moves(&mut self) {
+        self.recovery_generation = self.recovery_generation.wrapping_add(1);
+        let generation = self.recovery_generation;
+        self.recovery_loading = true;
+        let sender = self.recovery_sender.clone();
+        thread::spawn(move || {
+            let result = journal::scan_incomplete();
+            let _ = sender.send((generation, result));
+        });
     }
 
     fn current(&self) -> &Tab {
@@ -373,6 +460,21 @@ impl Explorer {
     }
 
     fn poll_background(&mut self, context: &egui::Context) {
+        while let Ok((generation, result)) = self.recovery_receiver.try_recv() {
+            if generation == self.recovery_generation {
+                self.recovery_loading = false;
+                match result {
+                    Ok(records) => {
+                        self.recovery_records = records;
+                        self.recovery_error = None;
+                    }
+                    Err(error) => {
+                        // Keep the last known records visible if a later scan fails.
+                        self.recovery_error = Some(error.to_string());
+                    }
+                }
+            }
+        }
         while let Ok(message) = self.preview_receiver.try_recv() {
             if self.preview_path.as_ref() == Some(&message.path) {
                 self.preview_loading = false;
@@ -446,48 +548,336 @@ impl Explorer {
                 OperationEvent::Progress(progress) => self.progress = Some(progress),
                 OperationEvent::Finished(message) => {
                     self.busy = false;
+                    let label = self
+                        .active_operation
+                        .take()
+                        .map(|(_, label)| label)
+                        .unwrap_or_else(|| "File operation".into());
                     self.progress = None;
-                    match message.result {
+                    let (summary, outcome) = match message.result {
                         Ok(success) => {
-                            self.status = Some((success, false));
-                            if message.clear_clipboard {
+                            if message.moved_paths.as_ref().is_some_and(|moved| {
+                                self.clipboard.as_ref().is_some_and(|clipboard| {
+                                    clipboard.cut && &clipboard.paths == moved
+                                })
+                            }) {
                                 self.clipboard = None;
                             }
+                            (success, OperationOutcome::Succeeded)
                         }
                         Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
-                            self.status = Some((
-                                "Cancelled. Previously completed items remain in place.".into(),
-                                false,
-                            ));
+                            self.queue_paused = !self.operation_queue.is_empty();
+                            let detail = if self.queue_paused {
+                                format!(
+                                    "Cancelled: {error}. Completed items remain; waiting copies are paused."
+                                )
+                            } else {
+                                format!(
+                                    "Cancelled: {error}. Previously completed items remain in place."
+                                )
+                            };
+                            (detail, OperationOutcome::Cancelled)
                         }
                         Err(error) => {
-                            self.status = Some((format!("Operation failed: {error}"), true))
+                            self.queue_paused = !self.operation_queue.is_empty();
+                            (
+                                format!("Operation failed: {error}"),
+                                OperationOutcome::Failed,
+                            )
                         }
+                    };
+                    self.status = Some((
+                        format!("#{}: {summary}", message.id),
+                        outcome == OperationOutcome::Failed,
+                    ));
+                    self.recent_operations.push_front(CompletedOperation {
+                        id: message.id,
+                        label,
+                        summary,
+                        outcome,
+                        finished_at: SystemTime::now(),
+                    });
+                    if self.recent_operations.len() > MAX_RECENT_OPERATIONS {
+                        self.recent_operations.pop_back();
                     }
                     self.refresh_all();
+                    self.check_unfinished_moves();
+                    self.start_next_operation();
                 }
             }
         }
     }
 
-    fn run_action(&mut self, action: Action) {
-        if self.busy {
-            self.status = Some(("Wait for the current operation to finish".into(), true));
+    fn recovery_banner(&mut self, ui: &mut egui::Ui) {
+        if self.recovery_records.is_empty() && self.recovery_error.is_none() {
             return;
         }
+        egui::Panel::top("unfinished_move_notice")
+            .frame(
+                egui::Frame::new()
+                    .fill(Color32::from_rgb(87, 58, 31))
+                    .inner_margin(egui::Margin::symmetric(12, 7)),
+            )
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.colored_label(
+                        Color32::WHITE,
+                        if self.recovery_error.is_some() {
+                            "File move recovery records need attention".to_owned()
+                        } else {
+                            format!(
+                                "{} unfinished cross-device file move(s) — source and destination may both exist",
+                                self.recovery_records.len()
+                            )
+                        },
+                    );
+                    if ui.button("Review safely…").clicked() {
+                        self.recovery_open = true;
+                    }
+                });
+            });
+    }
+
+    fn recovery_dialog(&mut self, context: &egui::Context) {
+        if !self.recovery_open {
+            return;
+        }
+        let mut open = true;
+        let mut rescan = false;
+        egui::Window::new("Unfinished cross-device moves")
+            .open(&mut open)
+            .default_width(610.0)
+            .default_height(340.0)
+            .resizable(true)
+            .show(context, |ui| {
+                ui.label("Read-only inspection. RiceExplorer will not delete, resume, or overwrite either side automatically.");
+                ui.label("Check the actual files, sizes and contents before manually deciding what to keep.");
+                if let Some(error) = &self.recovery_error {
+                    ui.colored_label(Color32::LIGHT_RED, format!("Cannot read all journal records: {error}"));
+                }
+                if self.recovery_loading {
+                    ui.spinner();
+                    ui.label("Checking operation records…");
+                }
+                ui.separator();
+                egui::ScrollArea::vertical().max_height(330.0).show(ui, |ui| {
+                    for record in &self.recovery_records {
+                        ui.group(|ui| {
+                            ui.strong(format!("{} — {:?}", record.id, record.state));
+                            ui.label(format!("Source: {}", record.source.display()));
+                            ui.label(format!("Destination: {}", record.destination.display()));
+                            if let Some(staging) = &record.staging {
+                                ui.label(format!("Staging: {}", staging.display()));
+                            }
+                            let guidance = match record.state {
+                                JournalState::Prepared => "Copy may be incomplete or may not have started.",
+                                JournalState::StagedVerified => "Staged data was verified; final publication may have occurred.",
+                                JournalState::Published => "Destination was published; removing the source may be incomplete.",
+                                JournalState::Completed => "Move completed.",
+                            };
+                            ui.small(guidance);
+                        });
+                    }
+                });
+                ui.separator();
+                if ui.button("Rescan records").clicked() {
+                    rescan = true;
+                }
+            });
+        self.recovery_open = open;
+        if rescan {
+            self.check_unfinished_moves();
+        }
+    }
+
+    /// One shared transfer surface for every rice, including shells without
+    /// a status bar. It intentionally reserves a stable row while idle.
+    fn transfer_strip(&mut self, ui: &mut egui::Ui) {
+        let theme = self.theme.clone();
+        egui::Panel::top("transfer_status")
+            .frame(
+                egui::Frame::new()
+                    .fill(theme.palette.background())
+                    .inner_margin(egui::Margin::symmetric(10, 3)),
+            )
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    let count = self.operation_queue.len() + usize::from(self.busy);
+                    if ui.small_button(format!("Transfers ({count})")).clicked() {
+                        self.show_operations = true;
+                    }
+                    if let Some((id, label)) = &self.active_operation {
+                        ui.label(format!("#{id} {label}"));
+                        if let Some(progress) = &self.progress {
+                            if progress.total > 0 {
+                                ui.add_sized(
+                                    [110.0, 14.0],
+                                    egui::ProgressBar::new(
+                                        (progress.transferred as f32 / progress.total as f32)
+                                            .clamp(0.0, 1.0),
+                                    ),
+                                );
+                            } else {
+                                ui.spinner();
+                            }
+                        }
+                    }
+                    if !self.operation_queue.is_empty() {
+                        ui.label(format!("{} waiting", self.operation_queue.len()));
+                        if self.queue_paused {
+                            ui.colored_label(Color32::from_rgb(165, 83, 30), "Paused after error");
+                        }
+                    }
+                    // Several rice shells intentionally omit the bottom status bar.
+                    // Their file-operation errors must still be visible without
+                    // opening the Transfers dialog or switching themes.
+                    if !theme.shell.status_bar.unwrap_or(true)
+                        && let Some((message, failed)) = &self.status
+                    {
+                        ui.separator();
+                        ui.colored_label(
+                            if *failed {
+                                Color32::LIGHT_RED
+                            } else {
+                                theme.palette.accent()
+                            },
+                            shorten(message, 72),
+                        )
+                        .on_hover_text(message);
+                    }
+                });
+            });
+    }
+
+    fn transfer_dialog(&mut self, context: &egui::Context) {
+        if !self.show_operations {
+            return;
+        }
+        let mut open = true;
+        let mut remove = None;
+        egui::Window::new("Transfers")
+            .open(&mut open)
+            .default_width(440.0)
+            .resizable(true)
+            .show(context, |ui| {
+                if let Some((id, label)) = &self.active_operation {
+                    ui.strong(format!("Running #{id}: {label}"));
+                    if let Some(progress) = &self.progress {
+                        ui.label(format!("{}: {}", progress.phase, progress.current.display()));
+                    }
+                    if ui.button("Cancel running transfer").clicked() {
+                        self.cancel.store(true, Ordering::Relaxed);
+                    }
+                    ui.small("Cancellation stops future work; already completed items are not undone.");
+                } else {
+                    ui.label("No transfer is running.");
+                }
+                ui.separator();
+                ui.strong(format!("Waiting ({})", self.operation_queue.len()));
+                ui.small("Only copy requests can wait. Removing a waiting job makes no filesystem changes.");
+                if self.queue_paused && ui.button("Resume waiting copies").clicked() {
+                    self.queue_paused = false;
+                }
+                egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+                    for job in self.operation_queue.iter() {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(format!("#{} {}", job.id, job.label));
+                            if ui.button("Remove").clicked() {
+                                remove = Some(job.id);
+                            }
+                        });
+                    }
+                });
+                ui.separator();
+                ui.strong(format!("Recent results ({})", self.recent_operations.len()));
+                ui.small("This session only. A failed batch may have completed earlier items.");
+                egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                    for entry in &self.recent_operations {
+                        let outcome = match entry.outcome {
+                            OperationOutcome::Succeeded => "Completed",
+                            OperationOutcome::Cancelled => "Cancelled",
+                            OperationOutcome::Failed => "Failed",
+                        };
+                        ui.horizontal_wrapped(|ui| {
+                            ui.strong(format!("#{} · {outcome}", entry.id));
+                            ui.label(&entry.label);
+                            ui.small(filesystem::age(Some(entry.finished_at)));
+                        });
+                        if entry.outcome == OperationOutcome::Failed {
+                            ui.colored_label(Color32::LIGHT_RED, &entry.summary);
+                        } else {
+                            ui.small(&entry.summary);
+                        }
+                        ui.separator();
+                    }
+                });
+            });
+        self.show_operations = open;
+        if let Some(id) = remove
+            && self.operation_queue.remove(id)
+        {
+            self.status = Some((format!("Removed waiting copy #{id}"), false));
+            if self.operation_queue.is_empty() {
+                self.queue_paused = false;
+            }
+        }
+        self.start_next_operation();
+    }
+
+    fn run_action(&mut self, action: Action) {
+        if self.queue_paused && !matches!(&action, Action::Copy { .. }) {
+            self.status = Some((
+                "Waiting copies are paused after an error. Resume or remove them first.".into(),
+                true,
+            ));
+            return;
+        }
+        if self.busy && !matches!(&action, Action::Copy { .. }) {
+            self.status = Some((
+                "A transfer is running. Only Copy can be queued; retry this action when it finishes."
+                    .into(),
+                true,
+            ));
+            return;
+        }
+        match self.operation_queue.enqueue(action) {
+            Ok(id) => {
+                if self.busy {
+                    self.status = Some((format!("Copy #{id} queued"), false));
+                }
+                self.start_next_operation();
+            }
+            Err(error) => {
+                self.status = Some((format!("Cannot queue transfer: {error}"), true));
+            }
+        }
+    }
+
+    fn start_next_operation(&mut self) {
+        if self.busy || self.queue_paused {
+            return;
+        }
+        let Some(job) = self.operation_queue.dequeue() else {
+            return;
+        };
         self.busy = true;
+        self.active_operation = Some((job.id, job.label));
         self.progress = None;
         self.cancel = Arc::new(AtomicBool::new(false));
         let cancel = Arc::clone(&self.cancel);
-        let clear_clipboard = matches!(action, Action::Move { .. });
+        let moved_paths = match &job.action {
+            Action::Move { sources, .. } => Some(sources.clone()),
+            _ => None,
+        };
         let sender = self.op_sender.clone();
         thread::spawn(move || {
-            let result = filesystem::perform_with_progress(&action, &cancel, &mut |progress| {
+            let result = filesystem::perform_with_progress(&job.action, &cancel, &mut |progress| {
                 let _ = sender.send(OperationEvent::Progress(progress));
             });
             let _ = sender.send(OperationEvent::Finished(OperationResult {
+                id: job.id,
                 result,
-                clear_clipboard,
+                moved_paths,
             }));
         });
     }
@@ -519,6 +909,20 @@ impl Explorer {
             ),
             false,
         ));
+    }
+
+    fn copy_selected_paths(&mut self, context: &egui::Context) {
+        let paths = self.selected_paths();
+        if paths.is_empty() {
+            return;
+        }
+        let text = paths
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        context.copy_text(text);
+        self.status = Some((format!("Copied {} path(s) as text", paths.len()), false));
     }
 
     fn paste(&mut self) {
@@ -690,7 +1094,11 @@ impl Explorer {
                 self.current_mut().selected = paths.into_iter().collect();
             }
             if ctrl && c {
-                self.copy_selection(false);
+                if context.input(|input| input.modifiers.shift) {
+                    self.copy_selected_paths(context);
+                } else {
+                    self.copy_selection(false);
+                }
             }
             if ctrl && x {
                 self.copy_selection(true);
@@ -722,7 +1130,7 @@ impl Explorer {
             }
             if ctrl && n {
                 self.dialog = Some(Dialog::Name {
-                    mode: NameMode::Folder,
+                    mode: NameMode::Folder(self.current().path.clone()),
                     value: String::new(),
                 });
             }
@@ -828,6 +1236,7 @@ impl Explorer {
 
     fn top_bar(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme.clone();
+        let components = theme.top_components();
         egui::Panel::top("chrome")
             .frame(
                 egui::Frame::new()
@@ -835,111 +1244,175 @@ impl Explorer {
                     .inner_margin(egui::Margin::same(7)),
             )
             .show(ui, |ui| {
-                if theme.layout == Layout::Classic {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new("RiceExplorer")
-                                .color(Color32::WHITE)
-                                .strong(),
-                        );
-                        ui.separator();
-                        ui.menu_button(egui::RichText::new("File").color(Color32::WHITE), |ui| {
-                            if ui.button("New folder  Ctrl+N").clicked() {
-                                self.dialog = Some(Dialog::Name {
-                                    mode: NameMode::Folder,
-                                    value: String::new(),
-                                });
-                                ui.close();
-                            }
-                            if ui.button("New empty file").clicked() {
-                                self.dialog = Some(Dialog::Name {
-                                    mode: NameMode::File,
-                                    value: String::new(),
-                                });
-                                ui.close();
-                            }
-                            if ui.button("New tab  Ctrl+T").clicked() {
-                                self.new_tab(self.current().path.clone());
-                                ui.close();
-                            }
-                        });
-                        ui.menu_button(egui::RichText::new("Edit").color(Color32::WHITE), |ui| {
-                            if ui.button("Copy  Ctrl+C").clicked() {
-                                self.copy_selection(false);
-                                ui.close();
-                            }
-                            if ui.button("Cut  Ctrl+X").clicked() {
-                                self.copy_selection(true);
-                                ui.close();
-                            }
-                            if ui.button("Paste  Ctrl+V").clicked() {
-                                self.paste();
-                                ui.close();
-                            }
-                            if ui.button("Rename  F2").clicked() {
-                                self.rename_selected();
-                                ui.close();
-                            }
-                            if ui.button("Move to Trash  Delete").clicked() {
-                                self.ask_trash();
-                                ui.close();
-                            }
-                        });
-                        ui.menu_button(egui::RichText::new("View").color(Color32::WHITE), |ui| {
-                            if ui.button("List").clicked() {
-                                self.config.view = "list".into();
-                                self.dirty_config = true;
-                                ui.close();
-                            }
-                            if ui.button("Icons").clicked() {
-                                self.config.view = "grid".into();
-                                self.dirty_config = true;
-                                ui.close();
-                            }
-                            if ui.button("Show hidden files").clicked() {
-                                self.config.show_hidden = !self.config.show_hidden;
-                                for index in 0..self.tabs.len() {
-                                    if self.tabs[index].recursive_search {
-                                        self.scan(index);
-                                    } else {
-                                        self.rebuild_visible(index);
-                                    }
-                                }
-                                self.dirty_config = true;
-                                ui.close();
-                            }
-                        });
-                    });
-                    ui.separator();
-                }
-                self.tabs_bar(ui);
-                ui.add_space(4.0);
-                self.navigation_bar(ui);
-                if theme.layout == Layout::Aero {
-                    ui.add_space(3.0);
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new("ORGANIZE")
-                                .small()
-                                .strong()
-                                .color(theme.palette.text()),
-                        );
-                        ui.separator();
-                        if ui.small_button("New folder").clicked() {
-                            self.dialog = Some(Dialog::Name {
-                                mode: NameMode::Folder,
-                                value: String::new(),
-                            });
-                        }
-                        if ui.small_button("Add to favorites").clicked() {
-                            self.toggle_bookmark();
-                        }
-                        if ui.small_button("Refresh").clicked() {
-                            self.scan(self.active);
-                        }
-                    });
+                for (index, component) in components.iter().enumerate() {
+                    if index != 0 {
+                        ui.add_space(3.0);
+                    }
+                    match component {
+                        ChromeComponent::MenuBar => self.menu_bar(ui),
+                        ChromeComponent::Tabs => self.tabs_bar(ui),
+                        ChromeComponent::Navigation => self.navigation_bar(ui),
+                        ChromeComponent::CommandBar => self.command_bar(ui, &theme),
+                    }
                 }
             });
+    }
+
+    fn menu_bar(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("RiceExplorer")
+                    .color(Color32::WHITE)
+                    .strong(),
+            );
+            ui.separator();
+            ui.menu_button(egui::RichText::new("File").color(Color32::WHITE), |ui| {
+                if ui.button("New folder  Ctrl+N").clicked() {
+                    self.dialog = Some(Dialog::Name {
+                        mode: NameMode::Folder(self.current().path.clone()),
+                        value: String::new(),
+                    });
+                    ui.close();
+                }
+                if ui.button("New empty file").clicked() {
+                    self.dialog = Some(Dialog::Name {
+                        mode: NameMode::File(self.current().path.clone()),
+                        value: String::new(),
+                    });
+                    ui.close();
+                }
+                if ui.button("New tab  Ctrl+T").clicked() {
+                    self.new_tab(self.current().path.clone());
+                    ui.close();
+                }
+            });
+            ui.menu_button(egui::RichText::new("Edit").color(Color32::WHITE), |ui| {
+                if ui.button("Copy  Ctrl+C").clicked() {
+                    self.copy_selection(false);
+                    ui.close();
+                }
+                if ui.button("Cut  Ctrl+X").clicked() {
+                    self.copy_selection(true);
+                    ui.close();
+                }
+                if ui.button("Paste  Ctrl+V").clicked() {
+                    self.paste();
+                    ui.close();
+                }
+                if ui.button("Rename  F2").clicked() {
+                    self.rename_selected();
+                    ui.close();
+                }
+                if ui.button("Move to Trash  Delete").clicked() {
+                    self.ask_trash();
+                    ui.close();
+                }
+            });
+            ui.menu_button(egui::RichText::new("View").color(Color32::WHITE), |ui| {
+                if ui.button("List").clicked() {
+                    self.config.view = "list".into();
+                    self.dirty_config = true;
+                    ui.close();
+                }
+                if ui.button("Icons").clicked() {
+                    self.config.view = "grid".into();
+                    self.dirty_config = true;
+                    ui.close();
+                }
+                if ui.button("Show hidden files").clicked() {
+                    self.config.show_hidden = !self.config.show_hidden;
+                    for index in 0..self.tabs.len() {
+                        if self.tabs[index].recursive_search {
+                            self.scan(index);
+                        } else {
+                            self.rebuild_visible(index);
+                        }
+                    }
+                    self.dirty_config = true;
+                    ui.close();
+                }
+            });
+        });
+        ui.separator();
+    }
+
+    fn command_bar(&mut self, ui: &mut egui::Ui, theme: &Theme) {
+        let has_selection = !self.current().selected.is_empty();
+        ui.horizontal_wrapped(|ui| match theme.shell_kind() {
+            ShellKind::Ribbon | ShellKind::Finder => {
+                let finder = theme.shell_kind() == ShellKind::Finder;
+                ui.label(
+                    egui::RichText::new(if finder { "FINDER" } else { "HOME" })
+                        .small()
+                        .strong()
+                        .color(theme.palette.text()),
+                );
+                ui.separator();
+                if ui.small_button("New folder").clicked() {
+                    self.dialog = Some(Dialog::Name {
+                        mode: NameMode::Folder(self.current().path.clone()),
+                        value: String::new(),
+                    });
+                }
+                if ui
+                    .add_enabled(has_selection, egui::Button::new("Copy"))
+                    .clicked()
+                {
+                    self.copy_selection(false);
+                }
+                if !finder
+                    && ui
+                        .add_enabled(has_selection, egui::Button::new("Cut"))
+                        .clicked()
+                {
+                    self.copy_selection(true);
+                }
+                if ui.small_button("Paste").clicked() {
+                    self.paste();
+                }
+                if ui
+                    .add_enabled(has_selection, egui::Button::new("Rename"))
+                    .clicked()
+                {
+                    self.rename_selected();
+                }
+                if finder {
+                    if ui
+                        .add_enabled(has_selection, egui::Button::new("Info"))
+                        .clicked()
+                        && let Some(path) = self.selected_paths().first().cloned()
+                    {
+                        self.open_properties(path);
+                    }
+                } else if ui
+                    .add_enabled(has_selection, egui::Button::new("Trash"))
+                    .clicked()
+                {
+                    self.ask_trash();
+                }
+            }
+            _ => {
+                ui.label(
+                    egui::RichText::new("ORGANIZE")
+                        .small()
+                        .strong()
+                        .color(theme.palette.text()),
+                );
+                ui.separator();
+                if ui.small_button("New folder").clicked() {
+                    self.dialog = Some(Dialog::Name {
+                        mode: NameMode::Folder(self.current().path.clone()),
+                        value: String::new(),
+                    });
+                }
+                if ui.small_button("Add to favorites").clicked() {
+                    self.toggle_bookmark();
+                }
+                if ui.small_button("Refresh").clicked() {
+                    self.scan(self.active);
+                }
+            }
+        });
     }
 
     fn tabs_bar(&mut self, ui: &mut egui::Ui) {
@@ -1080,9 +1553,13 @@ impl Explorer {
             return;
         }
         let theme = self.theme.clone();
-        egui::Panel::left("places")
+        let panel = match theme.sidebar_position() {
+            SidebarPosition::Left => egui::Panel::left("places"),
+            SidebarPosition::Right => egui::Panel::right("places"),
+        };
+        panel
             .resizable(true)
-            .default_size(theme.metrics.sidebar_width)
+            .default_size(theme.sidebar_width())
             .min_size(132.0)
             .frame(
                 egui::Frame::new()
@@ -1091,86 +1568,92 @@ impl Explorer {
             )
             .show(ui, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.label(
-                        egui::RichText::new("PLACES")
-                            .small()
-                            .strong()
-                            .color(theme.palette.muted()),
-                    );
-                    ui.add_space(8.0);
-                    let home = config::home();
-                    for (label, path) in [
-                        ("Home", home.clone()),
-                        ("Desktop", home.join("Desktop")),
-                        ("Documents", home.join("Documents")),
-                        ("Downloads", home.join("Downloads")),
-                        ("Music", home.join("Music")),
-                        ("Pictures", home.join("Pictures")),
-                        ("Videos", home.join("Videos")),
-                        ("Filesystem", PathBuf::from("/")),
-                    ] {
-                        if path.is_dir()
-                            && ui
-                                .add_sized(
-                                    [ui.available_width(), 29.0],
-                                    egui::Button::new(label).selected(self.current().path == path),
-                                )
-                                .clicked()
-                        {
-                            self.navigate(path);
+                    let sections = theme.sidebar_sections();
+                    for (index, section) in sections.into_iter().enumerate() {
+                        if index > 0 {
+                            ui.add_space(14.0);
+                            ui.separator();
                         }
-                    }
-                    ui.add_space(14.0);
-                    ui.separator();
-                    ui.label(
-                        egui::RichText::new("FAVORITES")
-                            .small()
-                            .strong()
-                            .color(theme.palette.muted()),
-                    );
-                    let bookmarks = self.config.bookmarks.clone();
-                    for path in bookmarks {
-                        let label = path.file_name().unwrap_or_default().to_string_lossy();
-                        if ui
-                            .add_sized(
-                                [ui.available_width(), 29.0],
-                                egui::Button::new(format!("Favorite: {label}"))
-                                    .selected(self.current().path == path),
-                            )
-                            .clicked()
-                        {
-                            self.navigate(path);
-                        }
-                    }
-                    if ui.small_button("+  Bookmark current folder").clicked() {
-                        self.toggle_bookmark();
-                    }
-                    ui.add_space(14.0);
-                    ui.separator();
-                    ui.label(
-                        egui::RichText::new("VOLUMES")
-                            .small()
-                            .strong()
-                            .color(theme.palette.muted()),
-                    );
-                    for path in self.volumes.clone() {
-                        let label = if path == Path::new("/") {
-                            "System disk".to_owned()
-                        } else {
-                            format!(
-                                "Volume: {}",
-                                path.file_name().unwrap_or_default().to_string_lossy()
-                            )
+                        let title = match section {
+                            SidebarSection::Places => "PLACES",
+                            SidebarSection::Favorites => "FAVORITES",
+                            SidebarSection::Volumes => "VOLUMES",
                         };
-                        if ui
-                            .add_sized(
-                                [ui.available_width(), 29.0],
-                                egui::Button::new(label).selected(self.current().path == path),
-                            )
-                            .on_hover_text(path.display().to_string())
-                            .clicked()
-                        {
-                            self.navigate(path);
+                        ui.label(
+                            egui::RichText::new(title)
+                                .small()
+                                .strong()
+                                .color(theme.palette.muted()),
+                        );
+                        match section {
+                            SidebarSection::Places => {
+                                ui.add_space(8.0);
+                                let home = config::home();
+                                for (label, path) in [
+                                    ("Home", home.clone()),
+                                    ("Desktop", home.join("Desktop")),
+                                    ("Documents", home.join("Documents")),
+                                    ("Downloads", home.join("Downloads")),
+                                    ("Music", home.join("Music")),
+                                    ("Pictures", home.join("Pictures")),
+                                    ("Videos", home.join("Videos")),
+                                    ("Filesystem", PathBuf::from("/")),
+                                ] {
+                                    if path.is_dir()
+                                        && ui
+                                            .add_sized(
+                                                [ui.available_width(), 29.0],
+                                                egui::Button::new(label)
+                                                    .selected(self.current().path == path),
+                                            )
+                                            .clicked()
+                                    {
+                                        self.navigate(path);
+                                    }
+                                }
+                            }
+                            SidebarSection::Favorites => {
+                                for path in self.config.bookmarks.clone() {
+                                    let label =
+                                        path.file_name().unwrap_or_default().to_string_lossy();
+                                    if ui
+                                        .add_sized(
+                                            [ui.available_width(), 29.0],
+                                            egui::Button::new(format!("Favorite: {label}"))
+                                                .selected(self.current().path == path),
+                                        )
+                                        .clicked()
+                                    {
+                                        self.navigate(path);
+                                    }
+                                }
+                                if ui.small_button("+  Bookmark current folder").clicked() {
+                                    self.toggle_bookmark();
+                                }
+                            }
+                            SidebarSection::Volumes => {
+                                for path in self.volumes.clone() {
+                                    let label = if path == Path::new("/") {
+                                        "System disk".to_owned()
+                                    } else {
+                                        format!(
+                                            "Volume: {}",
+                                            path.file_name().unwrap_or_default().to_string_lossy()
+                                        )
+                                    };
+                                    if ui
+                                        .add_sized(
+                                            [ui.available_width(), 29.0],
+                                            egui::Button::new(label)
+                                                .selected(self.current().path == path),
+                                        )
+                                        .on_hover_text(path.display().to_string())
+                                        .clicked()
+                                    {
+                                        self.navigate(path);
+                                    }
+                                }
+                            }
                         }
                     }
                 });
@@ -1303,14 +1786,14 @@ impl Explorer {
                     ui.menu_button("New", |ui| {
                         if ui.button("New folder  Ctrl+N").clicked() {
                             self.dialog = Some(Dialog::Name {
-                                mode: NameMode::Folder,
+                                mode: NameMode::Folder(self.current().path.clone()),
                                 value: String::new(),
                             });
                             ui.close();
                         }
                         if ui.button("Empty file").clicked() {
                             self.dialog = Some(Dialog::Name {
-                                mode: NameMode::File,
+                                mode: NameMode::File(self.current().path.clone()),
                                 value: String::new(),
                             });
                             ui.close();
@@ -1323,6 +1806,16 @@ impl Explorer {
                             .clicked()
                         {
                             self.copy_selection(false);
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(
+                                has_selection,
+                                egui::Button::new("Copy path  Ctrl+Shift+C"),
+                            )
+                            .clicked()
+                        {
+                            self.copy_selected_paths(ui.ctx());
                             ui.close();
                         }
                         if ui
@@ -1669,6 +2162,13 @@ impl Explorer {
                 self.copy_selection(false);
                 ui.close();
             }
+            if ui.button("Copy path").clicked() {
+                if !self.current().selected.contains(&entry.path) {
+                    self.select_entry(entry, index, Modifiers::default());
+                }
+                self.copy_selected_paths(ui.ctx());
+                ui.close();
+            }
             if ui.button("Cut").clicked() {
                 if !self.current().selected.contains(&entry.path) {
                     self.select_entry(entry, index, Modifiers::default());
@@ -1796,15 +2296,14 @@ impl Explorer {
             self.dialog = None;
             return;
         }
-        let current_path = self.current().path.clone();
         let mut action = None;
         let mut dismiss = false;
         if let Some(dialog) = self.dialog.as_mut() {
             match dialog {
                 Dialog::Name { mode, value } => {
                     let title = match mode {
-                        NameMode::Folder => "New folder",
-                        NameMode::File => "New empty file",
+                        NameMode::Folder(_) => "New folder",
+                        NameMode::File(_) => "New empty file",
                         NameMode::Rename(_) => "Rename item",
                     };
                     egui::Window::new(title)
@@ -1832,20 +2331,7 @@ impl Explorer {
                                         && ui.input(|i| i.key_pressed(Key::Enter)))
                                 {
                                     let name = value.clone();
-                                    action = Some(match mode {
-                                        NameMode::Folder => Action::NewFolder {
-                                            parent: current_path.clone(),
-                                            name,
-                                        },
-                                        NameMode::File => Action::NewFile {
-                                            parent: current_path.clone(),
-                                            name,
-                                        },
-                                        NameMode::Rename(source) => Action::Rename {
-                                            source: source.clone(),
-                                            name,
-                                        },
-                                    });
+                                    action = Some(mode.action(name));
                                     dismiss = true;
                                 }
                             });
@@ -1969,7 +2455,7 @@ impl eframe::App for Explorer {
         for index in 0..self.tabs.len() {
             if self.tabs[index]
                 .search_pending
-                .is_some_and(|when| when.elapsed() >= Duration::from_millis(350))
+                .is_some_and(|when| when.elapsed() >= SEARCH_DEBOUNCE)
             {
                 self.tabs[index].search_pending = None;
                 self.scan(index);
@@ -2018,22 +2504,31 @@ impl eframe::App for Explorer {
             self.keyboard(&context);
         }
         self.top_bar(ui);
-        self.status_bar(ui);
+        self.recovery_banner(ui);
+        self.transfer_strip(ui);
+        if self.theme.shell.status_bar.unwrap_or(true) {
+            self.status_bar(ui);
+        }
         self.sidebar(ui);
         self.preview_panel(ui);
         self.main_panel(ui);
         self.dialogs(&context);
+        self.recovery_dialog(&context);
+        self.transfer_dialog(&context);
         if self.dirty_config {
             if let Err(error) = self.config.save() {
                 self.status = Some((format!("Cannot save preferences: {error}"), true));
             }
             self.dirty_config = false;
         }
-        if self.busy || self.tabs.iter().any(|tab| tab.loading) {
-            context.request_repaint_after(Duration::from_millis(90));
+        let idle_delay = if self.busy || self.tabs.iter().any(|tab| tab.loading) {
+            Duration::from_millis(90)
         } else {
-            context.request_repaint_after(Duration::from_secs(3));
-        }
+            Duration::from_secs(3)
+        };
+        let delay = next_search_repaint_delay(&self.tabs, Instant::now())
+            .map_or(idle_delay, |search_delay| search_delay.min(idle_delay));
+        context.request_repaint_after(delay);
     }
 }
 
@@ -2092,6 +2587,54 @@ fn paint_file_icon(painter: &egui::Painter, rect: Rect, file: &Entry, theme: &Th
             short,
             FontId::proportional((rect.width() * 0.29).clamp(8.0, 13.0)),
             Color32::WHITE,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Action, NameMode, Tab, next_search_repaint_delay};
+    use std::path::PathBuf;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn name_dialog_actions_keep_the_original_paths() {
+        let parent = PathBuf::from("/initial/folder");
+        let source = parent.join("old.txt");
+
+        assert!(matches!(
+            NameMode::Folder(parent.clone()).action("new".into()),
+            Action::NewFolder { parent: target, name }
+                if target == parent && name == "new"
+        ));
+        assert!(matches!(
+            NameMode::File(parent.clone()).action("file.txt".into()),
+            Action::NewFile { parent: target, name }
+                if target == parent && name == "file.txt"
+        ));
+        assert!(matches!(
+            NameMode::Rename(source.clone()).action("renamed.txt".into()),
+            Action::Rename { source: target, name }
+                if target == source && name == "renamed.txt"
+        ));
+    }
+
+    #[test]
+    fn pending_search_in_an_inactive_tab_wakes_the_ui_on_time() {
+        let now = Instant::now();
+        let active = Tab::new(1, PathBuf::from("/active"));
+        let mut inactive = Tab::new(2, PathBuf::from("/inactive"));
+        inactive.search_pending = Some(now - Duration::from_millis(200));
+        assert_eq!(
+            next_search_repaint_delay(&[active, inactive], now),
+            Some(Duration::from_millis(150))
+        );
+
+        let mut overdue = Tab::new(3, PathBuf::from("/overdue"));
+        overdue.search_pending = Some(now - Duration::from_millis(400));
+        assert_eq!(
+            next_search_repaint_delay(&[overdue], now),
+            Some(Duration::ZERO)
         );
     }
 }

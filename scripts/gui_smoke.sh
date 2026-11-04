@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run under xvfb-run. Exercise three distinct RiceBowl layouts without touching the host desktop.
+# Run under xvfb-run. Smoke-test all bundled RiceBowl layouts without touching the host desktop.
 fixture_dir="$(mktemp -d)"
 app_pid=''
 cleanup() {
@@ -19,10 +19,21 @@ mkdir -p "$fixture_dir/Documents" "$fixture_dir/Pictures" screenshots
 printf 'RiceExplorer native GUI smoke test\n' > "$fixture_dir/Readme.txt"
 printf '# Markdown preview test\n' > "$fixture_dir/Documents/Example.md"
 cp assets/rice-explorer.png "$fixture_dir/Pictures/icon.png"
+cp themes/win7.toml "$fixture_dir/custom-theme.toml"
+printf '\n[shell.sidebar]\nposition = "right"\nwidth = 270\nsections = ["volumes", "favorites"]\n' >> "$fixture_dir/custom-theme.toml"
 
 export LIBGL_ALWAYS_SOFTWARE=1
-for theme in win7 xp-luna chromeos; do
-  ./target/release/rice-explorer --theme "$theme" "$fixture_dir" > "$fixture_dir/app.log" 2>&1 &
+# Never read or modify a developer's real config/state/cache, and never let
+# intentionally unfinished journals from cargo tests contaminate screenshots.
+export XDG_STATE_HOME="$fixture_dir/.state"
+export XDG_CONFIG_HOME="$fixture_dir/.config"
+export XDG_CACHE_HOME="$fixture_dir/.cache"
+for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sidebar; do
+  if [[ "$theme" == custom-sidebar ]]; then
+    ./target/release/rice-explorer --theme-file "$fixture_dir/custom-theme.toml" "$fixture_dir" > "$fixture_dir/app.log" 2>&1 &
+  else
+    ./target/release/rice-explorer --theme "$theme" "$fixture_dir" > "$fixture_dir/app.log" 2>&1 &
+  fi
   app_pid=$!
   sleep 5
   if ! kill -0 "$app_pid" 2>/dev/null; then
@@ -30,9 +41,20 @@ for theme in win7 xp-luna chromeos; do
     sed -n '1,100p' "$fixture_dir/app.log" >&2
     exit 1
   fi
-  import -window root "screenshots/$theme.png"
+  # Capture the application, not merely an empty Xvfb root window.
+  window_id="$(xdotool search --onlyvisible --name '^RiceExplorer$' | head -n 1 || true)"
+  if [[ -z "$window_id" ]]; then
+    echo "No visible RiceExplorer window for theme $theme" >&2
+    sed -n '1,100p' "$fixture_dir/app.log" >&2
+    exit 1
+  fi
+  # Avoid capturing an incidental hover tooltip over the file list.
+  xdotool mousemove --window "$window_id" 1050 650
+  sleep 1
+  import -window "$window_id" "screenshots/$theme.png"
+  identify -format '%wx%h\n' "screenshots/$theme.png"
   kill "$app_pid" 2>/dev/null || true
   wait "$app_pid" 2>/dev/null || true
   app_pid=''
 done
-echo 'Native GUI smoke checks passed for Windows 7, XP and ChromeOS profiles.'
+echo 'Native GUI smoke checks passed for seven bundled themes and one custom sidebar (window startup and screenshots only).'

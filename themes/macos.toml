@@ -1,6 +1,7 @@
 id = "macos"
 name = "macOS · Finder-inspired"
 layout = "modern"
+schema_version = 1
 [palette]
 background = "#edf0f3"
 chrome = "#e4e6eb"
@@ -19,3 +20,7 @@ row_height = 33
 tile_width = 125
 sidebar_width = 205
 icon_size = 27
+
+[shell]
+kind = "finder"
+top = ["tabs", "command-bar", "navigation"]

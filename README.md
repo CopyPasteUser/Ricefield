@@ -16,6 +16,8 @@ RiceExplorer is designed as the file-management companion to [RiceBowl](https://
 - Multiple selection (Ctrl/Shift/Ctrl+A), copy, cut, paste, duplicate, rename, new folder/file, symbolic links, desktop Trash and confirmed permanent deletion.
 - Native GTK file clipboard interoperability (when `xclip` or `wl-clipboard` is installed); otherwise use the internal file clipboard.
 - Cross-device moves with copy-first semantics and byte-for-byte verification, symlink-preserving copies, transfer progress and cancellation.
+- Bounded transfer queue for up to 32 waiting copy requests with FIFO job IDs, a shared Transfers panel, active progress/cancel, removal of jobs before they run and 64 recent session results. The queue pauses after a failed/cancelled operation until explicitly resumed. It is in memory only and never replayed after a restart; moves and destructive requests do not wait automatically.
+- Development preview: durable cross-device move journals and an always-visible, read-only warning for unfinished transfers, even when a rice hides its status bar. No automatic destructive recovery.
 - File properties and editable Unix permission bits; external changes to folder contents are detected.
 - On-demand preview pane for bounded image and text previews, decoded off the UI thread.
 - Background folder scanning and file operations; stale scan results cannot replace newer navigation results. Virtualized file listing for large directories.
@@ -38,6 +40,11 @@ For file copy/paste interoperability with other file managers, install `xclip` o
 Or run directly from source: `cargo run --release -- --theme win7 "$HOME"`.
 
 The installer places the executable at `~/.local/bin/rice-explorer`, a scalable icon under `~/.local/share/icons/hicolor/` and a `.desktop` launcher under `~/.local/share/applications/`. It does **not** change your default file manager or Xfce associations. It doesn't touch Thunar.
+
+To uninstall the application files, run `bash uninstall.sh` from the
+repository. This leaves personal settings and themes intact; it does not
+uninstall Thunar or change file associations. Re-running `bash install.sh`
+updates the application from the checked-out source.
 
 ## Select a rice
 
@@ -68,6 +75,32 @@ These profiles are *inspired by* their respective interface eras; they're not pi
 
 Copy a file from [`themes/`](themes/) and edit its colors and metrics. Launch it with `--theme-file`. All colors use 6-digit `#RRGGBB`; layout is `classic`, `aero` or `modern`. The external profile controls window surfaces, selection, folder/file icons, radius, list density, tile width and sidebar width. Invalid custom themes produce an error and fall back to the bundled Windows 7 profile.
 
+Theme schema 1 also supports a composable shell. Change the component order
+without recompiling. Put `schema_version = 1` with the top-level theme
+fields (before `[palette]`), then add the shell section at the end:
+
+```toml
+[shell]
+kind = "finder"
+top = ["tabs", "command-bar", "navigation"]
+status_bar = true
+
+[shell.sidebar]
+position = "left"
+width = 230
+sections = ["places", "favorites", "volumes"]
+```
+
+`kind` selects `classic`, `luna`, `aero`, `ribbon`, `aqua`,
+`chromeos`, `finder` or `modern`. The `top` list controls order and
+visibility of `menu-bar`, `tabs`, `navigation` and `command-bar`.
+The sidebar independently supports left/right placement, width (120–420)
+and section ordering/visibility; `status_bar = false` hides the bottom bar.
+The main content stays available regardless of the configured sections.
+Older TOML themes without these fields retain their previous layout.
+This is an evolving modular shell layer; a full visual editor, per-panel
+layout and custom Rust component registry are still on the roadmap.
+
 Per-user settings are stored in `~/.config/rice-explorer/config.toml` (or `$XDG_CONFIG_HOME/rice-explorer/config.toml`). You can customize bookmarks, current profile, hidden files, sidebar, view and sorting. Settings are written with a temporary file and rename.
 
 ### Shortcuts
@@ -79,6 +112,7 @@ Per-user settings are stored in `~/.config/rice-explorer/config.toml` (or `$XDG_
 | Ctrl+L / Ctrl+F | Path / folder search |
 | Ctrl+R / Ctrl+H | Refresh / hidden files |
 | Ctrl+C / Ctrl+X / Ctrl+V | Copy / cut / paste selected files |
+| Ctrl+Shift+C | Copy selected file paths as plain text |
 | Ctrl+N / F2 / Delete | New folder / rename / move to Trash |
 | Shift+Delete | Permanently delete (requires confirmation) |
 | Ctrl+A / Ctrl+D / Alt+Enter | Select all / duplicate / properties |
@@ -87,7 +121,36 @@ Per-user settings are stored in `~/.config/rice-explorer/config.toml` (or `$XDG_
 
 ## Safety and performance
 
-File copy creates new destination files without overwriting. Name collisions generate ` (copy)` suffixes; copying a directory into itself is rejected. Symbolic links are reproduced as links without following them; special device files are blocked. Across filesystems a move copies first, verifies every copied byte and only then removes the source (extra I/O is intentional). Cancelling a copy cleans its partial destination; a cancellation cannot undo earlier completed items. Normal deletion uses the desktop Trash; permanent deletion requires a separate confirmation. File names are never interpolated into shell commands.
+Current safeguards:
+
+- Copies use private, hidden staging directories and publish complete entries
+  with atomic no-overwrite rename. Existing targets get ` (copy)` suffixes;
+  copying a folder into itself is rejected.
+- Symlinks are copied as links, never traversed as directories; device files
+  are rejected. A regular file swapped for a symlink while opening is refused.
+- A source that changes identity, size, modification time or mode during copy
+  fails validation before publication. Regular-file and directory access and
+  modification timestamps are preserved where supported.
+- Cross-filesystem moves verify each copied byte before publishing, then
+  reverify published contents before deleting matching source entries.
+  Extra verification I/O is intentional.
+- Cancellation stops future work and cleans partial staging when possible,
+  but does **not** undo already committed items. Deletion uses the desktop
+  Trash unless permanent deletion is separately confirmed.
+
+**Important limitations:** Concurrent writers can still cause a partial move;
+the complete published destination is retained for manual recovery if source
+cleanup fails. ACLs, extended attributes, ownership, hardlink relationships,
+some symlink timestamps and full race-free cleanup are not preserved or
+guaranteed. **Do not use development builds for irreplaceable data.**
+
+After a crash, a hidden `.rice-explorer-staging-*` directory may remain. Move
+records live in `$XDG_STATE_HOME/rice-explorer/operations/` (default
+`~/.local/state/rice-explorer/operations/`). RiceExplorer warns about unfinished
+records and displays both source and destination paths. It will **never**
+automatically delete, resume or overwrite based on these records. Inspect both
+sides manually. The journal is not a full power-loss recovery engine. Filenames
+are never interpolated into shell commands.
 
 Scanning, searching, copying and Trash operations run on worker threads. Views render only visible rows. Recursive search is bounded to protect small machines; it is not a full-text or indexed search. Image thumbnail previews are implemented; drag-out, advanced mount management, undo and full interactive desktop integration tests remain outstanding. Until these are verified on your Mint laptop, keep Thunar available as a fallback.
 
@@ -100,6 +163,6 @@ cargo test --all-targets
 cargo run --release -- --theme win7
 ```
 
-The included GitHub Actions workflow is configured to perform these checks and produce a Linux x86-64 executable artifact once the repository is published. See [DESIGN.md](DESIGN.md), [UX-CONTRACT.md](UX-CONTRACT.md) and [ROADMAP.md](ROADMAP.md).
+The included GitHub Actions workflow is configured to perform these checks and produce a Linux x86-64 executable artifact. Its GUI startup smoke is not a substitute for mouse, keyboard, storage, or data-integrity testing on Linux Mint. See [DESIGN.md](DESIGN.md), [UX-CONTRACT.md](UX-CONTRACT.md), [ROADMAP.md](ROADMAP.md) and [CHANGELOG.md](CHANGELOG.md).
 
 License: MIT. Not affiliated with Microsoft, Apple or Google.

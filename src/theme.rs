@@ -17,8 +17,16 @@ pub struct Theme {
     pub id: String,
     pub name: String,
     pub layout: Layout,
+    #[serde(default = "theme_schema_version")]
+    pub schema_version: u32,
+    #[serde(default)]
+    pub shell: ShellConfig,
     pub palette: Palette,
     pub metrics: Metrics,
+}
+
+fn theme_schema_version() -> u32 {
+    1
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -27,6 +35,59 @@ pub enum Layout {
     Classic,
     Aero,
     Modern,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ShellKind {
+    Classic,
+    Luna,
+    Aero,
+    Ribbon,
+    Aqua,
+    Chromeos,
+    Finder,
+    Modern,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ChromeComponent {
+    MenuBar,
+    Tabs,
+    Navigation,
+    CommandBar,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SidebarPosition {
+    Left,
+    Right,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SidebarSection {
+    Places,
+    Favorites,
+    Volumes,
+}
+
+#[derive(Clone, Default, Deserialize)]
+pub struct SidebarConfig {
+    pub position: Option<SidebarPosition>,
+    pub width: Option<f32>,
+    pub sections: Option<Vec<SidebarSection>>,
+}
+
+#[derive(Clone, Default, Deserialize)]
+pub struct ShellConfig {
+    pub kind: Option<ShellKind>,
+    pub top: Option<Vec<ChromeComponent>>,
+    #[serde(default)]
+    pub sidebar: SidebarConfig,
+    pub status_bar: Option<bool>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -107,6 +168,61 @@ pub fn parse_color(color: &str) -> Option<Color32> {
 }
 
 impl Theme {
+    pub fn shell_kind(&self) -> ShellKind {
+        self.shell.kind.unwrap_or(match self.layout {
+            Layout::Classic => ShellKind::Classic,
+            Layout::Aero => ShellKind::Aero,
+            Layout::Modern => ShellKind::Modern,
+        })
+    }
+
+    pub fn top_components(&self) -> Vec<ChromeComponent> {
+        self.shell
+            .top
+            .clone()
+            .unwrap_or_else(|| match self.shell_kind() {
+                ShellKind::Classic | ShellKind::Luna => vec![
+                    ChromeComponent::MenuBar,
+                    ChromeComponent::Tabs,
+                    ChromeComponent::Navigation,
+                ],
+                ShellKind::Aero | ShellKind::Aqua => vec![
+                    ChromeComponent::Tabs,
+                    ChromeComponent::Navigation,
+                    ChromeComponent::CommandBar,
+                ],
+                ShellKind::Ribbon | ShellKind::Finder => vec![
+                    ChromeComponent::Tabs,
+                    ChromeComponent::CommandBar,
+                    ChromeComponent::Navigation,
+                ],
+                ShellKind::Chromeos | ShellKind::Modern => {
+                    vec![ChromeComponent::Tabs, ChromeComponent::Navigation]
+                }
+            })
+    }
+
+    pub fn sidebar_sections(&self) -> Vec<SidebarSection> {
+        self.shell.sidebar.sections.clone().unwrap_or_else(|| {
+            vec![
+                SidebarSection::Places,
+                SidebarSection::Favorites,
+                SidebarSection::Volumes,
+            ]
+        })
+    }
+
+    pub fn sidebar_position(&self) -> SidebarPosition {
+        self.shell.sidebar.position.unwrap_or(SidebarPosition::Left)
+    }
+
+    pub fn sidebar_width(&self) -> f32 {
+        self.shell
+            .sidebar
+            .width
+            .unwrap_or(self.metrics.sidebar_width)
+    }
+
     pub fn builtin(id: &str) -> Option<Self> {
         let source = match id {
             "win7" => include_str!("../themes/win7.toml"),
@@ -129,6 +245,44 @@ impl Theme {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        if self.schema_version != 1 {
+            return Err(format!(
+                "Unsupported theme schema version: {}",
+                self.schema_version
+            ));
+        }
+        if let Some(top) = &self.shell.top {
+            if top.is_empty() {
+                return Err("Shell top components must not be empty".into());
+            }
+            if top
+                .iter()
+                .enumerate()
+                .any(|(index, item)| top[..index].contains(item))
+            {
+                return Err("Duplicate shell top components".into());
+            }
+        }
+        if let Some(sections) = &self.shell.sidebar.sections {
+            if sections.is_empty() {
+                return Err("Sidebar must contain at least one section".into());
+            }
+            if sections
+                .iter()
+                .enumerate()
+                .any(|(index, item)| sections[..index].contains(item))
+            {
+                return Err("Duplicate sidebar sections".into());
+            }
+        }
+        if self
+            .shell
+            .sidebar
+            .width
+            .is_some_and(|width| !(120.0..=420.0).contains(&width))
+        {
+            return Err("Sidebar width outside supported range".into());
+        }
         if self.id.trim().is_empty() || self.name.trim().is_empty() {
             return Err("Theme id and name must not be empty".into());
         }
@@ -200,6 +354,9 @@ mod tests {
         for id in BUILTIN_IDS {
             let theme = Theme::builtin(id).unwrap();
             assert_eq!(theme.id, *id);
+            assert_eq!(theme.schema_version, 1);
+            assert!(theme.shell.kind.is_some());
+            assert!(!theme.top_components().is_empty());
             theme.validate().unwrap();
         }
     }
@@ -211,5 +368,106 @@ mod tests {
         let mut theme = Theme::builtin("win7").unwrap();
         theme.metrics.row_height = 0.0;
         assert!(theme.validate().is_err());
+    }
+
+    #[test]
+    fn old_theme_files_keep_their_legacy_layouts() {
+        for (id, kind, top) in [
+            (
+                "win98",
+                ShellKind::Classic,
+                vec![
+                    ChromeComponent::MenuBar,
+                    ChromeComponent::Tabs,
+                    ChromeComponent::Navigation,
+                ],
+            ),
+            (
+                "win7",
+                ShellKind::Aero,
+                vec![
+                    ChromeComponent::Tabs,
+                    ChromeComponent::Navigation,
+                    ChromeComponent::CommandBar,
+                ],
+            ),
+            (
+                "macos",
+                ShellKind::Modern,
+                vec![ChromeComponent::Tabs, ChromeComponent::Navigation],
+            ),
+        ] {
+            let mut theme = Theme::builtin(id).unwrap();
+            theme.shell = ShellConfig::default();
+            assert_eq!(theme.shell_kind(), kind);
+            assert_eq!(theme.top_components(), top);
+        }
+
+        let mut value: toml::Value = toml::from_str(include_str!("../themes/win7.toml")).unwrap();
+        let table = value.as_table_mut().unwrap();
+        table.remove("schema_version");
+        table.remove("shell");
+        let old_file: Theme = toml::from_str(&toml::to_string(&value).unwrap()).unwrap();
+        assert_eq!(old_file.schema_version, 1);
+        assert_eq!(old_file.shell_kind(), ShellKind::Aero);
+        old_file.validate().unwrap();
+    }
+
+    #[test]
+    fn invalid_shell_settings_are_rejected() {
+        let mut theme = Theme::builtin("win7").unwrap();
+        theme.schema_version = 2;
+        assert!(theme.validate().is_err());
+
+        theme.schema_version = 1;
+        theme.shell.top = Some(vec![]);
+        assert!(theme.validate().is_err());
+
+        theme.shell.top = Some(vec![ChromeComponent::Tabs, ChromeComponent::Tabs]);
+        assert!(theme.validate().is_err());
+
+        let bad_component =
+            include_str!("../themes/win7.toml").replace("\"command-bar\"", "\"unknown-component\"");
+        assert!(toml::from_str::<Theme>(&bad_component).is_err());
+    }
+
+    #[test]
+    fn explicit_shell_kind_works_without_a_top_list() {
+        let mut theme = Theme::builtin("win98").unwrap();
+        theme.shell.kind = Some(ShellKind::Finder);
+        theme.shell.top = None;
+        assert_eq!(
+            theme.top_components(),
+            vec![
+                ChromeComponent::Tabs,
+                ChromeComponent::CommandBar,
+                ChromeComponent::Navigation,
+            ]
+        );
+    }
+
+    #[test]
+    fn custom_sidebar_and_status_bar_are_validated() {
+        let source = include_str!("../themes/win7.toml");
+        let with_sidebar = format!(
+            "{source}\n[shell.sidebar]\nposition = 'right'\nwidth = 280\nsections = ['volumes', 'places']\n"
+        );
+        let theme: Theme = toml::from_str(&with_sidebar).unwrap();
+        assert_eq!(theme.sidebar_position(), SidebarPosition::Right);
+        assert_eq!(theme.sidebar_width(), 280.0);
+        assert_eq!(
+            theme.sidebar_sections(),
+            vec![SidebarSection::Volumes, SidebarSection::Places]
+        );
+        theme.validate().unwrap();
+
+        let mut invalid = theme.clone();
+        invalid.shell.sidebar.width = Some(999.0);
+        assert!(invalid.validate().is_err());
+        invalid.shell.sidebar.width = Some(200.0);
+        invalid.shell.sidebar.sections = Some(vec![SidebarSection::Places, SidebarSection::Places]);
+        assert!(invalid.validate().is_err());
+        invalid.shell.sidebar.sections = Some(Vec::new());
+        assert!(invalid.validate().is_err());
     }
 }
