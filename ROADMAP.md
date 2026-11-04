@@ -131,8 +131,8 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
 - [x] Inspect source, destination and staging path presence asynchronously
   during recovery scans, without following symlinks or writing to any path.
   Distinguish missing, present and inaccessible entries; show conservative
-  per-record guidance. Presence alone cannot justify source cleanup or
-  dismissing a journal.
+  per-record guidance. Coalesce concurrent rescan requests. Presence alone
+  cannot justify source cleanup or dismissing a journal.
 - [x] Isolate test journals and GUI smoke XDG state from the developer's real
   state, including tests that intentionally leave unfinished transfers.
 - [ ] Complete restart recovery with verified resume/rollback choices, bounded

@@ -66,7 +66,9 @@ renderers remain part of the roadmap.
   destination and staging paths currently exist (including broken symlinks)
   and gives cautious guidance. These are metadata observations, **not**
   content verification or permission to delete anything. No automatic
-  destructive recovery.
+  destructive recovery. Repeated rescans are coalesced while a filesystem
+  inspection is active, so slow or disconnected mounts cannot spawn a growing
+  group of duplicate scanners.
 - File properties and editable Unix permission bits; external changes to folder contents are detected.
 - On-demand preview pane for bounded image and text previews, decoded off the UI thread.
 - Background folder scanning and file operations; superseded local scans and recursive searches are cooperatively cancelled and cannot overwrite current results. Virtualized file listing for large directories.

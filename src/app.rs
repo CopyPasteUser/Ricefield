@@ -351,6 +351,7 @@ pub struct Explorer {
     recovery_records: Vec<JournalInspection>,
     recovery_error: Option<String>,
     recovery_loading: bool,
+    recovery_rescan_requested: bool,
     recovery_open: bool,
     clipboard: Option<Clipboard>,
     consumed_cut_paths: Option<Vec<PathBuf>>,
@@ -438,6 +439,7 @@ impl Explorer {
             recovery_records: Vec::new(),
             recovery_error: None,
             recovery_loading: false,
+            recovery_rescan_requested: false,
             recovery_open: false,
             clipboard: None,
             consumed_cut_paths: None,
@@ -476,6 +478,12 @@ impl Explorer {
 
     /// Journal inspection is read-only and never blocks the UI thread.
     fn check_unfinished_moves(&mut self) {
+        if self.recovery_loading {
+            // A disconnected mount can stall metadata probes. Never spawn an
+            // unbounded number of overlapping recovery scan threads.
+            self.recovery_rescan_requested = true;
+            return;
+        }
         self.recovery_generation = self.recovery_generation.wrapping_add(1);
         let generation = self.recovery_generation;
         self.recovery_loading = true;
@@ -669,6 +677,9 @@ impl Explorer {
                         // Keep the last known records visible if a later scan fails.
                         self.recovery_error = Some(error.to_string());
                     }
+                }
+                if std::mem::take(&mut self.recovery_rescan_requested) {
+                    self.check_unfinished_moves();
                 }
             }
         }

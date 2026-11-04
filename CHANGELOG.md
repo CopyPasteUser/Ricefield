@@ -5,7 +5,9 @@
 - Extend read-only crash-recovery inspection to observe source, published
   destination and staging path status asynchronously. Distinguish missing,
   present, symlink and inaccessible entries, and present conservative guidance
-  without attempting retries or deletion.
+  without attempting retries or deletion. Coalesce repeated scans while an
+  earlier scan is still running, avoiding unbounded worker threads on slow
+  or disconnected storage.
 - Sync the staging directory before marking its contents verified and sync
   the destination parent after atomic no-overwrite publication. A failed
   post-publication directory sync leaves the original source intact for a
