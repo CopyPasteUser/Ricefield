@@ -69,12 +69,14 @@ pub enum SidebarPosition {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SidebarSection {
+    Tasks,
     Places,
     Favorites,
     Volumes,
 }
 
 #[derive(Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SidebarConfig {
     pub position: Option<SidebarPosition>,
     pub width: Option<f32>,
@@ -82,11 +84,22 @@ pub struct SidebarConfig {
 }
 
 #[derive(Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreviewConfig {
+    pub position: Option<SidebarPosition>,
+    pub width: Option<f32>,
+}
+
+#[derive(Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ShellConfig {
     pub kind: Option<ShellKind>,
     pub top: Option<Vec<ChromeComponent>>,
+    pub bottom: Option<Vec<ChromeComponent>>,
     #[serde(default)]
     pub sidebar: SidebarConfig,
+    #[serde(default)]
+    pub preview: PreviewConfig,
     pub status_bar: Option<bool>,
 }
 
@@ -177,7 +190,8 @@ impl Theme {
     }
 
     pub fn top_components(&self) -> Vec<ChromeComponent> {
-        self.shell
+        let mut top = self
+            .shell
             .top
             .clone()
             .unwrap_or_else(|| match self.shell_kind() {
@@ -199,7 +213,17 @@ impl Theme {
                 ShellKind::Chromeos | ShellKind::Modern => {
                     vec![ChromeComponent::Tabs, ChromeComponent::Navigation]
                 }
-            })
+            });
+        // Moving a default component to the lower region does not require
+        // copying the entire default top list into a custom theme.
+        if self.shell.top.is_none() && let Some(bottom) = &self.shell.bottom {
+            top.retain(|component| !bottom.contains(component));
+        }
+        top
+    }
+
+    pub fn bottom_components(&self) -> Vec<ChromeComponent> {
+        self.shell.bottom.clone().unwrap_or_default()
     }
 
     pub fn sidebar_sections(&self) -> Vec<SidebarSection> {
@@ -221,6 +245,14 @@ impl Theme {
             .sidebar
             .width
             .unwrap_or(self.metrics.sidebar_width)
+    }
+
+    pub fn preview_position(&self) -> SidebarPosition {
+        self.shell.preview.position.unwrap_or(SidebarPosition::Right)
+    }
+
+    pub fn preview_width(&self) -> f32 {
+        self.shell.preview.width.unwrap_or(300.0)
     }
 
     pub fn builtin(id: &str) -> Option<Self> {
@@ -251,17 +283,20 @@ impl Theme {
                 self.schema_version
             ));
         }
-        if let Some(top) = &self.shell.top {
-            if top.is_empty() {
-                return Err("Shell top components must not be empty".into());
+        let top = self.top_components();
+        let bottom = self.bottom_components();
+        if top.is_empty() && bottom.is_empty() {
+            return Err("Shell must include at least one chrome component".into());
+        }
+        let mut seen = Vec::new();
+        for component in top.iter().chain(bottom.iter()) {
+            if seen.contains(component) {
+                return Err("A shell component cannot appear in two regions".into());
             }
-            if top
-                .iter()
-                .enumerate()
-                .any(|(index, item)| top[..index].contains(item))
-            {
-                return Err("Duplicate shell top components".into());
-            }
+            seen.push(*component);
+        }
+        if !seen.contains(&ChromeComponent::Navigation) {
+            return Err("Shell must expose the navigation component".into());
         }
         if let Some(sections) = &self.shell.sidebar.sections {
             if sections.is_empty() {
@@ -282,6 +317,14 @@ impl Theme {
             .is_some_and(|width| !(120.0..=420.0).contains(&width))
         {
             return Err("Sidebar width outside supported range".into());
+        }
+        if self
+            .shell
+            .preview
+            .width
+            .is_some_and(|width| !(210.0..=520.0).contains(&width))
+        {
+            return Err("Preview width outside supported range".into());
         }
         if self.id.trim().is_empty() || self.name.trim().is_empty() {
             return Err("Theme id and name must not be empty".into());
@@ -469,5 +512,79 @@ mod tests {
         assert!(invalid.validate().is_err());
         invalid.shell.sidebar.sections = Some(Vec::new());
         assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn shell_regions_support_real_layout_recomposition() {
+        let mut theme = Theme::builtin("win7").unwrap();
+        theme.shell.top = None;
+        theme.shell.bottom = Some(vec![ChromeComponent::Tabs, ChromeComponent::CommandBar]);
+        assert_eq!(theme.top_components(), vec![ChromeComponent::Navigation]);
+        assert_eq!(
+            theme.bottom_components(),
+            vec![ChromeComponent::Tabs, ChromeComponent::CommandBar]
+        );
+        theme.validate().unwrap();
+
+        // A bottom-only shell can place navigation below its file listing.
+        theme.shell.top = Some(Vec::new());
+        theme.shell.bottom = Some(vec![ChromeComponent::Navigation]);
+        theme.validate().unwrap();
+    }
+
+    #[test]
+    fn shell_regions_reject_duplicate_or_missing_navigation() {
+        let mut theme = Theme::builtin("win10").unwrap();
+        theme.shell.bottom = Some(vec![ChromeComponent::Navigation]);
+        assert!(theme.validate().is_err());
+
+        theme.shell.top = Some(vec![ChromeComponent::Tabs]);
+        theme.shell.bottom = Some(vec![ChromeComponent::CommandBar]);
+        assert!(theme.validate().is_err());
+
+        theme.shell.bottom = Some(vec![ChromeComponent::Navigation]);
+        theme.validate().unwrap();
+    }
+
+    #[test]
+    fn invalid_or_unknown_shell_regions_fail_instead_of_being_ignored() {
+        let source = include_str!("../themes/win7.toml");
+        let unsupported = source.replace(
+            "top = [\"tabs\", \"navigation\", \"command-bar\"]",
+            "left-dock = ['navigation']",
+        );
+        assert!(toml::from_str::<Theme>(&unsupported).is_err());
+        let impossible_preview =
+            format!("{source}\n[shell.preview]\nwidth = 330\nposition = 'center'\n");
+        assert!(toml::from_str::<Theme>(&impossible_preview).is_err());
+    }
+
+    #[test]
+    fn preview_and_task_shelf_are_composable() {
+        let mut theme = Theme::builtin("xp-luna").unwrap();
+        theme.shell.preview.position = Some(SidebarPosition::Left);
+        theme.shell.preview.width = Some(320.0);
+        assert_eq!(theme.preview_position(), SidebarPosition::Left);
+        assert_eq!(theme.preview_width(), 320.0);
+        assert!(theme.sidebar_sections().contains(&SidebarSection::Tasks));
+        theme.validate().unwrap();
+
+        theme.shell.preview.width = Some(190.0);
+        assert!(theme.validate().is_err());
+    }
+
+    #[test]
+    fn bundled_rices_have_distinct_component_regions() {
+        let xp = Theme::builtin("xp-luna").unwrap();
+        let win10 = Theme::builtin("win10").unwrap();
+        let frutiger = Theme::builtin("frutiger-aero").unwrap();
+        assert!(xp.sidebar_sections().contains(&SidebarSection::Tasks));
+        assert!(!win10.sidebar_sections().contains(&SidebarSection::Tasks));
+        assert!(win10.top_components().contains(&ChromeComponent::CommandBar));
+        assert!(!frutiger.top_components().contains(&ChromeComponent::CommandBar));
+        assert_eq!(
+            frutiger.bottom_components(),
+            vec![ChromeComponent::CommandBar]
+        );
     }
 }

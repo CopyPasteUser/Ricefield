@@ -10,6 +10,10 @@
 - Expand the roadmap with P0/P1/P2 priorities and measurable release gates.
 - Introduce versioned shell profiles and configurable top-level UI component
   order for all seven built-in rices, reusing the same file operations.
+- Let rice profiles compose chrome modules into top and bottom regions, move
+  previews to either side and order a real file-tasks module in the sidebar.
+  Give XP Luna a task-oriented sidebar and Frutiger Aero a bottom command
+  strip; reject duplicated/missing navigation and invalid preview widths.
 - Improve search debounce repaint timing and Linux mountinfo path decoding.
 - Cancel obsolete local folder scans and recursive searches as soon as a tab
   navigates, closes or changes its query. Workers check cancellation between
@@ -59,9 +63,10 @@
   upscaling them to the preview pane's maximum bounds.
 - Use the committed Cargo lockfile for the local installer just as in CI.
 
-**Validation:** Earlier feature-branch CI passed formatting, Clippy, unit tests,
-release build, CLI and seven-theme Xvfb smoke. This newer metadata/race-safety
-increment needs CI verification. Real Linux Mint acceptance is still pending.
+**Validation:** The GitHub workflow runs formatting, Clippy, unit tests,
+release build, CLI and seven-theme Xvfb smoke for each pushed commit. Consult
+the specific commit's workflow outcome before treating an increment as tested.
+Real Linux Mint acceptance is still pending.
 These changes are not a v1.0 release.
 
 ## 0.2.0

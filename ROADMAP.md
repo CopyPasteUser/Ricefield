@@ -122,6 +122,9 @@ devices produce clear errors without frozen UI or silent data loss.
 
 ### 0.6 — Everyday navigation and quick actions
 
+- [x] Extend declarative shell composition to top/bottom chrome, XP-style
+  task modules in the sidebar and left/right preview placement; keep old
+  TOML theme files compatible and enforce safe structural validation.
 - [ ] Split view, tab duplicate/reorder/restore and multiple windows.
 - [ ] Extract shared navigation, file list, toolbar, sidebar and dialog
   primitives so new shell renderers consume a common command dispatcher.

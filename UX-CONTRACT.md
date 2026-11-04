@@ -52,12 +52,16 @@ particularly after an interrupted cross-volume move.
   The dialog keeps 64 recent session outcomes (completed, cancelled, failed)
   without claiming that earlier successful items in a failed batch rolled back.
 - **Theme:** `Theme::apply` and runtime TOML files; no theme-specific copy/move behavior.
-- **Shell composition:** `Theme::shell_kind` and `Theme::top_components` select
-  existing controls and their order. A shell may change the interface, never
-  the semantics or safety checks of copy/move/Trash.
+- **Shell composition:** `Theme::shell_kind`, `top_components` and
+  `bottom_components` place maintained controls in distinct regions. A chrome
+  component may appear only once; path navigation must remain accessible.
+  Shell changes never replace state or the semantics/safety of mutations.
 - **Sidebar composition:** `Theme::sidebar_sections`, `sidebar_position` and
-  `sidebar_width` provide per-rice layout without altering bookmarks, mount
-  discovery or navigation semantics.
+  `sidebar_width` provide per-rice layout. The optional `tasks` section uses
+  the same New Folder/Copy/Cut/Paste/Rename/Trash/Properties handlers as the
+  top menus. Task availability follows the current selection.
+- **Preview placement:** `Theme::preview_position` and `preview_width` govern
+  only on-demand preview geometry, not which files are read or decoded.
 - **Settings:** XDG config TOML, transactional replacement, recoverable defaults for invalid content.
 
 Accessibility target is WCAG 2.2 AA. Explicit known gap in v0.1: egui's native screen-reader semantics and modal focus trapping need end-to-end accessibility testing before accessibility compliance can be claimed. Future releases must address it rather than stating compliance prematurely.

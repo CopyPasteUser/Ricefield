@@ -23,4 +23,5 @@ icon_size = 26
 
 [shell]
 kind = "aqua"
-top = ["tabs", "navigation", "command-bar"]
+top = ["tabs", "navigation"]
+bottom = ["command-bar"]

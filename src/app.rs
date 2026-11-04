@@ -1263,10 +1263,22 @@ impl Explorer {
         });
     }
 
-    fn top_bar(&mut self, ui: &mut egui::Ui) {
+    fn chrome_region(&mut self, ui: &mut egui::Ui, top: bool) {
         let theme = self.theme.clone();
-        let components = theme.top_components();
-        egui::Panel::top("chrome")
+        let components = if top {
+            theme.top_components()
+        } else {
+            theme.bottom_components()
+        };
+        if components.is_empty() {
+            return;
+        }
+        let panel = if top {
+            egui::Panel::top("chrome")
+        } else {
+            egui::Panel::bottom("secondary_chrome")
+        };
+        panel
             .frame(
                 egui::Frame::new()
                     .fill(theme.palette.chrome())
@@ -1584,14 +1596,15 @@ impl Explorer {
             return;
         }
         let theme = self.theme.clone();
+        let sidebar_id = egui::Id::new(("places", theme.id.as_str()));
         let panel = match theme.sidebar_position() {
-            SidebarPosition::Left => egui::Panel::left("places"),
-            SidebarPosition::Right => egui::Panel::right("places"),
+            SidebarPosition::Left => egui::Panel::left(sidebar_id),
+            SidebarPosition::Right => egui::Panel::right(sidebar_id),
         };
         panel
             .resizable(true)
             .default_size(theme.sidebar_width())
-            .min_size(132.0)
+            .min_size(120.0)
             .frame(
                 egui::Frame::new()
                     .fill(theme.palette.sidebar())
@@ -1606,6 +1619,7 @@ impl Explorer {
                             ui.separator();
                         }
                         let title = match section {
+                            SidebarSection::Tasks => "FILE TASKS",
                             SidebarSection::Places => "PLACES",
                             SidebarSection::Favorites => "FAVORITES",
                             SidebarSection::Volumes => "VOLUMES",
@@ -1617,6 +1631,7 @@ impl Explorer {
                                 .color(theme.palette.muted()),
                         );
                         match section {
+                            SidebarSection::Tasks => self.sidebar_tasks(ui),
                             SidebarSection::Places => {
                                 ui.add_space(8.0);
                                 let home = config::home();
@@ -1691,13 +1706,64 @@ impl Explorer {
             });
     }
 
+    fn sidebar_tasks(&mut self, ui: &mut egui::Ui) {
+        let selection = self.current().selected.len();
+        ui.add_space(8.0);
+        if ui.button("New folder").clicked() {
+            self.dialog = Some(Dialog::Name {
+                mode: NameMode::Folder(self.current().path.clone()),
+                value: String::new(),
+            });
+        }
+        if ui
+            .add_enabled(selection > 0, egui::Button::new("Copy selected"))
+            .clicked()
+        {
+            self.copy_selection(false);
+        }
+        if ui
+            .add_enabled(selection > 0, egui::Button::new("Cut selected"))
+            .clicked()
+        {
+            self.copy_selection(true);
+        }
+        if ui.button("Paste here").clicked() {
+            self.paste();
+        }
+        if ui
+            .add_enabled(selection == 1, egui::Button::new("Rename"))
+            .clicked()
+        {
+            self.rename_selected();
+        }
+        if ui
+            .add_enabled(selection > 0, egui::Button::new("Move to Trash"))
+            .clicked()
+        {
+            self.ask_trash();
+        }
+        if ui
+            .add_enabled(selection == 1, egui::Button::new("Properties"))
+            .clicked()
+            && let Some(path) = self.selected_paths().first().cloned()
+        {
+            self.open_properties(path);
+        }
+    }
+
     fn preview_panel(&mut self, ui: &mut egui::Ui) {
         let Some(path) = self.preview_path.clone() else {
             return;
         };
-        egui::Panel::right("preview")
+        let theme = self.theme.clone();
+        let preview_id = egui::Id::new(("preview", theme.id.as_str()));
+        let panel = match theme.preview_position() {
+            SidebarPosition::Left => egui::Panel::left(preview_id),
+            SidebarPosition::Right => egui::Panel::right(preview_id),
+        };
+        panel
             .resizable(true)
-            .default_size(300.0)
+            .default_size(theme.preview_width())
             .min_size(210.0)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -2534,12 +2600,13 @@ impl eframe::App for Explorer {
         if self.dialog.is_none() {
             self.keyboard(&context);
         }
-        self.top_bar(ui);
+        self.chrome_region(ui, true);
         self.recovery_banner(ui);
         self.transfer_strip(ui);
         if self.theme.shell.status_bar.unwrap_or(true) {
             self.status_bar(ui);
         }
+        self.chrome_region(ui, false);
         self.sidebar(ui);
         self.preview_panel(ui);
         self.main_panel(ui);

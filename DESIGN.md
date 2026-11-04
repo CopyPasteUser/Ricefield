@@ -57,15 +57,22 @@ The renderer uses egui's bundled system-like proportional font, with a technical
 - Classic: menu bar and familiar tool row, squared or gently beveled UI, narrower dense rows.
 - Aero: layered navigation and separate command bar, deliberate cool surface contrast.
 - Modern: tab-first condensed navigation, roomy rows and rounded surfaces.
-- The optional `[shell]` TOML table selects a shell identity and orders the
-  upper `menu-bar`, `tabs`, `navigation` and `command-bar` components.
+- The optional `[shell]` TOML table selects a shell identity and independently
+  composes `top` and `bottom` regions from `menu-bar`, `tabs`, `navigation`
+  and `command-bar` components. No component may render in both regions.
   Legacy themes without it use the established layout-family defaults.
 - `[shell.sidebar]` selects left/right placement, width and ordered visible
-  `places`, `favorites` and `volumes` sections. `[shell].status_bar` is optional.
+  `tasks`, `places`, `favorites` and `volumes` sections. The XP Luna task shelf
+  provides real file actions vertically; it is not a cosmetic duplicate.
+- `[shell.preview]` selects the side and width of the on-demand preview pane.
+  `[shell].status_bar` is optional; transfer/recovery warnings are not.
+- Frutiger Aero intentionally places its command strip below the file area,
+  while Windows 10 keeps its command strip in the upper ribbon position.
 - Renderers select shared UI actions; filesystem mutations, open tabs,
   selection and running jobs never belong to a theme-specific implementation.
-- Detail panes, dialogs, a complete shell-component registry and user-authored
-  Rust components still need modular adapters.
+- Arbitrary multi-column docking, a visual composer and user-authored Rust
+  components still need modular adapters. Regions currently accept only the
+  four maintained chrome components; the file grid always remains central.
 - Main directory area uses virtualized rows; width determines icon-grid column count.
 - Sidebar can be collapsed and resized independently; it does not obscure the file list.
 - Layout responds to small windows by shrinking search/path fields before losing controls.

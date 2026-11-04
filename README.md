@@ -4,13 +4,21 @@
 
 RiceExplorer is designed as the file-management companion to [RiceBowl](https://github.com/CopyPasteUser/RiceBowl). Its renderer, filesystem operations and visual profiles are separate: switching from Windows 98 to Windows 7 or ChromeOS changes the chrome, geometry, controls and icons without replacing the file manager or disturbing an open folder.
 
+**Built for structural customization.** RiceExplorer is not intended to be
+one file manager with seven recolors. Its TOML shells can move whole navigation,
+tab, menu and action components between regions; reorder sidebar modules and
+move the preview pane. Windows XP can have a task-oriented side pane, Windows
+10 a top command ribbon and a custom rice a bottom toolbar — all using the
+same tested file-operation engine. More component regions and custom Rust
+renderers remain part of the roadmap.
+
 ![RiceExplorer icon](assets/rice-explorer.svg)
 
 ## Current features — v0.2
 
 - Native Rust GUI with GPU-accelerated drawing; no Electron, browser or persistent background daemon.
 - Seven bundled visual profiles: `win98`, `xp-luna`, `win7`, `win10`, `frutiger-aero`, `chromeos` and `macos`.
-- Three interface families: classic menu/toolbar, Aero command bar, modern condensed navigation. A universal actions menu exposes core file operations on every profile.
+- Configurable structural shells: classic menu/toolbar, XP task sidebar, Aero command bar, Windows 10 ribbon-like toolbar and modern condensed navigation. A universal actions menu exposes core file operations on every profile.
 - Multiple tabs, history, path entry, home/parent navigation, bookmarks, mount-point navigation and a collapsible sidebar.
 - List and icon layouts, local and bounded recursive filename search, hidden-file toggle and sorting by name, kind, size or modification time.
 - Multiple selection (Ctrl/Shift/Ctrl+A), copy, cut, paste, duplicate, rename, new folder/file, symbolic links, desktop Trash and confirmed permanent deletion.
@@ -22,7 +30,7 @@ RiceExplorer is designed as the file-management companion to [RiceBowl](https://
 - On-demand preview pane for bounded image and text previews, decoded off the UI thread.
 - Background folder scanning and file operations; superseded local scans and recursive searches are cooperatively cancelled and cannot overwrite current results. Virtualized file listing for large directories.
 - Copy files into the open folder by dragging them from the desktop or another file manager.
-- External TOML themes and persistent user settings. A single executable works with all rices.
+- External TOML themes with configurable top/bottom tool regions, reorderable sidebar modules and left/right preview; persistent user settings. A single executable works with all rices.
 
 ### Install on Linux Mint / Xfce
 
@@ -75,31 +83,47 @@ These profiles are *inspired by* their respective interface eras; they're not pi
 
 Copy a file from [`themes/`](themes/) and edit its colors and metrics. Launch it with `--theme-file`. All colors use 6-digit `#RRGGBB`; layout is `classic`, `aero` or `modern`. The external profile controls window surfaces, selection, folder/file icons, radius, list density, tile width and sidebar width. Invalid custom themes produce an error and fall back to the bundled Windows 7 profile.
 
-Theme schema 1 also supports a composable shell. Change the component order
-without recompiling. Put `schema_version = 1` with the top-level theme
+Theme schema 1 also supports a composable shell. Change actual **layout
+structure**, not just colors, without recompiling. Put `schema_version = 1` with the top-level theme
 fields (before `[palette]`), then add the shell section at the end:
 
 ```toml
 [shell]
 kind = "finder"
-top = ["tabs", "command-bar", "navigation"]
+top = ["tabs", "navigation"]
+bottom = ["command-bar"]
 status_bar = true
 
 [shell.sidebar]
 position = "left"
 width = 230
-sections = ["places", "favorites", "volumes"]
+sections = ["tasks", "places", "favorites", "volumes"]
+
+[shell.preview]
+position = "right"
+width = 310
 ```
 
 `kind` selects `classic`, `luna`, `aero`, `ribbon`, `aqua`,
-`chromeos`, `finder` or `modern`. The `top` list controls order and
-visibility of `menu-bar`, `tabs`, `navigation` and `command-bar`.
-The sidebar independently supports left/right placement, width (120–420)
-and section ordering/visibility; `status_bar = false` hides the bottom bar.
-The main content stays available regardless of the configured sections.
-Older TOML themes without these fields retain their previous layout.
-This is an evolving modular shell layer; a full visual editor, per-panel
-layout and custom Rust component registry are still on the roadmap.
+`chromeos`, `finder` or `modern`. `top` and `bottom` independently order the
+`menu-bar`, `tabs`, `navigation` and `command-bar` modules. A module may appear
+in **one region only**; navigation must remain present. If `top` is omitted,
+moving a default component to `bottom` automatically removes it from the
+default top region. Either region can be empty, but not both.
+
+The sidebar supports `left`/`right`, width (120–420) and ordered `tasks`,
+`places`, `favorites`, `volumes` modules. `tasks` provides real New Folder,
+Copy, Cut, Paste, Rename, Trash and Properties controls; it does not duplicate
+file-operation logic. `[shell.preview]` independently controls the preview
+pane's `left`/`right` placement and width (210–520) when a preview is open.
+`status_bar = false` hides only the optional status bar, never transfer or
+recovery warnings. The main file view always remains available.
+
+Older TOML themes without these fields retain their established layout.
+Unsupported regions, duplicate widgets and invalid dimensions fail theme
+validation. This is a **declarative built-in component system**, not arbitrary
+runtime Rust code execution: a visual composer and compile-time custom
+component registry still need to be built for version 1.0.
 
 Per-user settings are stored in `~/.config/rice-explorer/config.toml` (or `$XDG_CONFIG_HOME/rice-explorer/config.toml`). You can customize bookmarks, current profile, hidden files, sidebar, view and sorting. Settings are written with a temporary file and rename.
 

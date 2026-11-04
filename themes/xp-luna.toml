@@ -24,3 +24,6 @@ icon_size = 25
 [shell]
 kind = "luna"
 top = ["menu-bar", "navigation", "tabs"]
+
+[shell.sidebar]
+sections = ["tasks", "places", "favorites", "volumes"]
