@@ -3,11 +3,109 @@
 
 use std::{
     ffi::OsString,
+    io::Read,
     path::PathBuf,
     process::{Command, Stdio},
+    sync::atomic::{AtomicBool, Ordering},
     thread,
     time::{Duration, Instant},
 };
+
+const MAX_REMOTE_LIST_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_REMOTE_ENTRIES: usize = 10_000;
+
+#[derive(Clone, Debug)]
+pub struct RemoteEntry {
+    pub uri: String,
+    pub name: String,
+}
+
+/// Enumerate URIs rather than unescaped names: newline and tab in a remote
+/// filename are encoded in the URI, so each output line stays unambiguous.
+/// GIO creates/drives its own GLib context in a worker process.
+pub fn list_remote(uri: &str, cancelled: &AtomicBool) -> Result<Vec<RemoteEntry>, String> {
+    let mut child = Command::new("gio")
+        .args(["list", "-u", uri])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Cannot start GIO listing: {error}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or("GIO listing output unavailable")?;
+    let reader = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout
+            .take(MAX_REMOTE_LIST_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map(|_| bytes)
+    });
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let status = loop {
+        if cancelled.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = reader.join();
+            return Err("Network listing cancelled".into());
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader.join();
+                return Err("Network listing timed out after 20 seconds".into());
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader.join();
+                return Err(format!("GIO listing failed: {error}"));
+            }
+        }
+    };
+    let bytes = reader
+        .join()
+        .map_err(|_| "GIO listing reader panicked")?
+        .map_err(|error| format!("Cannot read GIO listing: {error}"))?;
+    if !status.success() {
+        return Err("Cannot browse network location. Check connection and permissions.".into());
+    }
+    parse_remote_listing(uri, &bytes)
+}
+
+fn parse_remote_listing(parent: &str, bytes: &[u8]) -> Result<Vec<RemoteEntry>, String> {
+    if bytes.len() > MAX_REMOTE_LIST_BYTES as usize {
+        return Err("Network directory listing exceeds the 4 MiB safety limit".into());
+    }
+    let text = std::str::from_utf8(bytes).map_err(|_| "Invalid GIO URI encoding")?;
+    let prefix = format!("{}/", parent.trim_end_matches('/'));
+    let mut entries = Vec::new();
+    for line in text.lines().filter(|line| !line.is_empty()) {
+        // Never trust GIO stdout as a local path or permit an unrelated URI.
+        let name = line
+            .strip_prefix(&prefix)
+            .filter(|name| !name.is_empty() && !name.contains('/'))
+            .ok_or("Unexpected URI in GIO listing")?;
+        if !matches!(
+            crate::location::Location::parse(line.into()),
+            Ok(crate::location::Location::Remote(_))
+        ) {
+            return Err("Invalid remote entry URI".into());
+        }
+        entries.push(RemoteEntry {
+            uri: line.to_owned(),
+            name: name.to_owned(),
+        });
+        if entries.len() > MAX_REMOTE_ENTRIES {
+            return Err("Network directory has more than 10,000 entries".into());
+        }
+    }
+    Ok(entries)
+}
 
 #[derive(Clone, Debug)]
 pub enum VolumeAction {
@@ -88,6 +186,20 @@ mod tests {
         assert_eq!(
             VolumeAction::Connect("smb://host/share".into()).arguments(),
             vec![OsString::from("smb://host/share")]
+        );
+    }
+
+    #[test]
+    fn remote_listing_rejects_unrelated_uris_and_large_results() {
+        let uri = "smb://nas/share";
+        let entries =
+            parse_remote_listing(uri, b"smb://nas/share/A%0Afile\nsmb://nas/share/B\n").unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].name, "A%0Afile");
+        assert!(parse_remote_listing(uri, b"file:///tmp/secret\n").is_err());
+        assert!(parse_remote_listing(uri, b"smb://nas/share/sub/file\n").is_err());
+        assert!(
+            parse_remote_listing(uri, &vec![b'a'; MAX_REMOTE_LIST_BYTES as usize + 1]).is_err()
         );
     }
 }

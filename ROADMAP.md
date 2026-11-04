@@ -277,7 +277,13 @@ recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
   visible unsupported-backend error without accidentally scanning local paths.
 - [ ] Evolve navigation, tab history, entries and worker results to carry
   typed remote locations end-to-end; preserve all local POSIX operations.
+  The initial GIO read-only browser has its own navigation history and bounded
+  URI listing, without exposing any remote path to the POSIX file engine.
+  Unified tabs, entries, search and operations are still open.
 - [ ] Integrate GIO/GVfs with a correctly driven GLib main context.
+  `gio` commands currently run in background child processes with their own
+  GLib contexts, limits and timeouts. In-process native GIO integration and
+  robust cancellation are still open.
 - [ ] Discover drives/volumes/mounts and their capabilities dynamically.
   Existing background mountinfo enumeration now labels detected network mounts
   separately in the Volumes sidebar. Device capabilities and unmounted drives
@@ -291,6 +297,9 @@ recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
   URI credentials. Direct remote listing/file operations and interactive
   authentication are not yet available.
 - [ ] Connect dialog, secure credential handling, favorites and reconnect.
+  A basic URI dialog, 32 validated persistent URI favorites and manual
+  reconnect are implemented. Credential prompts/keyring integration and
+  recovery from mid-operation disconnects remain open.
 
 **Gate:** offline shares, disconnections, bad credentials and removed USB
 devices produce clear errors without frozen UI or silent data loss.

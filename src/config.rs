@@ -13,6 +13,7 @@ pub struct Config {
     pub sort_by: String,
     pub descending: bool,
     pub bookmarks: Vec<PathBuf>,
+    pub remote_favorites: Vec<String>,
     pub restore_session: bool,
     pub session_tabs: Vec<PathBuf>,
     pub session_active: usize,
@@ -28,6 +29,7 @@ impl Default for Config {
             sort_by: "name".to_owned(),
             descending: false,
             bookmarks: Vec::new(),
+            remote_favorites: Vec::new(),
             restore_session: true,
             session_tabs: Vec::new(),
             session_active: 0,
@@ -131,6 +133,7 @@ mod tests {
         assert!(config.restore_session);
         assert!(config.session_tabs.is_empty());
         assert!(config.show_hidden);
+        assert!(config.remote_favorites.is_empty());
     }
 
     #[test]
