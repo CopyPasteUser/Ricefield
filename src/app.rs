@@ -1596,7 +1596,7 @@ impl Explorer {
             return;
         }
         let theme = self.theme.clone();
-        let sidebar_id = egui::Id::new(("places", theme.id.as_str()));
+        let sidebar_id = egui::IdSalt::new(("places", theme.id.as_str()));
         let panel = match theme.sidebar_position() {
             SidebarPosition::Left => egui::Panel::left(sidebar_id),
             SidebarPosition::Right => egui::Panel::right(sidebar_id),
@@ -1756,7 +1756,7 @@ impl Explorer {
             return;
         };
         let theme = self.theme.clone();
-        let preview_id = egui::Id::new(("preview", theme.id.as_str()));
+        let preview_id = egui::IdSalt::new(("preview", theme.id.as_str()));
         let panel = match theme.preview_position() {
             SidebarPosition::Left => egui::Panel::left(preview_id),
             SidebarPosition::Right => egui::Panel::right(preview_id),
