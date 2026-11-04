@@ -238,6 +238,10 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   real mount/USB tests and source deletion safeguards. No automatic deletion
   is permitted based solely on a saved journal entry.
 - [ ] Cancel, safe pause/resume where possible, undo for reversible actions.
+  Individual completed Rename actions now offer a session-only Undo in
+  Transfers, guarded by the post-rename source snapshot and no-overwrite
+  semantics. Broader Undo (especially partial batches, copies, cross-device
+  moves and permanent delete) remains open and cannot rely on stale history.
 - [x] Implement bounded 2–256 item batch rename with a live prefix/suffix
   preview, before-start collision preflight and no-overwrite renames. Preserve
   non-UTF-8 filename bytes; test collisions and mid-batch partial failures.

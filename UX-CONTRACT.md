@@ -25,7 +25,7 @@ Linux desktop file management for RiceBowl users. v0.1 interface English; runtim
 | Action | Pending | Success | Failure |
 | --- | --- | --- | --- |
 | New file/folder | Background worker | Refresh all tabs; status message | Keep existing folder; error in status |
-| Rename | Background worker | Refresh tabs; status message | Existing target remains; error in status |
+| Rename | Background worker | Refresh tabs; status message; session-only Undo in Transfers if a post-rename inode snapshot is captured | Existing target remains; error in status |
 | Batch rename | Snapshot selection, preview all candidate names, preflight targets on worker | Rename each item without overwriting | Stop with failed item and completed count; no silent rollback claim |
 | Copy | Background worker | Unique new destination; status | Partial new output cleaned when possible; source intact |
 | Move | Background worker | Rename within volume; status | Original remains for failed individual move; report error |
@@ -37,6 +37,14 @@ The shared Transfers dialog also permits manual Pause / Resume of **waiting**
 Copy jobs. Any current transfer continues to completion or explicit
 cancellation; the pause does not suspend file I/O, lock changing sources,
 persist across restarts, or provide Undo.
+
+Completed single-item Renames may carry a one-time Undo action in the same
+session's Transfers history. Undo dispatches through the canonical filesystem
+worker, checks the post-rename inode/metadata snapshot and uses atomic
+no-overwrite rename to restore the original raw filename. If either source
+changed or the original name is occupied, Undo fails without replacing files;
+the control remains available for a deliberate retry. The action is not
+persisted across restarts and is not a general rollback guarantee.
 
 Copy/cut immediately updates the internal file clipboard and synchronizes
 the desktop clipboard in a worker. Outstanding desktop writes coalesce to the
