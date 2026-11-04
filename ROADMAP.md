@@ -79,6 +79,12 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
 - [ ] Extend the queue to Move and other operations only after stale-source
   preflight and safe confirmation are implemented; add per-item results,
   persistent history, elapsed time/rate/ETA and failure recovery.
+- [x] Add structured Copy/Move results for every requested source, including
+  completed/renamed targets, explicit skips, failures, cancellations and
+  unstarted items. Show a bounded-height, virtualized detail list in Transfers
+  for all rices. Preflight failures identify the offending input without
+  making changes; preserve skipped cut sources for retry. Results are only
+  retained in the current session, with no automatic rollback or replay.
 - [x] Report the index, source and count of earlier committed items when a
   multi-item Copy or Move stops; extend this report to Trash, Delete, Link and
   Batch Rename. This is an error diagnostic, not yet a full

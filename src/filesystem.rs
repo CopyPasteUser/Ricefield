@@ -18,6 +18,60 @@ pub struct Progress {
     pub phase: &'static str,
 }
 
+/// Immutable per-source outcomes; unattempted items are kept visible after failure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ItemState {
+    NotStarted,
+    Completed,
+    Skipped,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Clone, Debug)]
+pub struct ItemResult {
+    pub source: PathBuf,
+    pub target: Option<PathBuf>,
+    pub state: ItemState,
+    pub detail: Option<String>,
+}
+
+pub struct OperationReport {
+    pub result: io::Result<String>,
+    pub items: Vec<ItemResult>,
+}
+
+struct ItemUpdate {
+    index: usize,
+    target: Option<PathBuf>,
+    state: ItemState,
+    detail: Option<String>,
+}
+
+impl ItemUpdate {
+    fn new(index: usize, state: ItemState, target: Option<PathBuf>) -> Self {
+        Self {
+            index,
+            target,
+            state,
+            detail: None,
+        }
+    }
+
+    fn error(index: usize, target: Option<PathBuf>, error: &io::Error) -> Self {
+        Self {
+            index,
+            target,
+            state: if error.kind() == io::ErrorKind::Interrupted {
+                ItemState::Cancelled
+            } else {
+                ItemState::Failed
+            },
+            detail: Some(error.to_string()),
+        }
+    }
+}
+
 struct Transfer<'a> {
     cancelled: &'a AtomicBool,
     notify: &'a mut dyn FnMut(Progress),
@@ -397,13 +451,24 @@ fn batch_failure(
     path: &Path,
     error: io::Error,
 ) -> io::Error {
+    batch_failure_with_skips(verb, index, total, path, 0, error)
+}
+
+fn batch_failure_with_skips(
+    verb: &str,
+    index: usize,
+    total: usize,
+    path: &Path,
+    skipped: usize,
+    error: io::Error,
+) -> io::Error {
     io::Error::new(
         error.kind(),
         format!(
-            "{verb} stopped at item {} of {total} ({}): {error}. {} earlier item(s) completed; inspect the current item and both locations before retrying",
+            "{verb} stopped at item {} of {total} ({}): {error}. {} earlier item(s) completed, {skipped} skipped; inspect the current item and both locations before retrying",
             index + 1,
             path.display(),
-            index
+            index.saturating_sub(skipped)
         ),
     )
 }
@@ -457,43 +522,100 @@ pub fn perform(action: &Action) -> io::Result<String> {
 }
 
 /// No source is removed before a cross-device copy completes successfully.
+#[cfg(test)]
 pub fn perform_with_progress(
     action: &Action,
     cancelled: &AtomicBool,
     notify: &mut dyn FnMut(Progress),
 ) -> io::Result<String> {
-    perform_with_progress_in(action, cancelled, notify, None)
+    perform_with_progress_and_items(action, cancelled, notify, None, &mut |_| {})
 }
 
-/// Supplying a journal directory lets failure-injection tests keep their
-/// deliberately incomplete records inside disposable fixtures.
+/// Returns one entry per requested source, including items never started
+/// because an earlier source failed. Does not change the operation's behavior.
+pub fn perform_with_report(
+    action: &Action,
+    cancelled: &AtomicBool,
+    notify: &mut dyn FnMut(Progress),
+) -> OperationReport {
+    let sources: Vec<PathBuf> = match action {
+        Action::Copy { sources, .. } | Action::Move { sources, .. } => sources.clone(),
+        _ => Vec::new(),
+    };
+    let mut items: Vec<ItemResult> = sources
+        .into_iter()
+        .map(|source| ItemResult {
+            source,
+            target: None,
+            state: ItemState::NotStarted,
+            detail: None,
+        })
+        .collect();
+    let result = perform_with_progress_and_items(
+        action,
+        cancelled,
+        notify,
+        None,
+        &mut |update| {
+            if let Some(item) = items.get_mut(update.index) {
+                item.state = update.state;
+                item.target = update.target;
+                item.detail = update.detail;
+            }
+        },
+    );
+    OperationReport { result, items }
+}
+
+#[cfg(test)]
 fn perform_with_progress_in(
     action: &Action,
     cancelled: &AtomicBool,
     notify: &mut dyn FnMut(Progress),
     journal_directory: Option<&Path>,
 ) -> io::Result<String> {
+    perform_with_progress_and_items(action, cancelled, notify, journal_directory, &mut |_| {})
+}
+
+/// Supplying a journal directory lets failure-injection tests keep their
+/// deliberately incomplete records inside disposable fixtures.
+fn perform_with_progress_and_items(
+    action: &Action,
+    cancelled: &AtomicBool,
+    notify: &mut dyn FnMut(Progress),
+    journal_directory: Option<&Path>,
+    on_item: &mut dyn FnMut(ItemUpdate),
+) -> io::Result<String> {
     let sources: &[PathBuf] = match action {
         Action::Copy { sources, .. } | Action::Move { sources, .. } => sources,
         Action::Trash { paths } | Action::Delete { paths } => paths,
         _ => &[],
     };
-    let estimated: Vec<u64> =
-        match action {
-            Action::Copy { .. } => sources
-                .iter()
-                .map(|path| estimate_bytes(path, cancelled, 0))
-                .collect::<io::Result<_>>()?,
-            Action::Move { .. } => sources
-                .iter()
-                .map(|path| {
-                    fs::symlink_metadata(path).map(|metadata| {
-                        if metadata.is_dir() { 0 } else { metadata.len() }
-                    })
-                })
-                .collect::<io::Result<_>>()?,
-            _ => Vec::new(),
+    let mut estimated: Vec<u64> = Vec::with_capacity(sources.len());
+    for (index, source) in sources.iter().enumerate() {
+        let estimate = match action {
+            Action::Copy { .. } => estimate_bytes(source, cancelled, 0),
+            Action::Move { .. } => fs::symlink_metadata(source).map(|metadata| {
+                if metadata.is_dir() { 0 } else { metadata.len() }
+            }),
+            _ => break,
         };
+        match estimate {
+            Ok(bytes) => estimated.push(bytes),
+            Err(error) => {
+                on_item(ItemUpdate::error(index, None, &error));
+                return Err(io::Error::new(
+                    error.kind(),
+                    format!(
+                        "Transfer preflight failed at item {} of {} ({}): {error}. No items were processed",
+                        index + 1,
+                        sources.len(),
+                        source.display()
+                    ),
+                ));
+            }
+        }
+    }
     let total = estimated
         .iter()
         .fold(0u64, |sum, bytes| sum.saturating_add(*bytes));
@@ -613,25 +735,41 @@ fn perform_with_progress_in(
             }
             let mut skipped = 0usize;
             for (index, (source, bytes)) in sources.iter().zip(estimated.iter()).enumerate() {
+                let mut target = None;
+                let mut skipped_item = false;
                 let result = (|| {
                     transfer.check()?;
-                    if *conflict == ConflictPolicy::SkipExisting
-                        && occupied(
-                            &destination.join(source.file_name().ok_or_else(invalid_name)?),
-                        )?
-                    {
+                    let intended = destination.join(source.file_name().ok_or_else(invalid_name)?);
+                    if *conflict == ConflictPolicy::SkipExisting && occupied(&intended)? {
                         skipped += 1;
+                        skipped_item = true;
+                        target = Some(intended);
                         transfer.advance(*bytes, source);
                         return Ok(());
                     }
-                    let target = free_destination(
+                    let chosen_target = free_destination(
                         destination,
                         source.file_name().ok_or_else(invalid_name)?,
                     )?;
-                    stage_and_publish(source, &target, false, &mut transfer)
+                    target = Some(chosen_target.clone());
+                    stage_and_publish(source, &chosen_target, false, &mut transfer)
                 })();
-                if let Err(error) = result {
-                    return Err(batch_failure("Copy", index, sources.len(), source, error));
+                match result {
+                    Ok(()) => on_item(ItemUpdate::new(
+                        index,
+                        if skipped_item {
+                            ItemState::Skipped
+                        } else {
+                            ItemState::Completed
+                        },
+                        target,
+                    )),
+                    Err(error) => {
+                        on_item(ItemUpdate::error(index, target, &error));
+                        return Err(batch_failure_with_skips(
+                            "Copy", index, sources.len(), source, skipped, error,
+                        ));
+                    }
                 }
             }
             if skipped > 0 {
@@ -653,31 +791,33 @@ fn perform_with_progress_in(
             }
             let mut skipped = 0usize;
             for (index, (source, bytes)) in sources.iter().zip(estimated.iter()).enumerate() {
+                let mut target = None;
+                let mut skipped_item = false;
                 let result = (|| {
                     transfer.check()?;
                     if source.parent() == Some(destination.as_path()) {
-                        if *conflict == ConflictPolicy::SkipExisting {
-                            skipped += 1;
-                        }
-                        transfer.advance(*bytes, source);
-                        return Ok(());
-                    }
-                    if *conflict == ConflictPolicy::SkipExisting
-                        && occupied(
-                            &destination.join(source.file_name().ok_or_else(invalid_name)?),
-                        )?
-                    {
                         skipped += 1;
+                        skipped_item = true;
+                        target = Some(source.clone());
                         transfer.advance(*bytes, source);
                         return Ok(());
                     }
-                    let target = free_destination(
+                    let intended = destination.join(source.file_name().ok_or_else(invalid_name)?);
+                    if *conflict == ConflictPolicy::SkipExisting && occupied(&intended)? {
+                        skipped += 1;
+                        skipped_item = true;
+                        target = Some(intended);
+                        transfer.advance(*bytes, source);
+                        return Ok(());
+                    }
+                    let chosen_target = free_destination(
                         destination,
                         source.file_name().ok_or_else(invalid_name)?,
                     )?;
-                    ensure_outside_source(source, &target)?;
-                    match rename_without_overwrite(source, &target) {
-                        Ok(()) => transfer.advance(*bytes, &target),
+                    target = Some(chosen_target.clone());
+                    ensure_outside_source(source, &chosen_target)?;
+                    match rename_without_overwrite(source, &chosen_target) {
+                        Ok(()) => transfer.advance(*bytes, &chosen_target),
                         Err(error) if error.raw_os_error() == Some(libc::EXDEV) => {
                             // Only traverse a directory when the atomic rename is impossible.
                             let actual_bytes = estimate_bytes(source, cancelled, 0)?;
@@ -689,12 +829,14 @@ fn perform_with_progress_in(
                             // the source if publishing the journal state fails.
                             let original_source = fs::symlink_metadata(source)?;
                             let mut journal = match journal_directory {
-                                Some(directory) => Journal::begin_in(directory, source, &target)?,
-                                None => Journal::begin(source, &target)?,
+                                Some(directory) => {
+                                    Journal::begin_in(directory, source, &chosen_target)?
+                                }
+                                None => Journal::begin(source, &chosen_target)?,
                             };
                             stage_and_publish_with_journal(
                                 source,
-                                &target,
+                                &chosen_target,
                                 true,
                                 &mut transfer,
                                 Some(&mut journal),
@@ -707,9 +849,9 @@ fn perform_with_progress_in(
                             // If deletion fails, the published destination remains for
                             // recovery; no unverified new directory entries are removed.
                             ensure_same_source(source, &original_source)?;
-                            verify_tree(source, &target, 0, &mut transfer)?;
+                            verify_tree(source, &chosen_target, 0, &mut transfer)?;
                             ensure_same_source(source, &original_source)?;
-                            remove_verified_tree(source, &target, 0, &mut transfer)?;
+                            remove_verified_tree(source, &chosen_target, 0, &mut transfer)?;
                             journal.advance(State::Completed)?;
                             transfer.phase = "Copying";
                         }
@@ -717,8 +859,22 @@ fn perform_with_progress_in(
                     }
                     Ok(())
                 })();
-                if let Err(error) = result {
-                    return Err(batch_failure("Move", index, sources.len(), source, error));
+                match result {
+                    Ok(()) => on_item(ItemUpdate::new(
+                        index,
+                        if skipped_item {
+                            ItemState::Skipped
+                        } else {
+                            ItemState::Completed
+                        },
+                        target,
+                    )),
+                    Err(error) => {
+                        on_item(ItemUpdate::error(index, target, &error));
+                        return Err(batch_failure_with_skips(
+                            "Move", index, sources.len(), source, skipped, error,
+                        ));
+                    }
                 }
             }
             if skipped > 0 {
@@ -1680,6 +1836,177 @@ mod tests {
         );
         assert_eq!(fs::read_dir(&destination).unwrap().count(), 1);
         assert_eq!(fs::read(source).unwrap(), b"incoming");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn transfer_report_records_exact_completed_and_skipped_targets() {
+        let root = test_root();
+        let destination = root.join("out");
+        fs::create_dir(&destination).unwrap();
+        let existing = root.join("existing.txt");
+        let fresh = root.join("fresh.txt");
+        fs::write(&existing, b"source").unwrap();
+        fs::write(&fresh, b"new file").unwrap();
+        fs::write(destination.join("existing.txt"), b"destination").unwrap();
+        let report = perform_with_report(
+            &Action::Copy {
+                sources: vec![existing.clone(), fresh.clone()],
+                destination: destination.clone(),
+                conflict: ConflictPolicy::SkipExisting,
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert!(report.result.is_ok());
+        assert_eq!(report.items.len(), 2);
+        assert_eq!(report.items[0].state, ItemState::Skipped);
+        assert_eq!(report.items[0].source, existing);
+        assert_eq!(report.items[0].target, Some(destination.join("existing.txt")));
+        assert_eq!(report.items[1].state, ItemState::Completed);
+        assert_eq!(report.items[1].source, fresh);
+        assert_eq!(report.items[1].target, Some(destination.join("fresh.txt")));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn move_report_retains_skipped_sources_and_exposes_moved_target() {
+        let root = test_root();
+        let destination = root.join("out");
+        fs::create_dir(&destination).unwrap();
+        let existing = root.join("existing.txt");
+        let fresh = root.join("fresh.txt");
+        fs::write(&existing, b"source").unwrap();
+        fs::write(&fresh, b"fresh").unwrap();
+        fs::write(destination.join("existing.txt"), b"destination").unwrap();
+        let report = perform_with_report(
+            &Action::Move {
+                sources: vec![existing.clone(), fresh.clone()],
+                destination: destination.clone(),
+                conflict: ConflictPolicy::SkipExisting,
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert!(report.result.is_ok());
+        assert_eq!(report.items[0].state, ItemState::Skipped);
+        assert_eq!(report.items[1].state, ItemState::Completed);
+        assert_eq!(report.items[1].target, Some(destination.join("fresh.txt")));
+        assert_eq!(fs::read(existing).unwrap(), b"source");
+        assert!(!fresh.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn transfer_report_preserves_partial_failure_and_unstarted_items() {
+        use std::os::unix::net::UnixListener;
+        let root = test_root();
+        let destination = root.join("out");
+        fs::create_dir(&destination).unwrap();
+        let first = root.join("first.txt");
+        let last = root.join("last.txt");
+        fs::write(&first, b"completed").unwrap();
+        fs::write(&last, b"not started").unwrap();
+        let socket = root.join("socket");
+        let _listener = UnixListener::bind(&socket).unwrap();
+        let report = perform_with_report(
+            &Action::Copy {
+                sources: vec![first.clone(), socket.clone(), last.clone()],
+                destination: destination.clone(),
+                conflict: ConflictPolicy::KeepBoth,
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert_eq!(report.result.unwrap_err().kind(), io::ErrorKind::Unsupported);
+        assert_eq!(report.items.len(), 3);
+        assert_eq!(report.items[0].state, ItemState::Completed);
+        assert_eq!(report.items[0].target, Some(destination.join("first.txt")));
+        assert_eq!(report.items[1].state, ItemState::Failed);
+        assert!(report.items[1].detail.as_ref().is_some_and(|text| !text.is_empty()));
+        assert_eq!(report.items[2].state, ItemState::NotStarted);
+        assert_eq!(fs::read(destination.join("first.txt")).unwrap(), b"completed");
+        assert!(!destination.join("last.txt").exists());
+        assert_eq!(fs::read(last).unwrap(), b"not started");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn batch_failure_counts_skips_separately_from_completed_items() {
+        use std::os::unix::net::UnixListener;
+        let root = test_root();
+        let destination = root.join("out");
+        fs::create_dir(&destination).unwrap();
+        let existing = root.join("existing.txt");
+        fs::write(&existing, b"source").unwrap();
+        fs::write(destination.join("existing.txt"), b"keep").unwrap();
+        let socket = root.join("socket");
+        let _listener = UnixListener::bind(&socket).unwrap();
+        let report = perform_with_report(
+            &Action::Copy {
+                sources: vec![existing.clone(), socket],
+                destination: destination.clone(),
+                conflict: ConflictPolicy::SkipExisting,
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        let error = report.result.unwrap_err();
+        assert!(error.to_string().contains("0 earlier item(s) completed, 1 skipped"));
+        assert_eq!(report.items[0].state, ItemState::Skipped);
+        assert_eq!(report.items[1].state, ItemState::Failed);
+        assert_eq!(fs::read(existing).unwrap(), b"source");
+        assert_eq!(fs::read_dir(&destination).unwrap().count(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn transfer_report_preflight_failure_does_not_touch_any_source() {
+        let root = test_root();
+        let destination = root.join("out");
+        fs::create_dir(&destination).unwrap();
+        let first = root.join("first.txt");
+        fs::write(&first, b"safe").unwrap();
+        let missing = root.join("missing.txt");
+        let report = perform_with_report(
+            &Action::Copy {
+                sources: vec![first.clone(), missing],
+                destination: destination.clone(),
+                conflict: ConflictPolicy::KeepBoth,
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert_eq!(report.result.unwrap_err().kind(), io::ErrorKind::NotFound);
+        assert_eq!(report.items[0].state, ItemState::NotStarted);
+        assert_eq!(report.items[1].state, ItemState::Failed);
+        assert_eq!(fs::read(first).unwrap(), b"safe");
+        assert_eq!(fs::read_dir(&destination).unwrap().count(), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cancelled_report_does_not_mark_unstarted_items_as_completed() {
+        let root = test_root();
+        let destination = root.join("out");
+        fs::create_dir(&destination).unwrap();
+        let source = root.join("sample.txt");
+        fs::write(&source, b"untouched").unwrap();
+        let report = perform_with_report(
+            &Action::Copy {
+                sources: vec![source.clone()],
+                destination: destination.clone(),
+                conflict: ConflictPolicy::KeepBoth,
+            },
+            &AtomicBool::new(true),
+            &mut |_| {},
+        );
+        assert_eq!(report.result.unwrap_err().kind(), io::ErrorKind::Interrupted);
+        assert_eq!(report.items[0].state, ItemState::Cancelled);
+        assert!(!destination.join("sample.txt").exists());
+        assert_eq!(fs::read(source).unwrap(), b"untouched");
         fs::remove_dir_all(root).unwrap();
     }
 

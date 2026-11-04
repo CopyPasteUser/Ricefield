@@ -2,6 +2,12 @@
 
 ## Unreleased — v0.2 stability and v0.3 safety groundwork
 
+- Track detailed Copy/Move outcomes for each requested source, including
+  destination paths, cancelled/failed items and later not-started items.
+  Show expandable, row-virtualized per-file results in the shared Transfers
+  window. Surface preflight errors without falsely implying earlier files
+  were moved; preserve skipped cut sources in the internal clipboard for
+  selective retries while ignoring unchanged stale external cut contents.
 - Add Paste with options in every rice's shared Actions menu, with a
   no-overwrite Keep both / Skip existing choice for copy and move. Preserve
   skipped source files when moving, report skipped item counts, and account

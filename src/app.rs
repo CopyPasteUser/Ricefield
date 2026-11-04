@@ -124,7 +124,7 @@ enum PreviewContent {
 
 struct OperationResult {
     id: u64,
-    result: std::io::Result<String>,
+    report: filesystem::OperationReport,
     moved_paths: Option<Vec<PathBuf>>,
 }
 
@@ -134,6 +134,33 @@ struct CompletedOperation {
     summary: String,
     outcome: OperationOutcome,
     finished_at: SystemTime,
+    items: Vec<filesystem::ItemResult>,
+    counts: ItemCounts,
+}
+
+#[derive(Clone, Copy, Default)]
+struct ItemCounts {
+    completed: usize,
+    skipped: usize,
+    failed: usize,
+    not_started: usize,
+}
+
+impl ItemCounts {
+    fn from_items(items: &[filesystem::ItemResult]) -> Self {
+        let mut counts = Self::default();
+        for item in items {
+            match item.state {
+                filesystem::ItemState::Completed => counts.completed += 1,
+                filesystem::ItemState::Skipped => counts.skipped += 1,
+                filesystem::ItemState::Failed | filesystem::ItemState::Cancelled => {
+                    counts.failed += 1;
+                }
+                filesystem::ItemState::NotStarted => counts.not_started += 1,
+            }
+        }
+        counts
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -234,6 +261,7 @@ pub struct Explorer {
     recovery_loading: bool,
     recovery_open: bool,
     clipboard: Option<Clipboard>,
+    consumed_cut_paths: Option<Vec<PathBuf>>,
     dialog: Option<Dialog>,
     status: Option<(String, bool)>,
     busy: bool,
@@ -315,6 +343,7 @@ impl Explorer {
             recovery_loading: false,
             recovery_open: false,
             clipboard: None,
+            consumed_cut_paths: None,
             dialog: None,
             status,
             busy: false,
@@ -618,6 +647,11 @@ impl Explorer {
             match event {
                 OperationEvent::Progress(progress) => self.progress = Some(progress),
                 OperationEvent::Finished(message) => {
+                    let OperationResult {
+                        id,
+                        report,
+                        moved_paths,
+                    } = message;
                     self.busy = false;
                     let label = self
                         .active_operation
@@ -625,14 +659,35 @@ impl Explorer {
                         .map(|(_, label)| label)
                         .unwrap_or_else(|| "File operation".into());
                     self.progress = None;
-                    let (summary, outcome) = match message.result {
+                    let (summary, outcome) = match report.result {
                         Ok(success) => {
-                            if message.moved_paths.as_ref().is_some_and(|moved| {
-                                self.clipboard.as_ref().is_some_and(|clipboard| {
-                                    clipboard.cut && &clipboard.paths == moved
+                            if let Some(moved) = moved_paths
+                                && self.clipboard.as_ref().is_some_and(|clipboard| {
+                                    clipboard.cut && clipboard.paths == moved
                                 })
-                            }) {
-                                self.clipboard = None;
+                            {
+                                // Keep only skipped cut sources available for a later paste.
+                                // Do not overwrite a changed desktop clipboard: ignore only
+                                // the old external cut contents until the user copies again.
+                                let remaining: Vec<_> = report
+                                    .items
+                                    .iter()
+                                    .filter(|item| item.state != filesystem::ItemState::Completed)
+                                    .map(|item| item.source.clone())
+                                    .collect();
+                                self.clipboard = if remaining.is_empty() {
+                                    None
+                                } else {
+                                    Some(Clipboard {
+                                        paths: remaining,
+                                        cut: true,
+                                    })
+                                };
+                                if !self.consumed_cut_paths.as_ref().is_some_and(|consumed| {
+                                    moved.iter().all(|path| consumed.contains(path))
+                                }) {
+                                    self.consumed_cut_paths = Some(moved);
+                                }
                             }
                             (success, OperationOutcome::Succeeded)
                         }
@@ -658,15 +713,17 @@ impl Explorer {
                         }
                     };
                     self.status = Some((
-                        format!("#{}: {summary}", message.id),
+                        format!("#{id}: {summary}"),
                         outcome == OperationOutcome::Failed,
                     ));
                     self.recent_operations.push_front(CompletedOperation {
-                        id: message.id,
+                        id,
                         label,
                         summary,
                         outcome,
                         finished_at: SystemTime::now(),
+                        counts: ItemCounts::from_items(&report.items),
+                        items: report.items,
                     });
                     if self.recent_operations.len() > MAX_RECENT_OPERATIONS {
                         self.recent_operations.pop_back();
@@ -879,6 +936,54 @@ impl Explorer {
                         } else {
                             ui.small(&entry.summary);
                         }
+                        if !entry.items.is_empty() {
+                            let ItemCounts {
+                                completed,
+                                skipped,
+                                failed,
+                                not_started,
+                            } = entry.counts;
+                            ui.collapsing(
+                                format!(
+                                    "Per-file results: {completed} done · {skipped} skipped · {failed} errors · {not_started} not started"
+                                ),
+                                |ui| {
+                                    egui::ScrollArea::vertical()
+                                        .max_height(190.0)
+                                        .show_rows(ui, 25.0, entry.items.len(), |ui, range| {
+                                            for item in &entry.items[range] {
+                                                ui.horizontal(|ui| {
+                                                    let state = match item.state {
+                                                        filesystem::ItemState::NotStarted => {
+                                                            "Not started"
+                                                        }
+                                                        filesystem::ItemState::Completed => "Done",
+                                                        filesystem::ItemState::Skipped => "Skipped",
+                                                        filesystem::ItemState::Failed => "Failed",
+                                                        filesystem::ItemState::Cancelled => {
+                                                            "Cancelled"
+                                                        }
+                                                    };
+                                                    ui.small(state);
+                                                    let name = item.source.display().to_string();
+                                                    let mut details = name.clone();
+                                                    if let Some(target) = &item.target {
+                                                        details.push_str(&format!(
+                                                            "\nDestination: {}",
+                                                            target.display()
+                                                        ));
+                                                    }
+                                                    if let Some(error) = &item.detail {
+                                                        details.push_str(&format!("\n{error}"));
+                                                    }
+                                                    ui.monospace(shorten(&name, 54))
+                                                        .on_hover_text(details);
+                                                });
+                                            }
+                                        });
+                                },
+                            );
+                        }
                         ui.separator();
                     }
                 });
@@ -942,12 +1047,12 @@ impl Explorer {
         };
         let sender = self.op_sender.clone();
         thread::spawn(move || {
-            let result = filesystem::perform_with_progress(&job.action, &cancel, &mut |progress| {
+            let report = filesystem::perform_with_report(&job.action, &cancel, &mut |progress| {
                 let _ = sender.send(OperationEvent::Progress(progress));
             });
             let _ = sender.send(OperationEvent::Finished(OperationResult {
                 id: job.id,
-                result,
+                report,
                 moved_paths,
             }));
         });
@@ -967,6 +1072,7 @@ impl Explorer {
             paths: paths.clone(),
             cut,
         });
+        self.consumed_cut_paths = None;
         self.status = Some((
             format!(
                 "{} {} item(s){}",
@@ -997,12 +1103,16 @@ impl Explorer {
     }
 
     fn clipboard_for_paste(&self) -> Option<Clipboard> {
-        clipboard::paste_files()
-            .map(|files| Clipboard {
-                paths: files.paths,
-                cut: files.cut,
-            })
-            .or_else(|| self.clipboard.clone())
+        let desktop = clipboard::paste_files().map(|files| Clipboard {
+            paths: files.paths,
+            cut: files.cut,
+        });
+        if desktop.as_ref().is_some_and(|files| {
+            files.cut && self.consumed_cut_paths.as_ref() == Some(&files.paths)
+        }) {
+            return self.clipboard.clone();
+        }
+        desktop.or_else(|| self.clipboard.clone())
     }
 
     fn paste_action(
@@ -1027,6 +1137,7 @@ impl Explorer {
 
     fn paste(&mut self) {
         if let Some(clipboard) = self.clipboard_for_paste() {
+            self.clipboard = Some(clipboard.clone());
             self.run_action(Self::paste_action(
                 clipboard,
                 self.current().path.clone(),
@@ -2816,6 +2927,12 @@ impl Explorer {
             self.dialog = None;
         }
         if let Some(action) = action {
+            if let Action::Copy { sources, .. } | Action::Move { sources, .. } = &action {
+                self.clipboard = Some(Clipboard {
+                    paths: sources.clone(),
+                    cut: matches!(&action, Action::Move { .. }),
+                });
+            }
             self.run_action(action);
         }
     }
