@@ -33,6 +33,11 @@ Linux desktop file management for RiceBowl users. v0.1 interface English; runtim
 
 Only one mutation worker runs at a time; folder reads may proceed concurrently. Copy requests arriving during another mutation may enter a bounded 32-item FIFO queue with stable IDs. Queued jobs run after a successful active worker; after failure or cancellation they pause until explicit Resume, so further transfers do not cascade into a known failure. Each waiting job can be removed before execution without touching files. Other mutations are not delayed automatically, to avoid executing stale destructive requests. There is no fake optimistic success. The Trash confirmation is deliberately conservative even though desktop Trash is recoverable.
 
+The shared Transfers dialog also permits manual Pause / Resume of **waiting**
+Copy jobs. Any current transfer continues to completion or explicit
+cancellation; the pause does not suspend file I/O, lock changing sources,
+persist across restarts, or provide Undo.
+
 Copy/cut immediately updates the internal file clipboard and synchronizes
 the desktop clipboard in a worker. Outstanding desktop writes coalesce to the
 latest selection. Paste reads the desktop clipboard asynchronously and never
