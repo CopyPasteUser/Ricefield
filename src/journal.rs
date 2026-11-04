@@ -644,11 +644,11 @@ fn lock_journal_directory(directory: &Path) -> io::Result<File> {
     Ok(file)
 }
 
-/// Never prune incomplete recovery evidence automatically. Refuse to start
-/// another cross-device Move if the scan's fixed capacity is already full,
-/// rather than creating records that make startup inspection impossible.
+/// Reserve room for another move while holding the directory lock. Reclaim
+/// only fully validated Completed records if the capacity would otherwise be
+/// exhausted; malformed, changed and unfinished records are never purged.
 fn ensure_capacity(directory: &Path, limit: usize) -> io::Result<()> {
-    let mut count = 0usize;
+    let mut paths = Vec::new();
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
         if entry
@@ -656,12 +656,42 @@ fn ensure_capacity(directory: &Path, limit: usize) -> io::Result<()> {
             .extension()
             .is_some_and(|extension| extension == "toml")
         {
-            count += 1;
-            if count >= limit {
-                return Err(io::Error::other(
-                    "Move journal capacity reached; inspect existing recovery records before starting another cross-device Move",
-                ));
+            paths.push(entry.path());
+            if paths.len() > MAX_RECORDS {
+                return Err(invalid_data("Too many operation journal records"));
             }
+        }
+    }
+    if paths.len() >= limit {
+        let mut reclaimed = false;
+        for path in paths.iter() {
+            // Invalid or concurrently changing records must be retained.
+            let Ok((record, snapshot)) = read_record(path) else {
+                continue;
+            };
+            if record.state != State::Completed {
+                continue;
+            }
+            if fs::symlink_metadata(path).is_ok_and(|current| same_snapshot(&snapshot, &current)) {
+                fs::remove_file(path)?;
+                reclaimed = true;
+            }
+        }
+        if reclaimed {
+            File::open(directory)?.sync_all()?;
+        }
+        // Recount under the same lock: only terminal records are eligible
+        // for removal, and any remaining records still consume scan slots.
+        let remaining = fs::read_dir(directory)?.try_fold(0usize, |count, entry| {
+            let path = entry?.path();
+            Ok::<_, io::Error>(
+                count + usize::from(path.extension().is_some_and(|ext| ext == "toml")),
+            )
+        })?;
+        if remaining >= limit {
+            return Err(io::Error::other(
+                "Move journal capacity reached; inspect existing recovery records before starting another cross-device Move",
+            ));
         }
     }
     Ok(())
@@ -692,47 +722,54 @@ fn scan_incomplete_in(directory: &Path) -> io::Result<Vec<Record>> {
         if seen > MAX_RECORDS {
             return Err(invalid_data("Too many operation journal records"));
         }
-        let metadata = fs::symlink_metadata(&path)?;
-        if !metadata.is_file() || metadata.len() > MAX_RECORD_BYTES {
-            return Err(invalid_data("Journal record is not a bounded regular file"));
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if metadata.permissions().mode() & 0o077 != 0 {
-                return Err(invalid_data("Journal record permissions are too broad"));
-            }
-        }
-        // Pin the regular inode observed by lstat. A record replaced by a
-        // symlink or FIFO between lstat and open must not redirect or stall
-        // the recovery scanner (which runs automatically on startup).
-        let mut file = open_regular_no_follow(&path, &metadata)?;
-        let mut content = Vec::new();
-        (&mut file)
-            .take(MAX_RECORD_BYTES + 1)
-            .read_to_end(&mut content)?;
-        if content.len() as u64 > MAX_RECORD_BYTES {
-            return Err(invalid_data("Operation journal record is oversized"));
-        }
-        if !same_snapshot(&metadata, &file.metadata()?)
-            || !same_snapshot(&metadata, &fs::symlink_metadata(&path)?)
-        {
-            return Err(invalid_data("Operation journal changed while being read"));
-        }
-        let stored: StoredRecord = toml::from_str(
-            std::str::from_utf8(&content).map_err(|_| invalid_data("Invalid journal UTF-8"))?,
-        )
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let record = from_stored(stored)?;
-        if path.file_stem().and_then(|stem| stem.to_str()) != Some(record.id.as_str()) {
-            return Err(invalid_data("Journal ID and filename disagree"));
-        }
+        let (record, _) = read_record(&path)?;
         if record.state != State::Completed {
             records.push(record);
         }
     }
     records.sort_by(|left, right| left.id.cmp(&right.id));
     Ok(records)
+}
+
+/// The same bounded, no-follow validation is used for recovery inspection and
+/// terminal-record retirement. A filename or a `state` string alone never
+/// authorizes cleanup of journal evidence.
+fn read_record(path: &Path) -> io::Result<(Record, fs::Metadata)> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.is_file() || metadata.len() > MAX_RECORD_BYTES {
+        return Err(invalid_data("Journal record is not a bounded regular file"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(invalid_data("Journal record permissions are too broad"));
+        }
+    }
+    // Pin the regular inode observed by lstat. A record replaced by a symlink
+    // or FIFO must not redirect or stall the recovery scanner.
+    let mut file = open_regular_no_follow(path, &metadata)?;
+    let mut content = Vec::new();
+    (&mut file)
+        .take(MAX_RECORD_BYTES + 1)
+        .read_to_end(&mut content)?;
+    if content.len() as u64 > MAX_RECORD_BYTES {
+        return Err(invalid_data("Operation journal record is oversized"));
+    }
+    if !same_snapshot(&metadata, &file.metadata()?)
+        || !same_snapshot(&metadata, &fs::symlink_metadata(path)?)
+    {
+        return Err(invalid_data("Operation journal changed while being read"));
+    }
+    let stored: StoredRecord = toml::from_str(
+        std::str::from_utf8(&content).map_err(|_| invalid_data("Invalid journal UTF-8"))?,
+    )
+    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let record = from_stored(stored)?;
+    if path.file_stem().and_then(|stem| stem.to_str()) != Some(record.id.as_str()) {
+        return Err(invalid_data("Journal ID and filename disagree"));
+    }
+    Ok((record, metadata))
 }
 
 fn journal_directory() -> io::Result<PathBuf> {
@@ -1139,6 +1176,77 @@ mod tests {
         );
         assert!(directory.join("a.toml").exists());
         assert!(directory.join("b.toml").exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn capacity_reclaims_only_valid_completed_records() {
+        let directory = test_directory();
+        let original = directory.join("original");
+        let published = directory.join("published");
+        fs::write(&original, b"source").unwrap();
+        let mut complete = Journal::begin_in(&directory, &original, &published).unwrap();
+        complete.set_staging(&directory.join("staging")).unwrap();
+        complete.advance(State::StagedVerified).unwrap();
+        fs::write(&published, b"source").unwrap();
+        complete.advance(State::Published).unwrap();
+
+        // Simulate a crash after Completed is durable but before the
+        // normally immediate unlink of the journal record.
+        let mut completed = complete.record().clone();
+        completed.state = State::Completed;
+        write_record(&complete.path, &completed, false).unwrap();
+
+        let other = directory.join("another-source");
+        fs::write(&other, b"source").unwrap();
+        let next =
+            Journal::begin_in_with_limit(&directory, &other, &directory.join("next"), 1).unwrap();
+        assert!(!complete.path.exists());
+        assert!(next.path.exists());
+        assert_eq!(scan_incomplete_in(&directory).unwrap().len(), 1);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn capacity_preserves_incomplete_and_malformed_evidence() {
+        let directory = test_directory();
+        let original = directory.join("original");
+        let published = directory.join("published");
+        fs::write(&original, b"source").unwrap();
+        let mut journal = Journal::begin_in(&directory, &original, &published).unwrap();
+        journal.set_staging(&directory.join("staging")).unwrap();
+        journal.advance(State::StagedVerified).unwrap();
+        fs::write(&published, b"source").unwrap();
+        journal.advance(State::Published).unwrap();
+
+        let invalid = directory.join("unexpected.toml");
+        let mut masquerading = journal.record().clone();
+        masquerading.state = State::Completed;
+        // A Completed state without a matching filename is not enough to
+        // remove untrusted evidence from the journal.
+        fs::write(
+            &invalid,
+            toml::to_string(&to_stored(&masquerading).unwrap()).unwrap(),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&invalid, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let next_source = directory.join("next-source");
+        fs::write(&next_source, b"next").unwrap();
+        let error = Journal::begin_in_with_limit(
+            &directory,
+            &next_source,
+            &directory.join("next-target"),
+            2,
+        )
+        .err()
+        .unwrap();
+        assert!(error.to_string().contains("capacity reached"));
+        assert!(journal.path.exists());
+        assert!(invalid.exists());
         fs::remove_dir_all(directory).unwrap();
     }
 

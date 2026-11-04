@@ -211,6 +211,11 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   between publication and the durable Published journal transition.
   These snapshots are advisory and do not prove unchanged contents or permit
   automatic deletion; full provenance, crash replay and retention remain open.
+- [x] Reclaim structurally valid `Completed` journal entries only when the
+  bounded journal capacity is exhausted, validating with the same no-follow
+  reader used for recovery. Keep incomplete, malformed or changing records,
+  and sync the journal directory after cleanup. No incomplete record expiry,
+  resume, rollback or comprehensive long-term retention policy is implied.
 - [ ] Add durable provenance evidence, safe restart resume/rollback and
   race-free source cleanup; a matching read-only scan is insufficient.
 - [x] Isolate test journals and GUI smoke XDG state from the developer's real
