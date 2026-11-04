@@ -172,7 +172,9 @@ impl Entry {
                 Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "svg") => "Image",
                 Some("mp3" | "flac" | "wav" | "ogg" | "m4a") => "Audio",
                 Some("mkv" | "mp4" | "avi" | "webm" | "mov") => "Video",
-                Some("zip" | "7z" | "tar" | "gz" | "rar") => "Archive",
+                Some(
+                    "zip" | "7z" | "tar" | "gz" | "xz" | "zst" | "tgz" | "txz" | "tzst" | "rar",
+                ) => "Archive",
                 Some("rs" | "py" | "js" | "ts" | "html" | "css" | "sh") => "Code",
                 Some("pdf") => "PDF",
                 Some("txt" | "md") => "Document",

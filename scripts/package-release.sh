@@ -12,8 +12,8 @@ if [[ "$(uname -s)" != 'Linux' || "$release_arch" != 'x86_64' ]]; then
   echo 'Only Linux x86_64 release bundles are supported by this script' >&2
   exit 1
 fi
-if [[ ! "$release_version" =~ ^0\.[34]\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
-  echo 'Expected a single valid 0.3.x or 0.4.x version in Cargo.toml' >&2
+if [[ ! "$release_version" =~ ^0\.[345]\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
+  echo 'Expected a single valid 0.3.x, 0.4.x or 0.5.x version in Cargo.toml' >&2
   exit 1
 fi
 if [[ ! "$source_epoch" =~ ^[0-9]+$ ]]; then

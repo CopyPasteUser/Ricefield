@@ -1,5 +1,5 @@
 use crate::{
-    clipboard,
+    archive, clipboard,
     config::{self, Config},
     filesystem::{self, Action, ConflictPolicy, Entry, Progress},
     journal::{self, Inspection as JournalInspection, State as JournalState},
@@ -540,6 +540,85 @@ enum Dialog {
     },
 }
 
+enum ArchiveMode {
+    Browse {
+        path: PathBuf,
+        destination: PathBuf,
+        entries: Option<Vec<archive::ArchiveEntry>>,
+        selected: BTreeSet<usize>,
+        folder_name: String,
+    },
+    Create {
+        sources: Vec<PathBuf>,
+        destination: PathBuf,
+        stem: String,
+        format: archive::Format,
+    },
+}
+
+struct ArchiveDialog {
+    mode: ArchiveMode,
+    running: bool,
+    message: Option<(String, bool)>,
+    transferred: u64,
+    current_file: String,
+}
+
+enum ArchiveOperation {
+    List(PathBuf),
+    Verify(PathBuf),
+    Extract {
+        path: PathBuf,
+        destination: PathBuf,
+        folder: String,
+        selected: Vec<PathBuf>,
+    },
+    Create {
+        sources: Vec<PathBuf>,
+        destination: PathBuf,
+        stem: String,
+        format: archive::Format,
+    },
+}
+
+enum ArchiveEvent {
+    Listed {
+        generation: u64,
+        result: Result<Vec<archive::ArchiveEntry>, String>,
+    },
+    Progress {
+        generation: u64,
+        bytes: u64,
+        path: String,
+    },
+    Finished {
+        generation: u64,
+        changed: bool,
+        result: Result<String, String>,
+    },
+}
+
+fn archive_stem(path: &Path) -> String {
+    let filename = path
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_default();
+    let lower = filename.to_ascii_lowercase();
+    for suffix in [
+        ".tar.gz", ".tar.xz", ".tar.zst", ".tgz", ".txz", ".tzst", ".zip", ".tar", ".7z", ".rar",
+    ] {
+        if lower.ends_with(suffix) {
+            let stem = &filename[..filename.len() - suffix.len()];
+            return if stem.is_empty() {
+                "Archive".into()
+            } else {
+                stem.into()
+            };
+        }
+    }
+    "Archive".into()
+}
+
 fn accept_property_result(dialog: &mut Option<Dialog>, message: PropertyResult) {
     if let Some(Dialog::Properties {
         path,
@@ -621,6 +700,11 @@ pub struct Explorer {
     next_paste_id: u64,
     pending_paste: Option<PendingPaste>,
     dialog: Option<Dialog>,
+    archive_dialog: Option<ArchiveDialog>,
+    archive_sender: Sender<ArchiveEvent>,
+    archive_receiver: Receiver<ArchiveEvent>,
+    archive_generation: u64,
+    archive_cancel: Arc<AtomicBool>,
     status: Option<(String, bool)>,
     busy: bool,
     progress: Option<Progress>,
@@ -673,6 +757,7 @@ impl Explorer {
         let (recovery_sender, recovery_receiver) = mpsc::channel();
         let (recovery_comparison_sender, recovery_comparison_receiver) = mpsc::channel();
         let (clipboard_sender, clipboard_receiver) = mpsc::channel();
+        let (archive_sender, archive_receiver) = mpsc::channel();
         // Explicit CLI paths take precedence over the saved session. Restored
         // local and network locations are scanned asynchronously, never stat'ed
         // or contacted while reading preferences.
@@ -746,6 +831,11 @@ impl Explorer {
             next_paste_id: 0,
             pending_paste: None,
             dialog: None,
+            archive_dialog: None,
+            archive_sender,
+            archive_receiver,
+            archive_generation: 0,
+            archive_cancel: Arc::new(AtomicBool::new(false)),
             status,
             busy: false,
             progress: None,
@@ -1177,6 +1267,64 @@ impl Explorer {
     }
 
     fn poll_background(&mut self, context: &egui::Context) {
+        while let Ok(event) = self.archive_receiver.try_recv() {
+            match event {
+                ArchiveEvent::Listed { generation, result }
+                    if generation == self.archive_generation =>
+                {
+                    if let Some(dialog) = self.archive_dialog.as_mut() {
+                        dialog.running = false;
+                        match result {
+                            Ok(entries) => {
+                                if let ArchiveMode::Browse {
+                                    selected,
+                                    entries: existing,
+                                    ..
+                                } = &mut dialog.mode
+                                {
+                                    *selected = (0..entries.len()).collect();
+                                    *existing = Some(entries);
+                                }
+                            }
+                            Err(error) => {
+                                dialog.message = Some((error, true));
+                            }
+                        }
+                    }
+                }
+                ArchiveEvent::Progress {
+                    generation,
+                    bytes,
+                    path,
+                } if generation == self.archive_generation => {
+                    if let Some(dialog) = self.archive_dialog.as_mut() {
+                        dialog.transferred = bytes;
+                        dialog.current_file = path;
+                    }
+                }
+                ArchiveEvent::Finished {
+                    generation,
+                    changed,
+                    result,
+                } if generation == self.archive_generation => {
+                    let success = result.is_ok();
+                    if let Some(dialog) = self.archive_dialog.as_mut() {
+                        dialog.running = false;
+                        dialog.message = Some(match result {
+                            Ok(message) => {
+                                self.status = Some((message.clone(), false));
+                                (message, false)
+                            }
+                            Err(error) => (error, true),
+                        });
+                    }
+                    if changed && success {
+                        self.scan(self.active);
+                    }
+                }
+                _ => {} // Obsolete/closed archive dialog: never apply stale worker results.
+            }
+        }
         while let Ok(event) = self.clipboard_receiver.try_recv() {
             match event {
                 ClipboardEvent::Written { revision, success } => {
@@ -1934,6 +2082,17 @@ impl Explorer {
     }
 
     fn run_action(&mut self, action: Action) {
+        if self
+            .archive_dialog
+            .as_ref()
+            .is_some_and(|dialog| dialog.running)
+        {
+            self.status = Some((
+                "Wait for the archive operation or cancel it first".into(),
+                true,
+            ));
+            return;
+        }
         if self.current().remote_uri.is_some() {
             self.status = Some((
                 "Remote file mutations are disabled until safe GIO transfers are available".into(),
@@ -1967,6 +2126,159 @@ impl Explorer {
                 self.status = Some((format!("Cannot queue transfer: {error}"), true));
             }
         }
+    }
+
+    fn open_archive_browse(&mut self, path: PathBuf) {
+        if self.busy
+            || self
+                .archive_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.running)
+        {
+            self.status = Some(("Finish the current operation first".into(), true));
+            return;
+        }
+        if !archive::Format::is_archive(&path) || self.current().remote_uri.is_some() {
+            self.status = Some(("Select a supported local archive".into(), true));
+            return;
+        }
+        let destination = self.current().path.clone();
+        let folder_name = format!("{}-extracted", archive_stem(&path));
+        self.archive_dialog = Some(ArchiveDialog {
+            mode: ArchiveMode::Browse {
+                path: path.clone(),
+                destination,
+                entries: None,
+                selected: BTreeSet::new(),
+                folder_name,
+            },
+            running: false,
+            message: None,
+            transferred: 0,
+            current_file: String::new(),
+        });
+        self.start_archive_operation(ArchiveOperation::List(path));
+    }
+
+    fn open_archive_create(&mut self) {
+        if self.busy
+            || self
+                .archive_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.running)
+        {
+            self.status = Some(("Finish the current operation first".into(), true));
+            return;
+        }
+        if self.current().remote_uri.is_some() {
+            return;
+        }
+        let sources = self.selected_paths();
+        if sources.is_empty() {
+            return;
+        }
+        let stem = if sources.len() == 1 {
+            sources[0]
+                .file_stem()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "Archive".into())
+        } else {
+            "Archive".into()
+        };
+        self.archive_dialog = Some(ArchiveDialog {
+            mode: ArchiveMode::Create {
+                sources,
+                destination: self.current().path.clone(),
+                stem,
+                format: archive::Format::Zip,
+            },
+            running: false,
+            message: None,
+            transferred: 0,
+            current_file: String::new(),
+        });
+    }
+
+    fn start_archive_operation(&mut self, operation: ArchiveOperation) {
+        if self.busy {
+            self.status = Some((
+                "A file transfer is running; archive operation postponed".into(),
+                true,
+            ));
+            return;
+        }
+        self.archive_cancel.store(true, Ordering::Relaxed);
+        self.archive_cancel = Arc::new(AtomicBool::new(false));
+        let cancel = Arc::clone(&self.archive_cancel);
+        self.archive_generation = self.archive_generation.wrapping_add(1);
+        let generation = self.archive_generation;
+        let sender = self.archive_sender.clone();
+        if let Some(dialog) = self.archive_dialog.as_mut() {
+            dialog.running = true;
+            dialog.message = None;
+            dialog.transferred = 0;
+            dialog.current_file.clear();
+        }
+        thread::spawn(move || {
+            let operation = match operation {
+                ArchiveOperation::List(path) => {
+                    let result =
+                        archive::inspect(&path, &cancel).map_err(|error| error.to_string());
+                    let _ = sender.send(ArchiveEvent::Listed { generation, result });
+                    return;
+                }
+                other => other,
+            };
+            let changed = matches!(
+                &operation,
+                ArchiveOperation::Extract { .. } | ArchiveOperation::Create { .. }
+            );
+            let mut last_report = Instant::now() - Duration::from_secs(1);
+            let mut total = 0u64;
+            let mut report = |progress: archive::ArchiveProgress| {
+                total = total.saturating_add(progress.bytes);
+                if last_report.elapsed() >= Duration::from_millis(100) {
+                    let _ = sender.send(ArchiveEvent::Progress {
+                        generation,
+                        bytes: total,
+                        path: progress.path.display().to_string(),
+                    });
+                    last_report = Instant::now();
+                }
+            };
+            let result = match operation {
+                ArchiveOperation::Verify(path) => archive::verify(&path, &cancel, &mut report)
+                    .map(|count| format!("Verified {count} archive entries")),
+                ArchiveOperation::Extract {
+                    path,
+                    destination,
+                    folder,
+                    selected,
+                } => archive::extract(
+                    &path,
+                    &destination,
+                    &folder,
+                    &selected,
+                    &cancel,
+                    &mut report,
+                )
+                .map(|path| format!("Extracted to {}", path.display())),
+                ArchiveOperation::Create {
+                    sources,
+                    destination,
+                    stem,
+                    format,
+                } => archive::create(&sources, &destination, &stem, format, &cancel, &mut report)
+                    .map(|path| format!("Created {}", path.display())),
+                ArchiveOperation::List(_) => unreachable!(),
+            }
+            .map_err(|error| error.to_string());
+            let _ = sender.send(ArchiveEvent::Finished {
+                generation,
+                changed,
+                result,
+            });
+        });
     }
 
     fn start_next_operation(&mut self) {
@@ -3315,6 +3627,30 @@ impl Explorer {
                             ui.close();
                         }
                     });
+                    ui.menu_button("Archive", |ui| {
+                        let local = self.current().remote_uri.is_none();
+                        let paths = self.selected_paths();
+                        let browsable =
+                            local && paths.len() == 1 && archive::Format::is_archive(&paths[0]);
+                        if ui
+                            .add_enabled(browsable, egui::Button::new("Browse / extract archive…"))
+                            .clicked()
+                        {
+                            self.open_archive_browse(paths[0].clone());
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(
+                                local && !paths.is_empty(),
+                                egui::Button::new("Compress selected…"),
+                            )
+                            .clicked()
+                        {
+                            self.open_archive_create();
+                            ui.close();
+                        }
+                        ui.small("Local archives only · bounded extraction · no overwrite");
+                    });
                     ui.menu_button("Session", |ui| {
                         if ui
                             .checkbox(&mut self.config.restore_session, "Restore tabs on startup")
@@ -3852,6 +4188,126 @@ impl Explorer {
             });
     }
 
+    fn archive_window(&mut self, context: &egui::Context) {
+        let Some(mut dialog) = self.archive_dialog.take() else {
+            return;
+        };
+        let mut open = true;
+        let mut cancel = false;
+        let mut requested = None;
+        let title = match dialog.mode {
+            ArchiveMode::Browse { .. } => "Archive browser · 0.5 preview",
+            ArchiveMode::Create { .. } => "Create archive · 0.5 preview",
+        };
+        egui::Window::new(title)
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_width(590.0)
+            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+            .show(context, |ui| {
+                match &mut dialog.mode {
+                    ArchiveMode::Browse { path, destination, entries, selected, folder_name } => {
+                        ui.label(format!("Source: {}", path.display()));
+                        ui.label("All paths are checked for traversal, links and special files before extraction.");
+                        if let Some(entries) = entries {
+                            ui.horizontal(|ui| {
+                                ui.label(format!("{} entries", entries.len()));
+                                if ui.small_button("Select all").clicked() { *selected = (0..entries.len()).collect(); }
+                                if ui.small_button("Select none").clicked() { selected.clear(); }
+                            });
+                            egui::ScrollArea::vertical().max_height(300.0)
+                                .show_rows(ui, 23.0, entries.len(), |ui, range| {
+                                    for index in range {
+                                        let entry = &entries[index];
+                                        let mut checked = selected.contains(&index);
+                                        ui.horizontal(|ui| {
+                                            if ui.checkbox(&mut checked, "").changed() {
+                                                if checked { selected.insert(index); } else { selected.remove(&index); }
+                                            }
+                                            let label = entry.path.display().to_string();
+                                            ui.label(shorten(&label, 68)).on_hover_text(label);
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                if entry.directory { ui.small("folder"); }
+                                                else { ui.small(filesystem::human_size(entry.bytes)); }
+                                            });
+                                        });
+                                    }
+                                });
+                            ui.horizontal(|ui| {
+                                ui.label("Extract into new folder:");
+                                ui.add_sized([245.0, 24.0], egui::TextEdit::singleline(folder_name));
+                            });
+                            ui.small(format!("Parent: {} · Existing destinations will not be overwritten", destination.display()));
+                            ui.horizontal(|ui| {
+                                if ui.add_enabled(!dialog.running, egui::Button::new("Verify integrity")).clicked() {
+                                    requested = Some(ArchiveOperation::Verify(path.clone()));
+                                }
+                                if ui.add_enabled(!dialog.running && !selected.is_empty(),
+                                    egui::Button::new(format!("Extract {} selected", selected.len()))).clicked() {
+                                    requested = Some(ArchiveOperation::Extract { path: path.clone(),
+                                        destination: destination.clone(), folder: folder_name.clone(),
+                                        selected: selected.iter().map(|&index| entries[index].path.clone()).collect() });
+                                }
+                            });
+                        } else if dialog.running { ui.spinner(); ui.label("Reading archive directory…"); }
+                    }
+                    ArchiveMode::Create { sources, destination, stem, format } => {
+                        ui.label(format!("{} selected source(s)", sources.len()));
+                        ui.label(format!("Destination folder: {}", destination.display()));
+                        ui.horizontal(|ui| {
+                            ui.label("Archive name:");
+                            ui.add_sized([250.0, 24.0], egui::TextEdit::singleline(stem));
+                        });
+                        egui::ComboBox::from_label("Format")
+                            .selected_text(format.extension())
+                            .show_ui(ui, |ui| {
+                                for candidate in archive::Format::ALL {
+                                    ui.selectable_value(format, candidate, candidate.extension());
+                                }
+                            });
+                        ui.small(format!("Output: {}.{} · will never overwrite", stem, format.extension()));
+                        if ui.add_enabled(!dialog.running, egui::Button::new("Create archive")).clicked() {
+                            requested = Some(ArchiveOperation::Create { sources: sources.clone(),
+                                destination: destination.clone(), stem: stem.clone(), format: *format });
+                        }
+                    }
+                }
+                if dialog.running {
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(format!("Working · {} processed", filesystem::human_size(dialog.transferred)));
+                        if ui.button("Cancel").clicked() { cancel = true; }
+                    });
+                    if !dialog.current_file.is_empty() { ui.small(shorten(&dialog.current_file, 95)); }
+                }
+                if let Some((message, error)) = &dialog.message {
+                    ui.separator();
+                    ui.colored_label(if *error { Color32::LIGHT_RED } else { Color32::LIGHT_GREEN }, message);
+                }
+            });
+        if cancel {
+            self.archive_cancel.store(true, Ordering::Relaxed);
+        }
+        if open && !context.input(|input| input.key_pressed(Key::Escape)) {
+            self.archive_dialog = Some(dialog);
+            if let Some(operation) = requested {
+                self.start_archive_operation(operation);
+            }
+        } else {
+            self.archive_cancel.store(true, Ordering::Relaxed);
+            // Do not lose the cancellation handshake: the worker must finish
+            // cleaning its private stage before other file mutations start.
+            if dialog.running {
+                dialog.message = Some(("Cancelling; waiting for archive cleanup…".into(), false));
+                self.archive_dialog = Some(dialog);
+            } else {
+                self.archive_generation = self.archive_generation.wrapping_add(1);
+            }
+        }
+    }
+
     fn dialogs(&mut self, context: &egui::Context) {
         if self.dialog.is_some() && context.input(|input| input.key_pressed(Key::Escape)) {
             self.dialog = None;
@@ -4314,7 +4770,7 @@ impl eframe::App for Explorer {
                 conflict: ConflictPolicy::KeepBoth,
             });
         }
-        if self.dialog.is_none() {
+        if self.dialog.is_none() && self.archive_dialog.is_none() {
             self.keyboard(&context);
         }
         self.chrome_region(ui, true);
@@ -4328,6 +4784,7 @@ impl eframe::App for Explorer {
         self.preview_panel(ui);
         self.main_panel(ui);
         self.dialogs(&context);
+        self.archive_window(&context);
         self.volume_dialog(&context);
         self.recovery_dialog(&context);
         self.transfer_dialog(&context);
@@ -4344,6 +4801,10 @@ impl eframe::App for Explorer {
         let waiting_for_properties =
             matches!(&self.dialog, Some(Dialog::Properties { details: None, .. }));
         let idle_delay = if self.busy
+            || self
+                .archive_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.running)
             || self.volume_busy
             || waiting_for_preview
             || waiting_for_properties
