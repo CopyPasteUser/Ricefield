@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Reclaim only validated terminal `Completed` move journal records when the
+  4,096-record capacity would otherwise block a new move. Share the bounded,
+  no-follow record validator with the recovery reader; keep malformed,
+  replaced and unfinished evidence untouched. Sync the journal directory
+  after retirement. This is capacity maintenance, not safe restart replay.
 - Track every symbolic-Link operation in Transfers, with a read-only batch
   destination preflight, reserved unique names, item-count progress and
   individual success/failure/cancel outcomes. A racing external destination

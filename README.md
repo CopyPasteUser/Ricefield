@@ -75,7 +75,10 @@ renderers remain part of the roadmap.
   anything. No automatic
   destructive recovery. Repeated rescans are coalesced while a filesystem
   inspection is active, so slow or disconnected mounts cannot spawn a growing
-  group of duplicate scanners.
+  group of duplicate scanners. If the 4,096-record journal limit is reached,
+  validated **completed** records can be retired to free a slot; incomplete or
+  unreadable recovery evidence is always retained, and new Moves fail closed
+  if no slot can safely be freed.
 - File properties and editable Unix permission bits, loaded asynchronously so
   an unavailable mount cannot stall the entire UI. Slow requests are
   coalesced, stale results are ignored and permission edits remain disabled
