@@ -94,6 +94,7 @@ impl Journal {
         ))
     }
 
+    #[cfg(test)]
     pub fn record(&self) -> &Record {
         &self.record
     }
@@ -414,11 +415,11 @@ fn hex_path(path: &Path) -> io::Result<String> {
 #[cfg(unix)]
 fn path_from_hex(hex: &str) -> io::Result<PathBuf> {
     use std::os::unix::ffi::OsStringExt;
-    if hex.len() % 2 != 0 || hex.is_empty() {
+    if !hex.len().is_multiple_of(2) || hex.is_empty() {
         return Err(invalid_data("Invalid journal path encoding"));
     }
     let mut bytes = Vec::with_capacity(hex.len() / 2);
-    for pair in hex.as_bytes().chunks_exact(2) {
+    for pair in hex.as_bytes().as_chunks::<2>().0 {
         let high = (pair[0] as char)
             .to_digit(16)
             .ok_or_else(|| invalid_data("Invalid journal path hex"))?;
@@ -449,11 +450,11 @@ fn hex_path(path: &Path) -> io::Result<String> {
 
 #[cfg(not(unix))]
 fn path_from_hex(hex: &str) -> io::Result<PathBuf> {
-    if hex.len() % 2 != 0 || hex.is_empty() {
+    if !hex.len().is_multiple_of(2) || hex.is_empty() {
         return Err(invalid_data("Invalid journal path encoding"));
     }
     let mut bytes = Vec::new();
-    for pair in hex.as_bytes().chunks_exact(2) {
+    for pair in hex.as_bytes().as_chunks::<2>().0 {
         let text = std::str::from_utf8(pair).map_err(|_| invalid_data("Invalid path hex"))?;
         bytes.push(u8::from_str_radix(text, 16).map_err(|_| invalid_data("Invalid path hex"))?);
     }
