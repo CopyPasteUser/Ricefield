@@ -85,6 +85,12 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   structured per-item result or rollback system.
 - [ ] Preflight, conflict choices (replace/skip/keep both/rename/compare,
   apply to all), user-facing error recovery.
+- [x] Offer a non-destructive per-transfer Keep both / Skip existing choice
+  through the universal Actions menu; apply it to multi-item Copy and Move
+  on the worker, preserve skipped cut sources, and report counts. Test mixed
+  batches and dangling symlink destinations. This is **not** a full conflict
+  preflight or overwrite/compare/rename recovery workflow; racing writes may
+  still fail a transfer safely.
 - [ ] Stage output, synchronize and publish atomically when possible.
 - [x] Add a durable cross-device move state journal with a read-only scan on
   startup, a visible warning and manual inspection of unfinished transfers.

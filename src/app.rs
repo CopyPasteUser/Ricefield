@@ -1,7 +1,7 @@
 use crate::{
     clipboard,
     config::{self, Config},
-    filesystem::{self, Action, Entry, Progress},
+    filesystem::{self, Action, ConflictPolicy, Entry, Progress},
     journal::{self, Record as JournalRecord, State as JournalState},
     operation_queue::OperationQueue,
     preview,
@@ -193,6 +193,11 @@ enum Dialog {
         numbering: bool,
         number_start: u32,
         number_width: usize,
+    },
+    PasteOptions {
+        clipboard: Clipboard,
+        destination: PathBuf,
+        conflict: ConflictPolicy,
     },
     Trash(Vec<PathBuf>),
     Delete(Vec<PathBuf>),
@@ -991,25 +996,50 @@ impl Explorer {
         self.status = Some((format!("Copied {} path(s) as text", paths.len()), false));
     }
 
-    fn paste(&mut self) {
-        let available = clipboard::paste_files()
+    fn clipboard_for_paste(&self) -> Option<Clipboard> {
+        clipboard::paste_files()
             .map(|files| Clipboard {
                 paths: files.paths,
                 cut: files.cut,
             })
-            .or_else(|| self.clipboard.clone());
-        if let Some(clipboard) = available {
-            if clipboard.cut {
-                self.run_action(Action::Move {
-                    sources: clipboard.paths,
-                    destination: self.current().path.clone(),
-                });
-            } else {
-                self.run_action(Action::Copy {
-                    sources: clipboard.paths,
-                    destination: self.current().path.clone(),
-                });
+            .or_else(|| self.clipboard.clone())
+    }
+
+    fn paste_action(clipboard: Clipboard, destination: PathBuf, conflict: ConflictPolicy) -> Action {
+        if clipboard.cut {
+            Action::Move {
+                sources: clipboard.paths,
+                destination,
+                conflict,
             }
+        } else {
+            Action::Copy {
+                sources: clipboard.paths,
+                destination,
+                conflict,
+            }
+        }
+    }
+
+    fn paste(&mut self) {
+        if let Some(clipboard) = self.clipboard_for_paste() {
+            self.run_action(Self::paste_action(
+                clipboard,
+                self.current().path.clone(),
+                ConflictPolicy::KeepBoth,
+            ));
+        }
+    }
+
+    fn paste_with_options(&mut self) {
+        if let Some(clipboard) = self.clipboard_for_paste() {
+            self.dialog = Some(Dialog::PasteOptions {
+                clipboard,
+                destination: self.current().path.clone(),
+                conflict: ConflictPolicy::KeepBoth,
+            });
+        } else {
+            self.status = Some(("No files on the clipboard".into(), true));
         }
     }
 
@@ -1178,6 +1208,7 @@ impl Explorer {
                     self.run_action(Action::Copy {
                         sources,
                         destination: self.current().path.clone(),
+                        conflict: ConflictPolicy::KeepBoth,
                     });
                 }
             }
@@ -1996,6 +2027,10 @@ impl Explorer {
                             self.paste();
                             ui.close();
                         }
+                        if ui.button("Paste with options…").clicked() {
+                            self.paste_with_options();
+                            ui.close();
+                        }
                         ui.separator();
                         if ui
                             .add_enabled(has_selection, egui::Button::new("Rename  F2"))
@@ -2011,6 +2046,7 @@ impl Explorer {
                             self.run_action(Action::Copy {
                                 sources: self.selected_paths(),
                                 destination: self.current().path.clone(),
+                                conflict: ConflictPolicy::KeepBoth,
                             });
                             ui.close();
                         }
@@ -2377,6 +2413,7 @@ impl Explorer {
                     self.run_action(Action::Copy {
                         sources: vec![entry.path.clone()],
                         destination: parent.to_path_buf(),
+                        conflict: ConflictPolicy::KeepBoth,
                     });
                 }
                 ui.close();
@@ -2489,6 +2526,49 @@ impl Explorer {
         let mut dismiss = false;
         if let Some(dialog) = self.dialog.as_mut() {
             match dialog {
+                Dialog::PasteOptions {
+                    clipboard,
+                    destination,
+                    conflict,
+                } => {
+                    egui::Window::new("Paste with options")
+                        .collapsible(false)
+                        .resizable(false)
+                        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+                        .show(context, |ui| {
+                            ui.label(format!(
+                                "{} {} item(s) into {}",
+                                if clipboard.cut { "Move" } else { "Copy" },
+                                clipboard.paths.len(),
+                                destination.display()
+                            ));
+                            ui.separator();
+                            ui.radio_value(
+                                conflict,
+                                ConflictPolicy::KeepBoth,
+                                "Keep both — rename incoming items when names collide",
+                            );
+                            ui.radio_value(
+                                conflict,
+                                ConflictPolicy::SkipExisting,
+                                "Skip existing — leave matching destination items untouched",
+                            );
+                            ui.label("Existing files and folders are never overwritten. The operation runs in the background.");
+                            ui.horizontal(|ui| {
+                                if ui.button("Cancel").clicked() {
+                                    dismiss = true;
+                                }
+                                if ui.button("Start transfer").clicked() {
+                                    action = Some(Self::paste_action(
+                                        clipboard.clone(),
+                                        destination.clone(),
+                                        *conflict,
+                                    ));
+                                    dismiss = true;
+                                }
+                            });
+                        });
+                }
                 Dialog::Name { mode, value } => {
                     let title = match mode {
                         NameMode::Folder(_) => "New folder",
@@ -2787,6 +2867,7 @@ impl eframe::App for Explorer {
             self.run_action(Action::Copy {
                 sources: dropped,
                 destination: self.current().path.clone(),
+                conflict: ConflictPolicy::KeepBoth,
             });
         }
         if self.dialog.is_none() {

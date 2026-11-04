@@ -28,6 +28,12 @@ renderers remain part of the roadmap.
   remembers up to 32 tab locations and the active tab across restarts.
 - List and icon layouts, local and bounded recursive filename search, hidden-file toggle and sorting by name, kind, size or modification time.
 - Multiple selection (Ctrl/Shift/Ctrl+A), copy, cut, paste, duplicate, rename, new folder/file, symbolic links, desktop Trash and confirmed permanent deletion.
+- **Paste with options…** in the shared Actions menu: choose **Keep both**
+  (create a collision-free ` (copy)` name, also the normal Ctrl+V behavior)
+  or **Skip existing** (leave destination files, folders and broken links
+  untouched). Copy and Move use the same choice; skipped cut sources remain
+  at their original location. A result message reports copied/moved and
+  skipped counts. No replace/overwrite operation is currently offered.
 - Batch rename for 2–256 selected entries (F2 or Rename): add a prefix/suffix,
   literal find/replace or configurable zero-padded sequence numbers. Preview
   every candidate before confirming. Prefix/suffix and numbering preserve raw
@@ -43,11 +49,10 @@ renderers remain part of the roadmap.
 - Copy files into the open folder by dragging them from the desktop or another file manager.
 - External TOML themes with configurable top/bottom tool regions, reorderable sidebar modules and left/right preview; persistent user settings. A single executable works with all rices.
 
-**Most recent functional work:** a worker-based batch rename with a complete
-prefix/suffix, literal replacement and sequence-number preview; atomic
-no-overwrite renames on Linux; more precise partial-batch diagnostics;
-strict error reporting for missing permanent-delete targets; and bounded,
-opt-out tab-session restoration. The last
+**Most recent functional work:** a selectable collision policy for Copy/Move
+with a **Paste with options…** dialog, worker-side skip decisions and regression
+tests for mixed transfers and dangling target symlinks; plus worker-based
+batch rename and opt-out tab-session restoration. The last
 verified workflow checks Rust formatting, Clippy, unit tests, a release
 build, CLI startup and Xvfb GUI startup for all seven skins. These are
 development checks, **not** a production release or full Linux Mint acceptance.

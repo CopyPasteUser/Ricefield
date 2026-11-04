@@ -2,6 +2,12 @@
 
 ## Unreleased — v0.2 stability and v0.3 safety groundwork
 
+- Add Paste with options in every rice's shared Actions menu, with a
+  no-overwrite Keep both / Skip existing choice for copy and move. Preserve
+  skipped source files when moving, report skipped item counts, and account
+  for skipped bytes in worker progress. Verify multi-file mixed outcomes and
+  collisions with dangling target symlinks. Normal Ctrl+V and Duplicate
+  retain Keep both semantics; full replace/compare decisions remain pending.
 - Preserve non-UTF-8 filename bytes when choosing a collision-free copy name.
 - Capture the original destination when a New Folder/New File dialog opens.
 - Correct the desktop launcher to pass local paths, and validate CLI file URIs.

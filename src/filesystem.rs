@@ -204,6 +204,14 @@ pub fn search_cancellable(
     Ok(results)
 }
 
+/// A destination collision never permits overwriting existing data.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ConflictPolicy {
+    #[default]
+    KeepBoth,
+    SkipExisting,
+}
+
 #[derive(Clone)]
 pub enum Action {
     NewFolder {
@@ -224,10 +232,12 @@ pub enum Action {
     Copy {
         sources: Vec<PathBuf>,
         destination: PathBuf,
+        conflict: ConflictPolicy,
     },
     Move {
         sources: Vec<PathBuf>,
         destination: PathBuf,
+        conflict: ConflictPolicy,
     },
     Trash {
         paths: Vec<PathBuf>,
@@ -596,13 +606,24 @@ fn perform_with_progress_in(
         Action::Copy {
             sources,
             destination,
+            conflict,
         } => {
             if sources.is_empty() {
                 return Ok("Nothing to copy".into());
             }
-            for (index, source) in sources.iter().enumerate() {
+            let mut skipped = 0usize;
+            for (index, (source, bytes)) in sources.iter().zip(estimated.iter()).enumerate() {
                 let result = (|| {
                     transfer.check()?;
+                    if *conflict == ConflictPolicy::SkipExisting
+                        && occupied(
+                            &destination.join(source.file_name().ok_or_else(invalid_name)?),
+                        )?
+                    {
+                        skipped += 1;
+                        transfer.advance(*bytes, source);
+                        return Ok(());
+                    }
                     let target = free_destination(
                         destination,
                         source.file_name().ok_or_else(invalid_name)?,
@@ -613,19 +634,40 @@ fn perform_with_progress_in(
                     return Err(batch_failure("Copy", index, sources.len(), source, error));
                 }
             }
-            Ok(format!("Copied {} item(s)", sources.len()))
+            if skipped > 0 {
+                Ok(format!(
+                    "Copied {} item(s); skipped {skipped} existing",
+                    sources.len() - skipped
+                ))
+            } else {
+                Ok(format!("Copied {} item(s)", sources.len()))
+            }
         }
         Action::Move {
             sources,
             destination,
+            conflict,
         } => {
             if sources.is_empty() {
                 return Ok("Nothing to move".into());
             }
+            let mut skipped = 0usize;
             for (index, (source, bytes)) in sources.iter().zip(estimated.iter()).enumerate() {
                 let result = (|| {
                     transfer.check()?;
                     if source.parent() == Some(destination.as_path()) {
+                        if *conflict == ConflictPolicy::SkipExisting {
+                            skipped += 1;
+                        }
+                        transfer.advance(*bytes, source);
+                        return Ok(());
+                    }
+                    if *conflict == ConflictPolicy::SkipExisting
+                        && occupied(
+                            &destination.join(source.file_name().ok_or_else(invalid_name)?),
+                        )?
+                    {
+                        skipped += 1;
                         transfer.advance(*bytes, source);
                         return Ok(());
                     }
@@ -679,7 +721,14 @@ fn perform_with_progress_in(
                     return Err(batch_failure("Move", index, sources.len(), source, error));
                 }
             }
-            Ok(format!("Moved {} item(s)", sources.len()))
+            if skipped > 0 {
+                Ok(format!(
+                    "Moved {} item(s); skipped {skipped} existing",
+                    sources.len() - skipped
+                ))
+            } else {
+                Ok(format!("Moved {} item(s)", sources.len()))
+            }
         }
         Action::Trash { paths } => {
             for (index, path) in paths.iter().enumerate() {
@@ -1540,12 +1589,97 @@ mod tests {
         perform(&Action::Copy {
             sources: vec![source.clone()],
             destination: dst.clone(),
+            conflict: ConflictPolicy::KeepBoth,
         })
         .unwrap();
         assert_eq!(fs::read(dst.join("note.txt")).unwrap(), b"existing");
         assert_eq!(fs::read(dst.join("note (copy).txt")).unwrap(), b"original");
         assert_eq!(fs::read(source).unwrap(), b"original");
         assert_eq!(fs::read_dir(&dst).unwrap().count(), 2);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn copy_skip_existing_preserves_collisions_and_copies_other_items() {
+        let root = test_root();
+        let destination = root.join("out");
+        fs::create_dir(&destination).unwrap();
+        let existing = root.join("existing.txt");
+        let fresh = root.join("fresh.txt");
+        fs::write(&existing, b"incoming").unwrap();
+        fs::write(&fresh, b"fresh payload").unwrap();
+        fs::write(destination.join("existing.txt"), b"keep destination").unwrap();
+        let result = perform(&Action::Copy {
+            sources: vec![existing.clone(), fresh.clone()],
+            destination: destination.clone(),
+            conflict: ConflictPolicy::SkipExisting,
+        })
+        .unwrap();
+        assert!(result.contains("Copied 1 item(s); skipped 1"), "{result}");
+        assert_eq!(
+            fs::read(destination.join("existing.txt")).unwrap(),
+            b"keep destination"
+        );
+        assert_eq!(
+            fs::read(destination.join("fresh.txt")).unwrap(),
+            b"fresh payload"
+        );
+        assert!(!destination.join("existing (copy).txt").exists());
+        assert_eq!(fs::read(existing).unwrap(), b"incoming");
+        assert_eq!(fs::read(fresh).unwrap(), b"fresh payload");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn move_skip_existing_never_removes_skipped_sources() {
+        let root = test_root();
+        let destination = root.join("out");
+        fs::create_dir(&destination).unwrap();
+        let existing = root.join("existing.txt");
+        let fresh = root.join("fresh.txt");
+        fs::write(&existing, b"incoming").unwrap();
+        fs::write(&fresh, b"move me").unwrap();
+        fs::write(destination.join("existing.txt"), b"keep destination").unwrap();
+        let result = perform(&Action::Move {
+            sources: vec![existing.clone(), fresh.clone()],
+            destination: destination.clone(),
+            conflict: ConflictPolicy::SkipExisting,
+        })
+        .unwrap();
+        assert!(result.contains("Moved 1 item(s); skipped 1"), "{result}");
+        assert_eq!(
+            fs::read(destination.join("existing.txt")).unwrap(),
+            b"keep destination"
+        );
+        assert_eq!(fs::read(existing).unwrap(), b"incoming");
+        assert_eq!(fs::read(destination.join("fresh.txt")).unwrap(), b"move me");
+        assert!(!fresh.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skip_existing_recognizes_dangling_destination_symlinks() {
+        use std::os::unix::fs::symlink;
+        let root = test_root();
+        let destination = root.join("out");
+        fs::create_dir(&destination).unwrap();
+        let source = root.join("link");
+        fs::write(&source, b"incoming").unwrap();
+        symlink("absent-target", destination.join("link")).unwrap();
+        let result = perform(&Action::Copy {
+            sources: vec![source.clone()],
+            destination: destination.clone(),
+            conflict: ConflictPolicy::SkipExisting,
+        })
+        .unwrap();
+        assert!(result.contains("skipped 1"), "{result}");
+        assert_eq!(
+            fs::read_link(destination.join("link")).unwrap(),
+            PathBuf::from("absent-target")
+        );
+        assert_eq!(fs::read_dir(&destination).unwrap().count(), 1);
+        assert_eq!(fs::read(source).unwrap(), b"incoming");
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1563,6 +1697,7 @@ mod tests {
         perform(&Action::Copy {
             sources: vec![folder, file],
             destination: output.clone(),
+            conflict: ConflictPolicy::KeepBoth,
         })
         .unwrap();
 
@@ -1598,6 +1733,7 @@ mod tests {
         perform(&Action::Copy {
             sources: vec![folder],
             destination: output.clone(),
+            conflict: ConflictPolicy::KeepBoth,
         })
         .unwrap();
 
@@ -1631,6 +1767,7 @@ mod tests {
             &Action::Copy {
                 sources: vec![source.clone()],
                 destination: output.clone(),
+                conflict: ConflictPolicy::KeepBoth,
             },
             &cancelled,
             &mut |progress| {
@@ -1663,6 +1800,7 @@ mod tests {
         let error = perform(&Action::Copy {
             sources: vec![valid.clone(), socket.clone()],
             destination: output.clone(),
+            conflict: ConflictPolicy::KeepBoth,
         })
         .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::Unsupported);
@@ -1696,6 +1834,7 @@ mod tests {
             &Action::Copy {
                 sources: vec![source.clone()],
                 destination: output.clone(),
+                conflict: ConflictPolicy::KeepBoth,
             },
             &cancelled,
             &mut |progress| {
@@ -1733,6 +1872,7 @@ mod tests {
             &Action::Copy {
                 sources: vec![source.clone()],
                 destination: output.clone(),
+                conflict: ConflictPolicy::KeepBoth,
             },
             &cancelled,
             &mut |progress| {
@@ -1763,6 +1903,7 @@ mod tests {
         let error = perform(&Action::Copy {
             sources: vec![socket.clone()],
             destination: output.clone(),
+            conflict: ConflictPolicy::KeepBoth,
         })
         .unwrap_err();
 
@@ -1819,6 +1960,7 @@ mod tests {
         let err = perform(&Action::Copy {
             sources: vec![folder.clone()],
             destination: folder.clone(),
+            conflict: ConflictPolicy::KeepBoth,
         })
         .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
@@ -2079,6 +2221,7 @@ mod tests {
         perform(&Action::Copy {
             sources: vec![source.clone()],
             destination: output.clone(),
+            conflict: ConflictPolicy::KeepBoth,
         })
         .unwrap();
 
@@ -2104,6 +2247,7 @@ mod tests {
         perform(&Action::Copy {
             sources: vec![source.clone()],
             destination: output.clone(),
+            conflict: ConflictPolicy::KeepBoth,
         })
         .unwrap();
 
@@ -2136,6 +2280,7 @@ mod tests {
         perform(&Action::Copy {
             sources: vec![source.join("broken")],
             destination: output.clone(),
+            conflict: ConflictPolicy::KeepBoth,
         })
         .unwrap();
         assert_eq!(
@@ -2157,6 +2302,7 @@ mod tests {
             &Action::Copy {
                 sources: vec![original.clone()],
                 destination: dest.clone(),
+                conflict: ConflictPolicy::KeepBoth,
             },
             &cancelled,
             &mut |progress| {
@@ -2281,6 +2427,7 @@ mod tests {
             &Action::Move {
                 sources: vec![source.clone()],
                 destination: target.clone(),
+                conflict: ConflictPolicy::KeepBoth,
             },
             &cancelled,
             &mut |_| {},
@@ -2324,6 +2471,7 @@ mod tests {
             &Action::Move {
                 sources: vec![source.clone()],
                 destination: target.clone(),
+                conflict: ConflictPolicy::KeepBoth,
             },
             &cancelled,
             &mut |progress: Progress| {

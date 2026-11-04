@@ -90,6 +90,7 @@ mod tests {
         Action::Copy {
             sources: vec![PathBuf::from(format!("/tmp/src-{number}"))],
             destination: PathBuf::from("/tmp/dest"),
+            conflict: crate::filesystem::ConflictPolicy::KeepBoth,
         }
     }
 
