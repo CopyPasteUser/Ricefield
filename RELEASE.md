@@ -1,6 +1,6 @@
 # Release process (Linux x86_64)
 
-RiceExplorer 0.5.0-alpha.1 is a **preview candidate**, not signed off for use
+RiceExplorer 0.5.0-alpha.2 is a **preview candidate**, not signed off for use
 with irreplaceable files or as a complete network/archive file manager.
 The code can produce a tested distribution bundle, but a green CI run alone
 does not satisfy the safety, recovery and Linux Mint hardware gates in
@@ -82,8 +82,10 @@ as prereleases. Do **not** create the final tag before these gates pass.
 1. Run all five create → inspect → verify → selected extract round-trips,
    plus hostile ZIP/TAR/7z fixtures, decompression limit and interrupted
    extraction cases on Linux Mint with disposable directories.
-2. Add in-memory encrypted-archive password handling or explicitly narrow the
-   supported-format promise to unencrypted inputs; never store passwords.
+2. **Implemented in alpha.2:** archive passwords stay in memory for the open
+   dialog/worker, and encrypted ZIP creation uses AES-256. Before a stable
+   release, verify compatibility with external ZIP/7z/RAR samples on Mint.
+   Keyring integration remains deferred.
 3. Exercise UI interaction, cancellation/cleanup, non-overwrite publication and
    low-memory operation. A successful Xvfb window screenshot is only a smoke
    test, not a substitute for those workflows.
