@@ -125,10 +125,7 @@ fn inspect_record(record: Record) -> Inspection {
 /// Inspect saved records and their current paths off the GUI thread.
 /// This remains strictly read-only and never implies that files match.
 pub fn inspect_incomplete() -> io::Result<Vec<Inspection>> {
-    Ok(scan_incomplete()?
-        .into_iter()
-        .map(inspect_record)
-        .collect())
+    Ok(scan_incomplete()?.into_iter().map(inspect_record).collect())
 }
 
 #[derive(Serialize, Deserialize)]
@@ -649,9 +646,17 @@ mod tests {
             destination: PathStatus::Missing,
             staging: None,
         };
-        assert!(inspection.guidance().contains("Neither recorded path is visible"));
+        assert!(
+            inspection
+                .guidance()
+                .contains("Neither recorded path is visible")
+        );
         inspection.destination = PathStatus::Inaccessible("device unavailable".into());
-        assert!(inspection.guidance().contains("Check mounts and permissions"));
+        assert!(
+            inspection
+                .guidance()
+                .contains("Check mounts and permissions")
+        );
         inspection.destination = PathStatus::File;
         assert!(inspection.guidance().contains("destination is visible"));
     }
@@ -674,7 +679,12 @@ mod tests {
         assert_eq!(inspection.source, PathStatus::Symlink);
         assert_eq!(inspection.destination, PathStatus::Missing);
         assert!(inspection.guidance().contains("original is visible"));
-        assert!(fs::symlink_metadata(source).unwrap().file_type().is_symlink());
+        assert!(
+            fs::symlink_metadata(source)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 
