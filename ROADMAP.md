@@ -79,6 +79,9 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
 - [ ] Extend the queue to Move and other operations only after stale-source
   preflight and safe confirmation are implemented; add per-item results,
   persistent history, elapsed time/rate/ETA and failure recovery.
+- [x] Report the index, source and count of earlier committed items when a
+  multi-item Copy or Move stops. This is an error diagnostic, not yet a full
+  structured per-item result or rollback system.
 - [ ] Preflight, conflict choices (replace/skip/keep both/rename/compare,
   apply to all), user-facing error recovery.
 - [ ] Stage output, synchronize and publish atomically when possible.

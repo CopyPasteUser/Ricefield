@@ -567,15 +567,16 @@ impl Explorer {
                         }
                         Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
                             self.queue_paused = !self.operation_queue.is_empty();
-                            (
-                                if self.queue_paused {
-                                    "Cancelled. Completed items remain; waiting copies are paused."
-                                } else {
-                                    "Cancelled. Previously completed items remain in place."
-                                }
-                                .to_owned(),
-                                OperationOutcome::Cancelled,
-                            )
+                            let detail = if self.queue_paused {
+                                format!(
+                                    "Cancelled: {error}. Completed items remain; waiting copies are paused."
+                                )
+                            } else {
+                                format!(
+                                    "Cancelled: {error}. Previously completed items remain in place."
+                                )
+                            };
+                            (detail, OperationOutcome::Cancelled)
                         }
                         Err(error) => {
                             self.queue_paused = !self.operation_queue.is_empty();

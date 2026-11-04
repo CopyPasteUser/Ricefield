@@ -24,6 +24,11 @@ Linux desktop file management for RiceBowl users. v0.1 interface English; runtim
 
 Only one mutation worker runs at a time; folder reads may proceed concurrently. Copy requests arriving during another mutation may enter a bounded 32-item FIFO queue with stable IDs. Queued jobs run after a successful active worker; after failure or cancellation they pause until explicit Resume, so further transfers do not cascade into a known failure. Each waiting job can be removed before execution without touching files. Other mutations are not delayed automatically, to avoid executing stale destructive requests. There is no fake optimistic success. Copy/cut uses an application-local file clipboard for v0.1, not the desktop MIME clipboard. The Trash confirmation is deliberately conservative even though desktop Trash is recoverable.
 
+Copy and Move failures identify the failing source's position in the batch and
+the number of earlier completed items. The error is not a transaction rollback:
+the failed item may have a published destination needing manual inspection,
+particularly after an interrupted cross-volume move.
+
 ## Ownership and recovery
 
 - **File list/table:** `Explorer::file_listing`, shared for all themes; virtualized rows.

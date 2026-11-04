@@ -219,6 +219,26 @@ fn invalid_name() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, "Invalid file or folder name")
 }
 
+/// Batch operations are not transactional: report exactly where an error
+/// stopped work instead of suggesting that an entire batch was rolled back.
+fn batch_failure(
+    verb: &str,
+    index: usize,
+    total: usize,
+    path: &Path,
+    error: io::Error,
+) -> io::Error {
+    io::Error::new(
+        error.kind(),
+        format!(
+            "{verb} stopped at item {} of {total} ({}): {error}. {} earlier item(s) completed; inspect the current item and both locations before retrying",
+            index + 1,
+            path.display(),
+            index
+        ),
+    )
+}
+
 fn occupied(path: &Path) -> io::Result<bool> {
     match fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
@@ -351,11 +371,18 @@ pub fn perform_with_progress(
             if sources.is_empty() {
                 return Ok("Nothing to copy".into());
             }
-            for source in sources {
-                transfer.check()?;
-                let target =
-                    free_destination(destination, source.file_name().ok_or_else(invalid_name)?)?;
-                stage_and_publish(source, &target, false, &mut transfer)?;
+            for (index, source) in sources.iter().enumerate() {
+                let result = (|| {
+                    transfer.check()?;
+                    let target = free_destination(
+                        destination,
+                        source.file_name().ok_or_else(invalid_name)?,
+                    )?;
+                    stage_and_publish(source, &target, false, &mut transfer)
+                })();
+                if let Err(error) = result {
+                    return Err(batch_failure("Copy", index, sources.len(), source, error));
+                }
             }
             Ok(format!("Copied {} item(s)", sources.len()))
         }
@@ -366,47 +393,58 @@ pub fn perform_with_progress(
             if sources.is_empty() {
                 return Ok("Nothing to move".into());
             }
-            for (source, bytes) in sources.iter().zip(estimated.iter()) {
-                transfer.check()?;
-                if source.parent() == Some(destination.as_path()) {
-                    transfer.advance(*bytes, source);
-                    continue;
-                }
-                let target =
-                    free_destination(destination, source.file_name().ok_or_else(invalid_name)?)?;
-                ensure_outside_source(source, &target)?;
-                match rename_without_overwrite(source, &target) {
-                    Ok(()) => transfer.advance(*bytes, &target),
-                    Err(error) if error.raw_os_error() == Some(libc::EXDEV) => {
-                        // Only traverse a directory when the atomic rename is impossible.
-                        let actual_bytes = estimate_bytes(source, cancelled, 0)?;
-                        transfer.total = transfer
-                            .total
-                            .saturating_add(actual_bytes.saturating_sub(*bytes));
-                        transfer.report(source);
-                        // A durable record must exist before copying. Never delete
-                        // the source if publishing the journal state fails.
-                        let mut journal = Journal::begin(source, &target)?;
-                        stage_and_publish_with_journal(
-                            source,
-                            &target,
-                            true,
-                            &mut transfer,
-                            Some(&mut journal),
-                        )?;
-                        transfer.check()?;
-                        transfer.phase = "Finishing";
-                        transfer.report(source);
-                        // Another process may have modified the source while it was
-                        // copied. Recheck after publication before unlinking anything.
-                        // If deletion fails, the published destination remains for
-                        // recovery; no unverified new directory entries are removed.
-                        verify_tree(source, &target, 0, &mut transfer)?;
-                        remove_verified_tree(source, &target, 0, &mut transfer)?;
-                        journal.advance(State::Completed)?;
-                        transfer.phase = "Copying";
+            for (index, (source, bytes)) in sources.iter().zip(estimated.iter()).enumerate() {
+                let result = (|| {
+                    transfer.check()?;
+                    if source.parent() == Some(destination.as_path()) {
+                        transfer.advance(*bytes, source);
+                        return Ok(());
                     }
-                    Err(error) => return Err(error),
+                    let target = free_destination(
+                        destination,
+                        source.file_name().ok_or_else(invalid_name)?,
+                    )?;
+                    ensure_outside_source(source, &target)?;
+                    match rename_without_overwrite(source, &target) {
+                        Ok(()) => transfer.advance(*bytes, &target),
+                        Err(error) if error.raw_os_error() == Some(libc::EXDEV) => {
+                            // Only traverse a directory when the atomic rename is impossible.
+                            let actual_bytes = estimate_bytes(source, cancelled, 0)?;
+                            transfer.total = transfer
+                                .total
+                                .saturating_add(actual_bytes.saturating_sub(*bytes));
+                            transfer.report(source);
+                            // A durable record must exist before copying. Never delete
+                            // the source if publishing the journal state fails.
+                            let original_source = fs::symlink_metadata(source)?;
+                            let mut journal = Journal::begin(source, &target)?;
+                            stage_and_publish_with_journal(
+                                source,
+                                &target,
+                                true,
+                                &mut transfer,
+                                Some(&mut journal),
+                            )?;
+                            transfer.check()?;
+                            transfer.phase = "Finishing";
+                            transfer.report(source);
+                            // Another process may have modified the source while it was
+                            // copied. Recheck after publication before unlinking anything.
+                            // If deletion fails, the published destination remains for
+                            // recovery; no unverified new directory entries are removed.
+                            ensure_same_source(source, &original_source)?;
+                            verify_tree(source, &target, 0, &mut transfer)?;
+                            ensure_same_source(source, &original_source)?;
+                            remove_verified_tree(source, &target, 0, &mut transfer)?;
+                            journal.advance(State::Completed)?;
+                            transfer.phase = "Copying";
+                        }
+                        Err(error) => return Err(error),
+                    }
+                    Ok(())
+                })();
+                if let Err(error) = result {
+                    return Err(batch_failure("Move", index, sources.len(), source, error));
                 }
             }
             Ok(format!("Moved {} item(s)", sources.len()))
@@ -1346,6 +1384,33 @@ mod tests {
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read_dir(&output).unwrap().count(), 0);
         assert_eq!(fs::read(&source).unwrap(), vec![99u8; 8 * 1024 * 1024]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn partial_copy_batch_reports_failed_item_and_prior_successes() {
+        use std::os::unix::net::UnixListener;
+
+        let root = test_root();
+        let valid = root.join("valid.txt");
+        fs::write(&valid, b"already committed").unwrap();
+        let socket = root.join("unsupported-socket");
+        let _listener = UnixListener::bind(&socket).unwrap();
+        let output = root.join("output");
+        fs::create_dir(&output).unwrap();
+
+        let error = perform(&Action::Copy {
+            sources: vec![valid.clone(), socket.clone()],
+            destination: output.clone(),
+        })
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+        assert!(error.to_string().contains("item 2 of 2"));
+        assert!(error.to_string().contains("1 earlier item(s) completed"));
+        assert_eq!(fs::read(output.join("valid.txt")).unwrap(), b"already committed");
+        assert_eq!(fs::read(valid).unwrap(), b"already committed");
+        assert!(fs::symlink_metadata(socket).is_ok());
         fs::remove_dir_all(root).unwrap();
     }
 

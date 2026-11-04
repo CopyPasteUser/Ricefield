@@ -39,6 +39,10 @@
   Add regression tests for in-place mutation, path replacement and timestamps.
 - Keep operation feedback visible in rice shells that hide the bottom status
   bar; the full message remains available on hover.
+- Explain exactly which item stopped a multi-file Copy/Move and how many
+  earlier items had already completed. Add a partial-batch regression test;
+  recheck the original source identity after cross-device publication before
+  beginning source cleanup.
 
 **Validation:** Earlier feature-branch CI passed formatting, Clippy, unit tests,
 release build, CLI and seven-theme Xvfb smoke. This newer metadata/race-safety
