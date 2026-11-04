@@ -38,6 +38,99 @@ pub struct Record {
     pub staging: Option<PathBuf>,
 }
 
+/// Read-only observation; presence is not proof of matching contents or of
+/// a recoverable move. In particular, never follow a selected symlink.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PathStatus {
+    Missing,
+    File,
+    Directory,
+    Symlink,
+    Other,
+    Inaccessible(String),
+}
+
+impl PathStatus {
+    pub fn label(&self) -> String {
+        match self {
+            Self::Missing => "Missing".into(),
+            Self::File => "Present (file)".into(),
+            Self::Directory => "Present (directory)".into(),
+            Self::Symlink => "Present (symlink)".into(),
+            Self::Other => "Present (special file)".into(),
+            Self::Inaccessible(error) => format!("Cannot inspect: {error}"),
+        }
+    }
+
+    fn present(&self) -> bool {
+        matches!(
+            self,
+            Self::File | Self::Directory | Self::Symlink | Self::Other
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Inspection {
+    pub record: Record,
+    pub source: PathStatus,
+    pub destination: PathStatus,
+    pub staging: Option<PathStatus>,
+}
+
+impl Inspection {
+    /// Conservative triage only: metadata presence cannot authorize an undo,
+    /// source deletion, or dismissal of a recovery record.
+    pub fn guidance(&self) -> &'static str {
+        if matches!(&self.source, PathStatus::Inaccessible(_))
+            || matches!(&self.destination, PathStatus::Inaccessible(_))
+            || self
+                .staging
+                .as_ref()
+                .is_some_and(|status| matches!(status, PathStatus::Inaccessible(_)))
+        {
+            "At least one path cannot be inspected. Check mounts and permissions before taking action."
+        } else if !self.source.present() && !self.destination.present() {
+            "Neither recorded path is visible. Check mounts and backups; do not discard this record."
+        } else if self.source.present() && self.destination.present() {
+            "Both paths exist. Compare their actual contents before deciding what to keep; neither is removed automatically."
+        } else if self.source.present() {
+            "The original is visible, but the destination is missing. Inspect the staging path and verify mount availability before retrying."
+        } else {
+            "The destination is visible, but the original is missing. Verify destination integrity and mounts before resolving this record."
+        }
+    }
+}
+
+fn path_status(path: &Path) -> PathStatus {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => PathStatus::Symlink,
+        Ok(meta) if meta.is_dir() => PathStatus::Directory,
+        Ok(meta) if meta.is_file() => PathStatus::File,
+        Ok(_) => PathStatus::Other,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => PathStatus::Missing,
+        Err(error) => PathStatus::Inaccessible(error.to_string()),
+    }
+}
+
+fn inspect_record(record: Record) -> Inspection {
+    Inspection {
+        source: path_status(&record.source),
+        destination: path_status(&record.destination),
+        staging: record.staging.as_ref().map(|path| path_status(path)),
+        record,
+    }
+}
+
+/// Inspect saved records and their current paths off the GUI thread.
+/// This remains strictly read-only and never implies that files match.
+pub fn inspect_incomplete() -> io::Result<Vec<Inspection>> {
+    Ok(scan_incomplete()?
+        .into_iter()
+        .map(inspect_record)
+        .collect())
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StoredRecord {
@@ -509,6 +602,79 @@ mod tests {
                 .join(format!("{}.toml", journal.record().id))
                 .exists()
         );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn inspection_distinguishes_missing_and_present_paths_without_mutation() {
+        let directory = test_directory();
+        let source = directory.join("original");
+        let destination = directory.join("published");
+        let staging = directory.join("staging");
+        fs::write(&source, b"original data").unwrap();
+        fs::create_dir(&staging).unwrap();
+        let record = Record {
+            id: "test".into(),
+            state: State::StagedVerified,
+            source: source.clone(),
+            destination: destination.clone(),
+            staging: Some(staging.clone()),
+        };
+        let first = inspect_record(record.clone());
+        assert_eq!(first.source, PathStatus::File);
+        assert_eq!(first.destination, PathStatus::Missing);
+        assert_eq!(first.staging, Some(PathStatus::Directory));
+        assert!(first.guidance().contains("original is visible"));
+        fs::write(&destination, b"published data").unwrap();
+        let second = inspect_record(record);
+        assert_eq!(second.destination, PathStatus::File);
+        assert!(second.guidance().contains("Both paths exist"));
+        assert_eq!(fs::read(source).unwrap(), b"original data");
+        assert_eq!(fs::read(destination).unwrap(), b"published data");
+        assert!(staging.is_dir());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn recovery_guidance_never_treats_missing_or_unreadable_paths_as_safe() {
+        let mut inspection = Inspection {
+            record: Record {
+                id: "missing".into(),
+                state: State::Published,
+                source: PathBuf::from("/missing-source"),
+                destination: PathBuf::from("/missing-destination"),
+                staging: None,
+            },
+            source: PathStatus::Missing,
+            destination: PathStatus::Missing,
+            staging: None,
+        };
+        assert!(inspection.guidance().contains("Neither recorded path is visible"));
+        inspection.destination = PathStatus::Inaccessible("device unavailable".into());
+        assert!(inspection.guidance().contains("Check mounts and permissions"));
+        inspection.destination = PathStatus::File;
+        assert!(inspection.guidance().contains("destination is visible"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inspection_recognizes_symlinks_without_following_target() {
+        use std::os::unix::fs::symlink;
+        let directory = test_directory();
+        let source = directory.join("source-link");
+        let destination = directory.join("destination");
+        symlink(directory.join("missing-target"), &source).unwrap();
+        let inspection = inspect_record(Record {
+            id: "link".into(),
+            state: State::Published,
+            source: source.clone(),
+            destination: destination.clone(),
+            staging: Some(directory.join("staging")),
+        });
+        assert_eq!(inspection.source, PathStatus::Symlink);
+        assert_eq!(inspection.destination, PathStatus::Missing);
+        assert!(inspection.guidance().contains("original is visible"));
+        assert!(fs::symlink_metadata(source).unwrap().file_type().is_symlink());
         fs::remove_dir_all(directory).unwrap();
     }
 

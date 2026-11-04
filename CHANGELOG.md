@@ -2,6 +2,10 @@
 
 ## Unreleased — v0.2 stability and v0.3 safety groundwork
 
+- Extend read-only crash-recovery inspection to observe source, published
+  destination and staging path status asynchronously. Distinguish missing,
+  present, symlink and inaccessible entries, and present conservative guidance
+  without attempting retries or deletion.
 - Sync the staging directory before marking its contents verified and sync
   the destination parent after atomic no-overwrite publication. A failed
   post-publication directory sync leaves the original source intact for a

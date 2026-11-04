@@ -60,7 +60,13 @@ renderers remain part of the roadmap.
   failure cannot restore an earlier deleted file, and concurrent directory
   modifications remain a risk. Prefer Trash when possible.
 - Bounded transfer queue for up to 32 waiting copy requests with FIFO job IDs, a shared Transfers panel, active progress/cancel, removal of jobs before they run and 64 recent session results. Active transfers show elapsed time, average transferred-byte rate and an approximate remaining time (after the first second and only when measurable); completed jobs retain their duration. Estimates may fluctuate on slow drives and during verification. **Copy and Move results expand into per-file statuses** (completed, skipped, failed, cancelled or not started), with actual target paths and error details on hover. A failed batch keeps the earlier completed items; no automatic rollback is implied. After a partially successful cut-and-paste **including a failed batch**, only unfinished sources remain on the internal clipboard for a deliberate retry; unchanged stale desktop cut contents are ignored. The queue pauses after a failed/cancelled operation until explicitly resumed. It is in memory only and never replayed after a restart; moves and destructive requests do not wait automatically.
-- Development preview: durable cross-device move journals and an always-visible, read-only warning for unfinished transfers, even when a rice hides its status bar. No automatic destructive recovery.
+- Development preview: durable cross-device move journals and an always-visible,
+  read-only warning for unfinished transfers, even when a rice hides its
+  status bar. The recovery window checks whether the recorded source,
+  destination and staging paths currently exist (including broken symlinks)
+  and gives cautious guidance. These are metadata observations, **not**
+  content verification or permission to delete anything. No automatic
+  destructive recovery.
 - File properties and editable Unix permission bits; external changes to folder contents are detected.
 - On-demand preview pane for bounded image and text previews, decoded off the UI thread.
 - Background folder scanning and file operations; superseded local scans and recursive searches are cooperatively cancelled and cannot overwrite current results. Virtualized file listing for large directories.

@@ -128,6 +128,11 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   power-loss fault injection remain release blockers.
 - [x] Add a durable cross-device move state journal with a read-only scan on
   startup, a visible warning and manual inspection of unfinished transfers.
+- [x] Inspect source, destination and staging path presence asynchronously
+  during recovery scans, without following symlinks or writing to any path.
+  Distinguish missing, present and inaccessible entries; show conservative
+  per-record guidance. Presence alone cannot justify source cleanup or
+  dismissing a journal.
 - [x] Isolate test journals and GUI smoke XDG state from the developer's real
   state, including tests that intentionally leave unfinished transfers.
 - [ ] Complete restart recovery with verified resume/rollback choices, bounded

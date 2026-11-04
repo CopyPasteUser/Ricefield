@@ -2,7 +2,7 @@ use crate::{
     clipboard,
     config::{self, Config},
     filesystem::{self, Action, ConflictPolicy, Entry, Progress},
-    journal::{self, Record as JournalRecord, State as JournalState},
+    journal::{self, Inspection as JournalInspection, State as JournalState},
     operation_queue::OperationQueue,
     preview,
     theme::{
@@ -345,10 +345,10 @@ pub struct Explorer {
     queue_paused: bool,
     show_operations: bool,
     recent_operations: VecDeque<CompletedOperation>,
-    recovery_sender: Sender<(u64, std::io::Result<Vec<JournalRecord>>)>,
-    recovery_receiver: Receiver<(u64, std::io::Result<Vec<JournalRecord>>)>,
+    recovery_sender: Sender<(u64, std::io::Result<Vec<JournalInspection>>)>,
+    recovery_receiver: Receiver<(u64, std::io::Result<Vec<JournalInspection>>)>,
     recovery_generation: u64,
-    recovery_records: Vec<JournalRecord>,
+    recovery_records: Vec<JournalInspection>,
     recovery_error: Option<String>,
     recovery_loading: bool,
     recovery_open: bool,
@@ -481,7 +481,7 @@ impl Explorer {
         self.recovery_loading = true;
         let sender = self.recovery_sender.clone();
         thread::spawn(move || {
-            let result = journal::scan_incomplete();
+            let result = journal::inspect_incomplete();
             let _ = sender.send((generation, result));
         });
     }
@@ -898,13 +898,22 @@ impl Explorer {
                 }
                 ui.separator();
                 egui::ScrollArea::vertical().max_height(330.0).show(ui, |ui| {
-                    for record in &self.recovery_records {
+                    for inspection in &self.recovery_records {
+                        let record = &inspection.record;
                         ui.group(|ui| {
                             ui.strong(format!("{} — {:?}", record.id, record.state));
                             ui.label(format!("Source: {}", record.source.display()));
+                            ui.small(format!("Current source: {}", inspection.source.label()));
                             ui.label(format!("Destination: {}", record.destination.display()));
+                            ui.small(format!(
+                                "Current destination: {}",
+                                inspection.destination.label()
+                            ));
                             if let Some(staging) = &record.staging {
                                 ui.label(format!("Staging: {}", staging.display()));
+                            }
+                            if let Some(staging) = &inspection.staging {
+                                ui.small(format!("Current staging: {}", staging.label()));
                             }
                             let guidance = match record.state {
                                 JournalState::Prepared => "Copy may be incomplete or may not have started.",
@@ -913,6 +922,7 @@ impl Explorer {
                                 JournalState::Completed => "Move completed.",
                             };
                             ui.small(guidance);
+                            ui.colored_label(Color32::LIGHT_YELLOW, inspection.guidance());
                         });
                     }
                 });
