@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — v0.2 stability work
+## Unreleased — v0.2 stability and v0.3 safety groundwork
 
 - Preserve non-UTF-8 filename bytes when choosing a collision-free copy name.
 - Capture the original destination when a New Folder/New File dialog opens.
@@ -18,9 +18,19 @@
   plus visibility of the status bar, without changing the file core.
 - Reverify a published cross-device copy before source cleanup, and delete
   only individually checked entries; add concurrent-source-mutation regression.
+- Add versioned, private, synchronized operation records for cross-device moves;
+  persist the `Published` state before any source removal.
+- Inspect unfinished moves asynchronously on launch and after operations. Show
+  a visible warning across all themes, with read-only recovery details and a
+  manual rescan; no automatic destructive recovery.
+- Add fault-injection coverage of journal persistence failures after publishing.
+- Pin GitHub checkout and artifact actions to verified immutable release SHAs,
+  disable checkout credential persistence, and enforce `--locked` CI builds.
 
-**Validation pending:** Rust format, Clippy, unit tests, GUI smoke in CI,
-and real Linux Mint acceptance. These changes are not a v1.0 release.
+**Validation:** Earlier v0.2 feature branch CI passed formatting, Clippy,
+36 tests, release build, CLI and seven-theme Xvfb smoke. New journal and CI
+hardening changes need a fresh CI run; real Linux Mint acceptance is still
+pending. These changes are not a v1.0 release.
 
 ## 0.2.0
 

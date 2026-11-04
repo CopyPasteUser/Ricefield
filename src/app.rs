@@ -2,6 +2,7 @@ use crate::{
     clipboard,
     config::{self, Config},
     filesystem::{self, Action, Entry, Progress},
+    journal::{self, Record as JournalRecord, State as JournalState},
     preview,
     theme::{
         BUILTIN_IDS, ChromeComponent, Layout, ShellKind, SidebarPosition, SidebarSection, Theme,
@@ -161,6 +162,13 @@ pub struct Explorer {
     preview_receiver: Receiver<PreviewResult>,
     op_sender: Sender<OperationEvent>,
     op_receiver: Receiver<OperationEvent>,
+    recovery_sender: Sender<(u64, std::io::Result<Vec<JournalRecord>>)>,
+    recovery_receiver: Receiver<(u64, std::io::Result<Vec<JournalRecord>>)>,
+    recovery_generation: u64,
+    recovery_records: Vec<JournalRecord>,
+    recovery_error: Option<String>,
+    recovery_loading: bool,
+    recovery_open: bool,
     clipboard: Option<Clipboard>,
     dialog: Option<Dialog>,
     status: Option<(String, bool)>,
@@ -207,6 +215,7 @@ impl Explorer {
         let (refresh_sender, refresh_receiver) = mpsc::channel();
         let (preview_sender, preview_receiver) = mpsc::channel();
         let (op_sender, op_receiver) = mpsc::channel();
+        let (recovery_sender, recovery_receiver) = mpsc::channel();
         let mut explorer = Self {
             config,
             theme,
@@ -221,6 +230,13 @@ impl Explorer {
             preview_receiver,
             op_sender,
             op_receiver,
+            recovery_sender,
+            recovery_receiver,
+            recovery_generation: 0,
+            recovery_records: Vec::new(),
+            recovery_error: None,
+            recovery_loading: false,
+            recovery_open: false,
             clipboard: None,
             dialog: None,
             status,
@@ -250,7 +266,20 @@ impl Explorer {
             }
             explorer.active = 0;
         }
+        explorer.check_unfinished_moves();
         explorer
+    }
+
+    /// Journal inspection is read-only and never blocks the UI thread.
+    fn check_unfinished_moves(&mut self) {
+        self.recovery_generation = self.recovery_generation.wrapping_add(1);
+        let generation = self.recovery_generation;
+        self.recovery_loading = true;
+        let sender = self.recovery_sender.clone();
+        thread::spawn(move || {
+            let result = journal::scan_incomplete();
+            let _ = sender.send((generation, result));
+        });
     }
 
     fn current(&self) -> &Tab {
@@ -403,6 +432,21 @@ impl Explorer {
     }
 
     fn poll_background(&mut self, context: &egui::Context) {
+        while let Ok((generation, result)) = self.recovery_receiver.try_recv() {
+            if generation == self.recovery_generation {
+                self.recovery_loading = false;
+                match result {
+                    Ok(records) => {
+                        self.recovery_records = records;
+                        self.recovery_error = None;
+                    }
+                    Err(error) => {
+                        // Keep the last known records visible if a later scan fails.
+                        self.recovery_error = Some(error.to_string());
+                    }
+                }
+            }
+        }
         while let Ok(message) = self.preview_receiver.try_recv() {
             if self.preview_path.as_ref() == Some(&message.path) {
                 self.preview_loading = false;
@@ -495,8 +539,91 @@ impl Explorer {
                         }
                     }
                     self.refresh_all();
+                    self.check_unfinished_moves();
                 }
             }
+        }
+    }
+
+    fn recovery_banner(&mut self, ui: &mut egui::Ui) {
+        if self.recovery_records.is_empty() && self.recovery_error.is_none() {
+            return;
+        }
+        egui::Panel::top("unfinished_move_notice")
+            .frame(
+                egui::Frame::new()
+                    .fill(Color32::from_rgb(87, 58, 31))
+                    .inner_margin(egui::Margin::symmetric(12, 7)),
+            )
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.colored_label(
+                        Color32::WHITE,
+                        if self.recovery_error.is_some() {
+                            "File move recovery records need attention".to_owned()
+                        } else {
+                            format!(
+                                "{} unfinished cross-device file move(s) — source and destination may both exist",
+                                self.recovery_records.len()
+                            )
+                        },
+                    );
+                    if ui.button("Review safely…").clicked() {
+                        self.recovery_open = true;
+                    }
+                });
+            });
+    }
+
+    fn recovery_dialog(&mut self, context: &egui::Context) {
+        if !self.recovery_open {
+            return;
+        }
+        let mut open = true;
+        let mut rescan = false;
+        egui::Window::new("Unfinished cross-device moves")
+            .open(&mut open)
+            .default_width(610.0)
+            .default_height(340.0)
+            .resizable(true)
+            .show(context, |ui| {
+                ui.label("Read-only inspection. RiceExplorer will not delete, resume, or overwrite either side automatically.");
+                ui.label("Check the actual files, sizes and contents before manually deciding what to keep.");
+                if let Some(error) = &self.recovery_error {
+                    ui.colored_label(Color32::LIGHT_RED, format!("Cannot read all journal records: {error}"));
+                }
+                if self.recovery_loading {
+                    ui.spinner();
+                    ui.label("Checking operation records…");
+                }
+                ui.separator();
+                egui::ScrollArea::vertical().max_height(330.0).show(ui, |ui| {
+                    for record in &self.recovery_records {
+                        ui.group(|ui| {
+                            ui.strong(format!("{} — {:?}", record.id, record.state));
+                            ui.label(format!("Source: {}", record.source.display()));
+                            ui.label(format!("Destination: {}", record.destination.display()));
+                            if let Some(staging) = &record.staging {
+                                ui.label(format!("Staging: {}", staging.display()));
+                            }
+                            let guidance = match record.state {
+                                JournalState::Prepared => "Copy may be incomplete or may not have started.",
+                                JournalState::StagedVerified => "Staged data was verified; final publication may have occurred.",
+                                JournalState::Published => "Destination was published; removing the source may be incomplete.",
+                                JournalState::Completed => "Move completed.",
+                            };
+                            ui.small(guidance);
+                        });
+                    }
+                });
+                ui.separator();
+                if ui.button("Rescan records").clicked() {
+                    rescan = true;
+                }
+            });
+        self.recovery_open = open;
+        if rescan {
+            self.check_unfinished_moves();
         }
     }
 
@@ -2144,6 +2271,7 @@ impl eframe::App for Explorer {
             self.keyboard(&context);
         }
         self.top_bar(ui);
+        self.recovery_banner(ui);
         if self.theme.shell.status_bar.unwrap_or(true) {
             self.status_bar(ui);
         }
@@ -2151,6 +2279,7 @@ impl eframe::App for Explorer {
         self.preview_panel(ui);
         self.main_panel(ui);
         self.dialogs(&context);
+        self.recovery_dialog(&context);
         if self.dirty_config {
             if let Err(error) = self.config.save() {
                 self.status = Some((format!("Cannot save preferences: {error}"), true));

@@ -30,6 +30,10 @@ Only one mutation worker runs at a time; folder reads may proceed concurrently. 
 - **Search and clear:** `Explorer::navigation_bar`/`rebuild_visible`.
 - **Dialog/confirmation:** `Explorer::dialogs`; no system-wide native dialog side effects.
 - **Feedback:** `Explorer::status_bar`; persistent until the next result.
+- **Unfinished cross-device moves:** `journal::scan_incomplete` runs on a
+  background thread; `Explorer::recovery_banner` remains visible regardless
+  of theme/status-bar settings. The review window is inspection-only: journal
+  states do not authorize automatic deletion, resume or overwriting.
 - **Operations:** `filesystem::perform`; worker response includes actual completion result.
 - **Theme:** `Theme::apply` and runtime TOML files; no theme-specific copy/move behavior.
 - **Shell composition:** `Theme::shell_kind` and `Theme::top_components` select

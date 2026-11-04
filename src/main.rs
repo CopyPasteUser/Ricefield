@@ -2,6 +2,7 @@ mod app;
 mod clipboard;
 mod config;
 mod filesystem;
+mod journal;
 mod preview;
 mod theme;
 

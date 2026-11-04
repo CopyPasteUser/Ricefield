@@ -70,7 +70,12 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
 - [ ] Preflight, conflict choices (replace/skip/keep both/rename/compare,
   apply to all), user-facing error recovery.
 - [ ] Stage output, synchronize and publish atomically when possible.
-- [ ] Journal and restart recovery for cross-device moves.
+- [x] Add a durable cross-device move state journal with a read-only scan on
+  startup, a visible warning and manual inspection of unfinished transfers.
+- [ ] Complete restart recovery with verified resume/rollback choices, bounded
+  journal retention, interrupted-publication/power-loss fault injection,
+  real mount/USB tests and source deletion safeguards. No automatic deletion
+  is permitted based solely on a saved journal entry.
 - [ ] Cancel, safe pause/resume where possible, undo for reversible actions.
 - [ ] Batch rename with preview; test hardlinks, metadata and non-UTF8 names.
 

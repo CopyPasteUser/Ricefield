@@ -1,3 +1,4 @@
+use crate::journal::{Journal, State};
 use std::{
     ffi::OsString,
     fs::{self, File, OpenOptions},
@@ -383,7 +384,16 @@ pub fn perform_with_progress(
                             .total
                             .saturating_add(actual_bytes.saturating_sub(*bytes));
                         transfer.report(source);
-                        stage_and_publish(source, &target, true, &mut transfer)?;
+                        // A durable record must exist before copying. Never delete
+                        // the source if publishing the journal state fails.
+                        let mut journal = Journal::begin(source, &target)?;
+                        stage_and_publish_with_journal(
+                            source,
+                            &target,
+                            true,
+                            &mut transfer,
+                            Some(&mut journal),
+                        )?;
                         transfer.check()?;
                         transfer.phase = "Finishing";
                         transfer.report(source);
@@ -393,6 +403,7 @@ pub fn perform_with_progress(
                         // recovery; no unverified new directory entries are removed.
                         verify_tree(source, &target, 0, &mut transfer)?;
                         remove_verified_tree(source, &target, 0, &mut transfer)?;
+                        journal.advance(State::Completed)?;
                         transfer.phase = "Copying";
                     }
                     Err(error) => return Err(error),
@@ -753,9 +764,27 @@ fn stage_and_publish(
     verify: bool,
     transfer: &mut Transfer<'_>,
 ) -> io::Result<()> {
+    stage_and_publish_with_journal(source, destination, verify, transfer, None)
+}
+
+fn stage_and_publish_with_journal(
+    source: &Path,
+    destination: &Path,
+    verify: bool,
+    transfer: &mut Transfer<'_>,
+    mut journal: Option<&mut Journal>,
+) -> io::Result<()> {
     transfer.check()?;
     ensure_outside_source(source, destination)?;
     let staging_dir = create_staging_dir(destination.parent().ok_or_else(invalid_name)?)?;
+    if let Some(record) = journal.as_mut()
+        && let Err(error) = record.set_staging(&staging_dir)
+    {
+        if let Err(cleanup_error) = fs::remove_dir(&staging_dir) {
+            eprintln!("RiceExplorer: cannot clean staging directory: {cleanup_error}");
+        }
+        return Err(error);
+    }
     let staged = staging_dir.join("payload");
     let result = (|| {
         transfer.phase = "Copying";
@@ -764,11 +793,19 @@ fn stage_and_publish(
             transfer.phase = "Verifying";
             transfer.report(source);
             verify_tree(source, &staged, 0, transfer)?;
+            if let Some(record) = journal.as_mut() {
+                record.advance(State::StagedVerified)?;
+            }
         }
         transfer.check()?;
         transfer.phase = "Publishing";
         transfer.report(destination);
-        rename_without_overwrite(&staged, destination)
+        rename_without_overwrite(&staged, destination)?;
+        if let Some(record) = journal.as_mut() {
+            // No source entry may be removed before this transition is durable.
+            record.advance(State::Published)?;
+        }
+        Ok(())
     })();
     match result {
         Ok(()) => {
@@ -1043,6 +1080,91 @@ mod tests {
             std::env::temp_dir().join(format!("rice-explorer-test-{}-{nonce}", std::process::id()));
         fs::create_dir(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn journaled_publication_keeps_source_until_explicit_completion() {
+        let root = test_root();
+        let source = root.join("source.txt");
+        let destination = root.join("target.txt");
+        fs::write(&source, b"verified content").unwrap();
+        let mut journal = Journal::begin_in(&root.join("journal"), &source, &destination).unwrap();
+        let cancelled = AtomicBool::new(false);
+        let mut no_op = |_: Progress| {};
+        let mut transfer = Transfer {
+            cancelled: &cancelled,
+            notify: &mut no_op,
+            transferred: 0,
+            total: 16,
+            last_report: Instant::now(),
+            last_reported_bytes: 0,
+            phase: "Copying",
+        };
+        stage_and_publish_with_journal(
+            &source,
+            &destination,
+            true,
+            &mut transfer,
+            Some(&mut journal),
+        )
+        .unwrap();
+        assert_eq!(journal.record().state, State::Published);
+        assert_eq!(fs::read(&source).unwrap(), b"verified content");
+        assert_eq!(fs::read(&destination).unwrap(), b"verified content");
+        let saved = fs::read_to_string(
+            root.join("journal")
+                .join(format!("{}.toml", journal.record().id)),
+        )
+        .unwrap();
+        assert!(saved.contains("state = \"published\""));
+        fs::remove_file(&source).unwrap();
+        journal.advance(State::Completed).unwrap();
+        assert_eq!(journal.record().state, State::Completed);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn journal_publication_failure_never_deletes_source() {
+        let root = test_root();
+        let source = root.join("source.txt");
+        let destination = root.join("target.txt");
+        fs::write(&source, b"keep original").unwrap();
+        let journal_dir = root.join("journal");
+        let mut journal = Journal::begin_in(&journal_dir, &source, &destination).unwrap();
+        let journal_path = journal_dir.join(format!("{}.toml", journal.record().id));
+        let cancelled = AtomicBool::new(false);
+        let mut sabotaged = false;
+        let mut sabotage = |progress: Progress| {
+            if progress.phase == "Publishing" && !sabotaged {
+                // Simulate journal storage failing during Published persistence,
+                // immediately after the destination has been atomically renamed.
+                fs::remove_file(&journal_path).unwrap();
+                fs::create_dir(&journal_path).unwrap();
+                sabotaged = true;
+            }
+        };
+        let mut transfer = Transfer {
+            cancelled: &cancelled,
+            notify: &mut sabotage,
+            transferred: 0,
+            total: 13,
+            last_report: Instant::now(),
+            last_reported_bytes: 0,
+            phase: "Copying",
+        };
+        let result = stage_and_publish_with_journal(
+            &source,
+            &destination,
+            true,
+            &mut transfer,
+            Some(&mut journal),
+        );
+        assert!(sabotaged, "test did not reach publication");
+        assert!(result.is_err());
+        assert_eq!(journal.record().state, State::StagedVerified);
+        assert_eq!(fs::read(&source).unwrap(), b"keep original");
+        assert_eq!(fs::read(&destination).unwrap(), b"keep original");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
