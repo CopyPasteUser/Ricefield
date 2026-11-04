@@ -52,6 +52,15 @@ the number of earlier completed items. The error is not a transaction rollback:
 the failed item may have a published destination needing manual inspection,
 particularly after an interrupted cross-volume move.
 
+Paste with options offers Keep both, Skip existing without verification,
+Require no conflicts, and Skip only matching contents. That last policy uses
+bounded read-only no-follow comparison of occupied destinations (including
+nested directories and symlink targets), aborting the entire batch when data
+differs, cannot be inspected, or exceeds the budget. Equal-content skips never
+delete cut sources. The worker reruns preflight after the asynchronous preview;
+external writers can still change a path afterward, so no comparison is a
+source-cleanup guarantee or a safe replace/overwrite decision.
+
 Multi-item Trash, permanent Delete, Link and Batch Rename follow the same
 partial-result reporting rule. Batch rename accepts 2–256 selected entries,
 builds names using prefix, suffix, optional literal find/replace and optional

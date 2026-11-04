@@ -1,4 +1,4 @@
-use crate::journal::{Journal, State};
+use crate::journal::{Comparison, Journal, State, compare_for_recovery};
 use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::{OsStr, OsString},
@@ -268,6 +268,10 @@ pub enum ConflictPolicy {
     SkipExisting,
     /// Stop the entire batch before any source or destination is modified.
     AbortOnConflict,
+    /// Skip occupied destinations only after a bounded, read-only comparison
+    /// confirms matching contents. Mismatches and inconclusive checks abort
+    /// the entire preflight without touching any path.
+    SkipIfIdentical,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1509,6 +1513,38 @@ fn plan_transfer(
                     format!("Destination already exists: {}", intended.display()),
                 ),
             ));
+        } else if collision && conflict == ConflictPolicy::SkipIfIdentical {
+            if reserved.contains(&intended) {
+                return Err(PlanFailure::at(
+                    index,
+                    io::Error::new(
+                        io::ErrorKind::AlreadyExists,
+                        "Multiple selected sources need the same destination; choose Keep both",
+                    ),
+                ));
+            }
+            match compare_for_recovery(source, &intended, cancelled) {
+                Comparison::Identical { .. } => (intended.clone(), PlannedDisposition::Skip),
+                Comparison::Different(reason) => {
+                    return Err(PlanFailure::at(
+                        index,
+                        io::Error::new(
+                            io::ErrorKind::AlreadyExists,
+                            format!(
+                                "Existing destination differs from source: {reason}. Choose Keep both or Skip existing"
+                            ),
+                        ),
+                    ));
+                }
+                Comparison::Inconclusive(reason) => {
+                    return Err(PlanFailure::at(
+                        index,
+                        io::Error::other(format!(
+                            "Cannot verify existing destination safely: {reason}"
+                        )),
+                    ));
+                }
+            }
         } else {
             let target = free_destination_reserved(destination, name, &reserved)
                 .map_err(|e| PlanFailure::at(index, e))?;
@@ -3826,6 +3862,206 @@ mod tests {
         );
         assert_eq!(fs::read(fresh).unwrap(), b"fresh");
         assert_eq!(fs::read(existing).unwrap(), b"incoming");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skip_if_identical_skips_equal_contents_without_mutating_either_side() {
+        let root = test_root();
+        let destination = root.join("out");
+        fs::create_dir(&destination).unwrap();
+        let source = root.join("equal.txt");
+        let target = destination.join("equal.txt");
+        fs::write(&source, b"identical content").unwrap();
+        fs::write(&target, b"identical content").unwrap();
+
+        let plan = preview_transfer(
+            std::slice::from_ref(&source),
+            &destination,
+            ConflictPolicy::SkipIfIdentical,
+            false,
+        )
+        .unwrap();
+        assert_eq!(plan.collisions, 1);
+        assert_eq!(plan.skipped, 1);
+        assert_eq!(plan.renamed, 0);
+        assert_eq!(plan.items[0].disposition, PlannedDisposition::Skip);
+
+        // The same policy must never delete a cut source on a verified skip.
+        let report = perform_with_report(
+            &Action::Move {
+                sources: vec![source.clone()],
+                destination: destination.clone(),
+                conflict: ConflictPolicy::SkipIfIdentical,
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert!(report.result.is_ok());
+        assert_eq!(report.items[0].state, ItemState::Skipped);
+        assert_eq!(fs::read(&source).unwrap(), b"identical content");
+        assert_eq!(fs::read(&target).unwrap(), b"identical content");
+        assert_eq!(fs::read_dir(&destination).unwrap().count(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skip_if_identical_rejects_different_destination_before_batch_mutation() {
+        let root = test_root();
+        let destination = root.join("out");
+        fs::create_dir(&destination).unwrap();
+        let fresh = root.join("fresh.txt");
+        let conflicting = root.join("conflicting.txt");
+        fs::write(&fresh, b"fresh").unwrap();
+        fs::write(&conflicting, b"incoming").unwrap();
+        fs::write(destination.join("conflicting.txt"), b"different").unwrap();
+
+        let report = perform_with_report(
+            &Action::Copy {
+                sources: vec![fresh.clone(), conflicting.clone()],
+                destination: destination.clone(),
+                conflict: ConflictPolicy::SkipIfIdentical,
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert_eq!(
+            report.result.unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(report.items[0].state, ItemState::NotStarted);
+        assert_eq!(report.items[1].state, ItemState::Failed);
+        assert!(!destination.join("fresh.txt").exists());
+        assert_eq!(fs::read(fresh).unwrap(), b"fresh");
+        assert_eq!(fs::read(conflicting).unwrap(), b"incoming");
+        assert_eq!(
+            fs::read(destination.join("conflicting.txt")).unwrap(),
+            b"different"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skip_if_identical_rechecks_after_preview_and_keeps_changed_cut_source() {
+        let root = test_root();
+        let destination = root.join("out");
+        fs::create_dir(&destination).unwrap();
+        let source = root.join("changing.txt");
+        let target = destination.join("changing.txt");
+        fs::write(&source, b"first").unwrap();
+        fs::write(&target, b"first").unwrap();
+        assert_eq!(
+            preview_transfer(
+                std::slice::from_ref(&source),
+                &destination,
+                ConflictPolicy::SkipIfIdentical,
+                true,
+            )
+            .unwrap()
+            .skipped,
+            1
+        );
+        fs::write(&target, b"other").unwrap();
+
+        let report = perform_with_report(
+            &Action::Move {
+                sources: vec![source.clone()],
+                destination: destination.clone(),
+                conflict: ConflictPolicy::SkipIfIdentical,
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert_eq!(
+            report.result.unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(report.items[0].state, ItemState::Failed);
+        assert_eq!(fs::read(source).unwrap(), b"first");
+        assert_eq!(fs::read(target).unwrap(), b"other");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skip_if_identical_compares_nested_directories_without_removing_source() {
+        let root = test_root();
+        let destination = root.join("out");
+        let source = root.join("folder");
+        let target = destination.join("folder");
+        fs::create_dir(&destination).unwrap();
+        fs::create_dir(&source).unwrap();
+        fs::create_dir(&target).unwrap();
+        fs::write(source.join("nested.txt"), b"same").unwrap();
+        fs::write(target.join("nested.txt"), b"same").unwrap();
+
+        let report = perform_with_report(
+            &Action::Move {
+                sources: vec![source.clone()],
+                destination: destination.clone(),
+                conflict: ConflictPolicy::SkipIfIdentical,
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert!(report.result.is_ok());
+        assert_eq!(report.items[0].state, ItemState::Skipped);
+        assert_eq!(fs::read(source.join("nested.txt")).unwrap(), b"same");
+        assert_eq!(fs::read(target.join("nested.txt")).unwrap(), b"same");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skip_if_identical_rejects_unverifiable_large_file_without_writing() {
+        let root = test_root();
+        let destination = root.join("out");
+        fs::create_dir(&destination).unwrap();
+        let source = root.join("large.bin");
+        let target = destination.join("large.bin");
+        for path in [&source, &target] {
+            File::create(path)
+                .unwrap()
+                .set_len(513 * 1024 * 1024)
+                .unwrap();
+        }
+
+        let error = preview_transfer(
+            std::slice::from_ref(&source),
+            &destination,
+            ConflictPolicy::SkipIfIdentical,
+            false,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("512 MiB"));
+        assert_eq!(fs::metadata(&source).unwrap().len(), 513 * 1024 * 1024);
+        assert_eq!(fs::metadata(&target).unwrap().len(), 513 * 1024 * 1024);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skip_if_identical_does_not_compare_to_a_reserved_future_destination() {
+        let root = test_root();
+        let first_parent = root.join("a");
+        let second_parent = root.join("b");
+        let destination = root.join("out");
+        for dir in [&first_parent, &second_parent, &destination] {
+            fs::create_dir(dir).unwrap();
+        }
+        let first = first_parent.join("name.txt");
+        let second = second_parent.join("name.txt");
+        fs::write(&first, b"equal").unwrap();
+        fs::write(&second, b"equal").unwrap();
+
+        let error = preview_transfer(
+            &[first.clone(), second.clone()],
+            &destination,
+            ConflictPolicy::SkipIfIdentical,
+            false,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("Multiple selected sources"));
+        assert_eq!(fs::read_dir(&destination).unwrap().count(), 0);
+        assert_eq!(fs::read(first).unwrap(), b"equal");
+        assert_eq!(fs::read(second).unwrap(), b"equal");
         fs::remove_dir_all(root).unwrap();
     }
 

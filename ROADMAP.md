@@ -173,8 +173,12 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   Completed links are not automatically rolled back or undone.
 - [ ] Finish advanced conflict choices (verified replace/compare, rename
   manually, per-item overrides) and recoverable user-facing error decisions.
-  Current whole-batch preflight, Keep both, Skip existing and Abort on conflict
-  are safe but do not reserve destination names against external writers.
+  The additional content-verified **Skip only matching contents** policy now
+  compares existing files, nested folders and symlink targets on a bounded
+  background preflight, aborts if contents differ or cannot be checked, and
+  leaves skipped Move sources intact. It is deliberately **not** verified
+  replacement, manual per-item rename/override, atomic protection against
+  external writers or Undo. The remaining advanced choices are still open.
 - [x] Offer a non-destructive per-transfer Keep both / Skip existing choice
   through the universal Actions menu; apply it to multi-item Copy and Move
   on the worker, preserve skipped cut sources, and report counts. Test mixed

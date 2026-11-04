@@ -3238,12 +3238,17 @@ impl Explorer {
                             policy_changed |= ui.radio_value(
                                 conflict,
                                 ConflictPolicy::SkipExisting,
-                                "Skip existing — leave matching destination items untouched",
+                                "Skip existing — leave any existing destination item untouched (no comparison)",
                             ).changed();
                             policy_changed |= ui.radio_value(
                                 conflict,
                                 ConflictPolicy::AbortOnConflict,
                                 "Require no conflicts — cancel the entire batch if a name collides",
+                            ).changed();
+                            policy_changed |= ui.radio_value(
+                                conflict,
+                                ConflictPolicy::SkipIfIdentical,
+                                "Skip only matching contents — reject different or unverifiable files",
                             ).changed();
                             if policy_changed {
                                 refresh_paste_preview =
@@ -3302,7 +3307,7 @@ impl Explorer {
                                     }
                                 }
                             };
-                            ui.small("Preview only: the worker rechecks sources and destination before execution. No existing file is overwritten. Concurrent changes may still stop the transfer safely.");
+                            ui.small("Preview only: the worker rechecks paths before execution. Matching contents are compared read-only (up to 512 MiB / 10,000 entries); this is not a permanent integrity guarantee. No existing file is overwritten.");
                             ui.horizontal(|ui| {
                                 if ui.button("Cancel").clicked() {
                                     dismiss = true;
