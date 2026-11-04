@@ -1851,6 +1851,10 @@ fn verify_tree(
             error
         }
     })?;
+    // Identical bytes are not sufficient to authorize source deletion: a
+    // cross-device Move must not silently replace ownership, permissions,
+    // timestamps or extended metadata with a lossy copy.
+    verify_copied_metadata(source, destination, &source_meta, &target_meta)?;
     if source_meta.file_type().is_symlink() {
         if !target_meta.file_type().is_symlink()
             || fs::read_link(source)? != fs::read_link(destination)?
@@ -1908,6 +1912,124 @@ fn verify_tree(
         return Err(mismatch());
     }
     Ok(())
+}
+
+fn verify_copied_metadata(
+    source: &Path,
+    destination: &Path,
+    source_meta: &fs::Metadata,
+    target_meta: &fs::Metadata,
+) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+
+        if source_meta.mode() != target_meta.mode()
+            || source_meta.uid() != target_meta.uid()
+            || source_meta.gid() != target_meta.gid()
+            || source_meta.mtime() != target_meta.mtime()
+            || source_meta.mtime_nsec() != target_meta.mtime_nsec()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Move verification failed: ownership, permissions or modification time differs; source is untouched",
+            ));
+        }
+    }
+    #[cfg(target_os = "linux")]
+    verify_copied_xattrs(source, destination)?;
+    #[cfg(not(target_os = "linux"))]
+    let _ = (source, destination, source_meta, target_meta);
+    Ok(())
+}
+
+/// Compare all visible namespaces, not only the user.* attributes we can
+/// currently copy. A source ACL, capability or security label that would be
+/// lost must stop a destructive Move even when the file bytes are identical.
+#[cfg(target_os = "linux")]
+fn verify_copied_xattrs(source: &Path, destination: &Path) -> io::Result<()> {
+    let source_names = list_link_xattrs(source)?;
+    let target_names = list_link_xattrs(destination)?;
+    if source_names != target_names {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Move verification failed: extended-attribute names differ; source is untouched",
+        ));
+    }
+    for name in source_names {
+        if read_link_xattr(source, &name)? != read_link_xattr(destination, &name)? {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Move verification failed: extended-attribute values differ; source is untouched",
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn list_link_xattrs(path: &Path) -> io::Result<BTreeSet<Vec<u8>>> {
+    const MAX_NAMES: usize = 64 * 1024;
+    let path = CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "NUL in path"))?;
+    let count = unsafe { libc::llistxattr(path.as_ptr(), std::ptr::null_mut(), 0) };
+    if count < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if count as usize > MAX_NAMES {
+        return Err(io::Error::other(
+            "Too many extended-attribute names to verify",
+        ));
+    }
+    if count == 0 {
+        return Ok(BTreeSet::new());
+    }
+    let mut names = vec![0u8; count as usize];
+    let actual = unsafe { libc::llistxattr(path.as_ptr(), names.as_mut_ptr().cast(), names.len()) };
+    if actual < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(names[..actual as usize]
+        .split(|byte| *byte == 0)
+        .filter(|name| !name.is_empty())
+        .map(Vec::from)
+        .collect())
+}
+
+#[cfg(target_os = "linux")]
+fn read_link_xattr(path: &Path, name: &[u8]) -> io::Result<Vec<u8>> {
+    const MAX_VALUE: usize = 1024 * 1024;
+    let path = CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "NUL in path"))?;
+    let name = CString::new(name)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid xattr name"))?;
+    let count = unsafe { libc::lgetxattr(path.as_ptr(), name.as_ptr(), std::ptr::null_mut(), 0) };
+    if count < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if count as usize > MAX_VALUE {
+        return Err(io::Error::other(
+            "Extended-attribute value is too large to verify",
+        ));
+    }
+    let mut value = vec![0u8; count as usize];
+    let actual = unsafe {
+        libc::lgetxattr(
+            path.as_ptr(),
+            name.as_ptr(),
+            value.as_mut_ptr().cast(),
+            value.len(),
+        )
+    };
+    if actual < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if actual != count {
+        return Err(io::Error::other(
+            "Extended attribute changed during verification",
+        ));
+    }
+    Ok(value)
 }
 
 /// Open only the regular inode observed at lstat time. O_NONBLOCK prevents a
@@ -4267,6 +4389,134 @@ mod tests {
             io::ErrorKind::InvalidData
         );
         assert_eq!(fs::read(&original).unwrap(), b"ABCDEF");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn move_verification_rejects_lost_permissions_and_keeps_source() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = test_root();
+        let source = root.join("source.txt");
+        let destination = root.join("destination.txt");
+        fs::write(&source, b"same bytes").unwrap();
+        fs::write(&destination, b"same bytes").unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o640)).unwrap();
+        fs::set_permissions(&destination, fs::Permissions::from_mode(0o600)).unwrap();
+        let cancelled = AtomicBool::new(false);
+        let mut callback = |_: Progress| {};
+        let mut transfer = Transfer {
+            cancelled: &cancelled,
+            notify: &mut callback,
+            transferred: 0,
+            total: 10,
+            last_report: Instant::now(),
+            last_reported_bytes: 0,
+            phase: "Verifying",
+        };
+        let error = verify_tree(&source, &destination, 0, &mut transfer).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("permissions"));
+        assert_eq!(fs::read(&source).unwrap(), b"same bytes");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_move_rejects_metadata_loss_before_publication() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = test_root();
+        let source = root.join("source.txt");
+        let destination_dir = root.join("destination-dir");
+        let destination = destination_dir.join("source.txt");
+        fs::create_dir(&destination_dir).unwrap();
+        fs::write(&source, b"important bytes").unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o640)).unwrap();
+        let cancelled = AtomicBool::new(false);
+        let mut injected = false;
+        let mut callback = |progress: Progress| {
+            if progress.phase == "Verifying" && !injected {
+                let staging = fs::read_dir(&destination_dir)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path())
+                    .find(|path| {
+                        path.file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .starts_with(".rice-explorer-staging-")
+                    })
+                    .unwrap();
+                fs::set_permissions(staging.join("payload"), fs::Permissions::from_mode(0o600))
+                    .unwrap();
+                injected = true;
+            }
+        };
+        let mut transfer = Transfer {
+            cancelled: &cancelled,
+            notify: &mut callback,
+            transferred: 0,
+            total: 15,
+            last_report: Instant::now(),
+            last_reported_bytes: 0,
+            phase: "Copying",
+        };
+        let error = stage_and_publish(&source, &destination, true, &mut transfer).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(injected, "test never modified staged metadata");
+        assert_eq!(fs::read(&source).unwrap(), b"important bytes");
+        assert!(!destination.exists());
+        assert_eq!(fs::read_dir(&destination_dir).unwrap().count(), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn move_verification_rejects_lost_xattrs_and_keeps_source() {
+        let root = test_root();
+        let source = root.join("source.txt");
+        let destination = root.join("destination.txt");
+        fs::write(&source, b"same bytes").unwrap();
+        fs::write(&destination, b"same bytes").unwrap();
+        let path = CString::new(source.as_os_str().as_bytes()).unwrap();
+        let key = CString::new("user.rice_explorer_verification").unwrap();
+        let value = b"must survive";
+        let status = unsafe {
+            libc::lsetxattr(
+                path.as_ptr(),
+                key.as_ptr(),
+                value.as_ptr().cast(),
+                value.len(),
+                0,
+            )
+        };
+        if status != 0 {
+            let error = io::Error::last_os_error();
+            if matches!(
+                error.raw_os_error(),
+                Some(libc::EOPNOTSUPP) | Some(libc::EPERM)
+            ) {
+                fs::remove_dir_all(root).unwrap();
+                return;
+            }
+            panic!("Cannot prepare xattr fixture: {error}");
+        }
+        let cancelled = AtomicBool::new(false);
+        let mut callback = |_: Progress| {};
+        let mut transfer = Transfer {
+            cancelled: &cancelled,
+            notify: &mut callback,
+            transferred: 0,
+            total: 10,
+            last_report: Instant::now(),
+            last_reported_bytes: 0,
+            phase: "Verifying",
+        };
+        let error = verify_tree(&source, &destination, 0, &mut transfer).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("extended-attribute"));
+        assert_eq!(fs::read(&source).unwrap(), b"same bytes");
         fs::remove_dir_all(root).unwrap();
     }
 }
