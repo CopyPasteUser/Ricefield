@@ -290,6 +290,9 @@ changed or replaced paths; identity matching is not proof of matching bytes,
 authentic ownership or safety after reboot. Legacy v1 journals have no such
 evidence. New cross-device moves refuse to start when the directory already
 holds 4,096 journal records; unfinished evidence is never pruned automatically.
+Unix writers coordinate journal slot allocation with a private directory lock
+to avoid simultaneous over-reservation. Older noncooperating processes and
+filesystems without reliable advisory locks still require caution.
 The recovery window
 also offers an **opt-in, read-only byte comparison** of source and destination,
 including nested folders and symlink targets. It runs on a worker, can be

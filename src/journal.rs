@@ -508,8 +508,22 @@ impl Journal {
         source: &Path,
         destination: &Path,
     ) -> io::Result<Self> {
+        Self::begin_in_with_limit(directory, source, destination, MAX_RECORDS)
+    }
+
+    fn begin_in_with_limit(
+        directory: &Path,
+        source: &Path,
+        destination: &Path,
+        limit: usize,
+    ) -> io::Result<Self> {
         ensure_private_directory(directory)?;
-        ensure_capacity(directory, MAX_RECORDS)?;
+        // Hold an advisory cross-process lock over both the capacity check
+        // and journal publication. Concurrent RiceExplorer writers cannot
+        // each see the last free slot and exceed the recovery scan limit.
+        #[cfg(unix)]
+        let _lock = lock_journal_directory(directory)?;
+        ensure_capacity(directory, limit)?;
         let source = absolute_path(source)?;
         let destination = absolute_path(destination)?;
         if source == destination {
@@ -612,6 +626,22 @@ impl Journal {
         self.record = updated;
         Ok(())
     }
+}
+
+#[cfg(unix)]
+fn lock_journal_directory(directory: &Path) -> io::Result<File> {
+    use std::os::{fd::AsRawFd, unix::fs::OpenOptionsExt};
+
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW);
+    let file = options.open(directory)?;
+    check_private_directory(&file.metadata()?)?;
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(file)
 }
 
 /// Never prune incomplete recovery evidence automatically. Refuse to start
@@ -1109,6 +1139,82 @@ mod tests {
         );
         assert!(directory.join("a.toml").exists());
         assert!(directory.join("b.toml").exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn concurrent_writers_cannot_reserve_the_same_last_journal_slot() {
+        use std::sync::{Arc, Barrier};
+
+        let directory = test_directory();
+        for index in 0..2 {
+            fs::write(directory.join(format!("source-{index}")), b"source").unwrap();
+        }
+        let barrier = Arc::new(Barrier::new(3));
+        let threads: Vec<_> = (0..2)
+            .map(|index| {
+                let directory = directory.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    Journal::begin_in_with_limit(
+                        &directory,
+                        &directory.join(format!("source-{index}")),
+                        &directory.join(format!("destination-{index}")),
+                        1,
+                    )
+                    .map(|journal| journal.record().id.clone())
+                })
+            })
+            .collect();
+        barrier.wait();
+        let results: Vec<_> = threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .collect();
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| result
+                    .as_ref()
+                    .is_err_and(|error| { error.to_string().contains("capacity reached") }))
+                .count(),
+            1
+        );
+        assert_eq!(scan_incomplete_in(&directory).unwrap().len(), 1);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restart_inspection_never_infers_publication_from_a_staged_record() {
+        let directory = test_directory();
+        let source = directory.join("source");
+        let destination = directory.join("published");
+        fs::write(&source, b"source bytes").unwrap();
+        let mut journal = Journal::begin_in(&directory, &source, &destination).unwrap();
+        journal.set_staging(&directory.join("staging")).unwrap();
+        journal.advance(State::StagedVerified).unwrap();
+        // Simulate a process dying after atomic publication but before it
+        // could durably advance the journal to Published.
+        fs::write(&destination, b"source bytes").unwrap();
+        drop(journal);
+
+        let restored = scan_incomplete_in(&directory).unwrap().remove(0);
+        assert_eq!(restored.state, State::StagedVerified);
+        assert!(restored.destination_identity.is_none());
+        let inspection = inspect_record(restored);
+        assert_eq!(inspection.source_identity, IdentityStatus::SameSnapshot);
+        assert_eq!(inspection.destination_identity, IdentityStatus::NotRecorded);
+        assert!(
+            inspection
+                .guidance()
+                .contains("neither is removed automatically")
+        );
+        assert!(source.exists());
+        assert!(destination.exists());
         fs::remove_dir_all(directory).unwrap();
     }
 
