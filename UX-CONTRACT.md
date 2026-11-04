@@ -21,6 +21,7 @@ Linux desktop file management for RiceBowl users. v0.1 interface English; runtim
 | --- | --- | --- | --- |
 | New file/folder | Background worker | Refresh all tabs; status message | Keep existing folder; error in status |
 | Rename | Background worker | Refresh tabs; status message | Existing target remains; error in status |
+| Batch rename | Snapshot selection, preview all candidate names, preflight targets on worker | Rename each item without overwriting | Stop with failed item and completed count; no silent rollback claim |
 | Copy | Background worker | Unique new destination; status | Partial new output cleaned when possible; source intact |
 | Move | Background worker | Rename within volume; status | Original remains for failed individual move; report error |
 | Trash | Explicit confirmation, then worker | Platform Trash; status | Report error; refresh tabs to show partial state |
@@ -31,6 +32,14 @@ Copy and Move failures identify the failing source's position in the batch and
 the number of earlier completed items. The error is not a transaction rollback:
 the failed item may have a published destination needing manual inspection,
 particularly after an interrupted cross-volume move.
+
+Multi-item Trash, permanent Delete, Link and Batch Rename follow the same
+partial-result reporting rule. Batch rename accepts 2–256 selected entries,
+builds names from prefix + original filename + suffix without changing raw
+non-UTF-8 bytes, and displays the complete mapping before confirmation. The
+worker verifies all source identities and destination vacancies before its
+first mutation; individual renames use atomic no-overwrite semantics on Linux.
+Concurrent writers can still cause a partial batch and earlier renames remain.
 
 ## Ownership and recovery
 

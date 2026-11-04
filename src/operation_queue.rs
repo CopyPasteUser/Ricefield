@@ -74,6 +74,7 @@ pub fn describe(action: &Action) -> String {
         Action::Delete { paths } => format!("Delete {} item(s)", paths.len()),
         Action::Link { sources, .. } => format!("Link {} item(s)", sources.len()),
         Action::Rename { .. } => "Rename item".into(),
+        Action::BatchRename { changes } => format!("Batch rename {} item(s)", changes.len()),
         Action::NewFolder { .. } => "New folder".into(),
         Action::NewFile { .. } => "New file".into(),
         Action::SetMode { .. } => "Change permissions".into(),

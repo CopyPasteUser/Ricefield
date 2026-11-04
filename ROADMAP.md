@@ -80,7 +80,8 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   preflight and safe confirmation are implemented; add per-item results,
   persistent history, elapsed time/rate/ETA and failure recovery.
 - [x] Report the index, source and count of earlier committed items when a
-  multi-item Copy or Move stops. This is an error diagnostic, not yet a full
+  multi-item Copy or Move stops; extend this report to Trash, Delete, Link and
+  Batch Rename. This is an error diagnostic, not yet a full
   structured per-item result or rollback system.
 - [ ] Preflight, conflict choices (replace/skip/keep both/rename/compare,
   apply to all), user-facing error recovery.
@@ -94,7 +95,11 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   real mount/USB tests and source deletion safeguards. No automatic deletion
   is permitted based solely on a saved journal entry.
 - [ ] Cancel, safe pause/resume where possible, undo for reversible actions.
-- [ ] Batch rename with preview; test hardlinks, metadata and non-UTF8 names.
+- [x] Implement bounded 2–256 item batch rename with a live prefix/suffix
+  preview, before-start collision preflight and no-overwrite renames. Preserve
+  non-UTF-8 filename bytes; test collisions and mid-batch partial failures.
+- [ ] Extend batch rename to numbering, regex/replacement, safe rename cycles,
+  rollback/undo where possible; test hardlinks and complete metadata behavior.
 
 **Gate:** fault-injected copy/move/crash scenarios do not silently lose user
 data; transfers never block the UI.

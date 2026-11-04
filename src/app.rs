@@ -181,6 +181,11 @@ impl NameMode {
 
 enum Dialog {
     Name { mode: NameMode, value: String },
+    BatchRename {
+        paths: Vec<PathBuf>,
+        prefix: String,
+        suffix: String,
+    },
     Trash(Vec<PathBuf>),
     Delete(Vec<PathBuf>),
     Properties { path: PathBuf, mode: String },
@@ -1213,7 +1218,26 @@ impl Explorer {
     }
 
     fn rename_selected(&mut self) {
-        if let Some(path) = self.selected_paths().first() {
+        let paths = self.selected_paths();
+        if paths.len() > 1 {
+            if paths.len() > filesystem::MAX_BATCH_RENAME {
+                self.status = Some((
+                    format!(
+                        "Batch rename supports at most {} selected items",
+                        filesystem::MAX_BATCH_RENAME
+                    ),
+                    true,
+                ));
+            } else {
+                self.dialog = Some(Dialog::BatchRename {
+                    paths,
+                    prefix: String::new(),
+                    suffix: String::new(),
+                });
+            }
+            return;
+        }
+        if let Some(path) = paths.first() {
             let name = path
                 .file_name()
                 .unwrap_or_default()
@@ -1740,7 +1764,7 @@ impl Explorer {
             self.paste();
         }
         if ui
-            .add_enabled(selection == 1, egui::Button::new("Rename"))
+            .add_enabled(selection > 0, egui::Button::new("Rename"))
             .clicked()
         {
             self.rename_selected();
@@ -2441,6 +2465,77 @@ impl Explorer {
                                     dismiss = true;
                                 }
                             });
+                        });
+                }
+                Dialog::BatchRename {
+                    paths,
+                    prefix,
+                    suffix,
+                } => {
+                    egui::Window::new(format!("Batch rename ({} items)", paths.len()))
+                        .collapsible(false)
+                        .resizable(true)
+                        .default_width(580.0)
+                        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+                        .show(context, |ui| {
+                            ui.label("Add text before or after each original filename.");
+                            ui.horizontal(|ui| {
+                                ui.label("Prefix:");
+                                ui.add_sized(
+                                    [220.0, 26.0],
+                                    egui::TextEdit::singleline(prefix),
+                                );
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Suffix:");
+                                ui.add_sized(
+                                    [220.0, 26.0],
+                                    egui::TextEdit::singleline(suffix),
+                                );
+                            });
+                            match filesystem::plan_batch_rename(paths, prefix, suffix) {
+                                Ok(changes) => {
+                                    ui.separator();
+                                    ui.strong("Preview (original → new name)");
+                                    egui::ScrollArea::vertical()
+                                        .max_height(245.0)
+                                        .show(ui, |ui| {
+                                            for (source, name) in &changes {
+                                                ui.horizontal_wrapped(|ui| {
+                                                    ui.monospace(
+                                                        source
+                                                            .file_name()
+                                                            .unwrap_or_default()
+                                                            .to_string_lossy(),
+                                                    );
+                                                    ui.label("→");
+                                                    ui.monospace(name.to_string_lossy());
+                                                });
+                                            }
+                                        });
+                                    ui.label(
+                                        "Targets are checked before renaming. Existing names are never overwritten; if a later rename fails, earlier changes remain.",
+                                    );
+                                    ui.horizontal(|ui| {
+                                        if ui.button("Cancel").clicked() {
+                                            dismiss = true;
+                                        }
+                                        if ui.button("Rename selected").clicked() {
+                                            action = Some(Action::BatchRename { changes });
+                                            dismiss = true;
+                                        }
+                                    });
+                                }
+                                Err(error) => {
+                                    ui.colored_label(
+                                        Color32::from_rgb(170, 48, 43),
+                                        error.to_string(),
+                                    );
+                                    if ui.button("Cancel").clicked() {
+                                        dismiss = true;
+                                    }
+                                }
+                            }
                         });
                 }
                 Dialog::Trash(paths) => {

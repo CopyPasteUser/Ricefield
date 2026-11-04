@@ -1,6 +1,7 @@
 use crate::journal::{Journal, State};
 use std::{
-    ffi::OsString,
+    collections::BTreeSet,
+    ffi::{OsStr, OsString},
     fs::{self, File, FileTimes, OpenOptions},
     io::{self, Read, Write},
     path::{Path, PathBuf},
@@ -217,6 +218,9 @@ pub enum Action {
         source: PathBuf,
         name: String,
     },
+    BatchRename {
+        changes: Vec<(PathBuf, OsString)>,
+    },
     Copy {
         sources: Vec<PathBuf>,
         destination: PathBuf,
@@ -243,6 +247,56 @@ pub enum Action {
 
 pub fn valid_name(name: &str) -> bool {
     !name.is_empty() && name != "." && name != ".." && !name.contains('/') && !name.contains('\0')
+}
+
+pub const MAX_BATCH_RENAME: usize = 256;
+
+fn valid_os_name(name: &OsStr) -> bool {
+    !name.is_empty()
+        && name != OsStr::new(".")
+        && name != OsStr::new("..")
+        && !name.as_encoded_bytes().contains(&b'/')
+        && !name.as_encoded_bytes().contains(&0)
+}
+
+/// Build a side-effect-free preview from snapshotted selection paths.
+/// OsString preserves arbitrary Linux filename bytes, including non-UTF-8.
+pub fn plan_batch_rename(
+    paths: &[PathBuf],
+    prefix: &str,
+    suffix: &str,
+) -> io::Result<Vec<(PathBuf, OsString)>> {
+    if paths.is_empty() || paths.len() > MAX_BATCH_RENAME {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("Select 1–{MAX_BATCH_RENAME} items for batch rename"),
+        ));
+    }
+    if prefix.is_empty() && suffix.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Enter a prefix or suffix to rename these files",
+        ));
+    }
+    if !prefix.is_empty() && !valid_name(prefix) || !suffix.is_empty() && !valid_name(suffix) {
+        return Err(invalid_name());
+    }
+    let mut destinations = BTreeSet::new();
+    let mut changes = Vec::with_capacity(paths.len());
+    for path in paths {
+        let original = path.file_name().ok_or_else(invalid_name)?;
+        let mut name = OsString::from(prefix);
+        name.push(original);
+        name.push(suffix);
+        if !valid_os_name(&name) || !destinations.insert(path.with_file_name(&name)) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Invalid or duplicate name in batch rename preview",
+            ));
+        }
+        changes.push((path.clone(), name));
+    }
+    Ok(changes)
 }
 
 fn invalid_name() -> io::Error {
@@ -405,6 +459,65 @@ fn perform_with_progress_in(
             rename_without_overwrite(source, &target)?;
             Ok(format!("Renamed to {name}"))
         }
+        Action::BatchRename { changes } => {
+            if changes.is_empty() || changes.len() > MAX_BATCH_RENAME {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Batch rename requires between 1 and 256 items",
+                ));
+            }
+            let parent = changes[0].0.parent();
+            let mut original_paths = BTreeSet::new();
+            let mut targets = BTreeSet::new();
+            let mut snapshots = Vec::with_capacity(changes.len());
+            // Entire batch must pass preflight before the first filesystem mutation.
+            for (source, name) in changes {
+                transfer.check()?;
+                let target = source.with_file_name(name);
+                if !valid_os_name(name)
+                    || source == &target
+                    || source.parent() != parent
+                    || !original_paths.insert(source.clone())
+                    || !targets.insert(target.clone())
+                {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "Batch rename has duplicate, unchanged or invalid paths",
+                    ));
+                }
+                if occupied(&target)? {
+                    return Err(io::Error::new(
+                        io::ErrorKind::AlreadyExists,
+                        format!("Batch rename target already exists: {}", target.display()),
+                    ));
+                }
+                snapshots.push(fs::symlink_metadata(source)?);
+            }
+            transfer.phase = "Renaming";
+            transfer.total = changes.len() as u64;
+            for (index, ((source, name), snapshot)) in
+                changes.iter().zip(snapshots.iter()).enumerate()
+            {
+                let target = source.with_file_name(name);
+                let result = (|| {
+                    transfer.check()?;
+                    ensure_same_source(source, snapshot)?;
+                    rename_without_overwrite(source, &target)
+                })();
+                if let Err(error) = result {
+                    return Err(batch_failure(
+                        "Batch rename",
+                        index,
+                        changes.len(),
+                        source,
+                        error,
+                    ));
+                }
+                transfer.transferred = (index + 1) as u64;
+                transfer.report(&target);
+            }
+            Ok(format!("Renamed {} item(s)", changes.len()))
+        }
         Action::Copy {
             sources,
             destination,
@@ -494,16 +607,26 @@ fn perform_with_progress_in(
             Ok(format!("Moved {} item(s)", sources.len()))
         }
         Action::Trash { paths } => {
-            for path in paths {
-                transfer.check()?;
-                trash::delete(path).map_err(io::Error::other)?;
+            for (index, path) in paths.iter().enumerate() {
+                let result = (|| {
+                    transfer.check()?;
+                    trash::delete(path).map_err(io::Error::other)
+                })();
+                if let Err(error) = result {
+                    return Err(batch_failure("Trash", index, paths.len(), path, error));
+                }
             }
             Ok(format!("Moved {} item(s) to Trash", paths.len()))
         }
         Action::Delete { paths } => {
-            for path in paths {
-                transfer.check()?;
-                remove_created(path)?;
+            for (index, path) in paths.iter().enumerate() {
+                let result = (|| {
+                    transfer.check()?;
+                    remove_created(path)
+                })();
+                if let Err(error) = result {
+                    return Err(batch_failure("Delete", index, paths.len(), path, error));
+                }
             }
             Ok(format!("Permanently deleted {} item(s)", paths.len()))
         }
@@ -511,26 +634,33 @@ fn perform_with_progress_in(
             sources,
             destination,
         } => {
-            for source in sources {
-                transfer.check()?;
-                let target =
-                    free_destination(destination, source.file_name().ok_or_else(invalid_name)?)?;
-                #[cfg(unix)]
-                {
-                    let absolute = if source.is_absolute() {
-                        source.clone()
-                    } else {
-                        std::env::current_dir()?.join(source)
-                    };
-                    std::os::unix::fs::symlink(absolute, target)?;
-                }
-                #[cfg(not(unix))]
-                {
-                    let _ = target;
-                    return Err(io::Error::new(
-                        io::ErrorKind::Unsupported,
-                        "Unix links only",
-                    ));
+            for (index, source) in sources.iter().enumerate() {
+                let result = (|| {
+                    transfer.check()?;
+                    let target = free_destination(
+                        destination,
+                        source.file_name().ok_or_else(invalid_name)?,
+                    )?;
+                    #[cfg(unix)]
+                    {
+                        let absolute = if source.is_absolute() {
+                            source.clone()
+                        } else {
+                            std::env::current_dir()?.join(source)?
+                        };
+                        std::os::unix::fs::symlink(absolute, target)
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        let _ = target;
+                        Err(io::Error::new(
+                            io::ErrorKind::Unsupported,
+                            "Unix links only",
+                        ))
+                    }
+                })();
+                if let Err(error) = result {
+                    return Err(batch_failure("Link", index, sources.len(), source, error));
                 }
             }
             Ok(format!("Created {} link(s)", sources.len()))
@@ -1622,6 +1752,104 @@ mod tests {
         });
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read(root.join("b")).unwrap(), b"b");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn batch_rename_preview_is_executed_without_losing_contents() {
+        let root = test_root();
+        let first = root.join("alpha.txt");
+        let second = root.join("beta.txt");
+        fs::write(&first, b"alpha payload").unwrap();
+        fs::write(&second, b"beta payload").unwrap();
+        let changes = plan_batch_rename(&[first.clone(), second.clone()], "photo-", "-old")
+            .unwrap();
+        assert_eq!(changes[0].1, OsString::from("photo-alpha.txt-old"));
+        perform(&Action::BatchRename { changes }).unwrap();
+        assert_eq!(fs::read(root.join("photo-alpha.txt-old")).unwrap(), b"alpha payload");
+        assert_eq!(fs::read(root.join("photo-beta.txt-old")).unwrap(), b"beta payload");
+        assert!(!first.exists());
+        assert!(!second.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn batch_rename_preflight_rejects_collision_before_any_change() {
+        let root = test_root();
+        let first = root.join("one");
+        let second = root.join("two");
+        fs::write(&first, b"one").unwrap();
+        fs::write(&second, b"two").unwrap();
+        fs::write(root.join("X-two"), b"unrelated").unwrap();
+        let changes = plan_batch_rename(&[first.clone(), second.clone()], "X-", "").unwrap();
+        let error = perform(&Action::BatchRename { changes }).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(first).unwrap(), b"one");
+        assert_eq!(fs::read(second).unwrap(), b"two");
+        assert_eq!(fs::read(root.join("X-two")).unwrap(), b"unrelated");
+        assert!(!root.join("X-one").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn batch_rename_reports_partial_commit_if_target_appears_mid_batch() {
+        let root = test_root();
+        let first = root.join("one");
+        let second = root.join("two");
+        fs::write(&first, b"one").unwrap();
+        fs::write(&second, b"two").unwrap();
+        let changes = plan_batch_rename(&[first, second.clone()], "X-", "").unwrap();
+        let mut inserted = false;
+        let result = perform_with_progress(
+            &Action::BatchRename { changes },
+            &AtomicBool::new(false),
+            &mut |progress| {
+                if progress.phase == "Renaming" && progress.transferred == 1 && !inserted {
+                    fs::write(root.join("X-two"), b"external writer").unwrap();
+                    inserted = true;
+                }
+            },
+        );
+        let error = result.unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert!(error.to_string().contains("1 earlier item(s) completed"));
+        assert!(inserted);
+        assert_eq!(fs::read(root.join("X-one")).unwrap(), b"one");
+        assert_eq!(fs::read(second).unwrap(), b"two");
+        assert_eq!(fs::read(root.join("X-two")).unwrap(), b"external writer");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn delete_batch_reports_completed_count_without_touching_later_items() {
+        let root = test_root();
+        let first = root.join("first");
+        let missing = root.join("missing");
+        let last = root.join("last");
+        fs::write(&first, b"first").unwrap();
+        fs::write(&last, b"last").unwrap();
+        let error = perform(&Action::Delete {
+            paths: vec![first.clone(), missing, last.clone()],
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("1 earlier item(s) completed"));
+        assert!(!first.exists());
+        assert_eq!(fs::read(last).unwrap(), b"last");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn batch_rename_keeps_non_utf8_name_bytes_and_rejects_duplicate_targets() {
+        use std::os::unix::ffi::OsStringExt;
+        let root = test_root();
+        let source = root.join(OsString::from_vec(b"raw-\xfe".to_vec()));
+        fs::write(&source, b"payload").unwrap();
+        assert!(plan_batch_rename(&[source.clone(), source.clone()], "x-", "").is_err());
+        let changes = plan_batch_rename(&[source.clone()], "x-", "-end").unwrap();
+        perform(&Action::BatchRename { changes }).unwrap();
+        let target = root.join(OsString::from_vec(b"x-raw-\xfe-end".to_vec()));
+        assert_eq!(fs::read(target).unwrap(), b"payload");
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -22,6 +22,10 @@ renderers remain part of the roadmap.
 - Multiple tabs, history, path entry, home/parent navigation, bookmarks, mount-point navigation and a collapsible sidebar.
 - List and icon layouts, local and bounded recursive filename search, hidden-file toggle and sorting by name, kind, size or modification time.
 - Multiple selection (Ctrl/Shift/Ctrl+A), copy, cut, paste, duplicate, rename, new folder/file, symbolic links, desktop Trash and confirmed permanent deletion.
+- Batch rename for 2–256 selected entries (F2 or Rename): add a prefix and/or suffix,
+  review every proposed filename, then confirm. The original filename bytes,
+  including non-UTF-8 bytes, are preserved. Existing destinations are rejected
+  before any rename, with atomic no-overwrite publication on Linux.
 - Native GTK file clipboard interoperability (when `xclip` or `wl-clipboard` is installed); otherwise use the internal file clipboard.
 - Cross-device moves with copy-first semantics and byte-for-byte verification, symlink-preserving copies, transfer progress and cancellation.
 - Bounded transfer queue for up to 32 waiting copy requests with FIFO job IDs, a shared Transfers panel, active progress/cancel, removal of jobs before they run and 64 recent session results. The queue pauses after a failed/cancelled operation until explicitly resumed. It is in memory only and never replayed after a restart; moves and destructive requests do not wait automatically.
@@ -164,6 +168,11 @@ Current safeguards:
 - Cancellation stops future work and cleans partial staging when possible,
   but does **not** undo already committed items. Deletion uses the desktop
   Trash unless permanent deletion is separately confirmed.
+- Multi-item Rename, Trash, Delete and Link failures identify the stopped item
+  and how many earlier items completed. Batch rename preflights all targets,
+  but a competing filesystem writer can still cause a partial batch; it does
+  not automatically undo earlier renames. Prefix/suffix applies to the entire
+  original filename (including the extension).
 
 **Important limitations:** Concurrent writers can still cause a partial move;
 the complete published destination is retained for manual recovery if source
