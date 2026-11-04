@@ -119,7 +119,13 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   now catches known conflicts and unsafe source layouts; it is **not** a
   replace/compare/rename recovery workflow. Racing writes may still stop a
   transfer safely.
-- [ ] Stage output, synchronize and publish atomically when possible.
+- [x] Stage regular output and copy directories privately, sync staged files,
+  subdirectories and the staging parent, then publish by atomic no-overwrite
+  rename and sync the destination parent. If a directory sync fails after
+  publication, report the uncertain state and preserve the original source.
+  Verify failure behavior with injected staging and publication sync errors.
+  Metadata completeness, source cleanup durability, FUSE/remote behavior and
+  power-loss fault injection remain release blockers.
 - [x] Add a durable cross-device move state journal with a read-only scan on
   startup, a visible warning and manual inspection of unfinished transfers.
 - [x] Isolate test journals and GUI smoke XDG state from the developer's real

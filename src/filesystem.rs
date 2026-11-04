@@ -1602,8 +1602,8 @@ fn create_staging_dir(parent: &Path) -> io::Result<PathBuf> {
 
 /// Copy into a private, hidden directory on the destination filesystem, then publish
 /// only a complete payload with an atomic, no-overwrite rename. A killed process may
-/// leave an abandoned staging directory; a durable recovery journal and directory
-/// fsync are still needed for power-loss guarantees.
+/// leave an abandoned staging directory. The staging and destination parent
+/// directories are synced to make their entries durable where supported.
 fn stage_and_publish(
     source: &Path,
     destination: &Path,
@@ -1618,7 +1618,24 @@ fn stage_and_publish_with_journal(
     destination: &Path,
     verify: bool,
     transfer: &mut Transfer<'_>,
+    journal: Option<&mut Journal>,
+) -> io::Result<()> {
+    stage_and_publish_with_sync(source, destination, verify, transfer, journal, &mut sync_directory)
+}
+
+fn sync_directory(path: &Path) -> io::Result<()> {
+    File::open(path)?.sync_all()
+}
+
+/// Separating sync barriers makes post-publication failure injection
+/// deterministic without global test state or modifying user files.
+fn stage_and_publish_with_sync(
+    source: &Path,
+    destination: &Path,
+    verify: bool,
+    transfer: &mut Transfer<'_>,
     mut journal: Option<&mut Journal>,
+    sync: &mut dyn FnMut(&Path) -> io::Result<()>,
 ) -> io::Result<()> {
     transfer.check()?;
     ensure_outside_source(source, destination)?;
@@ -1640,15 +1657,29 @@ fn stage_and_publish_with_journal(
             transfer.phase = "Verifying";
             transfer.report(source);
             verify_tree(source, &staged, 0, transfer)?;
-            if let Some(record) = journal.as_mut() {
-                record.advance(State::StagedVerified)?;
-            }
+        }
+        // copy_tree has synced regular files and copied subdirectories.
+        // Persist the staging entry before a journal can claim it was verified.
+        sync(&staging_dir)?;
+        if verify && let Some(record) = journal.as_mut() {
+            record.advance(State::StagedVerified)?;
         }
         ensure_same_source(source, &original)?;
         transfer.check()?;
         transfer.phase = "Publishing";
         transfer.report(destination);
         rename_without_overwrite(&staged, destination)?;
+        // A successful rename alone is not a power-loss durability barrier.
+        // Report uncertainty if the parent cannot be synced; most importantly,
+        // a cross-device Move must not delete its source in this situation.
+        sync(destination.parent().ok_or_else(invalid_name)?).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "Destination was published, but directory sync failed: {error}. Verify both paths before retrying; source was not removed"
+                ),
+            )
+        })?;
         if let Some(record) = journal.as_mut() {
             // No source entry may be removed before this transition is durable.
             record.advance(State::Published)?;
@@ -2076,6 +2107,96 @@ mod tests {
         assert_eq!(journal.record().state, State::StagedVerified);
         assert_eq!(fs::read(&source).unwrap(), b"keep original");
         assert_eq!(fs::read(&destination).unwrap(), b"keep original");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn staging_directory_sync_failure_prevents_publication() {
+        let root = test_root();
+        let source = root.join("original");
+        let destination = root.join("target");
+        fs::write(&source, b"keep original").unwrap();
+        let mut journal = Journal::begin_in(&root.join("journal"), &source, &destination).unwrap();
+        let cancelled = AtomicBool::new(false);
+        let mut no_op = |_: Progress| {};
+        let mut transfer = Transfer {
+            cancelled: &cancelled,
+            notify: &mut no_op,
+            transferred: 0,
+            total: 13,
+            last_report: Instant::now(),
+            last_reported_bytes: 0,
+            phase: "Copying",
+        };
+        let mut sync = |_: &Path| Err(io::Error::other("injected staging directory sync error"));
+        let error = stage_and_publish_with_sync(
+            &source,
+            &destination,
+            true,
+            &mut transfer,
+            Some(&mut journal),
+            &mut sync,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("injected staging"));
+        assert_eq!(journal.record().state, State::Prepared);
+        assert_eq!(fs::read(&source).unwrap(), b"keep original");
+        assert!(!destination.exists());
+        assert!(
+            journal
+                .record()
+                .staging
+                .as_ref()
+                .is_some_and(|path| !path.exists())
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn destination_directory_sync_failure_retains_source_and_recovery_record() {
+        let root = test_root();
+        let source = root.join("original");
+        let destination = root.join("target");
+        fs::write(&source, b"keep original").unwrap();
+        let directory = root.join("journal");
+        let mut journal = Journal::begin_in(&directory, &source, &destination).unwrap();
+        let cancelled = AtomicBool::new(false);
+        let mut no_op = |_: Progress| {};
+        let mut transfer = Transfer {
+            cancelled: &cancelled,
+            notify: &mut no_op,
+            transferred: 0,
+            total: 13,
+            last_report: Instant::now(),
+            last_reported_bytes: 0,
+            phase: "Copying",
+        };
+        let mut barriers = 0usize;
+        let mut sync = |path: &Path| {
+            barriers += 1;
+            if barriers == 2 {
+                Err(io::Error::other("injected destination directory sync error"))
+            } else {
+                sync_directory(path)
+            }
+        };
+        let error = stage_and_publish_with_sync(
+            &source,
+            &destination,
+            true,
+            &mut transfer,
+            Some(&mut journal),
+            &mut sync,
+        )
+        .unwrap_err();
+        assert_eq!(barriers, 2);
+        assert!(error.to_string().contains("Destination was published"));
+        assert_eq!(fs::read(&source).unwrap(), b"keep original");
+        assert_eq!(fs::read(&destination).unwrap(), b"keep original");
+        assert_eq!(journal.record().state, State::StagedVerified);
+        let persisted = fs::read_to_string(directory.join(format!("{}.toml", journal.record().id)))
+            .unwrap();
+        assert!(persisted.contains("state = \"staged_verified\""));
         fs::remove_dir_all(root).unwrap();
     }
 

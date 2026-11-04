@@ -2,6 +2,12 @@
 
 ## Unreleased — v0.2 stability and v0.3 safety groundwork
 
+- Sync the staging directory before marking its contents verified and sync
+  the destination parent after atomic no-overwrite publication. A failed
+  post-publication directory sync leaves the original source intact for a
+  cross-device Move and reports that the published destination may need
+  manual inspection. Inject failures at both sync barriers in regression
+  tests; neither is allowed to remove the original source.
 - Preflight complete multi-item Trash and permanent Delete requests before
   removing any paths. Reject missing, duplicate and overlapping selections;
   revalidate each selected source at execution time. Surface per-item
