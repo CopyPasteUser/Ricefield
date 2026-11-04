@@ -85,18 +85,27 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   for all rices. Preflight failures identify the offending input without
   making changes; preserve skipped cut sources for retry. Results are only
   retained in the current session, with no automatic rollback or replay.
+- [x] Add a side-effect-free, asynchronous Paste preflight with per-item
+  destinations, reserved targets for repeated basenames, automatic rename/skip
+  counts and a third *Require no conflicts* policy. Repeat the complete
+  preflight on the worker before mutations; reject duplicate/overlapping
+  sources and destinations inside selected folders. Preserve only unfinished
+  cut items after a partially completed **failed** Move, not just success.
 - [x] Report the index, source and count of earlier committed items when a
   multi-item Copy or Move stops; extend this report to Trash, Delete, Link and
   Batch Rename. This is an error diagnostic, not yet a full
   structured per-item result or rollback system.
-- [ ] Preflight, conflict choices (replace/skip/keep both/rename/compare,
-  apply to all), user-facing error recovery.
+- [ ] Finish advanced conflict choices (verified replace/compare, rename
+  manually, per-item overrides) and recoverable user-facing error decisions.
+  Current whole-batch preflight, Keep both, Skip existing and Abort on conflict
+  are safe but do not reserve destination names against external writers.
 - [x] Offer a non-destructive per-transfer Keep both / Skip existing choice
   through the universal Actions menu; apply it to multi-item Copy and Move
   on the worker, preserve skipped cut sources, and report counts. Test mixed
-  batches and dangling symlink destinations. This is **not** a full conflict
-  preflight or overwrite/compare/rename recovery workflow; racing writes may
-  still fail a transfer safely.
+  batches and dangling symlink destinations. Full-batch read-only preflight
+  now catches known conflicts and unsafe source layouts; it is **not** a
+  replace/compare/rename recovery workflow. Racing writes may still stop a
+  transfer safely.
 - [ ] Stage output, synchronize and publish atomically when possible.
 - [x] Add a durable cross-device move state journal with a read-only scan on
   startup, a visible warning and manual inspection of unfinished transfers.

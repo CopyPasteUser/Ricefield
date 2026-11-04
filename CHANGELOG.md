@@ -2,6 +2,17 @@
 
 ## Unreleased — v0.2 stability and v0.3 safety groundwork
 
+- Preflight full Copy/Move batches before the first mutation: validate source
+  identities, destination directories, duplicate and nested selected sources,
+  and destinations inside a source tree. Reserve names within a batch so two
+  same-named inputs cannot unexpectedly collide. Reject sources that change
+  after preflight before their turn begins. Keep atomic no-overwrite writes.
+- Show a background-computed, row-virtualized Paste conflict preview with
+  intended paths and rename/skip totals. Add a *Require no conflicts* mode
+  that refuses the entire batch when a destination name is already occupied.
+  Revalidate on the worker; preview is advisory, not a filesystem lock.
+- After a partially failed cut-and-paste, retain only uncompleted sources for
+  retry in the internal clipboard, without replaying already moved paths.
 - Track detailed Copy/Move outcomes for each requested source, including
   destination paths, cancelled/failed items and later not-started items.
   Show expandable, row-virtualized per-file results in the shared Transfers

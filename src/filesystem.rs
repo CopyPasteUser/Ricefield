@@ -264,6 +264,50 @@ pub enum ConflictPolicy {
     #[default]
     KeepBoth,
     SkipExisting,
+    /// Stop the entire batch before any source or destination is modified.
+    AbortOnConflict,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlannedDisposition {
+    Transfer,
+    Skip,
+}
+
+#[derive(Clone, Debug)]
+pub struct PlannedItem {
+    pub source: PathBuf,
+    pub target: PathBuf,
+    pub disposition: PlannedDisposition,
+    pub collision: bool,
+    pub renamed: bool,
+    snapshot: fs::Metadata,
+}
+
+#[derive(Clone, Debug)]
+pub struct TransferPlan {
+    pub items: Vec<PlannedItem>,
+    pub collisions: usize,
+    pub renamed: usize,
+    pub skipped: usize,
+}
+
+struct PlanFailure {
+    index: Option<usize>,
+    error: io::Error,
+}
+
+impl PlanFailure {
+    fn at(index: usize, error: io::Error) -> Self {
+        Self {
+            index: Some(index),
+            error,
+        }
+    }
+
+    fn global(error: io::Error) -> Self {
+        Self { index: None, error }
+    }
 }
 
 #[derive(Clone)]
@@ -585,6 +629,44 @@ fn perform_with_progress_and_items(
         Action::Trash { paths } | Action::Delete { paths } => paths,
         _ => &[],
     };
+    // Validate the *entire* Copy/Move batch before any destination is staged
+    // or any source is renamed. UI previews are advisory; this worker-side
+    // preflight runs again with current filesystem state.
+    let plan = match action {
+        Action::Copy {
+            sources,
+            destination,
+            conflict,
+        }
+        | Action::Move {
+            sources,
+            destination,
+            conflict,
+        } if !sources.is_empty() => {
+            let moving = matches!(action, Action::Move { .. });
+            match plan_transfer(sources, destination, *conflict, moving, cancelled) {
+                Ok(plan) => Some(plan),
+                Err(failure) => {
+                    let index = failure.index.unwrap_or(0);
+                    on_item(ItemUpdate::error(index, None, &failure.error));
+                    return Err(io::Error::new(
+                        failure.error.kind(),
+                        format!(
+                            "Transfer preflight failed{}: {}. No items were processed",
+                            failure.index.map_or_else(String::new, |index| format!(
+                                " at item {} of {} ({})",
+                                index + 1,
+                                sources.len(),
+                                sources[index].display()
+                            )),
+                            failure.error
+                        ),
+                    ));
+                }
+            }
+        }
+        _ => None,
+    };
     let mut estimated: Vec<u64> = Vec::with_capacity(sources.len());
     for (index, source) in sources.iter().enumerate() {
         let estimate =
@@ -720,34 +802,27 @@ fn perform_with_progress_and_items(
             }
             Ok(format!("Renamed {} item(s)", changes.len()))
         }
-        Action::Copy {
-            sources,
-            destination,
-            conflict,
-        } => {
+        Action::Copy { sources, .. } => {
             if sources.is_empty() {
                 return Ok("Nothing to copy".into());
             }
             let mut skipped = 0usize;
+            let plan = plan.as_ref().expect("nonempty Copy has a validated plan");
             for (index, (source, bytes)) in sources.iter().zip(estimated.iter()).enumerate() {
+                let planned = &plan.items[index];
                 let mut target = None;
                 let mut skipped_item = false;
                 let result = (|| {
                     transfer.check()?;
-                    let intended = destination.join(source.file_name().ok_or_else(invalid_name)?);
-                    if *conflict == ConflictPolicy::SkipExisting && occupied(&intended)? {
+                    target = Some(planned.target.clone());
+                    if planned.disposition == PlannedDisposition::Skip {
                         skipped += 1;
                         skipped_item = true;
-                        target = Some(intended);
                         transfer.advance(*bytes, source);
                         return Ok(());
                     }
-                    let chosen_target = free_destination(
-                        destination,
-                        source.file_name().ok_or_else(invalid_name)?,
-                    )?;
-                    target = Some(chosen_target.clone());
-                    stage_and_publish(source, &chosen_target, false, &mut transfer)
+                    ensure_same_source(source, &planned.snapshot)?;
+                    stage_and_publish(source, &planned.target, false, &mut transfer)
                 })();
                 match result {
                     Ok(()) => on_item(ItemUpdate::new(
@@ -781,43 +856,29 @@ fn perform_with_progress_and_items(
                 Ok(format!("Copied {} item(s)", sources.len()))
             }
         }
-        Action::Move {
-            sources,
-            destination,
-            conflict,
-        } => {
+        Action::Move { sources, .. } => {
             if sources.is_empty() {
                 return Ok("Nothing to move".into());
             }
             let mut skipped = 0usize;
+            let plan = plan.as_ref().expect("nonempty Move has a validated plan");
             for (index, (source, bytes)) in sources.iter().zip(estimated.iter()).enumerate() {
+                let planned = &plan.items[index];
                 let mut target = None;
                 let mut skipped_item = false;
                 let result = (|| {
                     transfer.check()?;
-                    if source.parent() == Some(destination.as_path()) {
+                    target = Some(planned.target.clone());
+                    if planned.disposition == PlannedDisposition::Skip {
                         skipped += 1;
                         skipped_item = true;
-                        target = Some(source.clone());
                         transfer.advance(*bytes, source);
                         return Ok(());
                     }
-                    let intended = destination.join(source.file_name().ok_or_else(invalid_name)?);
-                    if *conflict == ConflictPolicy::SkipExisting && occupied(&intended)? {
-                        skipped += 1;
-                        skipped_item = true;
-                        target = Some(intended);
-                        transfer.advance(*bytes, source);
-                        return Ok(());
-                    }
-                    let chosen_target = free_destination(
-                        destination,
-                        source.file_name().ok_or_else(invalid_name)?,
-                    )?;
-                    target = Some(chosen_target.clone());
-                    ensure_outside_source(source, &chosen_target)?;
-                    match rename_without_overwrite(source, &chosen_target) {
-                        Ok(()) => transfer.advance(*bytes, &chosen_target),
+                    ensure_same_source(source, &planned.snapshot)?;
+                    ensure_outside_source(source, &planned.target)?;
+                    match rename_without_overwrite(source, &planned.target) {
+                        Ok(()) => transfer.advance(*bytes, &planned.target),
                         Err(error) if error.raw_os_error() == Some(libc::EXDEV) => {
                             // Only traverse a directory when the atomic rename is impossible.
                             let actual_bytes = estimate_bytes(source, cancelled, 0)?;
@@ -830,13 +891,13 @@ fn perform_with_progress_and_items(
                             let original_source = fs::symlink_metadata(source)?;
                             let mut journal = match journal_directory {
                                 Some(directory) => {
-                                    Journal::begin_in(directory, source, &chosen_target)?
+                                    Journal::begin_in(directory, source, &planned.target)?
                                 }
-                                None => Journal::begin(source, &chosen_target)?,
+                                None => Journal::begin(source, &planned.target)?,
                             };
                             stage_and_publish_with_journal(
                                 source,
-                                &chosen_target,
+                                &planned.target,
                                 true,
                                 &mut transfer,
                                 Some(&mut journal),
@@ -849,9 +910,9 @@ fn perform_with_progress_and_items(
                             // If deletion fails, the published destination remains for
                             // recovery; no unverified new directory entries are removed.
                             ensure_same_source(source, &original_source)?;
-                            verify_tree(source, &chosen_target, 0, &mut transfer)?;
+                            verify_tree(source, &planned.target, 0, &mut transfer)?;
                             ensure_same_source(source, &original_source)?;
-                            remove_verified_tree(source, &chosen_target, 0, &mut transfer)?;
+                            remove_verified_tree(source, &planned.target, 0, &mut transfer)?;
                             journal.advance(State::Completed)?;
                             transfer.phase = "Copying";
                         }
@@ -1096,8 +1157,16 @@ pub fn mounted_volumes() -> Vec<PathBuf> {
 }
 
 fn free_destination(parent: &Path, original: &std::ffi::OsStr) -> io::Result<PathBuf> {
+    free_destination_reserved(parent, original, &BTreeSet::new())
+}
+
+fn free_destination_reserved(
+    parent: &Path,
+    original: &OsStr,
+    reserved: &BTreeSet<PathBuf>,
+) -> io::Result<PathBuf> {
     let first = parent.join(original);
-    if !occupied(&first)? {
+    if !reserved.contains(&first) && !occupied(&first)? {
         return Ok(first);
     }
     let name = Path::new(original);
@@ -1116,7 +1185,7 @@ fn free_destination(parent: &Path, original: &std::ffi::OsStr) -> io::Result<Pat
             candidate.push(extension);
         }
         let candidate = parent.join(candidate);
-        if !occupied(&candidate)? {
+        if !reserved.contains(&candidate) && !occupied(&candidate)? {
             return Ok(candidate);
         }
     }
@@ -1124,6 +1193,159 @@ fn free_destination(parent: &Path, original: &std::ffi::OsStr) -> io::Result<Pat
         io::ErrorKind::AlreadyExists,
         "Too many duplicate names",
     ))
+}
+
+/// A read-only, best-effort preview. No name reservation or overwrite occurs;
+/// the worker re-runs the plan immediately before executing a batch. The
+/// no-replace publication/rename is still the authority under concurrent I/O.
+pub fn preview_transfer(
+    sources: &[PathBuf],
+    destination: &Path,
+    conflict: ConflictPolicy,
+    moving: bool,
+) -> io::Result<TransferPlan> {
+    let cancelled = AtomicBool::new(false);
+    plan_transfer(sources, destination, conflict, moving, &cancelled).map_err(|failure| {
+        io::Error::new(
+            failure.error.kind(),
+            match failure.index {
+                Some(index) => format!(
+                    "Cannot plan item {} of {} ({}): {}",
+                    index + 1,
+                    sources.len(),
+                    sources[index].display(),
+                    failure.error
+                ),
+                None => format!("Cannot plan transfer: {}", failure.error),
+            },
+        )
+    })
+}
+
+fn plan_transfer(
+    sources: &[PathBuf],
+    destination: &Path,
+    conflict: ConflictPolicy,
+    moving: bool,
+    cancelled: &AtomicBool,
+) -> Result<TransferPlan, PlanFailure> {
+    let destination_meta = fs::metadata(destination).map_err(PlanFailure::global)?;
+    if !destination_meta.is_dir() {
+        return Err(PlanFailure::global(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("Transfer destination is not a folder: {}", destination.display()),
+        )));
+    }
+    let canonical_destination = fs::canonicalize(destination).map_err(PlanFailure::global)?;
+
+    // Resolve parent directories, but not the final entry: a selected symlink
+    // is its own source, not an alias for the link target.
+    let mut snapshots = Vec::with_capacity(sources.len());
+    let mut selected = BTreeSet::new();
+    let mut selected_directories = BTreeSet::new();
+    for (index, source) in sources.iter().enumerate() {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(PlanFailure::at(index, io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Operation cancelled during preflight",
+            )));
+        }
+        let name = source
+            .file_name()
+            .ok_or_else(|| PlanFailure::at(index, invalid_name()))?;
+        let snapshot = fs::symlink_metadata(source).map_err(|e| PlanFailure::at(index, e))?;
+        let parent_path = source
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let parent = fs::canonicalize(parent_path)
+            .map_err(|e| PlanFailure::at(index, e))?;
+        let normalized = parent.join(name);
+        if !selected.insert(normalized.clone()) {
+            return Err(PlanFailure::at(index, io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Source was selected twice: {}", source.display()),
+            )));
+        }
+        if snapshot.is_dir() {
+            selected_directories.insert(normalized.clone());
+        }
+        snapshots.push((normalized, snapshot));
+    }
+    for (index, (normalized, _)) in snapshots.iter().enumerate() {
+        if normalized
+            .ancestors()
+            .skip(1)
+            .any(|ancestor| selected_directories.contains(ancestor))
+        {
+            return Err(PlanFailure::at(index, io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "An item is also inside another selected folder; split the transfer to avoid overlapping sources",
+            )));
+        }
+    }
+
+    let mut reserved = BTreeSet::new();
+    let mut plan = TransferPlan {
+        items: Vec::with_capacity(sources.len()),
+        collisions: 0,
+        renamed: 0,
+        skipped: 0,
+    };
+    for (index, (source, (normalized, snapshot))) in sources.iter().zip(snapshots).enumerate() {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(PlanFailure::at(index, io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Operation cancelled during preflight",
+            )));
+        }
+        let name = source
+            .file_name()
+            .ok_or_else(|| PlanFailure::at(index, invalid_name()))?;
+        let intended = destination.join(name);
+        // A move into its own parent is a deliberate no-op, regardless of the
+        // collision policy; never rename the original to a "copy" name.
+        let same_parent = moving && normalized.parent() == Some(canonical_destination.as_path());
+        if !same_parent {
+            ensure_outside_source(source, &intended).map_err(|e| PlanFailure::at(index, e))?;
+        }
+        let collision = reserved.contains(&intended)
+            || occupied(&intended).map_err(|e| PlanFailure::at(index, e))?;
+        if collision {
+            plan.collisions += 1;
+        }
+        let (target, disposition) = if same_parent {
+            (source.clone(), PlannedDisposition::Skip)
+        } else if collision && conflict == ConflictPolicy::SkipExisting {
+            (intended.clone(), PlannedDisposition::Skip)
+        } else if collision && conflict == ConflictPolicy::AbortOnConflict {
+            return Err(PlanFailure::at(index, io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("Destination already exists: {}", intended.display()),
+            )));
+        } else {
+            let target = free_destination_reserved(destination, name, &reserved)
+                .map_err(|e| PlanFailure::at(index, e))?;
+            reserved.insert(target.clone());
+            (target, PlannedDisposition::Transfer)
+        };
+        if disposition == PlannedDisposition::Skip {
+            plan.skipped += 1;
+        }
+        let renamed = disposition == PlannedDisposition::Transfer && target != intended;
+        if renamed {
+            plan.renamed += 1;
+        }
+        plan.items.push(PlannedItem {
+            source: source.clone(),
+            target,
+            disposition,
+            collision,
+            renamed,
+            snapshot,
+        });
+    }
+    Ok(plan)
 }
 
 fn estimate_bytes(path: &Path, cancelled: &AtomicBool, depth: usize) -> io::Result<u64> {
@@ -2007,6 +2229,174 @@ mod tests {
         assert_eq!(report.items[1].state, ItemState::Failed);
         assert_eq!(fs::read(first).unwrap(), b"safe");
         assert_eq!(fs::read_dir(&destination).unwrap().count(), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn preview_reserves_distinct_names_for_same_basename_sources() {
+        let root = test_root();
+        let first_parent = root.join("first");
+        let second_parent = root.join("second");
+        let destination = root.join("out");
+        for dir in [&first_parent, &second_parent, &destination] {
+            fs::create_dir(dir).unwrap();
+        }
+        let first = first_parent.join("same.txt");
+        let second = second_parent.join("same.txt");
+        fs::write(&first, b"first").unwrap();
+        fs::write(&second, b"second").unwrap();
+        fs::write(destination.join("same.txt"), b"existing").unwrap();
+        let plan = preview_transfer(
+            &[first.clone(), second.clone()],
+            &destination,
+            ConflictPolicy::KeepBoth,
+            false,
+        )
+        .unwrap();
+        assert_eq!(plan.collisions, 2);
+        assert_eq!(plan.renamed, 2);
+        assert_eq!(plan.items[0].target, destination.join("same (copy).txt"));
+        assert_eq!(plan.items[1].target, destination.join("same (copy 2).txt"));
+        // Planning must not create, rename or remove any file.
+        assert_eq!(fs::read_dir(&destination).unwrap().count(), 1);
+        let report = perform_with_report(
+            &Action::Copy {
+                sources: vec![first.clone(), second.clone()],
+                destination: destination.clone(),
+                conflict: ConflictPolicy::KeepBoth,
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert!(report.result.is_ok());
+        assert_eq!(report.items[0].target, Some(plan.items[0].target.clone()));
+        assert_eq!(report.items[1].target, Some(plan.items[1].target.clone()));
+        assert_eq!(fs::read(destination.join("same.txt")).unwrap(), b"existing");
+        assert_eq!(fs::read(plan.items[0].target.clone()).unwrap(), b"first");
+        assert_eq!(fs::read(plan.items[1].target.clone()).unwrap(), b"second");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skip_existing_also_skips_collision_with_earlier_planned_item() {
+        let root = test_root();
+        let first_parent = root.join("first");
+        let second_parent = root.join("second");
+        let destination = root.join("out");
+        for dir in [&first_parent, &second_parent, &destination] {
+            fs::create_dir(dir).unwrap();
+        }
+        let first = first_parent.join("same.txt");
+        let second = second_parent.join("same.txt");
+        fs::write(&first, b"first").unwrap();
+        fs::write(&second, b"second").unwrap();
+        let report = perform_with_report(
+            &Action::Copy {
+                sources: vec![first, second.clone()],
+                destination: destination.clone(),
+                conflict: ConflictPolicy::SkipExisting,
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert!(report.result.is_ok());
+        assert_eq!(report.items[0].state, ItemState::Completed);
+        assert_eq!(report.items[1].state, ItemState::Skipped);
+        assert_eq!(fs::read(destination.join("same.txt")).unwrap(), b"first");
+        assert_eq!(fs::read(second).unwrap(), b"second");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn abort_on_collision_rejects_entire_batch_before_first_copy() {
+        let root = test_root();
+        let destination = root.join("out");
+        fs::create_dir(&destination).unwrap();
+        let fresh = root.join("fresh.txt");
+        let existing = root.join("existing.txt");
+        fs::write(&fresh, b"fresh").unwrap();
+        fs::write(&existing, b"incoming").unwrap();
+        fs::write(destination.join("existing.txt"), b"original").unwrap();
+        let report = perform_with_report(
+            &Action::Copy {
+                sources: vec![fresh.clone(), existing.clone()],
+                destination: destination.clone(),
+                conflict: ConflictPolicy::AbortOnConflict,
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert_eq!(report.result.unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(report.items[0].state, ItemState::NotStarted);
+        assert_eq!(report.items[1].state, ItemState::Failed);
+        assert!(!destination.join("fresh.txt").exists());
+        assert_eq!(fs::read(destination.join("existing.txt")).unwrap(), b"original");
+        assert_eq!(fs::read(fresh).unwrap(), b"fresh");
+        assert_eq!(fs::read(existing).unwrap(), b"incoming");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn preflight_rejects_nested_selected_sources_and_self_copy() {
+        let root = test_root();
+        let parent = root.join("folder");
+        let destination = root.join("out");
+        fs::create_dir(&parent).unwrap();
+        fs::create_dir(&destination).unwrap();
+        let child = parent.join("child.txt");
+        fs::write(&child, b"safe").unwrap();
+        let err = preview_transfer(
+            &[parent.clone(), child.clone()],
+            &destination,
+            ConflictPolicy::KeepBoth,
+            true,
+        )
+        .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        let inside = parent.join("inside");
+        fs::create_dir(&inside).unwrap();
+        let err = preview_transfer(
+            &[parent.clone()],
+            &inside,
+            ConflictPolicy::KeepBoth,
+            false,
+        )
+        .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(fs::read(child).unwrap(), b"safe");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn source_changed_after_preflight_stops_before_changing_second_item() {
+        let root = test_root();
+        let destination = root.join("out");
+        fs::create_dir(&destination).unwrap();
+        let first = root.join("first.txt");
+        let second = root.join("second.txt");
+        fs::write(&first, b"first").unwrap();
+        fs::write(&second, b"original").unwrap();
+        let mut changed = false;
+        let report = perform_with_report(
+            &Action::Copy {
+                sources: vec![first.clone(), second.clone()],
+                destination: destination.clone(),
+                conflict: ConflictPolicy::KeepBoth,
+            },
+            &AtomicBool::new(false),
+            &mut |_| {
+                if !changed {
+                    fs::write(&second, b"changed after preflight with different length").unwrap();
+                    changed = true;
+                }
+            },
+        );
+        assert!(changed);
+        assert_eq!(report.result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert_eq!(report.items[0].state, ItemState::Completed);
+        assert_eq!(report.items[1].state, ItemState::Failed);
+        assert!(destination.join("first.txt").exists());
+        assert!(!destination.join("second.txt").exists());
         fs::remove_dir_all(root).unwrap();
     }
 

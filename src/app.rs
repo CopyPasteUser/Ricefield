@@ -175,10 +175,33 @@ enum OperationEvent {
     Finished(OperationResult),
 }
 
+struct PastePreviewResult {
+    generation: u64,
+    result: Result<filesystem::TransferPlan, String>,
+}
+
 #[derive(Clone)]
 struct Clipboard {
     paths: Vec<PathBuf>,
     cut: bool,
+}
+
+/// Reconcile cut paths after any result, including a partially failed batch.
+/// `None` means nothing moved and the original clipboard stays untouched.
+fn remaining_cut_paths(items: &[filesystem::ItemResult]) -> Option<Vec<PathBuf>> {
+    if !items
+        .iter()
+        .any(|item| item.state == filesystem::ItemState::Completed)
+    {
+        return None;
+    }
+    Some(
+        items
+            .iter()
+            .filter(|item| item.state != filesystem::ItemState::Completed)
+            .map(|item| item.source.clone())
+            .collect(),
+    )
 }
 
 enum NameMode {
@@ -225,6 +248,8 @@ enum Dialog {
         clipboard: Clipboard,
         destination: PathBuf,
         conflict: ConflictPolicy,
+        preview_generation: u64,
+        preview: Option<Result<filesystem::TransferPlan, String>>,
     },
     Trash(Vec<PathBuf>),
     Delete(Vec<PathBuf>),
@@ -248,6 +273,9 @@ pub struct Explorer {
     preview_receiver: Receiver<PreviewResult>,
     op_sender: Sender<OperationEvent>,
     op_receiver: Receiver<OperationEvent>,
+    paste_preview_sender: Sender<PastePreviewResult>,
+    paste_preview_receiver: Receiver<PastePreviewResult>,
+    paste_preview_generation: u64,
     operation_queue: OperationQueue,
     active_operation: Option<(u64, String)>,
     queue_paused: bool,
@@ -307,6 +335,7 @@ impl Explorer {
         let (refresh_sender, refresh_receiver) = mpsc::channel();
         let (preview_sender, preview_receiver) = mpsc::channel();
         let (op_sender, op_receiver) = mpsc::channel();
+        let (paste_preview_sender, paste_preview_receiver) = mpsc::channel();
         let (recovery_sender, recovery_receiver) = mpsc::channel();
         // Explicit CLI paths take precedence over the saved session. Restored
         // paths are inspected by asynchronous scans, never by synchronous stat.
@@ -330,6 +359,9 @@ impl Explorer {
             preview_receiver,
             op_sender,
             op_receiver,
+            paste_preview_sender,
+            paste_preview_receiver,
+            paste_preview_generation: 0,
             operation_queue: OperationQueue::default(),
             active_operation: None,
             queue_paused: false,
@@ -659,36 +691,32 @@ impl Explorer {
                         .map(|(_, label)| label)
                         .unwrap_or_else(|| "File operation".into());
                     self.progress = None;
+                    if let Some(moved) = moved_paths
+                        && self.clipboard.as_ref().is_some_and(|clipboard| {
+                            clipboard.cut && clipboard.paths == moved
+                        })
+                        && let Some(remaining) = remaining_cut_paths(&report.items)
+                    {
+                        // A cut batch may have partially succeeded even when its overall
+                        // result is an error. Never offer completed paths for a retry.
+                        self.clipboard = if remaining.is_empty() {
+                            None
+                        } else {
+                            Some(Clipboard {
+                                paths: remaining,
+                                cut: true,
+                            })
+                        };
+                        // The external desktop clipboard may still contain the original
+                        // full cut list. Ignore it while honoring the internal remainder.
+                        if !self.consumed_cut_paths.as_ref().is_some_and(|consumed| {
+                            moved.iter().all(|path| consumed.contains(path))
+                        }) {
+                            self.consumed_cut_paths = Some(moved);
+                        }
+                    }
                     let (summary, outcome) = match report.result {
                         Ok(success) => {
-                            if let Some(moved) = moved_paths
-                                && self.clipboard.as_ref().is_some_and(|clipboard| {
-                                    clipboard.cut && clipboard.paths == moved
-                                })
-                            {
-                                // Keep only skipped cut sources available for a later paste.
-                                // Do not overwrite a changed desktop clipboard: ignore only
-                                // the old external cut contents until the user copies again.
-                                let remaining: Vec<_> = report
-                                    .items
-                                    .iter()
-                                    .filter(|item| item.state != filesystem::ItemState::Completed)
-                                    .map(|item| item.source.clone())
-                                    .collect();
-                                self.clipboard = if remaining.is_empty() {
-                                    None
-                                } else {
-                                    Some(Clipboard {
-                                        paths: remaining,
-                                        cut: true,
-                                    })
-                                };
-                                if !self.consumed_cut_paths.as_ref().is_some_and(|consumed| {
-                                    moved.iter().all(|path| consumed.contains(path))
-                                }) {
-                                    self.consumed_cut_paths = Some(moved);
-                                }
-                            }
                             (success, OperationOutcome::Succeeded)
                         }
                         Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
@@ -732,6 +760,17 @@ impl Explorer {
                     self.check_unfinished_moves();
                     self.start_next_operation();
                 }
+            }
+        }
+        while let Ok(message) = self.paste_preview_receiver.try_recv() {
+            if let Some(Dialog::PasteOptions {
+                preview_generation,
+                preview,
+                ..
+            }) = self.dialog.as_mut()
+                && *preview_generation == message.generation
+            {
+                *preview = Some(message.result);
             }
         }
     }
@@ -1148,14 +1187,40 @@ impl Explorer {
 
     fn paste_with_options(&mut self) {
         if let Some(clipboard) = self.clipboard_for_paste() {
+            let destination = self.current().path.clone();
+            let conflict = ConflictPolicy::KeepBoth;
+            let preview_generation =
+                self.request_paste_preview(&clipboard, &destination, conflict);
             self.dialog = Some(Dialog::PasteOptions {
                 clipboard,
-                destination: self.current().path.clone(),
-                conflict: ConflictPolicy::KeepBoth,
+                destination,
+                conflict,
+                preview_generation,
+                preview: None,
             });
         } else {
             self.status = Some(("No files on the clipboard".into(), true));
         }
+    }
+
+    fn request_paste_preview(
+        &mut self,
+        clipboard: &Clipboard,
+        destination: &Path,
+        conflict: ConflictPolicy,
+    ) -> u64 {
+        self.paste_preview_generation = self.paste_preview_generation.saturating_add(1);
+        let generation = self.paste_preview_generation;
+        let sources = clipboard.paths.clone();
+        let destination = destination.to_path_buf();
+        let moving = clipboard.cut;
+        let sender = self.paste_preview_sender.clone();
+        thread::spawn(move || {
+            let result = filesystem::preview_transfer(&sources, &destination, conflict, moving)
+                .map_err(|error| error.to_string());
+            let _ = sender.send(PastePreviewResult { generation, result });
+        });
+        generation
     }
 
     fn activate(&mut self, entry: &Entry) {
@@ -2639,16 +2704,19 @@ impl Explorer {
         }
         let mut action = None;
         let mut dismiss = false;
+        let mut refresh_paste_preview = None;
         if let Some(dialog) = self.dialog.as_mut() {
             match dialog {
                 Dialog::PasteOptions {
                     clipboard,
                     destination,
                     conflict,
+                    preview,
+                    ..
                 } => {
                     egui::Window::new("Paste with options")
                         .collapsible(false)
-                        .resizable(false)
+                        .resizable(true)
                         .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
                         .show(context, |ui| {
                             ui.label(format!(
@@ -2658,22 +2726,84 @@ impl Explorer {
                                 destination.display()
                             ));
                             ui.separator();
-                            ui.radio_value(
+                            let mut policy_changed = ui.radio_value(
                                 conflict,
                                 ConflictPolicy::KeepBoth,
                                 "Keep both — rename incoming items when names collide",
-                            );
-                            ui.radio_value(
+                            ).changed();
+                            policy_changed |= ui.radio_value(
                                 conflict,
                                 ConflictPolicy::SkipExisting,
                                 "Skip existing — leave matching destination items untouched",
-                            );
-                            ui.label("Existing files and folders are never overwritten. The operation runs in the background.");
+                            ).changed();
+                            policy_changed |= ui.radio_value(
+                                conflict,
+                                ConflictPolicy::AbortOnConflict,
+                                "Require no conflicts — cancel the entire batch if a name collides",
+                            ).changed();
+                            if policy_changed {
+                                refresh_paste_preview =
+                                    Some((clipboard.clone(), destination.clone(), *conflict));
+                            }
+                            ui.separator();
+                            let can_start = if policy_changed {
+                                false
+                            } else {
+                                match preview {
+                                    None => {
+                                        ui.horizontal(|ui| {
+                                            ui.spinner();
+                                            ui.small("Checking all selected paths in the background…");
+                                        });
+                                        false
+                                    }
+                                    Some(Err(error)) => {
+                                        ui.colored_label(Color32::LIGHT_RED, error);
+                                        false
+                                    }
+                                    Some(Ok(plan)) => {
+                                        ui.strong(format!(
+                                            "Preflight: {} selected · {} name collision(s) · {} renamed · {} skipped",
+                                            plan.items.len(), plan.collisions,
+                                            plan.renamed, plan.skipped
+                                        ));
+                                        egui::ScrollArea::vertical()
+                                            .max_height(190.0)
+                                            .show_rows(ui, 20.0, plan.items.len(), |ui, rows| {
+                                                for planned in &plan.items[rows] {
+                                                    let decision = if planned.disposition == filesystem::PlannedDisposition::Skip {
+                                                        "Skip"
+                                                    } else if planned.renamed {
+                                                        "Rename incoming"
+                                                    } else {
+                                                        "Transfer"
+                                                    };
+                                                    let source = planned.source.display().to_string();
+                                                    ui.horizontal(|ui| {
+                                                        ui.small(if planned.collision && !planned.renamed {
+                                                            format!("{decision} · collision")
+                                                        } else {
+                                                            decision.to_owned()
+                                                        });
+                                                        ui.monospace(shorten(&source, 45))
+                                                            .on_hover_text(format!(
+                                                                "Source: {}\nDestination: {}",
+                                                                planned.source.display(),
+                                                                planned.target.display()
+                                                            ));
+                                                    });
+                                                }
+                                            });
+                                        true
+                                    }
+                                }
+                            };
+                            ui.small("Preview only: the worker rechecks sources and destination before execution. No existing file is overwritten. Concurrent changes may still stop the transfer safely.");
                             ui.horizontal(|ui| {
                                 if ui.button("Cancel").clicked() {
                                     dismiss = true;
                                 }
-                                if ui.button("Start transfer").clicked() {
+                                if ui.add_enabled(can_start, egui::Button::new("Start transfer")).clicked() {
                                     action = Some(Self::paste_action(
                                         clipboard.clone(),
                                         destination.clone(),
@@ -2926,6 +3056,18 @@ impl Explorer {
         if dismiss {
             self.dialog = None;
         }
+        if let Some((clipboard, destination, conflict)) = refresh_paste_preview {
+            let generation = self.request_paste_preview(&clipboard, &destination, conflict);
+            if let Some(Dialog::PasteOptions {
+                preview_generation,
+                preview,
+                ..
+            }) = self.dialog.as_mut()
+            {
+                *preview_generation = generation;
+                *preview = None;
+            }
+        }
         if let Some(action) = action {
             if let Action::Copy { sources, .. } | Action::Move { sources, .. } = &action {
                 self.clipboard = Some(Clipboard {
@@ -3013,7 +3155,11 @@ impl eframe::App for Explorer {
             }
             self.dirty_config = false;
         }
-        let idle_delay = if self.busy || self.tabs.iter().any(|tab| tab.loading) {
+        let waiting_for_preview = matches!(
+            &self.dialog,
+            Some(Dialog::PasteOptions { preview: None, .. })
+        );
+        let idle_delay = if self.busy || waiting_for_preview || self.tabs.iter().any(|tab| tab.loading) {
             Duration::from_millis(90)
         } else {
             Duration::from_secs(3)
@@ -3085,7 +3231,8 @@ fn paint_file_icon(painter: &egui::Painter, rect: Rect, file: &Entry, theme: &Th
 
 #[cfg(test)]
 mod tests {
-    use super::{Action, NameMode, Tab, next_search_repaint_delay};
+    use super::{Action, NameMode, Tab, next_search_repaint_delay, remaining_cut_paths};
+    use crate::filesystem::{ItemResult, ItemState};
     use std::path::PathBuf;
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
@@ -3146,5 +3293,47 @@ mod tests {
         assert!(!tab.accepts_scan_result(9, 1));
         tab.cancel_scan();
         assert!(!tab.accepts_scan_result(9, 0));
+    }
+
+    #[test]
+    fn partially_failed_cut_keeps_only_unmoved_files_on_clipboard() {
+        let items = [
+            ItemResult {
+                source: PathBuf::from("/original/moved.txt"),
+                target: Some(PathBuf::from("/target/moved.txt")),
+                state: ItemState::Completed,
+                detail: None,
+            },
+            ItemResult {
+                source: PathBuf::from("/original/failed.txt"),
+                target: None,
+                state: ItemState::Failed,
+                detail: Some("device disconnected".into()),
+            },
+            ItemResult {
+                source: PathBuf::from("/original/unstarted.txt"),
+                target: None,
+                state: ItemState::NotStarted,
+                detail: None,
+            },
+        ];
+        assert_eq!(
+            remaining_cut_paths(&items),
+            Some(vec![
+                PathBuf::from("/original/failed.txt"),
+                PathBuf::from("/original/unstarted.txt")
+            ])
+        );
+    }
+
+    #[test]
+    fn failed_cut_with_no_completed_items_keeps_original_clipboard() {
+        let items = [ItemResult {
+            source: PathBuf::from("/original/failed.txt"),
+            target: None,
+            state: ItemState::Failed,
+            detail: None,
+        }];
+        assert_eq!(remaining_cut_paths(&items), None);
     }
 }
