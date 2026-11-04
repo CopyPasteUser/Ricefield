@@ -85,6 +85,8 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
 - [x] Retain regular-file hardlink relationships when multiple names for the
   same inode occur inside a single directory tree being copied. Cross-item
   and out-of-tree links, extended metadata and ACL preservation remain open.
+  Reject a staged hardlink reuse if its source inode was changed since the
+  first copy, instead of silently reusing stale bytes.
 - [x] Snapshot every source entry before cross-device Move staging and
   revalidate the entire manifest before cleanup and each entry before unlink.
   Refuse a same-content replacement inode; handle ctime/link-count changes
@@ -112,6 +114,11 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   for all rices. Preflight failures identify the offending input without
   making changes; preserve skipped cut sources for retry. Results are only
   retained in the current session, with no automatic rollback or replay.
+- [x] Move external file clipboard copy/cut/paste calls off the GUI thread,
+  coalesce outstanding writes and limit reads to 4 MiB. An unresponsive paste
+  provider gets a two-second UI deadline and cannot issue a late mutation;
+  a tab/folder change also cancels the pending paste. Properties and remaining
+  filesystem/network UI calls still require a separate responsiveness audit.
 - [x] Add a side-effect-free, asynchronous Paste preflight with per-item
   destinations, reserved targets for repeated basenames, automatic rename/skip
   counts and a third *Require no conflicts* policy. Repeat the complete
@@ -149,6 +156,9 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   power-loss fault injection remain release blockers.
 - [x] Add a durable cross-device move state journal with a read-only scan on
   startup, a visible warning and manual inspection of unfinished transfers.
+  Its record reader now pins regular inodes without following replacement
+  symlinks or blocking on substituted FIFOs, and checks for changes after
+  bounded reads. Full resume/rollback remains open.
 - [x] Inspect source, destination and staging path presence asynchronously
   during recovery scans, without following symlinks or writing to any path.
   Distinguish missing, present and inaccessible entries; show conservative

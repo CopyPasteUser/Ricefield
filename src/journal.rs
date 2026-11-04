@@ -529,12 +529,21 @@ fn scan_incomplete_in(directory: &Path) -> io::Result<Vec<Record>> {
                 return Err(invalid_data("Journal record permissions are too broad"));
             }
         }
+        // Pin the regular inode observed by lstat. A record replaced by a
+        // symlink or FIFO between lstat and open must not redirect or stall
+        // the recovery scanner (which runs automatically on startup).
+        let mut file = open_regular_no_follow(&path, &metadata)?;
         let mut content = Vec::new();
-        File::open(&path)?
+        (&mut file)
             .take(MAX_RECORD_BYTES + 1)
             .read_to_end(&mut content)?;
         if content.len() as u64 > MAX_RECORD_BYTES {
             return Err(invalid_data("Operation journal record is oversized"));
+        }
+        if !same_snapshot(&metadata, &file.metadata()?)
+            || !same_snapshot(&metadata, &fs::symlink_metadata(&path)?)
+        {
+            return Err(invalid_data("Operation journal changed while being read"));
         }
         let stored: StoredRecord = toml::from_str(
             std::str::from_utf8(&content).map_err(|_| invalid_data("Invalid journal UTF-8"))?,
@@ -1095,6 +1104,32 @@ mod tests {
             scan_incomplete_in(&directory).unwrap_err().kind(),
             io::ErrorKind::InvalidData
         );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn journal_reader_rejects_replaced_symlink_and_fifo_without_following() {
+        use std::os::unix::fs::symlink;
+
+        let directory = test_directory();
+        let journal = Journal::begin_in(&directory, Path::new("from"), Path::new("to")).unwrap();
+        let path = directory.join(format!("{}.toml", journal.record().id));
+        let snapshot = fs::symlink_metadata(&path).unwrap();
+        let sensitive = directory.join("unrelated");
+        fs::write(&sensitive, "should not be read").unwrap();
+        fs::remove_file(&path).unwrap();
+        symlink(&sensitive, &path).unwrap();
+        assert!(open_regular_no_follow(&path, &snapshot).is_err());
+        assert!(scan_incomplete_in(&directory).is_err());
+
+        fs::remove_file(&path).unwrap();
+        use std::os::unix::ffi::OsStrExt;
+        let name = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        assert!(open_regular_no_follow(&path, &snapshot).is_err());
+        assert!(scan_incomplete_in(&directory).is_err());
+        assert_eq!(fs::read_to_string(sensitive).unwrap(), "should not be read");
         fs::remove_dir_all(directory).unwrap();
     }
 

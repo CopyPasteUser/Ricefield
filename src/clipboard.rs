@@ -2,10 +2,12 @@
 //! The internal clipboard remains available when xclip/wl-clipboard is absent.
 use std::{
     ffi::OsString,
-    io::{self, Write},
+    io::{self, Read, Write},
     path::PathBuf,
     process::{Command, Stdio},
 };
+
+const MAX_DESKTOP_CLIPBOARD_BYTES: u64 = 4 * 1024 * 1024;
 
 #[derive(Clone)]
 pub struct Files {
@@ -110,6 +112,12 @@ pub fn copy_files(paths: &[PathBuf], cut: bool) -> io::Result<()> {
         };
         data.push_str(&percent_encode(&absolute));
         data.push('\n');
+        if data.len() as u64 > MAX_DESKTOP_CLIPBOARD_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "File selection is too large for the desktop clipboard",
+            ));
+        }
     }
     for (program, args, _) in handlers() {
         if let Ok(mut child) = Command::new(program)
@@ -139,13 +147,29 @@ pub fn copy_files(paths: &[PathBuf], cut: bool) -> io::Result<()> {
 pub fn paste_files() -> Option<Files> {
     for (_, _, command) in handlers() {
         let (program, args) = command.split_first()?;
-        let Ok(result) = Command::new(program).args(args).output() else {
+        let Ok(mut child) = Command::new(program)
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+        else {
             continue;
         };
-        if !result.status.success() {
+        let mut bytes = Vec::new();
+        let read = child
+            .stdout
+            .take()?
+            .take(MAX_DESKTOP_CLIPBOARD_BYTES + 1)
+            .read_to_end(&mut bytes);
+        if read.is_err() || bytes.len() as u64 > MAX_DESKTOP_CLIPBOARD_BYTES {
+            let _ = child.kill();
+            let _ = child.wait();
             continue;
         }
-        if let Ok(text) = String::from_utf8(result.stdout)
+        if !child.wait().is_ok_and(|status| status.success()) {
+            continue;
+        }
+        if let Ok(text) = String::from_utf8(bytes)
             && let Some(files) = parse_files(&text)
         {
             return Some(files);
@@ -181,6 +205,15 @@ mod tests {
     fn uri_roundtrip_with_spaces_and_unicode() {
         let file = PathBuf::from("/tmp/Äpfel & Ordner/one#.txt");
         assert_eq!(decode_uri(&percent_encode(&file)), Some(file));
+    }
+
+    #[test]
+    fn oversized_file_clipboard_never_launches_a_desktop_helper() {
+        let path = PathBuf::from("x".repeat(MAX_DESKTOP_CLIPBOARD_BYTES as usize));
+        assert_eq!(
+            copy_files(&[path], false).unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
     }
 
     #[test]

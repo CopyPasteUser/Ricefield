@@ -28,6 +28,7 @@ use std::{
 
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(350);
 const MAX_RECENT_OPERATIONS: usize = 64;
+const CLIPBOARD_WAIT: Duration = Duration::from_secs(2);
 
 struct Tab {
     id: u64,
@@ -114,6 +115,43 @@ struct RefreshResult {
 struct PreviewResult {
     path: PathBuf,
     result: std::io::Result<preview::Preview>,
+}
+
+#[derive(Clone, Copy)]
+enum PasteMode {
+    Immediate,
+    Options,
+}
+
+struct PendingPaste {
+    id: u64,
+    revision: u64,
+    tab_id: u64,
+    tab_generation: u64,
+    destination: PathBuf,
+    mode: PasteMode,
+    started: Instant,
+}
+
+impl PendingPaste {
+    fn is_current(&self, revision: u64, tab: &Tab, now: Instant) -> bool {
+        self.revision == revision
+            && self.tab_id == tab.id
+            && self.tab_generation == tab.generation
+            && self.destination == tab.path
+            && now.saturating_duration_since(self.started) < CLIPBOARD_WAIT
+    }
+}
+
+enum ClipboardEvent {
+    Written {
+        revision: u64,
+        success: bool,
+    },
+    Read {
+        id: u64,
+        files: Option<clipboard::Files>,
+    },
 }
 
 enum PreviewContent {
@@ -249,6 +287,26 @@ struct Clipboard {
     cut: bool,
 }
 
+fn choose_paste_clipboard(
+    desktop: Option<clipboard::Files>,
+    internal: Option<Clipboard>,
+    consumed_cut_paths: Option<&[PathBuf]>,
+) -> Option<Clipboard> {
+    let desktop = desktop.map(|files| Clipboard {
+        paths: files.paths,
+        cut: files.cut,
+    });
+    if desktop
+        .as_ref()
+        .is_some_and(|files| files.cut && consumed_cut_paths == Some(files.paths.as_slice()))
+    {
+        // The external cut clipboard may still contain a batch that already
+        // moved partially. Never replay completed sources from that batch.
+        return internal;
+    }
+    desktop.or(internal)
+}
+
 /// Reconcile cut paths after any result, including a partially failed batch.
 /// `None` means nothing moved and the original clipboard stays untouched.
 fn remaining_cut_paths(items: &[filesystem::ItemResult]) -> Option<Vec<PathBuf>> {
@@ -360,6 +418,15 @@ pub struct Explorer {
     recovery_comparisons: HashMap<String, journal::Comparison>,
     clipboard: Option<Clipboard>,
     consumed_cut_paths: Option<Vec<PathBuf>>,
+    clipboard_sender: Sender<ClipboardEvent>,
+    clipboard_receiver: Receiver<ClipboardEvent>,
+    clipboard_revision: u64,
+    desktop_copy_running: bool,
+    pending_desktop_copy: Option<(Vec<PathBuf>, bool, u64)>,
+    desktop_read_running: bool,
+    desktop_read_revision: u64,
+    next_paste_id: u64,
+    pending_paste: Option<PendingPaste>,
     dialog: Option<Dialog>,
     status: Option<(String, bool)>,
     busy: bool,
@@ -408,6 +475,7 @@ impl Explorer {
         let (paste_preview_sender, paste_preview_receiver) = mpsc::channel();
         let (recovery_sender, recovery_receiver) = mpsc::channel();
         let (recovery_comparison_sender, recovery_comparison_receiver) = mpsc::channel();
+        let (clipboard_sender, clipboard_receiver) = mpsc::channel();
         // Explicit CLI paths take precedence over the saved session. Restored
         // paths are inspected by asynchronous scans, never by synchronous stat.
         let from_session = locations.is_empty();
@@ -454,6 +522,15 @@ impl Explorer {
             recovery_comparisons: HashMap::new(),
             clipboard: None,
             consumed_cut_paths: None,
+            clipboard_sender,
+            clipboard_receiver,
+            clipboard_revision: 0,
+            desktop_copy_running: false,
+            pending_desktop_copy: None,
+            desktop_read_running: false,
+            desktop_read_revision: 0,
+            next_paste_id: 0,
+            pending_paste: None,
             dialog: None,
             status,
             busy: false,
@@ -698,6 +775,72 @@ impl Explorer {
     }
 
     fn poll_background(&mut self, context: &egui::Context) {
+        while let Ok(event) = self.clipboard_receiver.try_recv() {
+            match event {
+                ClipboardEvent::Written { revision, success } => {
+                    self.desktop_copy_running = false;
+                    if let Some((paths, cut, latest)) = self.pending_desktop_copy.take() {
+                        self.start_desktop_copy(paths, cut, latest);
+                    } else if revision == self.clipboard_revision
+                        && self.status.as_ref().is_some_and(|(message, _)| {
+                            message.contains("syncing desktop clipboard")
+                        })
+                        && let Some(files) = &self.clipboard
+                    {
+                        self.status = Some((
+                            format!(
+                                "{} {} item(s){}",
+                                if files.cut { "Cut" } else { "Copied" },
+                                files.paths.len(),
+                                if success {
+                                    ""
+                                } else {
+                                    " (internal clipboard only)"
+                                }
+                            ),
+                            false,
+                        ));
+                    }
+                }
+                ClipboardEvent::Read { id, files } => {
+                    self.desktop_read_running = false;
+                    if let Some(pending) = self.pending_paste.take_if(|pending| pending.id == id) {
+                        if pending.started.elapsed() >= CLIPBOARD_WAIT {
+                            self.status = Some((
+                                "Desktop clipboard is not responding; no files were pasted".into(),
+                                true,
+                            ));
+                        } else if pending.is_current(
+                            self.clipboard_revision,
+                            self.current(),
+                            Instant::now(),
+                        ) {
+                            let clipboard = self.clipboard_for_paste(files);
+                            self.finish_paste(clipboard, pending.destination, pending.mode);
+                        } else {
+                            self.status = Some((
+                                "Paste cancelled because the active folder or clipboard changed"
+                                    .into(),
+                                false,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        if self
+            .pending_paste
+            .as_ref()
+            .is_some_and(|pending| pending.started.elapsed() >= CLIPBOARD_WAIT)
+        {
+            // Do not silently act on an old internal cut buffer if the
+            // desktop clipboard is stuck. Ignore any late worker response.
+            self.pending_paste = None;
+            self.status = Some((
+                "Desktop clipboard is not responding; no files were pasted".into(),
+                true,
+            ));
+        }
         while let Ok((generation, id, result)) = self.recovery_comparison_receiver.try_recv() {
             if self.recovery_comparison_active.as_deref() == Some(id.as_str()) {
                 self.recovery_comparison_active = None;
@@ -1289,7 +1432,8 @@ impl Explorer {
         if paths.is_empty() {
             return;
         }
-        let desktop_clipboard = clipboard::copy_files(&paths, cut);
+        self.clipboard_revision = self.clipboard_revision.wrapping_add(1);
+        self.pending_paste = None;
         self.clipboard = Some(Clipboard {
             paths: paths.clone(),
             cut,
@@ -1297,17 +1441,28 @@ impl Explorer {
         self.consumed_cut_paths = None;
         self.status = Some((
             format!(
-                "{} {} item(s){}",
+                "{} {} item(s) (internal clipboard; syncing desktop clipboard)",
                 if cut { "Cut" } else { "Copied" },
                 paths.len(),
-                if desktop_clipboard.is_ok() {
-                    ""
-                } else {
-                    " (internal clipboard)"
-                }
             ),
             false,
         ));
+        if self.desktop_copy_running {
+            // Keep only the latest copy request. A stuck desktop clipboard
+            // provider must not spawn an unbounded set of write workers.
+            self.pending_desktop_copy = Some((paths, cut, self.clipboard_revision));
+        } else {
+            self.start_desktop_copy(paths, cut, self.clipboard_revision);
+        }
+    }
+
+    fn start_desktop_copy(&mut self, paths: Vec<PathBuf>, cut: bool, revision: u64) {
+        self.desktop_copy_running = true;
+        let sender = self.clipboard_sender.clone();
+        thread::spawn(move || {
+            let success = clipboard::copy_files(&paths, cut).is_ok();
+            let _ = sender.send(ClipboardEvent::Written { revision, success });
+        });
     }
 
     fn copy_selected_paths(&mut self, context: &egui::Context) {
@@ -1324,17 +1479,12 @@ impl Explorer {
         self.status = Some((format!("Copied {} path(s) as text", paths.len()), false));
     }
 
-    fn clipboard_for_paste(&self) -> Option<Clipboard> {
-        let desktop = clipboard::paste_files().map(|files| Clipboard {
-            paths: files.paths,
-            cut: files.cut,
-        });
-        if desktop.as_ref().is_some_and(|files| {
-            files.cut && self.consumed_cut_paths.as_ref() == Some(&files.paths)
-        }) {
-            return self.clipboard.clone();
-        }
-        desktop.or_else(|| self.clipboard.clone())
+    fn clipboard_for_paste(&self, desktop: Option<clipboard::Files>) -> Option<Clipboard> {
+        choose_paste_clipboard(
+            desktop,
+            self.clipboard.clone(),
+            self.consumed_cut_paths.as_deref(),
+        )
     }
 
     fn paste_action(
@@ -1358,30 +1508,89 @@ impl Explorer {
     }
 
     fn paste(&mut self) {
-        if let Some(clipboard) = self.clipboard_for_paste() {
-            self.clipboard = Some(clipboard.clone());
-            self.run_action(Self::paste_action(
-                clipboard,
-                self.current().path.clone(),
-                ConflictPolicy::KeepBoth,
-            ));
-        }
+        self.request_desktop_paste(PasteMode::Immediate);
     }
 
     fn paste_with_options(&mut self) {
-        if let Some(clipboard) = self.clipboard_for_paste() {
-            let destination = self.current().path.clone();
-            let conflict = ConflictPolicy::KeepBoth;
-            let preview_generation = self.request_paste_preview(&clipboard, &destination, conflict);
-            self.dialog = Some(Dialog::PasteOptions {
+        self.request_desktop_paste(PasteMode::Options);
+    }
+
+    fn request_desktop_paste(&mut self, mode: PasteMode) {
+        if self.pending_paste.is_some() {
+            return;
+        }
+        let destination = self.current().path.clone();
+        // A copy initiated here is authoritative until desktop sync returns.
+        // If a desktop read has hung, do not start another unbounded worker.
+        if self.desktop_copy_running {
+            self.finish_paste(self.clipboard.clone(), destination, mode);
+            return;
+        }
+        if self.desktop_read_running {
+            if self.clipboard_revision != self.desktop_read_revision {
+                // A newer in-app copy supersedes the hung external read.
+                self.finish_paste(self.clipboard.clone(), destination, mode);
+            } else {
+                self.status = Some((
+                    "Still waiting for the desktop clipboard; no files were pasted".into(),
+                    true,
+                ));
+            }
+            return;
+        }
+        self.next_paste_id = self.next_paste_id.wrapping_add(1);
+        let id = self.next_paste_id;
+        self.pending_paste = Some(PendingPaste {
+            id,
+            revision: self.clipboard_revision,
+            tab_id: self.current().id,
+            tab_generation: self.current().generation,
+            destination,
+            mode,
+            started: Instant::now(),
+        });
+        self.desktop_read_running = true;
+        self.desktop_read_revision = self.clipboard_revision;
+        self.status = Some(("Reading desktop clipboard…".into(), false));
+        let sender = self.clipboard_sender.clone();
+        thread::spawn(move || {
+            let files = clipboard::paste_files();
+            let _ = sender.send(ClipboardEvent::Read { id, files });
+        });
+    }
+
+    fn finish_paste(
+        &mut self,
+        clipboard: Option<Clipboard>,
+        destination: PathBuf,
+        mode: PasteMode,
+    ) {
+        let Some(clipboard) = clipboard else {
+            self.status = Some((
+                "No files on the clipboard (or desktop clipboard unavailable)".into(),
+                true,
+            ));
+            return;
+        };
+        self.clipboard = Some(clipboard.clone());
+        match mode {
+            PasteMode::Immediate => self.run_action(Self::paste_action(
                 clipboard,
                 destination,
-                conflict,
-                preview_generation,
-                preview: None,
-            });
-        } else {
-            self.status = Some(("No files on the clipboard".into(), true));
+                ConflictPolicy::KeepBoth,
+            )),
+            PasteMode::Options => {
+                let conflict = ConflictPolicy::KeepBoth;
+                let preview_generation =
+                    self.request_paste_preview(&clipboard, &destination, conflict);
+                self.dialog = Some(Dialog::PasteOptions {
+                    clipboard,
+                    destination,
+                    conflict,
+                    preview_generation,
+                    preview: None,
+                });
+            }
         }
     }
 
@@ -3417,9 +3626,11 @@ fn paint_file_icon(painter: &egui::Painter, rect: Rect, file: &Entry, theme: &Th
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, NameMode, Tab, elapsed_label, next_search_repaint_delay, remaining_cut_paths,
+        Action, CLIPBOARD_WAIT, Clipboard, NameMode, PasteMode, PendingPaste, Tab,
+        choose_paste_clipboard, elapsed_label, next_search_repaint_delay, remaining_cut_paths,
         transfer_progress_details,
     };
+    use crate::clipboard;
     use crate::filesystem::{ItemResult, ItemState, Progress};
     use std::path::PathBuf;
     use std::sync::atomic::Ordering;
@@ -3512,6 +3723,62 @@ mod tests {
                 PathBuf::from("/original/unstarted.txt")
             ])
         );
+    }
+
+    #[test]
+    fn stale_desktop_cut_cannot_replay_completed_sources() {
+        let original = vec![
+            PathBuf::from("/source/moved"),
+            PathBuf::from("/source/pending"),
+        ];
+        let internal = Clipboard {
+            paths: vec![original[1].clone()],
+            cut: true,
+        };
+        let chosen = choose_paste_clipboard(
+            Some(clipboard::Files {
+                paths: original.clone(),
+                cut: true,
+            }),
+            Some(internal),
+            Some(&original),
+        )
+        .unwrap();
+        assert_eq!(chosen.paths, vec![original[1].clone()]);
+        let fresh = choose_paste_clipboard(
+            Some(clipboard::Files {
+                paths: vec![PathBuf::from("/external/new")],
+                cut: false,
+            }),
+            Some(chosen),
+            Some(&original),
+        )
+        .unwrap();
+        assert_eq!(fresh.paths, vec![PathBuf::from("/external/new")]);
+        assert!(!fresh.cut);
+    }
+
+    #[test]
+    fn delayed_paste_cannot_target_an_old_tab_or_expired_read() {
+        let now = Instant::now();
+        let mut tab = Tab::new(5, PathBuf::from("/initial"));
+        let pending = PendingPaste {
+            id: 1,
+            revision: 9,
+            tab_id: tab.id,
+            tab_generation: tab.generation,
+            destination: tab.path.clone(),
+            mode: PasteMode::Immediate,
+            started: now,
+        };
+        assert!(pending.is_current(9, &tab, now));
+        assert!(!pending.is_current(9, &tab, now + CLIPBOARD_WAIT));
+        assert!(!pending.is_current(10, &tab, now));
+        tab.generation += 1;
+        assert!(!pending.is_current(9, &tab, now));
+        tab.generation -= 1;
+        tab.path = PathBuf::from("/other");
+        assert!(!pending.is_current(9, &tab, now));
     }
 
     #[test]
