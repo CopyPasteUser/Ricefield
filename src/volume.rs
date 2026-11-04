@@ -18,6 +18,7 @@ const MAX_REMOTE_ENTRIES: usize = 10_000;
 pub struct RemoteEntry {
     pub uri: String,
     pub name: String,
+    pub is_directory: bool,
 }
 
 /// Enumerate URIs rather than unescaped names: newline and tab in a remote
@@ -25,7 +26,8 @@ pub struct RemoteEntry {
 /// GIO creates/drives its own GLib context in a worker process.
 pub fn list_remote(uri: &str, cancelled: &AtomicBool) -> Result<Vec<RemoteEntry>, String> {
     let mut child = Command::new("gio")
-        .args(["list", "-u", uri])
+        .args(["list", "-l", "-a", "standard::type", "-u", uri])
+        .env("LC_ALL", "C")
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .stdout(Stdio::piped())
@@ -86,19 +88,24 @@ fn parse_remote_listing(parent: &str, bytes: &[u8]) -> Result<Vec<RemoteEntry>, 
     let mut entries = Vec::new();
     for line in text.lines().filter(|line| !line.is_empty()) {
         // Never trust GIO stdout as a local path or permit an unrelated URI.
-        let name = line
+        let (entry_uri, metadata) = line.split_once('\t').ok_or("Malformed GIO listing")?;
+        let (_, kind) = metadata
+            .rsplit_once('\t')
+            .ok_or("Malformed GIO entry metadata")?;
+        let name = entry_uri
             .strip_prefix(&prefix)
             .filter(|name| !name.is_empty() && !name.contains('/'))
             .ok_or("Unexpected URI in GIO listing")?;
         if !matches!(
-            crate::location::Location::parse(line.into()),
+            crate::location::Location::parse(entry_uri.into()),
             Ok(crate::location::Location::Remote(_))
         ) {
             return Err("Invalid remote entry URI".into());
         }
         entries.push(RemoteEntry {
-            uri: line.to_owned(),
+            uri: entry_uri.to_owned(),
             name: name.to_owned(),
+            is_directory: kind == "(directory)",
         });
         if entries.len() > MAX_REMOTE_ENTRIES {
             return Err("Network directory has more than 10,000 entries".into());
@@ -192,12 +199,18 @@ mod tests {
     #[test]
     fn remote_listing_rejects_unrelated_uris_and_large_results() {
         let uri = "smb://nas/share";
-        let entries =
-            parse_remote_listing(uri, b"smb://nas/share/A%0Afile\nsmb://nas/share/B\n").unwrap();
+        let entries = parse_remote_listing(
+            uri,
+            b"smb://nas/share/A%0Afile\t0\t(directory)\nsmb://nas/share/B\t123\t(regular)\n",
+        )
+        .unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].name, "A%0Afile");
-        assert!(parse_remote_listing(uri, b"file:///tmp/secret\n").is_err());
-        assert!(parse_remote_listing(uri, b"smb://nas/share/sub/file\n").is_err());
+        assert!(entries[0].is_directory);
+        assert!(!entries[1].is_directory);
+        assert!(parse_remote_listing(uri, b"file:///tmp/secret\t0\t(directory)\n").is_err());
+        assert!(parse_remote_listing(uri, b"smb://nas/share/sub/file\t0\t(directory)\n").is_err());
+        assert!(parse_remote_listing(uri, b"smb://nas/share/no-metadata\n").is_err());
         assert!(
             parse_remote_listing(uri, &vec![b'a'; MAX_REMOTE_LIST_BYTES as usize + 1]).is_err()
         );

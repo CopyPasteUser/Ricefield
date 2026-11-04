@@ -279,8 +279,8 @@ recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
   typed remote locations end-to-end; preserve all local POSIX operations.
   Read-only remote URI tabs now have per-tab navigation, back/forward and
   bounded worker scans without exposing any remote path to the POSIX file
-  engine. Unified entry operations, remote search and session persistence are
-  still open.
+  engine. Validated remote tabs now persist in the opt-out 32-tab session
+  snapshot. Unified entry operations and remote search are still open.
 - [ ] Integrate GIO/GVfs with a correctly driven GLib main context.
   `gio` commands currently run in background child processes with their own
   GLib contexts, limits and timeouts. In-process native GIO integration and
@@ -295,8 +295,10 @@ recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
   still open. No forced unmount is offered.
 - [ ] Connect SMB/SFTP/WebDAV, browse system NFS and supported MTP devices.
   Initial non-blocking `gio mount` connection attempts are supported without
-  URI credentials. Direct remote listing/file operations and interactive
-  authentication are not yet available.
+  URI credentials. Read-only remote listing works in normal tabs; native remote
+  file operations and interactive authentication are not yet available. A
+  bounded metadata listing distinguishes traversable directories from files
+  that still cannot be opened or transferred.
 - [ ] Connect dialog, secure credential handling, favorites and reconnect.
   A basic URI dialog, 32 validated persistent URI favorites and manual
   reconnect are implemented. Credential prompts/keyring integration and
