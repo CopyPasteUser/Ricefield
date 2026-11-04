@@ -277,9 +277,10 @@ recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
   visible unsupported-backend error without accidentally scanning local paths.
 - [ ] Evolve navigation, tab history, entries and worker results to carry
   typed remote locations end-to-end; preserve all local POSIX operations.
-  The initial GIO read-only browser has its own navigation history and bounded
-  URI listing, without exposing any remote path to the POSIX file engine.
-  Unified tabs, entries, search and operations are still open.
+  Read-only remote URI tabs now have per-tab navigation, back/forward and
+  bounded worker scans without exposing any remote path to the POSIX file
+  engine. Unified entry operations, remote search and session persistence are
+  still open.
 - [ ] Integrate GIO/GVfs with a correctly driven GLib main context.
   `gio` commands currently run in background child processes with their own
   GLib contexts, limits and timeouts. In-process native GIO integration and
