@@ -1633,7 +1633,10 @@ fn remove_verified_tree(
     }
     let metadata = fs::symlink_metadata(source)?;
     let original = manifest.get(source).ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidData, "Source was not in the original move")
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Source was not in the original move",
+        )
     })?;
     #[cfg(unix)]
     ensure_cleanup_source(original, &metadata, removed_links)?;
@@ -2391,8 +2394,14 @@ mod tests {
         let second = fs::metadata(copied.join("nested/second.txt")).unwrap();
         assert_eq!(first.ino(), second.ino());
         assert_eq!(first.nlink(), 2);
-        assert_eq!(fs::read(copied.join("nested/second.txt")).unwrap(), b"shared content");
-        assert_ne!(first.ino(), fs::metadata(original.join("first.txt")).unwrap().ino());
+        assert_eq!(
+            fs::read(copied.join("nested/second.txt")).unwrap(),
+            b"shared content"
+        );
+        assert_ne!(
+            first.ino(),
+            fs::metadata(original.join("first.txt")).unwrap().ino()
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
