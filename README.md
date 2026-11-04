@@ -4,7 +4,7 @@
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Latest source:** [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main) — actively developed toward 1.0. The package currently identifies as **v0.2.0** (`Cargo.toml`); the **v0.3 file-operation improvements are implemented incrementally but have not passed the complete v0.3 release gate**. No version 1.0 release is claimed. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+> **Development preview: v0.3.0-alpha.1** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not the completed v0.3 release gate or a safe replacement for Thunar with irreplaceable data. It adds hardened local operations and recovery inspection while ACLs, ownership, fully race-free cleanup and hardware acceptance remain outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
 RiceExplorer is designed as the file-management companion to [RiceBowl](https://github.com/CopyPasteUser/RiceBowl). Its renderer, filesystem operations and visual profiles are separate: switching from Windows 98 to Windows 7 or ChromeOS changes the chrome, geometry, controls and icons without replacing the file manager or disturbing an open folder.
 
@@ -18,7 +18,7 @@ renderers remain part of the roadmap.
 
 ![RiceExplorer icon](assets/rice-explorer.svg)
 
-## Implemented on `main` — v0.2 baseline + ongoing v0.3 work
+## Implemented on `main` — v0.3.0-alpha.1
 
 - Native Rust GUI with GPU-accelerated drawing; no Electron, browser or persistent background daemon.
 - Seven bundled visual profiles: `win98`, `xp-luna`, `win7`, `win10`, `frutiger-aero`, `chromeos` and `macos`.
@@ -125,6 +125,7 @@ rice-explorer --theme xp-luna ~/Documents
 rice-explorer --theme win98
 rice-explorer --theme frutiger-aero
 rice-explorer --theme-file ~/.config/rice-explorer/my-rice.toml ~/Pictures
+rice-explorer --version
 rice-explorer --list-themes
 ```
 

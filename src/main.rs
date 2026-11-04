@@ -95,8 +95,13 @@ fn main() -> eframe::Result {
         match arg.to_str() {
             Some("--help" | "-h") => {
                 println!(
-                    "RiceExplorer 0.2\nUsage: rice-explorer [--theme ID] [--theme-file FILE] [FOLDER ...]\n\n--list-themes    Show bundled profiles\n--theme ID       Select a RiceBowl visual profile\n--theme-file FILE  Load an external editable TOML theme\n\nAccepts local paths and file:// URIs. Remote URIs are not yet supported.\n\nKeyboard: Ctrl+L path, Ctrl+F search, Ctrl+T/W tabs, Ctrl+C/X/V copy/cut/paste, F2 rename, Delete trash, Shift+Delete permanent delete, Ctrl+A select all, Ctrl+D duplicate, Alt+Enter properties, Space preview, Ctrl+H hidden, Ctrl+R refresh."
+                    "RiceExplorer {}\nUsage: rice-explorer [--theme ID] [--theme-file FILE] [FOLDER ...]\n\n--version        Show the package version\n--list-themes    Show bundled profiles\n--theme ID       Select a RiceBowl visual profile\n--theme-file FILE  Load an external editable TOML theme\n\nAccepts local paths and file:// URIs. Remote URIs are not yet supported.\n\nKeyboard: Ctrl+L path, Ctrl+F search, Ctrl+T/W tabs, Ctrl+C/X/V copy/cut/paste, F2 rename, Delete trash, Shift+Delete permanent delete, Ctrl+A select all, Ctrl+D duplicate, Alt+Enter properties, Space preview, Ctrl+H hidden, Ctrl+R refresh.",
+                    env!("CARGO_PKG_VERSION")
                 );
+                return Ok(());
+            }
+            Some("--version" | "-V") => {
+                println!("RiceExplorer {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
             Some("--list-themes") => {

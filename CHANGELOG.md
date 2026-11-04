@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased — v0.2 stability and v0.3 safety groundwork
+## Unreleased
+
+- Final v0.3 safety gate, Mint hardware acceptance and recovery decisions are
+  still in progress. Do not treat this alpha as a production release.
+
+## 0.3.0-alpha.1 — 2026-11-04
+
+- Read the actual package version from Cargo in `--help` and `--version`
+  instead of showing the old hard-coded 0.2 text; exercise both in CLI smoke.
 
 - Preserve accessible `user.*` extended attributes on Linux while staging
   local copies and cross-filesystem moves. Fail safely if the destination

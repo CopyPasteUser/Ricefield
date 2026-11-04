@@ -45,6 +45,9 @@ At baseline commit `214e585`, `main` and
 
 Each release requires implementation, meaningful tests and documentation.
 Untested hardware and GUI behavior is reported as **outstanding**, not done.
+`0.3.0-alpha.1` is a development preview for the completed 0.3 safety
+increments, **not** a passed final v0.3 gate. Its remaining unchecked items
+must not be implied complete by the package version.
 
 ### 0.2 — Stability and existing behavior
 
