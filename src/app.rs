@@ -188,6 +188,11 @@ enum Dialog {
         paths: Vec<PathBuf>,
         prefix: String,
         suffix: String,
+        find: String,
+        replace: String,
+        numbering: bool,
+        number_start: u32,
+        number_width: usize,
     },
     Trash(Vec<PathBuf>),
     Delete(Vec<PathBuf>),
@@ -1239,6 +1244,11 @@ impl Explorer {
                     paths,
                     prefix: String::new(),
                     suffix: String::new(),
+                    find: String::new(),
+                    replace: String::new(),
+                    numbering: false,
+                    number_start: 1,
+                    number_width: 3,
                 });
             }
             return;
@@ -2477,6 +2487,11 @@ impl Explorer {
                     paths,
                     prefix,
                     suffix,
+                    find,
+                    replace,
+                    numbering,
+                    number_start,
+                    number_width,
                 } => {
                     egui::Window::new(format!("Batch rename ({} items)", paths.len()))
                         .collapsible(false)
@@ -2484,7 +2499,7 @@ impl Explorer {
                         .default_width(580.0)
                         .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
                         .show(context, |ui| {
-                            ui.label("Add text before or after each original filename.");
+                            ui.label("Preview every new name before applying the changes.");
                             ui.horizontal(|ui| {
                                 ui.label("Prefix:");
                                 ui.add_sized(
@@ -2499,7 +2514,31 @@ impl Explorer {
                                     egui::TextEdit::singleline(suffix),
                                 );
                             });
-                            match filesystem::plan_batch_rename(paths, prefix, suffix) {
+                            ui.horizontal(|ui| {
+                                ui.label("Find:");
+                                ui.add_sized([170.0, 26.0], egui::TextEdit::singleline(find));
+                                ui.label("Replace:");
+                                ui.add_sized([170.0, 26.0], egui::TextEdit::singleline(replace));
+                            });
+                            ui.horizontal(|ui| {
+                                ui.checkbox(numbering, "Add sequence numbers");
+                                if *numbering {
+                                    ui.label("Start:");
+                                    ui.add(egui::DragValue::new(number_start).range(1..=99_999_999));
+                                    ui.label("Digits:");
+                                    ui.add(egui::DragValue::new(number_width).range(1..=8));
+                                }
+                            });
+                            let options = filesystem::BatchRenameOptions {
+                                prefix,
+                                suffix,
+                                find,
+                                replace,
+                                numbering: *numbering,
+                                number_start: *number_start,
+                                number_width: *number_width,
+                            };
+                            match filesystem::plan_batch_rename_with_options(paths, &options) {
                                 Ok(changes) => {
                                     ui.separator();
                                     ui.strong("Preview (original → new name)");

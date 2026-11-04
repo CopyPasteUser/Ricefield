@@ -35,8 +35,11 @@ particularly after an interrupted cross-volume move.
 
 Multi-item Trash, permanent Delete, Link and Batch Rename follow the same
 partial-result reporting rule. Batch rename accepts 2–256 selected entries,
-builds names from prefix + original filename + suffix without changing raw
-non-UTF-8 bytes, and displays the complete mapping before confirmation. The
+builds names using prefix, suffix, optional literal find/replace and optional
+numbering, and displays the complete mapping before confirmation. Prefix,
+suffix and numbering preserve raw non-UTF-8 bytes; text replacement explicitly
+requires UTF-8 filenames. Permanent Delete must report missing items rather
+than silently succeed, unlike idempotent internal staging cleanup. The
 worker verifies all source identities and destination vacancies before its
 first mutation; individual renames use atomic no-overwrite semantics on Linux.
 Concurrent writers can still cause a partial batch and earlier renames remain.

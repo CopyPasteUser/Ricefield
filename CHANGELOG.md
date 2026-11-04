@@ -59,6 +59,11 @@
   before renaming, never overwrite, retain non-UTF-8 source bytes and report
   partial completion if a competing writer creates a later target. Extend
   item-by-item failure reporting to Trash, Delete and Link actions.
+- Extend batch rename with literal search/replace and zero-padded sequence
+  numbers. Reject unchanged, invalid or duplicate name previews and refuse
+  text replacement of non-UTF-8 names rather than corrupting filename bytes.
+  Distinguish strict permanent deletion (missing input is an error) from
+  idempotent cleanup of internal staging files, with regression tests.
 - Keep failure-injection journals in per-test temporary directories and isolate
   the Xvfb smoke test's XDG config/state/cache. This prevents a fabricated
   unfinished-move warning in GUI screenshots and protects a developer's real

@@ -98,8 +98,10 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
 - [x] Implement bounded 2–256 item batch rename with a live prefix/suffix
   preview, before-start collision preflight and no-overwrite renames. Preserve
   non-UTF-8 filename bytes; test collisions and mid-batch partial failures.
-- [ ] Extend batch rename to numbering, regex/replacement, safe rename cycles,
-  rollback/undo where possible; test hardlinks and complete metadata behavior.
+- [x] Add zero-padded numbering and literal search/replace to the complete
+  preview without new dependencies. Refuse search/replace of non-UTF-8 names.
+- [ ] Extend batch rename to regex, safe rename cycles, rollback/undo where
+  possible; test hardlinks and complete metadata behavior.
 
 **Gate:** fault-injected copy/move/crash scenarios do not silently lose user
 data; transfers never block the UI.

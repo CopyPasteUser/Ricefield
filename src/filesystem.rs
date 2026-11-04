@@ -251,6 +251,16 @@ pub fn valid_name(name: &str) -> bool {
 
 pub const MAX_BATCH_RENAME: usize = 256;
 
+pub struct BatchRenameOptions<'a> {
+    pub prefix: &'a str,
+    pub suffix: &'a str,
+    pub find: &'a str,
+    pub replace: &'a str,
+    pub numbering: bool,
+    pub number_start: u32,
+    pub number_width: usize,
+}
+
 fn valid_os_name(name: &OsStr) -> bool {
     !name.is_empty()
         && name != OsStr::new(".")
@@ -266,32 +276,96 @@ pub fn plan_batch_rename(
     prefix: &str,
     suffix: &str,
 ) -> io::Result<Vec<(PathBuf, OsString)>> {
+    plan_batch_rename_with_options(
+        paths,
+        &BatchRenameOptions {
+            prefix,
+            suffix,
+            find: "",
+            replace: "",
+            numbering: false,
+            number_start: 1,
+            number_width: 3,
+        },
+    )
+}
+
+pub fn plan_batch_rename_with_options(
+    paths: &[PathBuf],
+    options: &BatchRenameOptions<'_>,
+) -> io::Result<Vec<(PathBuf, OsString)>> {
     if paths.is_empty() || paths.len() > MAX_BATCH_RENAME {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("Select 1–{MAX_BATCH_RENAME} items for batch rename"),
         ));
     }
-    if prefix.is_empty() && suffix.is_empty() {
+    if options.prefix.is_empty()
+        && options.suffix.is_empty()
+        && options.find.is_empty()
+        && !options.numbering
+    {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "Enter a prefix or suffix to rename these files",
+            "Enter a prefix, suffix, search text or enable numbering",
         ));
     }
-    if !prefix.is_empty() && !valid_name(prefix) || !suffix.is_empty() && !valid_name(suffix) {
+    if !options.prefix.is_empty() && !valid_name(options.prefix)
+        || !options.suffix.is_empty() && !valid_name(options.suffix)
+        || options.find.contains('/')
+        || options.find.contains('\0')
+        || options.replace.contains('/')
+        || options.replace.contains('\0')
+        || (options.find.is_empty() && !options.replace.is_empty())
+    {
         return Err(invalid_name());
+    }
+    if options.numbering
+        && (options.number_start == 0
+            || !(1..=8).contains(&options.number_width)
+            || u64::from(options.number_start) + paths.len() as u64 > 100_000_000)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Numbering needs a start from 1 and width 1–8 (max number 99,999,999)",
+        ));
     }
     let mut destinations = BTreeSet::new();
     let mut changes = Vec::with_capacity(paths.len());
-    for path in paths {
+    for (index, path) in paths.iter().enumerate() {
         let original = path.file_name().ok_or_else(invalid_name)?;
-        let mut name = OsString::from(prefix);
-        name.push(original);
-        name.push(suffix);
-        if !valid_os_name(&name) || !destinations.insert(path.with_file_name(&name)) {
+        let replacement = if options.find.is_empty() {
+            None
+        } else {
+            let utf8 = original.to_str().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Search/replace requires UTF-8 filenames; prefix/suffix and numbering preserve arbitrary filename bytes",
+                )
+            })?;
+            Some(utf8.replace(options.find, options.replace))
+        };
+        let mut name = OsString::from(options.prefix);
+        if options.numbering {
+            name.push(format!(
+                "{:0width$}-",
+                options.number_start as usize + index,
+                width = options.number_width
+            ));
+        }
+        if let Some(replaced) = replacement {
+            name.push(replaced);
+        } else {
+            name.push(original);
+        }
+        name.push(options.suffix);
+        if !valid_os_name(&name)
+            || name == original
+            || !destinations.insert(path.with_file_name(&name))
+        {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "Invalid or duplicate name in batch rename preview",
+                "Invalid, unchanged or duplicate name in batch rename preview",
             ));
         }
         changes.push((path.clone(), name));
@@ -622,7 +696,7 @@ fn perform_with_progress_in(
             for (index, path) in paths.iter().enumerate() {
                 let result = (|| {
                     transfer.check()?;
-                    remove_created(path)
+                    remove_selected(path)
                 })();
                 if let Err(error) = result {
                     return Err(batch_failure("Delete", index, paths.len(), path, error));
@@ -886,6 +960,17 @@ fn remove_created(path: &Path) -> io::Result<()> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),
     };
+    if metadata.is_dir() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    }
+}
+
+/// Unlike cleanup of staging paths, user-requested deletion must report
+/// missing inputs rather than silently claiming that they were deleted.
+fn remove_selected(path: &Path) -> io::Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
     if metadata.is_dir() {
         fs::remove_dir_all(path)
     } else {
@@ -1780,6 +1865,77 @@ mod tests {
     }
 
     #[test]
+    fn batch_rename_numbering_and_literal_replacement_are_predictable() {
+        let root = test_root();
+        let first = root.join("old-alpha.txt");
+        let second = root.join("old-beta.txt");
+        fs::write(&first, b"alpha").unwrap();
+        fs::write(&second, b"beta").unwrap();
+        let changes = plan_batch_rename_with_options(
+            &[first.clone(), second.clone()],
+            &BatchRenameOptions {
+                prefix: "image-",
+                suffix: "-backup",
+                find: "old-",
+                replace: "",
+                numbering: true,
+                number_start: 7,
+                number_width: 3,
+            },
+        )
+        .unwrap();
+        assert_eq!(changes[0].1, OsString::from("image-007-alpha.txt-backup"));
+        assert_eq!(changes[1].1, OsString::from("image-008-beta.txt-backup"));
+        perform(&Action::BatchRename { changes }).unwrap();
+        assert_eq!(
+            fs::read(root.join("image-007-alpha.txt-backup")).unwrap(),
+            b"alpha"
+        );
+        assert_eq!(
+            fs::read(root.join("image-008-beta.txt-backup")).unwrap(),
+            b"beta"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn batch_rename_rejects_unchanged_invalid_and_duplicate_name_plans() {
+        let root = test_root();
+        let source = root.join("one.txt");
+        fs::write(&source, b"original").unwrap();
+        let default = BatchRenameOptions {
+            prefix: "",
+            suffix: "",
+            find: "absent",
+            replace: "new",
+            numbering: false,
+            number_start: 1,
+            number_width: 3,
+        };
+        assert!(plan_batch_rename_with_options(std::slice::from_ref(&source), &default).is_err());
+        let invalid = BatchRenameOptions {
+            find: "one",
+            replace: "../unsafe",
+            ..default
+        };
+        assert!(plan_batch_rename_with_options(std::slice::from_ref(&source), &invalid).is_err());
+        let duplicate = BatchRenameOptions {
+            prefix: "",
+            suffix: "",
+            find: "one",
+            replace: "two",
+            numbering: false,
+            number_start: 1,
+            number_width: 3,
+        };
+        assert!(
+            plan_batch_rename_with_options(&[source.clone(), source.clone()], &duplicate).is_err()
+        );
+        assert_eq!(fs::read(source).unwrap(), b"original");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn batch_rename_preflight_rejects_collision_before_any_change() {
         let root = test_root();
         let first = root.join("one");
@@ -1856,6 +2012,35 @@ mod tests {
         perform(&Action::BatchRename { changes }).unwrap();
         let target = root.join(OsString::from_vec(b"x-raw-\xfe-end".to_vec()));
         assert_eq!(fs::read(target).unwrap(), b"payload");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn batch_numbering_keeps_non_utf8_bytes_but_literal_replacement_refuses_them() {
+        use std::os::unix::ffi::OsStringExt;
+        let root = test_root();
+        let source = root.join(OsString::from_vec(b"raw-\xfe".to_vec()));
+        fs::write(&source, b"payload").unwrap();
+        let numbered = BatchRenameOptions {
+            prefix: "",
+            suffix: "",
+            find: "",
+            replace: "",
+            numbering: true,
+            number_start: 4,
+            number_width: 2,
+        };
+        let changes =
+            plan_batch_rename_with_options(std::slice::from_ref(&source), &numbered).unwrap();
+        assert_eq!(changes[0].1, OsString::from_vec(b"04-raw-\xfe".to_vec()));
+        let find = BatchRenameOptions {
+            find: "raw",
+            replace: "new",
+            ..numbered
+        };
+        assert!(plan_batch_rename_with_options(std::slice::from_ref(&source), &find).is_err());
+        assert_eq!(fs::read(source).unwrap(), b"payload");
         fs::remove_dir_all(root).unwrap();
     }
 
