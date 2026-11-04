@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Start 0.4 location handling with a shared typed local/remote address parser
+  for the CLI and GUI path field. Recognize SMB, SFTP, WebDAV and MTP URIs,
+  reject embedded credentials/invalid encodings, and report unsupported remote
+  navigation without scanning a fake local folder. Existing `file://` and raw
+  non-UTF-8 local pathname behavior remains unchanged. GIO/GVfs browsing is
+  **not** implemented yet.
+
 ## 0.3.0-alpha.4 — 2026-11-04
 
 - Make cross-filesystem Move **source-retaining by default**: verified staged
