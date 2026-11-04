@@ -1,7 +1,11 @@
 # Changelog
 
-## Unreleased
+## Unreleased — 0.4.0-alpha.1 candidate
 
+- Add bounded, asynchronous, read-only GIO text previews for files in remote
+  tabs, with a 32 KiB cap, 12-second timeout, cancellation and stale-result
+  rejection. Reject binary/control data; no remote mutation or download is
+  enabled. Virtualize large remote directory lists to avoid UI stalls.
 - Unify Back/Forward history across local and network locations, preserving
   exact native local paths. Clear stale tab results on navigation, avoid
   false Home history entries when restoring/duplicating remote tabs, skip
