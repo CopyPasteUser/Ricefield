@@ -646,7 +646,7 @@ fn perform_with_progress_in(
                         let absolute = if source.is_absolute() {
                             source.clone()
                         } else {
-                            std::env::current_dir()?.join(source)?
+                            std::env::current_dir()?.join(source)
                         };
                         std::os::unix::fs::symlink(absolute, target)
                     }
