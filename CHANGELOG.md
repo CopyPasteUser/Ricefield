@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased — 0.5.0-alpha.1 candidate
+## Unreleased — 0.5.0-alpha.2 candidate
+
+- Add masked session-only passwords to archive browsing, reload, verification
+  and extraction; support AES-256 ZIP creation and rejection of wrong passwords
+  without exposing partial output. No keyring or plaintext persistence.
+- Add hostile TAR symlink/device, ZIP drive-path, duplicate member, forged
+  4 GiB size, truncated stream, wrong password and extraction-cancel tests.
+  Libarchive may normalize ZIP backslashes to relative directory separators;
+  final paths are checked for escapes and drive syntax.
+
+## 0.5.0-alpha.1 — archive preview baseline
 
 - Start 0.5 archive management with a runtime-loaded libarchive backend.
   Browse and verify local ZIP, tar, tar.gz, tar.xz, tar.zst and 7z archives,
@@ -16,8 +26,8 @@
 - Explicitly defer keyring work and physical Mint/USB/network-disconnect
   acceptance at the owner's request. Keep network writes and credential
   persistence disabled. Do not claim 0.4 stable acceptance from this decision.
-- Encrypted archives, interactive passwords and expanded hostile-corpus
-  fuzzing remain open; this is not a stable 0.5 release.
+- Interactive passwords and expanded hostile-corpus fuzzing remained open in
+  this baseline; it was not a stable 0.5 release.
 
 ## 0.4.0-alpha.1 — merged groundwork, not a stable release
 

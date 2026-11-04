@@ -322,20 +322,29 @@ stable or infer that skipping the tests satisfies the 0.4 release gate.
 - [x] Background archive entry browser, selected extraction (including
   selected directories), full-stream integrity check, bounded progress
   updates and cooperative cancellation in a shared archive dialog.
-- [ ] Password prompts where supported, no plaintext password persistence.
-  Encrypted archives currently fail closed; keyring integration is not required.
+- [x] Masked, session-only password field for reading encrypted ZIP and 7z/RAR
+  variants supported by installed libarchive; optional AES-256 encrypted ZIP
+  creation. No password persistence or keyring; missing/incorrect credentials
+  fail without publishing partially extracted files.
 - [x] Validate every entry name; reject absolute/parent traversal, symlinks,
   hardlinks, special files, duplicate normalized entry paths and excessive
   depth, entries and inflated size. Extract into a private stage and publish
   through Linux atomic no-overwrite rename. Cancellation/failure discards
   the unpublished stage. Adversarial regression fixtures include `../` ZIP
   entries, existing target collision and symlink sources.
+- [x] Add targeted hostile TAR symlink/device entries, malicious ZIP paths and
+  Windows drive prefixes, duplicate members, forged 4 GiB inflated size,
+  truncated ZIP, wrong passwords and mid-extraction cancellation. libarchive
+  normalizes some Windows ZIP separators to safe relative paths before the
+  final checks; drive prefixes and escapes remain rejected.
 - [ ] Expand hostile archive/format fuzzing and password workflows; perform
-  complete native Mint acceptance before labelling the release stable.
+  complete native Mint acceptance before labelling the release stable. Keyring
+  and real-device/network-disconnect acceptance were explicitly deferred by
+  the owner, not silently considered passed.
 
 **Gate:** hostile archives cannot write outside the selected destination.
-The core extraction invariants are in place and unit-tested; wider hostile
-corpora and real Mint device acceptance are still open for stable 0.5.
+The core extraction invariants and ZIP password round-trips are unit-tested;
+wider hostile corpora and real Mint device acceptance are open for stable 0.5.
 
 ### 0.6 — Everyday navigation and quick actions
 

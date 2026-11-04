@@ -4,7 +4,7 @@
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Development preview: v0.5.0-alpha.1 candidate** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+> **Development preview: v0.5.0-alpha.2 candidate** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
 **Distribution:** An [automated Linux x86_64 preview bundle](RELEASE.md) can
 be built without distributing Rust sources to every end user. The verified
@@ -46,10 +46,19 @@ uses the system `libarchive.so.13` backend (install `libarchive13t64` on Mint
 22/Ubuntu 24.04). Browse entries, select files or directories, verify archive
 integrity, or extract into a **new folder**. Create ZIP, tar.gz, tar.xz,
 tar.zst and 7z archives. Work happens in background, with progress and Cancel.
+ZIP archives can optionally be created with **AES-256 encryption**. For an
+encrypted ZIP, or 7z/RAR supported by installed libarchive, enter the password
+in the archive browser and select **Reload list** if needed. ZIP filenames
+can be visible even if their contents are locked; **Verify** and **Extract**
+use the password and cannot publish files with a missing or wrong password.
+Passwords exist only in the open dialog and active worker; they are never
+saved in settings, logs or a keyring. Password recovery is out of scope.
 Archive paths cannot escape the selected destination; symlinks, hardlinks and
 special files are refused, extraction has explicit size/entry limits and uses
 private staging plus atomic no-overwrite publication. Existing targets are
-never replaced. Encrypted/password-protected archives are **not supported yet**.
+never replaced. Regression tests include hostile TAR types, duplicate members,
+forged inflated sizes, truncated ZIP, wrong passwords and extraction cancellation.
+Native Mint acceptance, broader fuzzing and low-memory testing remain open.
 Do not open unknown archives with other tools as a workaround.
 
 **Built for structural customization.** RiceExplorer is not intended to be
@@ -62,7 +71,7 @@ renderers remain part of the roadmap.
 
 ![RiceExplorer icon](assets/rice-explorer.svg)
 
-## Implemented on `main` — v0.3 core, 0.4 groundwork and 0.5 archive preview
+## Implemented on `main` — v0.3 core, 0.4 groundwork and 0.5 archive alpha
 
 - Native Rust GUI with GPU-accelerated drawing; no Electron, browser or persistent background daemon.
 - Seven bundled visual profiles: `win98`, `xp-luna`, `win7`, `win10`, `frutiger-aero`, `chromeos` and `macos`.

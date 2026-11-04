@@ -31,6 +31,7 @@ const MAX_TOTAL_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_PATH_BYTES: usize = 4096;
 const MAX_PATH_DEPTH: usize = 64;
 const IO_BLOCK: usize = 64 * 1024;
+const MAX_PASSWORD_BYTES: usize = 4096;
 
 type Ptr = *mut std::ffi::c_void;
 type New = unsafe extern "C" fn() -> Ptr;
@@ -48,6 +49,7 @@ struct Api {
     read_filter_all: Config,
     read_format_all: Config,
     read_open_fd: unsafe extern "C" fn(Ptr, i32, usize) -> i32,
+    read_add_passphrase: unsafe extern "C" fn(Ptr, *const libc::c_char) -> i32,
     read_next: Next,
     read_data: ReadData,
     write_new: New,
@@ -60,6 +62,8 @@ struct Api {
     write_xz: Config,
     write_zstd: Config,
     write_open: unsafe extern "C" fn(Ptr, *const libc::c_char) -> i32,
+    write_set_options: unsafe extern "C" fn(Ptr, *const libc::c_char) -> i32,
+    write_set_passphrase: unsafe extern "C" fn(Ptr, *const libc::c_char) -> i32,
     write_header: Header,
     write_data: WriteData,
     entry_new: New,
@@ -96,6 +100,7 @@ impl Api {
             read_filter_all: sym!("archive_read_support_filter_all"),
             read_format_all: sym!("archive_read_support_format_all"),
             read_open_fd: sym!("archive_read_open_fd"),
+            read_add_passphrase: sym!("archive_read_add_passphrase"),
             read_next: sym!("archive_read_next_header"),
             read_data: sym!("archive_read_data"),
             write_new: sym!("archive_write_new"),
@@ -108,6 +113,8 @@ impl Api {
             write_xz: sym!("archive_write_add_filter_xz"),
             write_zstd: sym!("archive_write_add_filter_zstd"),
             write_open: sym!("archive_write_open_filename"),
+            write_set_options: sym!("archive_write_set_options"),
+            write_set_passphrase: sym!("archive_write_set_passphrase"),
             write_header: sym!("archive_write_header"),
             write_data: sym!("archive_write_data"),
             entry_new: sym!("archive_entry_new"),
@@ -150,7 +157,7 @@ struct Reader<'a> {
 }
 
 impl<'a> Reader<'a> {
-    fn open(api: &'a Api, path: &Path) -> io::Result<Self> {
+    fn open(api: &'a Api, path: &Path, password: Option<&str>) -> io::Result<Self> {
         let file = OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOFOLLOW)
@@ -165,6 +172,12 @@ impl<'a> Reader<'a> {
         let reader = Self { api, handle, file };
         api.check(handle, unsafe { (api.read_filter_all)(handle) })?;
         api.check(handle, unsafe { (api.read_format_all)(handle) })?;
+        if let Some(password) = password {
+            let passphrase = validate_password(password)?;
+            api.check(handle, unsafe {
+                (api.read_add_passphrase)(handle, passphrase.as_ptr())
+            })?;
+        }
         // libarchive borrows archive_read_open_fd's descriptor; the Reader
         // owns it until archive_read_free, so path replacement cannot redirect
         // a later open to a symlink or a special file.
@@ -210,7 +223,7 @@ struct Writer<'a> {
 }
 
 impl<'a> Writer<'a> {
-    fn open(api: &'a Api, path: &Path, format: Format) -> io::Result<Self> {
+    fn open(api: &'a Api, path: &Path, format: Format, password: Option<&str>) -> io::Result<Self> {
         let name = os_cstring(path.as_os_str())?;
         let handle = unsafe { (api.write_new)() };
         if handle.is_null() {
@@ -227,6 +240,18 @@ impl<'a> Writer<'a> {
             _ => api.write_tar,
         };
         api.check(handle, unsafe { configure(handle) })?;
+        if let Some(password) = password {
+            if format != Format::Zip {
+                return Err(invalid("Encryption is only supported for ZIP creation"));
+            }
+            let passphrase = validate_password(password)?;
+            api.check(handle, unsafe {
+                (api.write_set_options)(handle, c"zip:encryption=aes256".as_ptr())
+            })?;
+            api.check(handle, unsafe {
+                (api.write_set_passphrase)(handle, passphrase.as_ptr())
+            })?;
+        }
         let filter = match format {
             Format::TarGz => Some(api.write_gzip),
             Format::TarXz => Some(api.write_xz),
@@ -386,6 +411,13 @@ fn invalid(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.into())
 }
 
+fn validate_password(password: &str) -> io::Result<CString> {
+    if password.is_empty() || password.len() > MAX_PASSWORD_BYTES {
+        return Err(invalid("Password must be between 1 and 4096 bytes"));
+    }
+    CString::new(password).map_err(|_| invalid("Password contains a NUL byte"))
+}
+
 fn os_cstring(value: &OsStr) -> io::Result<CString> {
     CString::new(value.as_bytes()).map_err(|_| invalid("NUL in file path"))
 }
@@ -406,6 +438,11 @@ fn check_cancel(cancelled: &AtomicBool) -> io::Result<()> {
 fn safe_path(raw: &[u8]) -> io::Result<PathBuf> {
     if raw.is_empty() || raw.len() > MAX_PATH_BYTES || raw.contains(&b'\\') || raw.contains(&0) {
         return Err(invalid("Unsafe archive entry path"));
+    }
+    // ZIP readers may normalize `C:\\foo` into `C:/foo` before this point.
+    // Reject Windows drive prefixes even after that normalization.
+    if raw.len() >= 2 && raw[0].is_ascii_alphabetic() && raw[1] == b':' {
+        return Err(invalid("Archive entry contains a drive prefix"));
     }
     let mut output = PathBuf::new();
     let mut depth = 0;
@@ -481,24 +518,43 @@ fn scan(
     Ok(entries)
 }
 
+#[cfg(test)]
 pub fn inspect(path: &Path, cancelled: &AtomicBool) -> io::Result<Vec<ArchiveEntry>> {
+    inspect_with_password(path, None, cancelled)
+}
+
+pub fn inspect_with_password(
+    path: &Path,
+    password: Option<&str>,
+    cancelled: &AtomicBool,
+) -> io::Result<Vec<ArchiveEntry>> {
     if !Format::is_archive(path) {
         return Err(invalid("Unsupported archive filename"));
     }
     let api = Api::load()?;
-    let reader = Reader::open(&api, path)?;
+    let reader = Reader::open(&api, path, password)?;
     scan(&reader, cancelled, |_, _| Ok(()))
 }
 
 /// Read every regular file and ask libarchive to validate checksums/streams.
 /// The operation does not create or modify any filesystem object.
+#[cfg(test)]
 pub fn verify(
     path: &Path,
     cancelled: &AtomicBool,
     mut progress: impl FnMut(ArchiveProgress),
 ) -> io::Result<usize> {
+    verify_with_password(path, None, cancelled, &mut progress)
+}
+
+pub fn verify_with_password(
+    path: &Path,
+    password: Option<&str>,
+    cancelled: &AtomicBool,
+    mut progress: impl FnMut(ArchiveProgress),
+) -> io::Result<usize> {
     let api = Api::load()?;
-    let reader = Reader::open(&api, path)?;
+    let reader = Reader::open(&api, path, password)?;
     let mut total_read = 0u64;
     let entries = scan(&reader, cancelled, |reader, entry| {
         if entry.directory {
@@ -623,6 +679,7 @@ fn valid_output_name(name: &str) -> bool {
 
 /// Extract only selected entry paths (directories also include descendants).
 /// Passing an empty selection extracts the complete archive.
+#[cfg(test)]
 pub fn extract(
     path: &Path,
     destination: &Path,
@@ -631,12 +688,32 @@ pub fn extract(
     cancelled: &AtomicBool,
     mut progress: impl FnMut(ArchiveProgress),
 ) -> io::Result<PathBuf> {
+    extract_with_password(
+        path,
+        destination,
+        folder_name,
+        selected,
+        None,
+        cancelled,
+        &mut progress,
+    )
+}
+
+pub fn extract_with_password(
+    path: &Path,
+    destination: &Path,
+    folder_name: &str,
+    selected: &[PathBuf],
+    password: Option<&str>,
+    cancelled: &AtomicBool,
+    mut progress: impl FnMut(ArchiveProgress),
+) -> io::Result<PathBuf> {
     if !valid_output_name(folder_name) {
         return Err(invalid("Invalid extraction folder name"));
     }
     let selected = selected.iter().cloned().collect::<BTreeSet<_>>();
     // Read-only preflight rejects all unsafe paths before any output exists.
-    let entries = inspect(path, cancelled)?;
+    let entries = inspect_with_password(path, password, cancelled)?;
     if !selected.is_empty()
         && !selected
             .iter()
@@ -648,7 +725,7 @@ pub fn extract(
     let root = stage.0.join("unpacked");
     fs::create_dir(&root)?;
     let api = Api::load()?;
-    let reader = Reader::open(&api, path)?;
+    let reader = Reader::open(&api, path, password)?;
     let mut total_read = 0;
     scan(&reader, cancelled, |reader, entry| {
         // Selected directories include children, without an O(N²) scan when
@@ -693,11 +770,32 @@ pub fn extract(
     Ok(output)
 }
 
+#[cfg(test)]
 pub fn create(
     sources: &[PathBuf],
     destination: &Path,
     stem: &str,
     format: Format,
+    cancelled: &AtomicBool,
+    mut progress: impl FnMut(ArchiveProgress),
+) -> io::Result<PathBuf> {
+    create_with_password(
+        sources,
+        destination,
+        stem,
+        format,
+        None,
+        cancelled,
+        &mut progress,
+    )
+}
+
+pub fn create_with_password(
+    sources: &[PathBuf],
+    destination: &Path,
+    stem: &str,
+    format: Format,
+    password: Option<&str>,
     cancelled: &AtomicBool,
     mut progress: impl FnMut(ArchiveProgress),
 ) -> io::Result<PathBuf> {
@@ -723,7 +821,7 @@ pub fn create(
     let filename = format!("{stem}.{}", format.extension());
     let temporary = stage.0.join(&filename);
     let api = Api::load()?;
-    let writer = Writer::open(&api, &temporary, format)?;
+    let writer = Writer::open(&api, &temporary, format, password)?;
     let mut count = 0usize;
     let mut total = 0u64;
     for source in sources {
@@ -838,6 +936,7 @@ mod tests {
             b"/tmp/evil",
             b"folder/../../evil",
             b"C:\\evil",
+            b"C:/evil",
             b".",
         ] {
             assert!(safe_path(raw).is_err(), "accepted {raw:?}");
@@ -915,7 +1014,7 @@ mod tests {
         fs::write(&payload, "must not escape").unwrap();
         let path = fixture.0.join("hostile.zip");
         let api = Api::load().unwrap();
-        let writer = Writer::open(&api, &path, Format::Zip).unwrap();
+        let writer = Writer::open(&api, &path, Format::Zip, None).unwrap();
         let cancel = AtomicBool::new(false);
         writer
             .add(
@@ -1005,5 +1104,270 @@ mod tests {
                 .to_string_lossy()
                 .starts_with(".rice-explorer-archive-")
         }));
+    }
+
+    #[test]
+    fn encrypted_zip_requires_correct_password_and_never_publishes_on_failure() {
+        let fixture = Fixture::new();
+        let source = fixture.0.join("secret.txt");
+        fs::write(&source, "private archive payload").unwrap();
+        let cancel = AtomicBool::new(false);
+        let path = create_with_password(
+            &[source],
+            &fixture.0,
+            "locked",
+            Format::Zip,
+            Some("correct horse"),
+            &cancel,
+            |_| {},
+        )
+        .unwrap();
+        // ZIP member names may be visible even when their data is encrypted.
+        assert_eq!(inspect(&path, &cancel).unwrap().len(), 1);
+        assert!(verify(&path, &cancel, |_| {}).is_err());
+        assert!(verify_with_password(&path, Some("incorrect"), &cancel, |_| {}).is_err());
+        assert_eq!(
+            verify_with_password(&path, Some("correct horse"), &cancel, |_| {}).unwrap(),
+            1
+        );
+        for password in [None, Some("incorrect")] {
+            assert!(
+                extract_with_password(
+                    &path,
+                    &fixture.0,
+                    "no-output",
+                    &[],
+                    password,
+                    &cancel,
+                    |_| {},
+                )
+                .is_err()
+            );
+            assert!(!fixture.0.join("no-output").exists());
+        }
+        let output = extract_with_password(
+            &path,
+            &fixture.0,
+            "unlocked",
+            &[],
+            Some("correct horse"),
+            &cancel,
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read_to_string(output.join("secret.txt")).unwrap(),
+            "private archive payload"
+        );
+        assert!(!fs::read_dir(&fixture.0).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".rice-explorer-archive-")
+        }));
+    }
+
+    #[test]
+    fn password_validation_and_unsupported_encrypted_creation_fail_closed() {
+        assert!(validate_password("").is_err());
+        assert!(validate_password("a\0b").is_err());
+        assert!(validate_password(&"a".repeat(MAX_PASSWORD_BYTES + 1)).is_err());
+        let fixture = Fixture::new();
+        let source = fixture.0.join("source.txt");
+        fs::write(&source, "data").unwrap();
+        let cancel = AtomicBool::new(false);
+        assert!(
+            create_with_password(
+                &[source],
+                &fixture.0,
+                "unsupported",
+                Format::SevenZip,
+                Some("secret"),
+                &cancel,
+                |_| {},
+            )
+            .is_err()
+        );
+        assert!(!fixture.0.join("unsupported.7z").exists());
+    }
+
+    #[test]
+    fn duplicate_archive_entries_are_rejected_before_extraction() {
+        let fixture = Fixture::new();
+        let payload = fixture.0.join("payload");
+        fs::write(&payload, "content").unwrap();
+        let archive = fixture.0.join("duplicate.zip");
+        let api = Api::load().unwrap();
+        let writer = Writer::open(&api, &archive, Format::Zip, None).unwrap();
+        let cancel = AtomicBool::new(false);
+        for _ in 0..2 {
+            writer
+                .add(
+                    Path::new("same.txt"),
+                    Some(&mut File::open(&payload).unwrap()),
+                    7,
+                    &cancel,
+                    &mut |_| {},
+                )
+                .unwrap();
+        }
+        writer.finish().unwrap();
+        assert!(inspect(&archive, &cancel).is_err());
+        assert!(extract(&archive, &fixture.0, "no-output", &[], &cancel, |_| {}).is_err());
+        assert!(!fixture.0.join("no-output").exists());
+    }
+
+    #[test]
+    fn truncated_archive_cannot_publish_any_extracted_files() {
+        let fixture = Fixture::new();
+        let source = fixture.0.join("source.txt");
+        fs::write(&source, "content").unwrap();
+        let cancel = AtomicBool::new(false);
+        let archive = create(
+            &[source],
+            &fixture.0,
+            "truncated",
+            Format::Zip,
+            &cancel,
+            |_| {},
+        )
+        .unwrap();
+        let file = OpenOptions::new().write(true).open(&archive).unwrap();
+        let original = file.metadata().unwrap().len();
+        file.set_len(original - 16).unwrap();
+        assert!(verify(&archive, &cancel, |_| {}).is_err());
+        assert!(extract(&archive, &fixture.0, "unpacked", &[], &cancel, |_| {}).is_err());
+        assert!(!fixture.0.join("unpacked").exists());
+    }
+
+    #[test]
+    fn cancellation_during_extraction_cleans_private_stage() {
+        let fixture = Fixture::new();
+        let source = fixture.0.join("large.dat");
+        fs::write(&source, vec![b'q'; IO_BLOCK * 4]).unwrap();
+        let cancel = AtomicBool::new(false);
+        let archive = create(&[source], &fixture.0, "large", Format::Zip, &cancel, |_| {}).unwrap();
+        let result = extract(&archive, &fixture.0, "unpacked", &[], &cancel, |_| {
+            cancel.store(true, Ordering::Relaxed);
+        });
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Interrupted);
+        assert!(!fixture.0.join("unpacked").exists());
+        assert!(!fs::read_dir(&fixture.0).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".rice-explorer-archive-")
+        }));
+    }
+
+    #[test]
+    fn hostile_tar_symlinks_and_device_nodes_are_rejected() {
+        // Write deliberately unsafe entries via libarchive's low-level test
+        // path, bypassing the production Writer::add regular-file constraint.
+        for (kind, name) in [(0o120000, "linked"), (0o020000, "device")] {
+            let fixture = Fixture::new();
+            let archive = fixture.0.join("hostile.tar.gz");
+            let api = Api::load().unwrap();
+            let writer = Writer::open(&api, &archive, Format::TarGz, None).unwrap();
+            let entry = unsafe { (api.entry_new)() };
+            assert!(!entry.is_null());
+            let name = CString::new(name).unwrap();
+            unsafe {
+                (api.entry_set_path)(entry, name.as_ptr());
+                (api.entry_set_type)(entry, kind);
+                (api.entry_set_size)(entry, 0);
+                (api.entry_set_perm)(entry, 0o777);
+            }
+            let result = api.check(writer.handle, unsafe {
+                (api.write_header)(writer.handle, entry)
+            });
+            unsafe { (api.entry_free)(entry) };
+            result.unwrap();
+            writer.finish().unwrap();
+            let cancel = AtomicBool::new(false);
+            assert!(inspect(&archive, &cancel).is_err(), "accepted {name:?}");
+            assert!(extract(&archive, &fixture.0, "unpacked", &[], &cancel, |_| {}).is_err());
+            assert!(!fixture.0.join("unpacked").exists());
+        }
+    }
+
+    #[test]
+    fn hostile_zip_names_cannot_escape_or_alias_another_path() {
+        for name in [
+            "/absolute.txt",
+            "dir/../../escape.txt",
+            "folder\\escape.txt",
+            "C:\\drive.txt",
+            "./../escape.txt",
+        ] {
+            let fixture = Fixture::new();
+            let archive = fixture.0.join("hostile.zip");
+            let api = Api::load().unwrap();
+            let writer = Writer::open(&api, &archive, Format::Zip, None).unwrap();
+            let cancel = AtomicBool::new(false);
+            writer
+                .add(
+                    Path::new(name),
+                    Some(
+                        &mut File::open({
+                            let source = fixture.0.join("payload");
+                            fs::write(&source, b"X").unwrap();
+                            source
+                        })
+                        .unwrap(),
+                    ),
+                    1,
+                    &cancel,
+                    &mut |_| {},
+                )
+                .unwrap();
+            writer.finish().unwrap();
+            if name == "folder\\escape.txt" {
+                // libarchive canonicalizes Windows separators in ZIP names.
+                // Confirm the resulting relative path remains confined to the
+                // newly created extraction directory.
+                let entries = inspect(&archive, &cancel).unwrap();
+                assert_eq!(entries[0].path, PathBuf::from("folder/escape.txt"));
+                let output =
+                    extract(&archive, &fixture.0, "unpacked", &[], &cancel, |_| {}).unwrap();
+                assert_eq!(fs::read(output.join("folder/escape.txt")).unwrap(), b"X");
+                assert!(!fixture.0.join("escape.txt").exists());
+            } else {
+                assert!(inspect(&archive, &cancel).is_err(), "accepted {name:?}");
+                assert!(extract(&archive, &fixture.0, "unpacked", &[], &cancel, |_| {}).is_err());
+                assert!(!fixture.0.join("unpacked").exists());
+            }
+        }
+    }
+
+    #[test]
+    fn forged_zip_inflated_size_is_rejected_at_preflight() {
+        let fixture = Fixture::new();
+        let source = fixture.0.join("small.txt");
+        fs::write(&source, b"small").unwrap();
+        let cancel = AtomicBool::new(false);
+        let archive = create(
+            &[source],
+            &fixture.0,
+            "forged",
+            Format::Zip,
+            &cancel,
+            |_| {},
+        )
+        .unwrap();
+        let mut bytes = fs::read(&archive).unwrap();
+        // PK\x01\x02 is the ZIP central directory header; its uncompressed
+        // 32-bit member size sits at byte offset 24. Claim 4 GiB, not 5 B.
+        let central = bytes
+            .windows(4)
+            .position(|part| part == b"PK\x01\x02")
+            .unwrap();
+        bytes[central + 24..central + 28].copy_from_slice(&u32::MAX.to_le_bytes());
+        fs::write(&archive, bytes).unwrap();
+        assert!(inspect(&archive, &cancel).is_err());
+        assert!(extract(&archive, &fixture.0, "unpacked", &[], &cancel, |_| {}).is_err());
+        assert!(!fixture.0.join("unpacked").exists());
     }
 }

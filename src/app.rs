@@ -547,12 +547,15 @@ enum ArchiveMode {
         entries: Option<Vec<archive::ArchiveEntry>>,
         selected: BTreeSet<usize>,
         folder_name: String,
+        password: String,
     },
     Create {
         sources: Vec<PathBuf>,
         destination: PathBuf,
         stem: String,
         format: archive::Format,
+        encrypt: bool,
+        password: String,
     },
 }
 
@@ -565,19 +568,27 @@ struct ArchiveDialog {
 }
 
 enum ArchiveOperation {
-    List(PathBuf),
-    Verify(PathBuf),
+    List {
+        path: PathBuf,
+        password: Option<String>,
+    },
+    Verify {
+        path: PathBuf,
+        password: Option<String>,
+    },
     Extract {
         path: PathBuf,
         destination: PathBuf,
         folder: String,
         selected: Vec<PathBuf>,
+        password: Option<String>,
     },
     Create {
         sources: Vec<PathBuf>,
         destination: PathBuf,
         stem: String,
         format: archive::Format,
+        password: Option<String>,
     },
 }
 
@@ -2151,13 +2162,17 @@ impl Explorer {
                 entries: None,
                 selected: BTreeSet::new(),
                 folder_name,
+                password: String::new(),
             },
             running: false,
             message: None,
             transferred: 0,
             current_file: String::new(),
         });
-        self.start_archive_operation(ArchiveOperation::List(path));
+        self.start_archive_operation(ArchiveOperation::List {
+            path,
+            password: None,
+        });
     }
 
     fn open_archive_create(&mut self) {
@@ -2191,6 +2206,8 @@ impl Explorer {
                 destination: self.current().path.clone(),
                 stem,
                 format: archive::Format::Zip,
+                encrypt: false,
+                password: String::new(),
             },
             running: false,
             message: None,
@@ -2221,9 +2238,10 @@ impl Explorer {
         }
         thread::spawn(move || {
             let operation = match operation {
-                ArchiveOperation::List(path) => {
+                ArchiveOperation::List { path, password } => {
                     let result =
-                        archive::inspect(&path, &cancel).map_err(|error| error.to_string());
+                        archive::inspect_with_password(&path, password.as_deref(), &cancel)
+                            .map_err(|error| error.to_string());
                     let _ = sender.send(ArchiveEvent::Listed { generation, result });
                     return;
                 }
@@ -2247,18 +2265,22 @@ impl Explorer {
                 }
             };
             let result = match operation {
-                ArchiveOperation::Verify(path) => archive::verify(&path, &cancel, &mut report)
-                    .map(|count| format!("Verified {count} archive entries")),
+                ArchiveOperation::Verify { path, password } => {
+                    archive::verify_with_password(&path, password.as_deref(), &cancel, &mut report)
+                        .map(|count| format!("Verified {count} archive entries"))
+                }
                 ArchiveOperation::Extract {
                     path,
                     destination,
                     folder,
                     selected,
-                } => archive::extract(
+                    password,
+                } => archive::extract_with_password(
                     &path,
                     &destination,
                     &folder,
                     &selected,
+                    password.as_deref(),
                     &cancel,
                     &mut report,
                 )
@@ -2268,9 +2290,18 @@ impl Explorer {
                     destination,
                     stem,
                     format,
-                } => archive::create(&sources, &destination, &stem, format, &cancel, &mut report)
-                    .map(|path| format!("Created {}", path.display())),
-                ArchiveOperation::List(_) => unreachable!(),
+                    password,
+                } => archive::create_with_password(
+                    &sources,
+                    &destination,
+                    &stem,
+                    format,
+                    password.as_deref(),
+                    &cancel,
+                    &mut report,
+                )
+                .map(|path| format!("Created {}", path.display())),
+                ArchiveOperation::List { .. } => unreachable!(),
             }
             .map_err(|error| error.to_string());
             let _ = sender.send(ArchiveEvent::Finished {
@@ -4207,9 +4238,23 @@ impl Explorer {
             .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
             .show(context, |ui| {
                 match &mut dialog.mode {
-                    ArchiveMode::Browse { path, destination, entries, selected, folder_name } => {
+                    ArchiveMode::Browse { path, destination, entries, selected, folder_name, password } => {
                         ui.label(format!("Source: {}", path.display()));
                         ui.label("All paths are checked for traversal, links and special files before extraction.");
+                        ui.horizontal(|ui| {
+                            ui.label("Password (if encrypted):");
+                            ui.add_sized([245.0, 24.0], egui::TextEdit::singleline(password)
+                                .password(true).hint_text("Session only · never saved"));
+                            if ui.add_enabled(!dialog.running, egui::Button::new("Reload list")).clicked() {
+                                *entries = None;
+                                selected.clear();
+                                requested = Some(ArchiveOperation::List {
+                                    path: path.clone(),
+                                    password: (!password.is_empty()).then(|| password.clone()),
+                                });
+                            }
+                        });
+                        ui.small("Encrypted ZIP and supported 7z/RAR archives may need a password; ZIP filenames can be listed while contents remain locked.");
                         if let Some(entries) = entries {
                             ui.horizontal(|ui| {
                                 ui.label(format!("{} entries", entries.len()));
@@ -4241,18 +4286,21 @@ impl Explorer {
                             ui.small(format!("Parent: {} · Existing destinations will not be overwritten", destination.display()));
                             ui.horizontal(|ui| {
                                 if ui.add_enabled(!dialog.running, egui::Button::new("Verify integrity")).clicked() {
-                                    requested = Some(ArchiveOperation::Verify(path.clone()));
+                                    requested = Some(ArchiveOperation::Verify { path: path.clone(),
+                                        password: (!password.is_empty()).then(|| password.clone()) });
                                 }
                                 if ui.add_enabled(!dialog.running && !selected.is_empty(),
                                     egui::Button::new(format!("Extract {} selected", selected.len()))).clicked() {
                                     requested = Some(ArchiveOperation::Extract { path: path.clone(),
                                         destination: destination.clone(), folder: folder_name.clone(),
-                                        selected: selected.iter().map(|&index| entries[index].path.clone()).collect() });
+                                        selected: selected.iter().map(|&index| entries[index].path.clone()).collect(),
+                                        password: (!password.is_empty()).then(|| password.clone()) });
                                 }
                             });
                         } else if dialog.running { ui.spinner(); ui.label("Reading archive directory…"); }
+                        else { ui.label("Enter a password and select Reload list if this archive is locked."); }
                     }
-                    ArchiveMode::Create { sources, destination, stem, format } => {
+                    ArchiveMode::Create { sources, destination, stem, format, encrypt, password } => {
                         ui.label(format!("{} selected source(s)", sources.len()));
                         ui.label(format!("Destination folder: {}", destination.display()));
                         ui.horizontal(|ui| {
@@ -4266,10 +4314,23 @@ impl Explorer {
                                     ui.selectable_value(format, candidate, candidate.extension());
                                 }
                             });
+                        ui.checkbox(encrypt, "Encrypt ZIP with AES-256");
+                        if *encrypt {
+                            ui.horizontal(|ui| {
+                                ui.label("Password:");
+                                ui.add_sized([260.0, 24.0], egui::TextEdit::singleline(password)
+                                    .password(true).hint_text("Session only · never saved"));
+                            });
+                            if *format != archive::Format::Zip {
+                                ui.colored_label(Color32::LIGHT_RED, "Encryption is available only for ZIP archives.");
+                            }
+                        }
                         ui.small(format!("Output: {}.{} · will never overwrite", stem, format.extension()));
-                        if ui.add_enabled(!dialog.running, egui::Button::new("Create archive")).clicked() {
+                        if ui.add_enabled(!dialog.running && (!*encrypt || (*format == archive::Format::Zip && !password.is_empty())),
+                            egui::Button::new("Create archive")).clicked() {
                             requested = Some(ArchiveOperation::Create { sources: sources.clone(),
-                                destination: destination.clone(), stem: stem.clone(), format: *format });
+                                destination: destination.clone(), stem: stem.clone(), format: *format,
+                                password: (*encrypt).then(|| password.clone()) });
                         }
                     }
                 }
