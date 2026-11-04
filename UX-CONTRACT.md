@@ -7,6 +7,9 @@ Linux desktop file management for RiceBowl users. v0.1 interface English; runtim
 ## Navigation and selection
 
 - Tabs preserve their own path, back/forward history, search query, selection and pending scan generation.
+- Each tab owns a cooperative scan cancellation token. Navigation, refresh,
+  closure and changes to recursive search queries invalidate superseded
+  workers; cancelled/queued stale results must never replace current entries.
 - Entering a new location clears local search and selection, but not bookmarks or preferences.
 - Sorting always groups directories before files. Filters operate only on the current folder; no unrequested recursive search/indexing.
 - Shift selects a contiguous visible range; Ctrl toggles one item. Navigation history is independent of filesystem mutation history.

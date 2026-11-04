@@ -11,6 +11,10 @@
 - Introduce versioned shell profiles and configurable top-level UI component
   order for all seven built-in rices, reusing the same file operations.
 - Improve search debounce repaint timing and Linux mountinfo path decoding.
+- Cancel obsolete local folder scans and recursive searches as soon as a tab
+  navigates, closes or changes its query. Workers check cancellation between
+  filesystem entries and do not publish partial/stale results; add regression
+  tests for cancellation tokens and interrupted reads.
 - Add Copy Path to the actions/context menus and Ctrl+Shift+C.
 - Stage local copies and cross-device moves under hidden temporary paths,
   verifying cross-device transfers before atomic no-overwrite publication.

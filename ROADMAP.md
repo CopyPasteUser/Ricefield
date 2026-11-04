@@ -144,6 +144,8 @@ devices produce clear errors without frozen UI or silent data loss.
 
 ### 0.8 — Search and organization
 
+- [x] Cancel obsolete local folder scans and recursive filename searches on
+  new requests, tab closure and query changes; reject queued stale results.
 - [ ] Filename/content searches, type/date/size/regex filters.
 - [ ] Bounded cancellable network search, optional index (not mandatory).
 - [ ] Saved searches, duplicate finder and batch action previews.

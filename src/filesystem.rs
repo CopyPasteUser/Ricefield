@@ -101,9 +101,22 @@ impl Entry {
     }
 }
 
-pub fn scan(path: &Path) -> io::Result<Vec<Entry>> {
+fn check_scan_cancel(cancelled: &AtomicBool) -> io::Result<()> {
+    if cancelled.load(Ordering::Relaxed) {
+        Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "Folder scan cancelled",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+pub fn scan_cancellable(path: &Path, cancelled: &AtomicBool) -> io::Result<Vec<Entry>> {
+    check_scan_cancel(cancelled)?;
     let mut entries = Vec::new();
     for result in fs::read_dir(path)? {
+        check_scan_cancel(cancelled)?;
         let item = result?;
         // Metadata is gathered on a worker thread: large/slow folders never freeze the UI.
         let metadata = match fs::symlink_metadata(item.path()) {
@@ -120,16 +133,30 @@ pub fn scan(path: &Path) -> io::Result<Vec<Entry>> {
             modified: metadata.modified().ok(),
         });
     }
+    check_scan_cancel(cancelled)?;
     Ok(entries)
 }
 
 /// Bounded recursive filename search. Symlink directories are never followed.
+#[cfg(test)]
 pub fn search(root: &Path, query: &str, show_hidden: bool) -> io::Result<Vec<Entry>> {
+    search_cancellable(root, query, show_hidden, &AtomicBool::new(false))
+}
+
+/// A cancelled search returns Interrupted without exposing incomplete results.
+pub fn search_cancellable(
+    root: &Path,
+    query: &str,
+    show_hidden: bool,
+    cancelled: &AtomicBool,
+) -> io::Result<Vec<Entry>> {
+    check_scan_cancel(cancelled)?;
     let mut results = Vec::new();
     let mut pending = std::collections::VecDeque::from([(root.to_path_buf(), 0usize)]);
     let needle = query.to_lowercase();
     let mut visited = 0usize;
     while let Some((directory, depth)) = pending.pop_front() {
+        check_scan_cancel(cancelled)?;
         let entries = match fs::read_dir(&directory) {
             Ok(entries) => entries,
             Err(_) if directory.as_path() != root => {
@@ -139,6 +166,7 @@ pub fn search(root: &Path, query: &str, show_hidden: bool) -> io::Result<Vec<Ent
             Err(error) => return Err(error),
         };
         for entry in entries {
+            check_scan_cancel(cancelled)?;
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(_) => continue,
@@ -153,6 +181,7 @@ pub fn search(root: &Path, query: &str, show_hidden: bool) -> io::Result<Vec<Ent
             };
             visited += 1;
             if visited >= 250_000 || results.len() >= 20_000 {
+                check_scan_cancel(cancelled)?;
                 return Ok(results);
             }
             if metadata.is_dir() && depth < 48 {
@@ -170,6 +199,7 @@ pub fn search(root: &Path, query: &str, show_hidden: bool) -> io::Result<Vec<Ent
             }
         }
     }
+    check_scan_cancel(cancelled)?;
     Ok(results)
 }
 
@@ -1732,6 +1762,27 @@ mod tests {
         assert_eq!(shown.len(), 1);
         assert!(shown[0].path.ends_with("needle.md"));
         assert_eq!(search(&root, "needle", true).unwrap().len(), 2);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cancelled_folder_scan_stops_before_reading_entries() {
+        let root = test_root();
+        fs::write(root.join("sample.txt"), b"present").unwrap();
+        let cancelled = AtomicBool::new(true);
+        let result = scan_cancellable(&root, &cancelled);
+        assert_eq!(result.err().unwrap().kind(), io::ErrorKind::Interrupted);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cancelled_recursive_search_stops_before_reading_entries() {
+        let root = test_root();
+        fs::create_dir(root.join("nested")).unwrap();
+        fs::write(root.join("nested").join("sample.txt"), b"present").unwrap();
+        let cancelled = AtomicBool::new(true);
+        let result = search_cancellable(&root, "sample", false, &cancelled);
+        assert_eq!(result.err().unwrap().kind(), io::ErrorKind::Interrupted);
         fs::remove_dir_all(root).unwrap();
     }
 

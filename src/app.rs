@@ -46,6 +46,7 @@ struct Tab {
     dir_mtime: Option<SystemTime>,
     recursive_search: bool,
     search_pending: Option<Instant>,
+    scan_cancel: Arc<AtomicBool>,
 }
 
 impl Tab {
@@ -68,7 +69,25 @@ impl Tab {
             dir_mtime: None,
             recursive_search: false,
             search_pending: None,
+            scan_cancel: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    fn cancel_scan(&self) {
+        self.scan_cancel.store(true, Ordering::Relaxed);
+    }
+
+    fn next_scan_token(&mut self) -> Arc<AtomicBool> {
+        self.cancel_scan();
+        let token = Arc::new(AtomicBool::new(false));
+        self.scan_cancel = Arc::clone(&token);
+        token
+    }
+
+    fn accepts_scan_result(&self, tab_id: u64, generation: u64) -> bool {
+        self.id == tab_id
+            && self.generation == generation
+            && !self.scan_cancel.load(Ordering::Relaxed)
     }
 }
 
@@ -330,6 +349,7 @@ impl Explorer {
             self.navigate(config::home());
             return;
         }
+        self.tabs[index].cancel_scan();
         self.tabs.remove(index);
         if self.active >= self.tabs.len() {
             self.active = self.tabs.len() - 1;
@@ -340,6 +360,7 @@ impl Explorer {
 
     fn scan(&mut self, index: usize) {
         let tab = &mut self.tabs[index];
+        let cancel = tab.next_scan_token();
         tab.generation += 1;
         tab.loading = true;
         tab.error = None;
@@ -349,17 +370,25 @@ impl Explorer {
         let show_hidden = self.config.show_hidden;
         let sender = self.scan_sender.clone();
         thread::spawn(move || {
+            let result = if recursive {
+                filesystem::search_cancellable(&task.2, &query, show_hidden, &cancel)
+            } else {
+                filesystem::scan_cancellable(&task.2, &cancel)
+            };
+            if cancel.load(Ordering::Relaxed) {
+                return;
+            }
+            let dir_mtime = std::fs::metadata(&task.2)
+                .and_then(|meta| meta.modified())
+                .ok();
+            if cancel.load(Ordering::Relaxed) {
+                return;
+            }
             let _ = sender.send(ScanResult {
                 tab: task.0,
                 generation: task.1,
-                result: if recursive {
-                    filesystem::search(&task.2, &query, show_hidden)
-                } else {
-                    filesystem::scan(&task.2)
-                },
-                dir_mtime: std::fs::metadata(&task.2)
-                    .and_then(|meta| meta.modified())
-                    .ok(),
+                result,
+                dir_mtime,
             });
         });
     }
@@ -517,7 +546,7 @@ impl Explorer {
             if let Some(index) = self
                 .tabs
                 .iter()
-                .position(|tab| tab.id == message.tab && tab.generation == message.generation)
+                .position(|tab| tab.accepts_scan_result(message.tab, message.generation))
             {
                 let tab = &mut self.tabs[index];
                 tab.loading = false;
@@ -1519,6 +1548,7 @@ impl Explorer {
             if search.changed() {
                 self.current_mut().selected.clear();
                 if self.current().recursive_search {
+                    self.current().cancel_scan();
                     self.current_mut().search_pending = Some(Instant::now());
                 } else {
                     self.rebuild_visible(self.active);
@@ -1528,6 +1558,7 @@ impl Explorer {
                 && ui.small_button("×").on_hover_text("Clear search").clicked()
             {
                 self.current_mut().query.clear();
+                self.current_mut().search_pending = None;
                 if self.current().recursive_search {
                     self.scan(self.active);
                 } else {
@@ -2595,6 +2626,7 @@ fn paint_file_icon(painter: &egui::Painter, rect: Rect, file: &Entry, theme: &Th
 mod tests {
     use super::{Action, NameMode, Tab, next_search_repaint_delay};
     use std::path::PathBuf;
+    use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
 
     #[test]
@@ -2636,5 +2668,22 @@ mod tests {
             next_search_repaint_delay(&[overdue], now),
             Some(Duration::ZERO)
         );
+    }
+
+    #[test]
+    fn replacing_tab_scan_token_cancels_old_worker_only() {
+        let mut tab = Tab::new(9, PathBuf::from("/somewhere"));
+        let old = tab.scan_cancel.clone();
+        let current = tab.next_scan_token();
+        assert!(old.load(Ordering::Relaxed));
+        assert!(!current.load(Ordering::Relaxed));
+        assert!(tab.accepts_scan_result(9, 0));
+        let subsequent = tab.next_scan_token();
+        assert!(current.load(Ordering::Relaxed));
+        assert!(!subsequent.load(Ordering::Relaxed));
+        assert!(!tab.accepts_scan_result(1, 0));
+        assert!(!tab.accepts_scan_result(9, 1));
+        tab.cancel_scan();
+        assert!(!tab.accepts_scan_result(9, 0));
     }
 }
