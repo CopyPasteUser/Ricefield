@@ -180,7 +180,10 @@ impl NameMode {
 }
 
 enum Dialog {
-    Name { mode: NameMode, value: String },
+    Name {
+        mode: NameMode,
+        value: String,
+    },
     BatchRename {
         paths: Vec<PathBuf>,
         prefix: String,
@@ -188,7 +191,10 @@ enum Dialog {
     },
     Trash(Vec<PathBuf>),
     Delete(Vec<PathBuf>),
-    Properties { path: PathBuf, mode: String },
+    Properties {
+        path: PathBuf,
+        mode: String,
+    },
 }
 
 pub struct Explorer {

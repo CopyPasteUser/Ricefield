@@ -1762,12 +1762,18 @@ mod tests {
         let second = root.join("beta.txt");
         fs::write(&first, b"alpha payload").unwrap();
         fs::write(&second, b"beta payload").unwrap();
-        let changes = plan_batch_rename(&[first.clone(), second.clone()], "photo-", "-old")
-            .unwrap();
+        let changes =
+            plan_batch_rename(&[first.clone(), second.clone()], "photo-", "-old").unwrap();
         assert_eq!(changes[0].1, OsString::from("photo-alpha.txt-old"));
         perform(&Action::BatchRename { changes }).unwrap();
-        assert_eq!(fs::read(root.join("photo-alpha.txt-old")).unwrap(), b"alpha payload");
-        assert_eq!(fs::read(root.join("photo-beta.txt-old")).unwrap(), b"beta payload");
+        assert_eq!(
+            fs::read(root.join("photo-alpha.txt-old")).unwrap(),
+            b"alpha payload"
+        );
+        assert_eq!(
+            fs::read(root.join("photo-beta.txt-old")).unwrap(),
+            b"beta payload"
+        );
         assert!(!first.exists());
         assert!(!second.exists());
         fs::remove_dir_all(root).unwrap();
