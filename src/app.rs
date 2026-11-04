@@ -205,6 +205,7 @@ struct CompletedOperation {
     elapsed: Duration,
     items: Vec<filesystem::ItemResult>,
     counts: ItemCounts,
+    rename_undo: Option<Box<filesystem::RenameUndo>>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -460,6 +461,7 @@ pub struct Explorer {
     queue_paused: bool,
     show_operations: bool,
     recent_operations: VecDeque<CompletedOperation>,
+    pending_undo_origin: Option<u64>,
     recovery_sender: Sender<(u64, std::io::Result<Vec<JournalInspection>>)>,
     recovery_receiver: Receiver<(u64, std::io::Result<Vec<JournalInspection>>)>,
     recovery_generation: u64,
@@ -570,6 +572,7 @@ impl Explorer {
             queue_paused: false,
             show_operations: false,
             recent_operations: VecDeque::new(),
+            pending_undo_origin: None,
             recovery_sender,
             recovery_receiver,
             recovery_generation: 0,
@@ -1030,6 +1033,17 @@ impl Explorer {
                         report,
                         moved_paths,
                     } = message;
+                    let undo_succeeded = report.result.is_ok();
+                    let rename_undo = report.rename_undo;
+                    if let Some(origin_id) = self.pending_undo_origin.take()
+                        && undo_succeeded
+                        && let Some(entry) = self
+                            .recent_operations
+                            .iter_mut()
+                            .find(|entry| entry.id == origin_id)
+                    {
+                        entry.rename_undo = None;
+                    }
                     self.busy = false;
                     let label = self
                         .active_operation
@@ -1103,6 +1117,7 @@ impl Explorer {
                         elapsed,
                         counts: ItemCounts::from_items(&report.items),
                         items: report.items,
+                        rename_undo,
                     });
                     if self.recent_operations.len() > MAX_RECENT_OPERATIONS {
                         self.recent_operations.pop_back();
@@ -1383,6 +1398,7 @@ impl Explorer {
         }
         let mut open = true;
         let mut remove = None;
+        let mut undo_request = None;
         egui::Window::new("Transfers")
             .open(&mut open)
             .default_width(440.0)
@@ -1450,6 +1466,19 @@ impl Explorer {
                             ui.label(&entry.label);
                             ui.small(filesystem::age(Some(entry.finished_at)));
                             ui.small(format!("Took {}", elapsed_label(entry.elapsed)));
+                            if let Some(candidate) = &entry.rename_undo
+                                && ui
+                                    .add_enabled(
+                                        !self.busy
+                                            && !self.queue_paused
+                                            && self.operation_queue.is_empty(),
+                                        egui::Button::new("Undo rename"),
+                                    )
+                                    .on_hover_text("Restore the previous name if this entry is unchanged and the original name is still free. Never overwrites another file; available only in this session.")
+                                    .clicked()
+                            {
+                                undo_request = Some((entry.id, candidate.action()));
+                            }
                         });
                         if entry.outcome == OperationOutcome::Failed {
                             ui.colored_label(Color32::LIGHT_RED, &entry.summary);
@@ -1515,6 +1544,12 @@ impl Explorer {
             self.status = Some((format!("Removed waiting copy #{id}"), false));
             if self.operation_queue.is_empty() {
                 self.queue_paused = false;
+            }
+        }
+        if let Some((origin_id, action)) = undo_request {
+            self.run_action(action);
+            if self.busy {
+                self.pending_undo_origin = Some(origin_id);
             }
         }
         self.start_next_operation();

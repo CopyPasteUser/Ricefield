@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Offer session-only Undo for successfully renamed individual files/folders
+  through the shared Transfers history. Capture the original raw filename and
+  post-rename inode/metadata snapshot; restore with Linux's atomic
+  no-overwrite rename only when the moved entry still matches that snapshot.
+  Refuse modified/replaced entries and occupied original names without
+  touching them. Undo is never replayed after restart and does not yet cover
+  partial batch renames, Copy/Move, Trash or Delete.
 - Offer an opt-in fresh Copy preview from the unfinished-move review when the
   original source's recorded identity still matches. It reuses the normal
   background preflight, defaults to Keep both and requires a second explicit

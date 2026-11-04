@@ -41,6 +41,27 @@ pub struct ItemResult {
 pub struct OperationReport {
     pub result: io::Result<String>,
     pub items: Vec<ItemResult>,
+    pub rename_undo: Option<Box<RenameUndo>>,
+}
+
+/// Session-only rename reversal. The original name is preserved as raw OS
+/// bytes, and the moved entry must still match its post-rename snapshot.
+/// It never authorizes an overwrite, content removal or crash replay.
+#[derive(Clone)]
+pub struct RenameUndo {
+    pub current: PathBuf,
+    pub original: PathBuf,
+    pub snapshot: fs::Metadata,
+}
+
+impl RenameUndo {
+    pub fn action(&self) -> Action {
+        Action::UndoRename {
+            current: self.current.clone(),
+            original: self.original.clone(),
+            snapshot: self.snapshot.clone(),
+        }
+    }
 }
 
 struct ItemUpdate {
@@ -383,6 +404,11 @@ pub enum Action {
         source: PathBuf,
         name: String,
     },
+    UndoRename {
+        current: PathBuf,
+        original: PathBuf,
+        snapshot: fs::Metadata,
+    },
     BatchRename {
         changes: Vec<(PathBuf, OsString)>,
     },
@@ -641,6 +667,10 @@ pub fn perform_with_report(
     cancelled: &AtomicBool,
     notify: &mut dyn FnMut(Progress),
 ) -> OperationReport {
+    let before_rename = match action {
+        Action::Rename { source, .. } => fs::symlink_metadata(source).ok(),
+        _ => None,
+    };
     let sources: Vec<PathBuf> = match action {
         Action::Copy { sources, .. }
         | Action::Move { sources, .. }
@@ -664,7 +694,35 @@ pub fn perform_with_report(
             item.detail = update.detail;
         }
     });
-    OperationReport { result, items }
+    let rename_undo = if result.is_ok() {
+        match (action, before_rename) {
+            (Action::Rename { source, name }, Some(before)) => {
+                let current = source.with_file_name(name);
+                if &current == source {
+                    None
+                } else {
+                    fs::symlink_metadata(&current)
+                        .ok()
+                        .filter(|after| same_inode_and_kind(&before, after))
+                        .map(|snapshot| {
+                            Box::new(RenameUndo {
+                                current,
+                                original: source.clone(),
+                                snapshot,
+                            })
+                        })
+                }
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+    OperationReport {
+        result,
+        items,
+        rename_undo,
+    }
 }
 
 #[cfg(test)]
@@ -837,6 +895,25 @@ fn perform_with_progress_and_items(
             }
             rename_without_overwrite(source, &target)?;
             Ok(format!("Renamed to {name}"))
+        }
+        Action::UndoRename {
+            current,
+            original,
+            snapshot,
+        } => {
+            transfer.check()?;
+            if current == original
+                || current.parent() != original.parent()
+                || original.file_name().is_none()
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Undo rename requires distinct names in the same folder",
+                ));
+            }
+            ensure_same_source(current, snapshot)?;
+            rename_without_overwrite(current, original)?;
+            Ok(format!("Restored original name {}", original.display()))
         }
         Action::BatchRename { changes } => {
             if changes.is_empty() || changes.len() > MAX_BATCH_RENAME {
@@ -2527,6 +2604,21 @@ fn copy_user_xattrs(source: &Path, destination: &Path, follow: bool) -> io::Resu
 /// This is a best-effort non-snapshot check, not an atomic lock on other writers.
 fn ensure_same_source(path: &Path, initial: &fs::Metadata) -> io::Result<()> {
     ensure_same_source_metadata(initial, &fs::symlink_metadata(path)?)
+}
+
+fn same_inode_and_kind(before: &fs::Metadata, after: &fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        before.dev() == after.dev()
+            && before.ino() == after.ino()
+            && before.mode() & libc::S_IFMT == after.mode() & libc::S_IFMT
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (before, after);
+        false
+    }
 }
 
 fn ensure_same_source_metadata(initial: &fs::Metadata, current: &fs::Metadata) -> io::Result<()> {
@@ -4455,6 +4547,105 @@ mod tests {
         });
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read(root.join("b")).unwrap(), b"b");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn successful_rename_offers_session_undo_without_overwriting_existing_names() {
+        let root = test_root();
+        let original = root.join("original.txt");
+        let current = root.join("changed.txt");
+        fs::write(&original, b"preserve me").unwrap();
+        let report = perform_with_report(
+            &Action::Rename {
+                source: original.clone(),
+                name: "changed.txt".into(),
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert!(report.result.is_ok());
+        let undo = report
+            .rename_undo
+            .expect("successful rename should offer Undo");
+        assert_eq!(undo.current, current);
+        assert_eq!(undo.original, original);
+
+        fs::write(&original, b"other writer").unwrap();
+        let error = perform(&undo.action()).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&current).unwrap(), b"preserve me");
+        assert_eq!(fs::read(&original).unwrap(), b"other writer");
+        fs::remove_file(&original).unwrap();
+
+        assert!(perform(&undo.action()).is_ok());
+        assert!(!current.exists());
+        assert_eq!(fs::read(&original).unwrap(), b"preserve me");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rename_undo_refuses_modified_or_replaced_target() {
+        let root = test_root();
+        let original = root.join("original.txt");
+        let current = root.join("changed.txt");
+        fs::write(&original, b"original").unwrap();
+        let rename = || {
+            perform_with_report(
+                &Action::Rename {
+                    source: original.clone(),
+                    name: "changed.txt".into(),
+                },
+                &AtomicBool::new(false),
+                &mut |_| {},
+            )
+        };
+        let undo = rename().rename_undo.unwrap();
+        fs::write(&current, b"modified").unwrap();
+        assert_eq!(
+            perform(&undo.action()).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert!(!original.exists());
+        assert_eq!(fs::read(&current).unwrap(), b"modified");
+
+        // A replacement inode with identical bytes must not be renamed back.
+        let held = File::open(&current).unwrap();
+        fs::remove_file(&current).unwrap();
+        fs::write(&current, b"original").unwrap();
+        assert_eq!(
+            perform(&undo.action()).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(fs::read(&current).unwrap(), b"original");
+        assert!(!original.exists());
+        drop(held);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rename_undo_restores_original_non_utf8_filename_bytes() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let root = test_root();
+        let raw = OsString::from_vec(vec![b'n', 0xff, b'm', b'e']);
+        let original = root.join(raw);
+        fs::write(&original, b"non-UTF8 source").unwrap();
+        let rename = perform_with_report(
+            &Action::Rename {
+                source: original.clone(),
+                name: "renamed.txt".into(),
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        let undo = rename.rename_undo.unwrap();
+        assert!(perform(&undo.action()).is_ok());
+        assert_eq!(fs::read(&original).unwrap(), b"non-UTF8 source");
+        assert!(!root.join("renamed.txt").exists());
         fs::remove_dir_all(root).unwrap();
     }
 
