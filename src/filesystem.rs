@@ -1965,10 +1965,12 @@ fn copy_tree(
             }
             ensure_same_source(source, &metadata)?;
             let output = File::open(destination)?;
-            output.set_permissions(metadata.permissions())?;
-            output.set_times(source_times(&metadata))?;
             #[cfg(target_os = "linux")]
             copy_user_xattrs(source, destination, true)?;
+            // Installing read-only source permissions first could prevent us
+            // from writing otherwise accessible user.* metadata.
+            output.set_permissions(metadata.permissions())?;
+            output.set_times(source_times(&metadata))?;
             ensure_same_source(source, &metadata)?;
             output.sync_all()?;
             Ok(())
@@ -2019,10 +2021,10 @@ fn copy_tree(
             }
             ensure_same_source_metadata(&metadata, &input.metadata()?)?;
             ensure_same_source(source, &metadata)?;
-            output.set_permissions(metadata.permissions())?;
-            output.set_times(source_times(&metadata))?;
             #[cfg(target_os = "linux")]
             copy_user_xattrs(source, destination, true)?;
+            output.set_permissions(metadata.permissions())?;
+            output.set_times(source_times(&metadata))?;
             ensure_same_source(source, &metadata)?;
             output.sync_all()?;
             Ok(())
@@ -2624,6 +2626,8 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn copying_tree_preserves_user_extended_attributes() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
         let root = test_root();
         let original = root.join("original");
         let file = original.join("note.txt");
@@ -2656,6 +2660,7 @@ mod tests {
                 panic!("Cannot prepare xattr fixture: {error}");
             }
         }
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o444)).unwrap();
         perform(&Action::Copy {
             sources: vec![original.clone()],
             destination: output.clone(),
@@ -2677,6 +2682,13 @@ mod tests {
             assert_eq!(size as usize, value.len());
             assert_eq!(&found[..value.len()], value);
         }
+        assert_eq!(
+            fs::metadata(output.join("original/note.txt"))
+                .unwrap()
+                .mode()
+                & 0o777,
+            0o444
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

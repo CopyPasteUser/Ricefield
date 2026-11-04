@@ -9,6 +9,8 @@
 
 - Read the actual package version from Cargo in `--help` and `--version`
   instead of showing the old hard-coded 0.2 text; exercise both in CLI smoke.
+- Copy accessible `user.*` extended attributes before restoring restrictive
+  source permissions, so read-only source files retain their metadata.
 
 - Preserve accessible `user.*` extended attributes on Linux while staging
   local copies and cross-filesystem moves. Fail safely if the destination
