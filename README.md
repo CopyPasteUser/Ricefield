@@ -83,6 +83,10 @@ outcomes; and transfer elapsed time, average speed and approximate ETA.
 Unreleased safety hardening on `main` also rejects stale hardlink payloads
 when a source inode changes mid-copy, and refuses journal records replaced
 by symlinks, special files or different inodes while being scanned.
+The next metadata safety change requires cross-device Move copies to match
+source Unix owner/group, permissions and modification times, and (on Linux)
+all readable extended-attribute names and values. Unsupported ownership or
+ACL migration now stops the Move instead of silently losing metadata.
 Asynchronous Paste conflict previews, full-batch worker preflight and
 *Require no conflicts* remain available. Detailed per-file results appear in
 the Transfers window. The CI workflow checks
@@ -239,8 +243,12 @@ Current safeguards:
   reverify published contents before deleting matching source entries. A
   bounded source-entry manifest also checks device/inode/mtime/ctime/mode
   identities to refuse deletion of a newly substituted file with identical
-  bytes. Extra verification I/O is intentional; the final unlink is not an
-  atomic compare-and-delete against a concurrent writer.
+  bytes. Unix owner/group, mode and modification times must also match; on
+  Linux every readable xattr namespace, including ACL/security attributes,
+  is compared on the original and copied inode without following symlinks.
+  Missing or unreadable metadata aborts a destructive Move. Extra verification
+  I/O is intentional; the final unlink is not an atomic compare-and-delete
+  against a concurrent writer.
 - Cancellation stops future work and cleans partial staging when possible,
   but does **not** undo already committed items. Deletion uses the desktop
   Trash unless permanent deletion is separately confirmed.
@@ -256,7 +264,9 @@ Current safeguards:
 the complete published destination is retained for manual recovery if source
 cleanup fails. ACLs, non-`user.*` extended attributes, ownership, hardlink relationships
 *between separately copied source trees* and full
-race-free cleanup are not preserved or guaranteed. **Do not use development
+race-free cleanup are not preserved or guaranteed. Cross-device Moves refuse
+copies that cannot retain the checked metadata; RiceExplorer does not migrate
+it automatically. **Do not use development
 builds for irreplaceable data.**
 
 After a crash, a hidden `.rice-explorer-staging-*` directory may remain. Move

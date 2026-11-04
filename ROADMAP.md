@@ -95,6 +95,13 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
 - [x] Preserve readable Linux `user.*` xattrs in staged files, directories
   and symlinks; refuse publication when the target cannot accept a copied
   attribute. System ACLs, privileged namespaces and ownership remain open.
+- [x] Before publishing a verified cross-device Move or removing its source,
+  require equivalent Unix mode, owner/group and nanosecond modification time
+  for each copied entry. On Linux also compare **all** visible xattr names
+  and values without following symlinks, including ACL/security namespaces;
+  fail closed when unreadable or different. This blocks lossy moves but does
+  **not** implement ownership/ACL migration, eliminate the final unlink race
+  or guarantee that another process cannot change source metadata afterward.
 - [x] Introduce a bounded, in-memory FIFO for up to 32 waiting Copy jobs,
   stable operation IDs, visible progress in every rice, and cancellation of
   waiting jobs without filesystem side effects. Pause the queue after an

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Fail closed on cross-device Move if copied Unix ownership, group, mode or
+  modification timestamp differs from the original. On Linux, verify every
+  visible extended-attribute name and value, including ACL/security namespaces
+  that RiceExplorer cannot yet copy. Refuse publication or source cleanup
+  when metadata is lost or unreadable; byte equality alone is insufficient.
+  Add permission- and xattr-loss regressions. This does not solve atomic
+  source unlink or implement privileged metadata migration.
 - Run desktop file clipboard copy/cut and paste helpers off the render thread.
   Coalesce queued copies, limit external payloads to 4 MiB and give desktop
   reads a two-second UI deadline. Ignore late paste responses and cancel a
