@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Preserve Linux POSIX access/default ACLs when staging regular files and
+  directories. Apply ACLs after chmod to retain their masks; remove ACLs
+  inherited from the private staging hierarchy when the source has none.
+  Attempt to keep original uid/gid (including symlink ownership) when the
+  process has permission, while allowing ordinary Copy to use the current
+  owner otherwise. Strict cross-device Move verification still refuses
+  ownership mismatches. Do not copy privileged security labels/capabilities.
+  Add real ACL fixtures and inherited-ACL regression tests.
 - Fail closed on cross-device Move if copied Unix ownership, group, mode or
   modification timestamp differs from the original. On Linux, verify every
   visible extended-attribute name and value, including ACL/security namespaces

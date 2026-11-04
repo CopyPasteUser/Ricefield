@@ -2083,6 +2083,11 @@ fn copy_tree(
             ensure_same_source(source, &metadata)?;
             std::os::unix::fs::symlink(target, destination)?;
             #[cfg(target_os = "linux")]
+            if let Err(error) = preserve_available_owner(destination, &metadata) {
+                let _ = fs::remove_file(destination);
+                return Err(error);
+            }
+            #[cfg(target_os = "linux")]
             if let Err(error) = copy_user_xattrs(source, destination, false) {
                 let _ = fs::remove_file(destination);
                 return Err(error);
@@ -2119,10 +2124,14 @@ fn copy_tree(
             ensure_same_source(source, &metadata)?;
             let output = File::open(destination)?;
             #[cfg(target_os = "linux")]
+            preserve_available_owner(destination, &metadata)?;
+            #[cfg(target_os = "linux")]
             copy_user_xattrs(source, destination, true)?;
             // Installing read-only source permissions first could prevent us
             // from writing otherwise accessible user.* metadata.
             output.set_permissions(metadata.permissions())?;
+            #[cfg(target_os = "linux")]
+            copy_posix_acls(source, destination)?;
             output.set_times(source_times(&metadata))?;
             ensure_same_source(source, &metadata)?;
             output.sync_all()?;
@@ -2173,8 +2182,12 @@ fn copy_tree(
             ensure_same_source_metadata(&metadata, &input.metadata()?)?;
             ensure_same_source(source, &metadata)?;
             #[cfg(target_os = "linux")]
+            preserve_available_owner(destination, &metadata)?;
+            #[cfg(target_os = "linux")]
             copy_user_xattrs(source, destination, true)?;
             output.set_permissions(metadata.permissions())?;
+            #[cfg(target_os = "linux")]
+            copy_posix_acls(source, destination)?;
             output.set_times(source_times(&metadata))?;
             ensure_same_source(source, &metadata)?;
             output.sync_all()?;
@@ -2197,6 +2210,85 @@ fn copy_tree(
             "Special device files cannot be copied",
         ))
     }
+}
+
+/// Try to retain the original uid/gid when the process has permission to do
+/// so. A plain Copy remains allowed for an unprivileged reader of a file
+/// owned by somebody else; a cross-device Move additionally runs strict
+/// metadata verification and refuses to delete that source on mismatch.
+#[cfg(target_os = "linux")]
+fn preserve_available_owner(destination: &Path, source: &fs::Metadata) -> io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+
+    let existing = fs::symlink_metadata(destination)?;
+    if existing.uid() == source.uid() && existing.gid() == source.gid() {
+        return Ok(());
+    }
+    let destination = CString::new(destination.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "NUL in destination path"))?;
+    let status = unsafe {
+        libc::fchownat(
+            libc::AT_FDCWD,
+            destination.as_ptr(),
+            source.uid(),
+            source.gid(),
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    };
+    if status == 0 {
+        return Ok(());
+    }
+    let error = io::Error::last_os_error();
+    if matches!(error.raw_os_error(), Some(libc::EPERM) | Some(libc::EACCES)) {
+        return Ok(());
+    }
+    Err(error)
+}
+
+/// POSIX ACLs are stored in the system namespace, unlike security labels or
+/// capabilities (which must never be blindly replayed). Apply ACLs *after*
+/// chmod because chmod may update the ACL mask, but *before* restoring mtime.
+/// Also discard any default/access ACL inherited from the staging directory
+/// when the original has no matching ACL.
+#[cfg(target_os = "linux")]
+fn copy_posix_acls(source: &Path, destination: &Path) -> io::Result<()> {
+    const ACL_NAMES: [&[u8]; 2] = [b"system.posix_acl_access", b"system.posix_acl_default"];
+    // Filesystems with no xattr support cannot store POSIX ACLs either.
+    // Match copy_user_xattrs' existing behavior for those mounts rather than
+    // rejecting otherwise valid plain copies.
+    let list_names = |path| match list_link_xattrs(path) {
+        Err(error) if error.raw_os_error() == Some(libc::EOPNOTSUPP) => Ok(BTreeSet::new()),
+        result => result,
+    };
+    let source_names = list_names(source)?;
+    let destination_names = list_names(destination)?;
+    let path = CString::new(destination.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "NUL in destination path"))?;
+
+    for name in ACL_NAMES {
+        let key = CString::new(name).expect("static ACL name has no NUL");
+        if source_names.contains(name) {
+            let value = read_link_xattr(source, name)?;
+            let status = unsafe {
+                libc::setxattr(
+                    path.as_ptr(),
+                    key.as_ptr(),
+                    value.as_ptr().cast(),
+                    value.len(),
+                    0,
+                )
+            };
+            if status != 0 {
+                return Err(io::Error::last_os_error());
+            }
+        } else if destination_names.contains(name) {
+            let status = unsafe { libc::removexattr(path.as_ptr(), key.as_ptr()) };
+            if status != 0 {
+                return Err(io::Error::last_os_error());
+            }
+        }
+    }
+    Ok(())
 }
 
 /// utimensat with AT_SYMLINK_NOFOLLOW applies the original timestamps to the
@@ -2906,6 +2998,223 @@ mod tests {
                 & 0o777,
             0o444
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    fn test_acl_value(owner: u16, group: u16, mask: u16, other: u16) -> Vec<u8> {
+        // Linux POSIX ACL xattr v2: little-endian header followed by
+        // (tag, permission, uid/gid) entries. A named user makes the ACL
+        // nontrivial so the kernel retains it as an extended attribute.
+        let mut value = 2u32.to_le_bytes().to_vec();
+        // Use a mapped uid even inside single-id user namespaces; 65534
+        // is not guaranteed to be valid in an isolated test container.
+        let named_user = unsafe { libc::geteuid() };
+        for (tag, permission, id) in [
+            (1u16, owner, u32::MAX),
+            (2u16, 4, named_user),
+            (4u16, group, u32::MAX),
+            (16u16, mask, u32::MAX),
+            (32u16, other, u32::MAX),
+        ] {
+            value.extend(tag.to_le_bytes());
+            value.extend(permission.to_le_bytes());
+            value.extend(id.to_le_bytes());
+        }
+        value
+    }
+
+    #[cfg(target_os = "linux")]
+    fn set_test_acl(path: &Path, name: &[u8], value: &[u8]) -> io::Result<()> {
+        let path = CString::new(path.as_os_str().as_bytes()).unwrap();
+        let name = CString::new(name).unwrap();
+        let result = unsafe {
+            libc::setxattr(
+                path.as_ptr(),
+                name.as_ptr(),
+                value.as_ptr().cast(),
+                value.len(),
+                0,
+            )
+        };
+        if result != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn copying_tree_retains_posix_access_and_default_acls() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let root = test_root();
+        let source = root.join("source");
+        let output = root.join("output");
+        fs::create_dir(&source).unwrap();
+        fs::create_dir(&output).unwrap();
+        let file = source.join("note.txt");
+        fs::write(&file, b"access control").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o640)).unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o750)).unwrap();
+
+        let access = test_acl_value(6, 4, 4, 0);
+        let default = test_acl_value(7, 5, 5, 0);
+        for (path, name, value) in [
+            (
+                file.as_path(),
+                b"system.posix_acl_access".as_slice(),
+                &access,
+            ),
+            (
+                source.as_path(),
+                b"system.posix_acl_default".as_slice(),
+                &default,
+            ),
+        ] {
+            if let Err(error) = set_test_acl(path, name, value) {
+                if matches!(
+                    error.raw_os_error(),
+                    Some(libc::EOPNOTSUPP) | Some(libc::EPERM)
+                ) {
+                    fs::remove_dir_all(root).unwrap();
+                    return;
+                }
+                panic!("Cannot prepare ACL fixture: {error}");
+            }
+        }
+
+        perform(&Action::Copy {
+            sources: vec![source.clone()],
+            destination: output.clone(),
+            conflict: ConflictPolicy::KeepBoth,
+        })
+        .unwrap();
+        for (left, right, name) in [
+            (
+                file,
+                output.join("source/note.txt"),
+                b"system.posix_acl_access".as_slice(),
+            ),
+            (
+                source,
+                output.join("source"),
+                b"system.posix_acl_default".as_slice(),
+            ),
+        ] {
+            assert_eq!(
+                read_link_xattr(&left, name).unwrap(),
+                read_link_xattr(&right, name).unwrap()
+            );
+            assert_eq!(
+                fs::metadata(left).unwrap().mode() & 0o7777,
+                fs::metadata(right).unwrap().mode() & 0o7777
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn copying_file_removes_acl_inherited_from_staging_parent() {
+        let root = test_root();
+        let source = root.join("plain.txt");
+        let output = root.join("output");
+        fs::write(&source, b"without ACL").unwrap();
+        fs::create_dir(&output).unwrap();
+        let inherited_acl = test_acl_value(7, 5, 5, 0);
+        if let Err(error) = set_test_acl(&output, b"system.posix_acl_default", &inherited_acl) {
+            if matches!(
+                error.raw_os_error(),
+                Some(libc::EOPNOTSUPP) | Some(libc::EPERM)
+            ) {
+                fs::remove_dir_all(root).unwrap();
+                return;
+            }
+            panic!("Cannot prepare inherited ACL fixture: {error}");
+        }
+        assert!(
+            !list_link_xattrs(&source)
+                .unwrap()
+                .contains(b"system.posix_acl_access".as_slice())
+        );
+        perform(&Action::Copy {
+            sources: vec![source.clone()],
+            destination: output.clone(),
+            conflict: ConflictPolicy::KeepBoth,
+        })
+        .unwrap();
+        let copied = output.join("plain.txt");
+        assert_eq!(fs::read(&copied).unwrap(), b"without ACL");
+        assert!(
+            !list_link_xattrs(&copied)
+                .unwrap()
+                .contains(b"system.posix_acl_access".as_slice())
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn verified_move_staging_accepts_preserved_posix_acl() {
+        let root = test_root();
+        let source = root.join("source.txt");
+        let destination = root.join("published.txt");
+        fs::write(&source, b"acl-verified data").unwrap();
+        let access = test_acl_value(6, 4, 4, 0);
+        if let Err(error) = set_test_acl(&source, b"system.posix_acl_access", &access) {
+            if matches!(
+                error.raw_os_error(),
+                Some(libc::EOPNOTSUPP) | Some(libc::EPERM)
+            ) {
+                fs::remove_dir_all(root).unwrap();
+                return;
+            }
+            panic!("Cannot prepare ACL fixture: {error}");
+        }
+        let cancelled = AtomicBool::new(false);
+        let mut callback = |_: Progress| {};
+        let mut transfer = Transfer {
+            cancelled: &cancelled,
+            notify: &mut callback,
+            transferred: 0,
+            total: 17,
+            last_report: Instant::now(),
+            last_reported_bytes: 0,
+            phase: "Copying",
+        };
+        stage_and_publish(&source, &destination, true, &mut transfer).unwrap();
+        assert_eq!(fs::read(&source).unwrap(), fs::read(&destination).unwrap());
+        assert_eq!(
+            read_link_xattr(&source, b"system.posix_acl_access").unwrap(),
+            read_link_xattr(&destination, b"system.posix_acl_access").unwrap()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn privileged_copy_retains_noncurrent_owner_if_permitted() {
+        use std::os::unix::fs::MetadataExt;
+
+        if unsafe { libc::geteuid() } != 0 {
+            return;
+        }
+        let root = test_root();
+        let source = root.join("source.txt");
+        let output = root.join("output");
+        fs::write(&source, b"owned by nobody").unwrap();
+        fs::create_dir(&output).unwrap();
+        let path = CString::new(source.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::chown(path.as_ptr(), 65534, 65534) }, 0);
+        perform(&Action::Copy {
+            sources: vec![source.clone()],
+            destination: output.clone(),
+            conflict: ConflictPolicy::KeepBoth,
+        })
+        .unwrap();
+        let copied = fs::symlink_metadata(output.join("source.txt")).unwrap();
+        assert_eq!((copied.uid(), copied.gid()), (65534, 65534));
         fs::remove_dir_all(root).unwrap();
     }
 

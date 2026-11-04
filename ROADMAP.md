@@ -94,7 +94,15 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   still not atomic under a concurrent writer.
 - [x] Preserve readable Linux `user.*` xattrs in staged files, directories
   and symlinks; refuse publication when the target cannot accept a copied
-  attribute. System ACLs, privileged namespaces and ownership remain open.
+  attribute. POSIX ACLs are now handled separately; privileged xattr
+  namespaces are still not migrated.
+- [x] Preserve Linux POSIX access/default ACLs on staged files/directories,
+  including removal of unintended ACL inheritance from staging parents.
+  Attempt to preserve uid/gid without following symlinks when permitted;
+  allow an ordinary Copy to continue with its new owner if not permitted,
+  but reject an ownership mismatch for a verified cross-device Move.
+  Privileged metadata, external hardlink identity, complete ownership support
+  across filesystems and atomic source cleanup remain open.
 - [x] Before publishing a verified cross-device Move or removing its source,
   require equivalent Unix mode, owner/group and nanosecond modification time
   for each copied entry. On Linux also compare **all** visible xattr names
