@@ -173,7 +173,10 @@ mod tests {
         let mut config = Config::default();
         let raw = PathBuf::from(std::ffi::OsString::from_vec(b"/dir-\xff".to_vec()));
         assert!(config.remember_session(&[raw, PathBuf::from("/visible")], 0));
-        assert_eq!(config.restored_session(), (vec![PathBuf::from("/visible")], 0));
+        assert_eq!(
+            config.restored_session(),
+            (vec![PathBuf::from("/visible")], 0)
+        );
         assert!(toml::to_string(&config).is_ok());
     }
 }
