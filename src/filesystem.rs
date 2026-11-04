@@ -1620,7 +1620,14 @@ fn stage_and_publish_with_journal(
     transfer: &mut Transfer<'_>,
     journal: Option<&mut Journal>,
 ) -> io::Result<()> {
-    stage_and_publish_with_sync(source, destination, verify, transfer, journal, &mut sync_directory)
+    stage_and_publish_with_sync(
+        source,
+        destination,
+        verify,
+        transfer,
+        journal,
+        &mut sync_directory,
+    )
 }
 
 fn sync_directory(path: &Path) -> io::Result<()> {
@@ -2175,7 +2182,9 @@ mod tests {
         let mut sync = |path: &Path| {
             barriers += 1;
             if barriers == 2 {
-                Err(io::Error::other("injected destination directory sync error"))
+                Err(io::Error::other(
+                    "injected destination directory sync error",
+                ))
             } else {
                 sync_directory(path)
             }
@@ -2194,8 +2203,8 @@ mod tests {
         assert_eq!(fs::read(&source).unwrap(), b"keep original");
         assert_eq!(fs::read(&destination).unwrap(), b"keep original");
         assert_eq!(journal.record().state, State::StagedVerified);
-        let persisted = fs::read_to_string(directory.join(format!("{}.toml", journal.record().id)))
-            .unwrap();
+        let persisted =
+            fs::read_to_string(directory.join(format!("{}.toml", journal.record().id))).unwrap();
         assert!(persisted.contains("state = \"staged_verified\""));
         fs::remove_dir_all(root).unwrap();
     }
