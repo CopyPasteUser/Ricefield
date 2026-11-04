@@ -1936,7 +1936,7 @@ fn open_verified_regular(path: &Path, snapshot: &fs::Metadata) -> io::Result<Fil
 #[derive(Default)]
 struct CopyContext {
     #[cfg(unix)]
-    hardlinks: BTreeMap<(u64, u64), PathBuf>,
+    hardlinks: BTreeMap<(u64, u64), (PathBuf, fs::Metadata)>,
 }
 
 fn copy_tree(
@@ -2017,9 +2017,14 @@ fn copy_tree(
             (metadata.nlink() > 1).then_some((metadata.dev(), metadata.ino()))
         };
         #[cfg(unix)]
-        if let Some(existing) = hardlink_key.and_then(|key| context.hardlinks.get(&key)) {
+        if let Some((existing, first_snapshot)) =
+            hardlink_key.and_then(|key| context.hardlinks.get(&key))
+        {
             // Keep a shared inode within the copied tree. Only use links
-            // created under our private staging directory.
+            // created under our private staging directory. If the inode was
+            // modified since its first name was copied, linking the old
+            // staged payload under another name would silently copy stale data.
+            ensure_same_source_metadata(first_snapshot, &metadata)?;
             ensure_same_source(source, &metadata)?;
             fs::hard_link(existing, destination)?;
             transfer.advance(metadata.len(), source);
@@ -2058,7 +2063,9 @@ fn copy_tree(
         } else {
             #[cfg(unix)]
             if let Some(key) = hardlink_key {
-                context.hardlinks.insert(key, destination.to_path_buf());
+                context
+                    .hardlinks
+                    .insert(key, (destination.to_path_buf(), metadata));
             }
         }
         result
@@ -2588,6 +2595,38 @@ mod tests {
             first.ino(),
             fs::metadata(original.join("first.txt")).unwrap().ino()
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hardlink_copy_rejects_mutation_after_first_name_was_staged() {
+        let root = test_root();
+        let first = root.join("first");
+        let second = root.join("second");
+        let staged_first = root.join("staged-first");
+        let staged_second = root.join("staged-second");
+        fs::write(&first, b"original bytes").unwrap();
+        fs::hard_link(&first, &second).unwrap();
+
+        let cancelled = AtomicBool::new(false);
+        let mut no_op = |_: Progress| {};
+        let mut transfer = Transfer {
+            cancelled: &cancelled,
+            notify: &mut no_op,
+            transferred: 0,
+            total: 28,
+            last_report: Instant::now(),
+            last_reported_bytes: 0,
+            phase: "Copying",
+        };
+        let mut context = CopyContext::default();
+        copy_tree(&first, &staged_first, 0, &mut transfer, &mut context).unwrap();
+        fs::write(&second, b"different data").unwrap();
+        let error = copy_tree(&second, &staged_second, 0, &mut transfer, &mut context).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(&staged_first).unwrap(), b"original bytes");
+        assert!(!staged_second.exists());
         fs::remove_dir_all(root).unwrap();
     }
 

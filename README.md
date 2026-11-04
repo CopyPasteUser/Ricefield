@@ -80,6 +80,9 @@ renderers remain part of the roadmap.
 read-only crash-recovery triage showing source, destination and staging status;
 coalesced recovery rescans; whole-batch Trash/Delete preflight with per-item
 outcomes; and transfer elapsed time, average speed and approximate ETA.
+Unreleased safety hardening on `main` also rejects stale hardlink payloads
+when a source inode changes mid-copy, and refuses journal records replaced
+by symlinks, special files or different inodes while being scanned.
 Asynchronous Paste conflict previews, full-batch worker preflight and
 *Require no conflicts* remain available. Detailed per-file results appear in
 the Transfers window. The CI workflow checks
