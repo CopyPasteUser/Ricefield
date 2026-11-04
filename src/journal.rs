@@ -200,7 +200,10 @@ fn compare_node(
     let left = fs::symlink_metadata(source)?;
     let right = fs::symlink_metadata(destination)?;
     if !same_kind(&left, &right) {
-        return Ok(Some(format!("Different item types at {}", source.display())));
+        return Ok(Some(format!(
+            "Different item types at {}",
+            source.display()
+        )));
     }
     if left.file_type().is_symlink() {
         if fs::read_link(source)? != fs::read_link(destination)? {
@@ -213,7 +216,10 @@ fn compare_node(
         let left_names = bounded_names(source, cancelled, budget)?;
         let right_names = bounded_names(destination, cancelled, budget)?;
         if left_names != right_names {
-            return Ok(Some(format!("Different directory entries at {}", source.display())));
+            return Ok(Some(format!(
+                "Different directory entries at {}",
+                source.display()
+            )));
         }
         for name in left_names {
             if let Some(reason) = compare_node(
@@ -228,17 +234,25 @@ fn compare_node(
         }
     } else if left.is_file() {
         if left.len() != right.len() {
-            return Ok(Some(format!("Different file sizes at {}", source.display())));
+            return Ok(Some(format!(
+                "Different file sizes at {}",
+                source.display()
+            )));
         }
         budget.bytes = budget
             .bytes
             .checked_add(left.len())
             .ok_or_else(|| io::Error::other("Comparison size overflow"))?;
         if budget.bytes > MAX_COMPARE_BYTES {
-            return Err(io::Error::other("Comparison exceeds 512 MiB; verify manually"));
+            return Err(io::Error::other(
+                "Comparison exceeds 512 MiB; verify manually",
+            ));
         }
         if !compare_regular_files(source, destination, &left, &right, cancelled)? {
-            return Ok(Some(format!("Different file bytes at {}", source.display())));
+            return Ok(Some(format!(
+                "Different file bytes at {}",
+                source.display()
+            )));
         }
     } else {
         return Err(io::Error::other(format!(
@@ -934,7 +948,10 @@ mod tests {
         let cancelled = AtomicBool::new(false);
         assert_eq!(
             compare_for_recovery(&source, &destination, &cancelled),
-            Comparison::Identical { entries: 3, bytes: 6 }
+            Comparison::Identical {
+                entries: 3,
+                bytes: 6
+            }
         );
         fs::write(destination.join("nested/data"), b"abcdeg").unwrap();
         assert!(matches!(
@@ -981,7 +998,10 @@ mod tests {
         let cancelled = AtomicBool::new(false);
         assert_eq!(
             compare_for_recovery(&original, &published, &cancelled),
-            Comparison::Identical { entries: 1, bytes: 0 }
+            Comparison::Identical {
+                entries: 1,
+                bytes: 0
+            }
         );
         fs::remove_file(&published).unwrap();
         symlink("different-target", &published).unwrap();

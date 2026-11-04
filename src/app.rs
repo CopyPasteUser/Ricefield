@@ -703,7 +703,10 @@ impl Explorer {
                 self.recovery_comparison_active = None;
             }
             if generation == self.recovery_generation
-                && self.recovery_records.iter().any(|entry| entry.record.id == id)
+                && self
+                    .recovery_records
+                    .iter()
+                    .any(|entry| entry.record.id == id)
             {
                 self.recovery_comparisons.insert(id, result);
             }
