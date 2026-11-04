@@ -201,8 +201,14 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
 - [x] Inspect source, destination and staging path presence asynchronously
   during recovery scans, without following symlinks or writing to any path.
   Distinguish missing, present and inaccessible entries; show conservative
-  per-record guidance. Coalesce concurrent rescan requests. Presence alone
-  cannot justify source cleanup or dismissing a journal.
+  per-record guidance. Show source and destination identity status separately
+  and allow direct navigation to their containing folders and the staging
+  parent for manual triage, without following the saved entry as a symlink.
+  Offer a separate, preflighted non-destructive Copy shortcut only for a source
+  whose recorded identity still matches; require explicit Start and retain the
+  unresolved journal. This is **not** safe restart Move replay or rollback.
+  Coalesce concurrent rescan requests. Presence alone cannot justify source
+  cleanup or dismissing a journal.
 - [x] Offer opt-in background, cancellable, bounded read-only comparisons of
   recorded source/destination contents (including nested bytes and symlink
   targets) with clear match/mismatch/inconclusive results. Check snapshots

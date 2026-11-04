@@ -83,7 +83,13 @@ renderers remain part of the roadmap.
   destination and staging paths currently exist (including broken symlinks)
   and gives cautious guidance. New records also retain Unix source/published
   destination inode and metadata snapshots, so inspection can flag changed or
-  replaced objects. Older records remain readable without identity evidence.
+  replaced objects. The review now displays source/destination evidence
+  separately and lets you browse their containing folders (or the staging
+  folder) without following the recorded entry. When the original source's
+  recorded identity still matches, an optional **separate Copy preview**
+  defaults to Keep both and requires another confirmation; it does not resume
+  the interrupted Move, delete a source or clear the record. Older records remain readable
+  without identity evidence.
   Optional bounded read-only content comparison
   is available, but even matching bytes are **not** permission to delete
   anything. No automatic
@@ -325,7 +331,12 @@ large trees and missing/inaccessible files require manual verification. A
 matching snapshot **cannot prove that either path will stay unchanged**, and
 never authorizes source deletion. RiceExplorer will **never** automatically
 delete, resume or overwrite based on these records. The journal is not a full
-power-loss recovery engine. Filenames are never interpolated into shell commands.
+power-loss recovery engine. Its browse buttons open the *parent* folders for
+manual inspection; they do not treat any recorded path as a trusted symlink
+target. The optional fresh Copy shortcut can duplicate the source to a new
+collision-free name after a separate preflight and Start confirmation, but it
+does not attest to source contents or replace crash recovery. Filenames are
+never interpolated into shell commands.
 
 Scanning, searching, copying and Trash operations run on worker threads. Views render only visible rows. Recursive search is bounded to protect small machines; it is not a full-text or indexed search. Image thumbnail previews are implemented; drag-out, advanced mount management, undo and full interactive desktop integration tests remain outstanding. Until these are verified on your Mint laptop, keep Thunar available as a fallback.
 

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Offer an opt-in fresh Copy preview from the unfinished-move review when the
+  original source's recorded identity still matches. It reuses the normal
+  background preflight, defaults to Keep both and requires a second explicit
+  Start transfer action. It never retries a destructive Move or clears the
+  original recovery record; replaced, changed, missing and legacy source
+  identity states cannot use this shortcut.
+- Recovery review now displays recorded source and destination inode/metadata
+  observations separately, including missing evidence and replacement warnings.
+  Browse the containing source, destination or staging folders directly from
+  the review window without following the recorded entry as a symlink. These
+  are navigation and read-only diagnosis aids, **not** restart resume,
+  rollback, source deletion or clearance of journal evidence.
 - Add a fourth non-destructive Paste conflict policy, **Skip only matching
   contents**. Compare colliding files, directories and symlink targets using
   bounded, cancellable, no-follow reads (512 MiB / 10,000 entries); accept a

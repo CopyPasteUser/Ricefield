@@ -1163,14 +1163,17 @@ impl Explorer {
         let mut open = true;
         let mut rescan = false;
         let mut compare = None;
+        let mut browse_parent = None;
+        let mut prepare_copy = None;
         egui::Window::new("Unfinished cross-device moves")
             .open(&mut open)
             .default_width(610.0)
             .default_height(340.0)
             .resizable(true)
             .show(context, |ui| {
-                ui.label("Read-only inspection. RiceExplorer will not delete, resume, or overwrite either side automatically.");
+                ui.label("Inspection is read-only. RiceExplorer will not delete, resume, or overwrite either side automatically.");
                 ui.label("Compare file contents on demand (maximum 512 MiB and 10,000 entries). A match is only a snapshot, never authorization to delete a source.");
+                ui.small("If the original source identity still matches, you can separately prepare a new Copy with a full preview. This does not complete the interrupted Move or clear its journal.");
                 if let Some(error) = &self.recovery_error {
                     ui.colored_label(Color32::LIGHT_RED, format!("Cannot read all journal records: {error}"));
                 }
@@ -1186,16 +1189,46 @@ impl Explorer {
                             ui.strong(format!("{} — {:?}", record.id, record.state));
                             ui.label(format!("Source: {}", record.source.display()));
                             ui.small(format!("Current source: {}", inspection.source.label()));
+                            ui.small(format!(
+                                "Source identity: {}",
+                                inspection.source_identity.label()
+                            ));
                             ui.label(format!("Destination: {}", record.destination.display()));
                             ui.small(format!(
                                 "Current destination: {}",
                                 inspection.destination.label()
+                            ));
+                            ui.small(format!(
+                                "Destination identity: {}",
+                                inspection.destination_identity.label()
                             ));
                             if let Some(staging) = &record.staging {
                                 ui.label(format!("Staging: {}", staging.display()));
                             }
                             if let Some(staging) = &inspection.staging {
                                 ui.small(format!("Current staging: {}", staging.label()));
+                            }
+                            ui.horizontal_wrapped(|ui| {
+                                if ui.button("Browse source folder").clicked() {
+                                    browse_parent = record.source.parent().map(Path::to_path_buf);
+                                }
+                                if ui.button("Browse destination folder").clicked() {
+                                    browse_parent = record.destination.parent().map(Path::to_path_buf);
+                                }
+                                if let Some(staging) = &record.staging
+                                    && ui.button("Browse staging folder").clicked()
+                                {
+                                    browse_parent = staging.parent().map(Path::to_path_buf);
+                                }
+                            });
+                            if ui.add_enabled(
+                                inspection.can_offer_fresh_copy()
+                                    && record.destination.parent().is_some(),
+                                egui::Button::new("Prepare separate Copy (keep both)…"),
+                            ).on_hover_text("Start a new copy preview only; keep the original source and recovery record. Unavailable if the saved source identity changed or cannot be checked.").clicked()
+                                && let Some(parent) = record.destination.parent()
+                            {
+                                prepare_copy = Some((record.source.clone(), parent.to_path_buf()));
                             }
                             let guidance = match record.state {
                                 JournalState::Prepared => "Copy may be incomplete or may not have started.",
@@ -1253,6 +1286,32 @@ impl Explorer {
         }
         if rescan {
             self.check_unfinished_moves();
+        }
+        if let Some(folder) = browse_parent {
+            self.recovery_open = false;
+            self.recovery_comparison_cancel
+                .store(true, Ordering::Relaxed);
+            // Navigate to the parent rather than following a potentially
+            // replaced source/destination symlink. Navigation scans on a worker.
+            self.navigate(folder);
+        }
+        if let Some((source, destination)) = prepare_copy {
+            self.recovery_open = false;
+            self.recovery_comparison_cancel
+                .store(true, Ordering::Relaxed);
+            let clipboard = Clipboard {
+                paths: vec![source],
+                cut: false,
+            };
+            let conflict = ConflictPolicy::KeepBoth;
+            let preview_generation = self.request_paste_preview(&clipboard, &destination, conflict);
+            self.dialog = Some(Dialog::PasteOptions {
+                clipboard,
+                destination,
+                conflict,
+                preview_generation,
+                preview: None,
+            });
         }
     }
 
