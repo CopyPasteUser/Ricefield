@@ -283,7 +283,13 @@ recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
   separately in the Volumes sidebar. Device capabilities and unmounted drives
   still require UDisks2/GIO integration.
 - [ ] Mount/unmount/eject/unlock through OS APIs and Polkit.
+  The Volumes sidebar can now invoke bounded background GIO unmount/eject
+  commands after confirmation; drive unlocking and a native Polkit flow are
+  still open. No forced unmount is offered.
 - [ ] Connect SMB/SFTP/WebDAV, browse system NFS and supported MTP devices.
+  Initial non-blocking `gio mount` connection attempts are supported without
+  URI credentials. Direct remote listing/file operations and interactive
+  authentication are not yet available.
 - [ ] Connect dialog, secure credential handling, favorites and reconnect.
 
 **Gate:** offline shares, disconnections, bad credentials and removed USB

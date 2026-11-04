@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add a GIO-backed, non-blocking network connection attempt and confirmed
+  unmount/eject actions to the Volumes sidebar. Commands are argument-based,
+  have a bounded runtime, never call sudo, and do not claim a remote file
+  browsing backend or interactive authentication.
 - Label mounted network shares separately from local volumes in the sidebar.
   This is discovery-only: no mount, eject, credentials or remote browsing yet.
 - Start 0.4 location handling with a shared typed local/remote address parser
