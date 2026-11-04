@@ -119,6 +119,9 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   waiting jobs without filesystem side effects. Pause the queue after an
   operation error/cancellation until the user explicitly resumes it. Keep a
   bounded 64-entry session-only result history with success/failure/cancel.
+- [x] Offer manual Pause / Resume for the waiting Copy queue in the shared
+  Transfers dialog. Running operations are not suspended mid-file, and this
+  session-only control does not imply restart replay or safe Undo.
 - [ ] Extend the queue to Move and other operations only after stale-source
   preflight and safe confirmation are implemented; add persistent history
   and failure recovery. Per-item results and elapsed time/rate/ETA are tracked

@@ -1294,7 +1294,7 @@ impl Explorer {
                     if !self.operation_queue.is_empty() {
                         ui.label(format!("{} waiting", self.operation_queue.len()));
                         if self.queue_paused {
-                            ui.colored_label(Color32::from_rgb(165, 83, 30), "Paused after error");
+                            ui.colored_label(Color32::from_rgb(165, 83, 30), "Queue paused");
                         }
                     }
                     // Several rice shells intentionally omit the bottom status bar.
@@ -1347,8 +1347,24 @@ impl Explorer {
                 ui.separator();
                 ui.strong(format!("Waiting ({})", self.operation_queue.len()));
                 ui.small("Only copy requests can wait. Removing a waiting job makes no filesystem changes.");
-                if self.queue_paused && ui.button("Resume waiting copies").clicked() {
-                    self.queue_paused = false;
+                if !self.operation_queue.is_empty() {
+                    let label = if self.queue_paused {
+                        "Resume waiting copies"
+                    } else {
+                        "Pause waiting copies"
+                    };
+                    if ui.button(label).clicked() {
+                        self.queue_paused = !self.queue_paused;
+                        self.status = Some((
+                            if self.queue_paused {
+                                "Waiting copies paused; any running transfer continues."
+                            } else {
+                                "Waiting copies resumed."
+                            }
+                            .into(),
+                            false,
+                        ));
+                    }
                 }
                 egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
                     for job in self.operation_queue.iter() {
@@ -1448,7 +1464,7 @@ impl Explorer {
     fn run_action(&mut self, action: Action) {
         if self.queue_paused && !matches!(&action, Action::Copy { .. }) {
             self.status = Some((
-                "Waiting copies are paused after an error. Resume or remove them first.".into(),
+                "Waiting copies are paused. Resume or remove them first.".into(),
                 true,
             ));
             return;

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add a manual Pause / Resume toggle for pending Copy jobs in the shared
+  Transfers view. Running work continues; only not-yet-started queue entries
+  wait. Label the paused state consistently across rice shells.
+- Use a process-local atomic sequence and collision retry for file-operation
+  test directories. Parallel fixtures no longer depend on distinct clock
+  nanoseconds, eliminating an intermittent `AlreadyExists` test failure.
 - Reclaim only validated terminal `Completed` move journal records when the
   4,096-record capacity would otherwise block a new move. Share the bounded,
   no-follow record validator with the recovery reader; keep malformed,

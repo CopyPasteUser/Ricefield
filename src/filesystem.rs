@@ -2616,14 +2616,24 @@ mod tests {
     }
 
     fn test_root() -> PathBuf {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let dir =
-            std::env::temp_dir().join(format!("rice-explorer-test-{}-{nonce}", std::process::id()));
-        fs::create_dir(&dir).unwrap();
-        dir
+        static NEXT_TEST_ROOT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        for _ in 0..128 {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let sequence = NEXT_TEST_ROOT.fetch_add(1, Ordering::Relaxed);
+            let dir = std::env::temp_dir().join(format!(
+                "rice-explorer-test-{}-{nonce}-{sequence}",
+                std::process::id()
+            ));
+            match fs::create_dir(&dir) {
+                Ok(()) => return dir,
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("Cannot create isolated test root: {error}"),
+            }
+        }
+        panic!("Cannot allocate a unique isolated test root")
     }
 
     #[test]
