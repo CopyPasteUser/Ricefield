@@ -83,10 +83,12 @@ outcomes; and transfer elapsed time, average speed and approximate ETA.
 Unreleased safety hardening on `main` also rejects stale hardlink payloads
 when a source inode changes mid-copy, and refuses journal records replaced
 by symlinks, special files or different inodes while being scanned.
-The next metadata safety change requires cross-device Move copies to match
+The metadata safety guard requires cross-device Move copies to match
 source Unix owner/group, permissions and modification times, and (on Linux)
 all readable extended-attribute names and values. Unsupported ownership or
-ACL migration now stops the Move instead of silently losing metadata.
+ACL migration stops the Move instead of silently losing metadata.
+Linux staging additionally preserves POSIX access/default ACLs and tries to
+retain original uid/gid when permitted, without requiring extra dependencies.
 Asynchronous Paste conflict previews, full-batch worker preflight and
 *Require no conflicts* remain available. Detailed per-file results appear in
 the Transfers window. The CI workflow checks
@@ -234,8 +236,13 @@ Current safeguards:
   items and hardlinks outside the selected tree are not linked together.
 - On Linux, accessible `user.*` extended attributes are copied for files,
   directories and links. A destination that refuses one of these attributes
-  aborts staged publication instead of silently discarding it. System ACLs,
-  privileged metadata and file ownership are not yet migrated.
+  aborts staged publication instead of silently discarding it. POSIX access
+  and default ACLs are copied for regular files and directories; inherited
+  staging ACLs are removed when absent on the original. Source uid/gid is
+  also retained when permitted, including for symlinks. An ordinary Copy can
+  still create a user-owned copy if it lacks permission to retain the owner;
+  a cross-device Move refuses that mismatch instead of deleting the source.
+  Security labels and capabilities are never replayed automatically.
 - A source that changes identity, size, modification time or mode during copy
   fails validation before publication. Regular-file, directory and (on Linux)
   symbolic-link access and modification timestamps are preserved where supported.
@@ -262,11 +269,13 @@ Current safeguards:
 
 **Important limitations:** Concurrent writers can still cause a partial move;
 the complete published destination is retained for manual recovery if source
-cleanup fails. ACLs, non-`user.*` extended attributes, ownership, hardlink relationships
-*between separately copied source trees* and full
-race-free cleanup are not preserved or guaranteed. Cross-device Moves refuse
-copies that cannot retain the checked metadata; RiceExplorer does not migrate
-it automatically. **Do not use development
+cleanup fails. Security labels, file capabilities and other privileged
+extended attributes are not automatically copied; owner/group changes may
+require privileges, and hardlink relationships *between separately copied
+source trees* and full race-free cleanup are not guaranteed. Cross-device
+Moves refuse copies that cannot retain the checked metadata. Linux POSIX ACLs
+are migrated when supported, but not all filesystems implement them.
+**Do not use development
 builds for irreplaceable data.**
 
 After a crash, a hidden `.rice-explorer-staging-*` directory may remain. Move
