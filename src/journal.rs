@@ -61,7 +61,11 @@ impl Journal {
         Self::begin_in(&journal_directory()?, source, destination)
     }
 
-    pub(crate) fn begin_in(directory: &Path, source: &Path, destination: &Path) -> io::Result<Self> {
+    pub(crate) fn begin_in(
+        directory: &Path,
+        source: &Path,
+        destination: &Path,
+    ) -> io::Result<Self> {
         ensure_private_directory(directory)?;
         let source = absolute_path(source)?;
         let destination = absolute_path(destination)?;
@@ -97,7 +101,9 @@ impl Journal {
     /// Record the reserved staging directory before copying data into it.
     pub fn set_staging(&mut self, staging: &Path) -> io::Result<()> {
         if self.record.state != State::Prepared || self.record.staging.is_some() {
-            return Err(invalid_input("Staging can only be assigned once while prepared"));
+            return Err(invalid_input(
+                "Staging can only be assigned once while prepared",
+            ));
         }
         let staging = absolute_path(staging)?;
         if staging == self.record.source || staging == self.record.destination {
@@ -133,8 +139,8 @@ impl Journal {
             // Failure to retire is non-destructive: a Completed record is
             // ignored by recovery until it can be cleaned up later.
             if let Some(parent) = self.path.parent() {
-                let cleanup = fs::remove_file(&self.path)
-                    .and_then(|()| File::open(parent)?.sync_all());
+                let cleanup =
+                    fs::remove_file(&self.path).and_then(|()| File::open(parent)?.sync_all());
                 if let Err(error) = cleanup {
                     eprintln!("RiceExplorer: completed journal cleanup failed: {error}");
                 }
@@ -275,7 +281,9 @@ fn check_private_directory(metadata: &fs::Metadata) -> io::Result<()> {
 }
 
 fn write_record(path: &Path, record: &Record, new_record: bool) -> io::Result<()> {
-    let parent = path.parent().ok_or_else(|| invalid_input("Invalid journal path"))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| invalid_input("Invalid journal path"))?;
     let encoded = toml::to_string(&to_stored(record)?).map_err(io::Error::other)?;
     if encoded.len() as u64 > MAX_RECORD_BYTES {
         return Err(invalid_input("Operation journal record is oversized"));
@@ -340,13 +348,22 @@ fn from_stored(stored: StoredRecord) -> io::Result<Record> {
     }
     let source = path_from_hex(&stored.source_hex)?;
     let destination = path_from_hex(&stored.destination_hex)?;
-    let staging = stored.staging_hex.as_deref().map(path_from_hex).transpose()?;
-    if !source.is_absolute() || !destination.is_absolute()
+    let staging = stored
+        .staging_hex
+        .as_deref()
+        .map(path_from_hex)
+        .transpose()?;
+    if !source.is_absolute()
+        || !destination.is_absolute()
         || staging.as_ref().is_some_and(|path| !path.is_absolute())
     {
         return Err(invalid_data("Journal paths must be absolute"));
     }
-    if source == destination || staging.as_ref().is_some_and(|p| p == &source || p == &destination) {
+    if source == destination
+        || staging
+            .as_ref()
+            .is_some_and(|p| p == &source || p == &destination)
+    {
         return Err(invalid_data("Journal paths overlap"));
     }
     if stored.state != State::Prepared && staging.is_none() {
@@ -419,7 +436,9 @@ fn path_from_hex(hex: &str) -> io::Result<PathBuf> {
 
 #[cfg(not(unix))]
 fn hex_path(path: &Path) -> io::Result<String> {
-    let text = path.to_str().ok_or_else(|| invalid_input("Non-Unicode path"))?;
+    let text = path
+        .to_str()
+        .ok_or_else(|| invalid_input("Non-Unicode path"))?;
     let mut hex = String::new();
     for byte in text.bytes() {
         use std::fmt::Write as _;
@@ -484,15 +503,19 @@ mod tests {
         assert_eq!(incomplete[0].staging, Some(directory.join("stage")));
         journal.advance(State::Completed).unwrap();
         assert!(scan_incomplete_in(&directory).unwrap().is_empty());
-        assert!(!directory.join(format!("{}.toml", journal.record().id)).exists());
+        assert!(
+            !directory
+                .join(format!("{}.toml", journal.record().id))
+                .exists()
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
     fn invalid_transitions_do_not_change_disk() {
         let directory = test_directory();
-        let mut journal = Journal::begin_in(&directory, Path::new("from"), Path::new("to"))
-            .unwrap();
+        let mut journal =
+            Journal::begin_in(&directory, Path::new("from"), Path::new("to")).unwrap();
         assert_eq!(
             journal.advance(State::Published).unwrap_err().kind(),
             io::ErrorKind::InvalidInput
@@ -506,7 +529,10 @@ mod tests {
             journal.set_staging(Path::new("stage2")).unwrap_err().kind(),
             io::ErrorKind::InvalidInput
         );
-        assert_eq!(scan_incomplete_in(&directory).unwrap()[0].state, State::Prepared);
+        assert_eq!(
+            scan_incomplete_in(&directory).unwrap()[0].state,
+            State::Prepared
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -521,7 +547,10 @@ mod tests {
         let loaded = scan_incomplete_in(&directory).unwrap();
         assert_eq!(loaded[0].source, source);
         assert_eq!(loaded[0].destination, destination);
-        assert_eq!(fs::metadata(&directory).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(
+            fs::metadata(&directory).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
         assert_eq!(
             fs::metadata(directory.join(format!("{}.toml", journal.record().id)))
                 .unwrap()
@@ -537,8 +566,7 @@ mod tests {
     #[test]
     fn corrupted_and_oversized_records_fail_closed() {
         let directory = test_directory();
-        let journal = Journal::begin_in(&directory, Path::new("from"), Path::new("to"))
-            .unwrap();
+        let journal = Journal::begin_in(&directory, Path::new("from"), Path::new("to")).unwrap();
         let path = directory.join(format!("{}.toml", journal.record().id));
         fs::write(&path, "version = 999\n").unwrap();
         assert_eq!(
