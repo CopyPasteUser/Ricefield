@@ -584,7 +584,10 @@ mod tests {
         assert_eq!(theme.preview_position(), SidebarPosition::Left);
         assert_eq!(theme.preview_width(), 320.0);
         assert!(theme.sidebar_sections().contains(&SidebarSection::Tasks));
-        assert_eq!(theme.sidebar_section_mode(), SidebarSectionMode::Collapsible);
+        assert_eq!(
+            theme.sidebar_section_mode(),
+            SidebarSectionMode::Collapsible
+        );
         theme.validate().unwrap();
 
         theme.shell.preview.width = Some(190.0);
