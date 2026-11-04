@@ -28,7 +28,7 @@ Linux desktop file management for RiceBowl users. v0.1 interface English; runtim
 | Rename | Background worker | Refresh tabs; status message; session-only Undo in Transfers if a post-rename inode snapshot is captured | Existing target remains; error in status |
 | Batch rename | Snapshot selection, preview all candidate names, preflight targets on worker | Rename each item without overwriting | Stop with failed item and completed count; no silent rollback claim |
 | Copy | Background worker | Unique new destination; status | Partial new output cleaned when possible; source intact |
-| Move | Background worker | Rename within volume; status | Original remains for failed individual move; report error |
+| Move | Background worker | Rename within volume; cross-volume verified copy with source kept | Original kept on cross-volume success; errors and per-item status explicit |
 | Trash | Explicit confirmation, then worker | Platform Trash; status | Report error; refresh tabs to show partial state |
 
 Only one mutation worker runs at a time; folder reads may proceed concurrently. Copy requests arriving during another mutation may enter a bounded 32-item FIFO queue with stable IDs. Queued jobs run after a successful active worker; after failure or cancellation they pause until explicit Resume, so further transfers do not cascade into a known failure. Each waiting job can be removed before execution without touching files. Other mutations are not delayed automatically, to avoid executing stale destructive requests. There is no fake optimistic success. The Trash confirmation is deliberately conservative even though desktop Trash is recoverable.
@@ -46,18 +46,27 @@ changed or the original name is occupied, Undo fails without replacing files;
 the control remains available for a deliberate retry. The action is not
 persisted across restarts and is not a general rollback guarantee.
 
-Cross-device Move must refuse a selected source tree with hardlinks to names
+Cross-device Move (implemented as source-retaining Copy) refuses a selected source tree with hardlinks to names
 outside the selected tree, or a hardlinked symlink, before it stages output.
-Copy may produce independent inodes; Move may not silently sever surviving
+Copy may produce independent inodes; the conservative Move pathway does not silently sever surviving
 hardlink relationships. Neither check provides atomic protection from an
 external writer changing source link counts after the preflight.
 
-The v3 Move journal saves the verified staged object's inode before it is
+After verifying and publishing a cross-device Move's destination, RiceExplorer
+**must not automatically unlink the source**. Transfers marks it "Copied —
+source kept", and the completion text instructs manual review and cleanup.
+The associated cut clipboard intent is consumed so an old Cut does not
+silently paste the same verified copy twice. Same-filesystem Move retains its
+atomic rename behavior.
+
+Legacy v3 Move journals saved the verified staged object's inode before it was
 published. If publication races with another writer or a crash, recovery
 can report whether the destination still names that staged inode. This
 evidence is read-only and cannot itself authorize retry, rollback, cleanup
 or dismissal. Legacy journal versions without staged inode evidence remain
-inspectable and explicitly marked as unproven.
+inspectable and explicitly marked as unproven. The current source-retaining
+cross-device Copy does not create a new Move journal; old unfinished records
+remain reviewable.
 
 Copy/cut immediately updates the internal file clipboard and synchronizes
 the desktop clipboard in a worker. Outstanding desktop writes coalesce to the

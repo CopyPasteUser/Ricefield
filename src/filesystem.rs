@@ -25,6 +25,9 @@ pub struct Progress {
 pub enum ItemState {
     NotStarted,
     Completed,
+    /// A cross-filesystem cut was copied and verified, but the source is
+    /// intentionally untouched until the user removes it separately.
+    CopiedSourceRetained,
     Skipped,
     Failed,
     Cancelled,
@@ -735,13 +738,13 @@ fn perform_with_progress_in(
     perform_with_progress_and_items(action, cancelled, notify, journal_directory, &mut |_| {})
 }
 
-/// Supplying a journal directory lets failure-injection tests keep their
-/// deliberately incomplete records inside disposable fixtures.
+/// The historical injected journal path remains in the test adapter so tests
+/// can assert that new source-preserving cross-volume copies create no journal.
 fn perform_with_progress_and_items(
     action: &Action,
     cancelled: &AtomicBool,
     notify: &mut dyn FnMut(Progress),
-    journal_directory: Option<&Path>,
+    _journal_directory: Option<&Path>,
     on_item: &mut dyn FnMut(ItemUpdate),
 ) -> io::Result<String> {
     let sources: &[PathBuf] = match action {
@@ -1033,11 +1036,13 @@ fn perform_with_progress_and_items(
                 return Ok("Nothing to move".into());
             }
             let mut skipped = 0usize;
+            let mut retained = 0usize;
             let plan = plan.as_ref().expect("nonempty Move has a validated plan");
             for (index, (source, bytes)) in sources.iter().zip(estimated.iter()).enumerate() {
                 let planned = &plan.items[index];
                 let mut target = None;
                 let mut skipped_item = false;
+                let mut retained_item = false;
                 let result = (|| {
                     transfer.check()?;
                     target = Some(planned.target.clone());
@@ -1058,12 +1063,10 @@ fn perform_with_progress_and_items(
                                 .total
                                 .saturating_add(actual_bytes.saturating_sub(*bytes));
                             transfer.report(source);
-                            // A durable record must exist before copying. Never delete
-                            // the source if publishing the journal state fails.
-                            let original_source = fs::symlink_metadata(source)?;
-                            // Keep the identity of every original entry, not merely
-                            // the root. A different file with identical contents
-                            // must not become a candidate for source cleanup.
+                            // The source is never deleted after cross-device publication:
+                            // Linux has no conditional unlink that atomically checks a
+                            // previously verified inode against a concurrent writer.
+                            // Stage and publish a verified independent copy instead.
                             let mut source_manifest = BTreeMap::new();
                             capture_source_manifest(
                                 source,
@@ -1072,39 +1075,9 @@ fn perform_with_progress_and_items(
                                 &mut transfer,
                             )?;
                             ensure_hardlink_scope_preserved(&source_manifest)?;
-                            let mut journal = match journal_directory {
-                                Some(directory) => {
-                                    Journal::begin_in(directory, source, &planned.target)?
-                                }
-                                None => Journal::begin(source, &planned.target)?,
-                            };
-                            stage_and_publish_with_journal(
-                                source,
-                                &planned.target,
-                                true,
-                                &mut transfer,
-                                Some(&mut journal),
-                            )?;
-                            transfer.check()?;
-                            transfer.phase = "Finishing";
-                            transfer.report(source);
-                            // Another process may have modified the source while it was
-                            // copied. Recheck after publication before unlinking anything.
-                            // If deletion fails, the published destination remains for
-                            // recovery; no unverified new directory entries are removed.
-                            ensure_same_source(source, &original_source)?;
-                            verify_tree(source, &planned.target, 0, &mut transfer)?;
-                            verify_source_manifest(&source_manifest, &mut transfer)?;
-                            ensure_same_source(source, &original_source)?;
-                            remove_verified_tree(
-                                source,
-                                &planned.target,
-                                0,
-                                &source_manifest,
-                                &mut BTreeSet::new(),
-                                &mut transfer,
-                            )?;
-                            journal.advance(State::Completed)?;
+                            stage_and_publish(source, &planned.target, true, &mut transfer)?;
+                            retained_item = true;
+                            retained += 1;
                             transfer.phase = "Copying";
                         }
                         Err(error) => return Err(error),
@@ -1112,15 +1085,26 @@ fn perform_with_progress_and_items(
                     Ok(())
                 })();
                 match result {
-                    Ok(()) => on_item(ItemUpdate::new(
-                        index,
-                        if skipped_item {
-                            ItemState::Skipped
-                        } else {
-                            ItemState::Completed
-                        },
-                        target,
-                    )),
+                    Ok(()) => {
+                        let mut update = ItemUpdate::new(
+                            index,
+                            if skipped_item {
+                                ItemState::Skipped
+                            } else if retained_item {
+                                ItemState::CopiedSourceRetained
+                            } else {
+                                ItemState::Completed
+                            },
+                            target,
+                        );
+                        if retained_item {
+                            update.detail = Some(
+                                "Cross-device copy verified. Original source was kept; review the copy and remove the original manually."
+                                    .into(),
+                            );
+                        }
+                        on_item(update);
+                    }
                     Err(error) => {
                         on_item(ItemUpdate::error(index, target, &error));
                         return Err(batch_failure_with_skips(
@@ -1134,7 +1118,12 @@ fn perform_with_progress_and_items(
                     }
                 }
             }
-            if skipped > 0 {
+            if retained > 0 {
+                Ok(format!(
+                    "Moved {} item(s); copied {retained} across filesystems — originals kept for manual cleanup; skipped {skipped}",
+                    sources.len() - skipped - retained
+                ))
+            } else if skipped > 0 {
                 Ok(format!(
                     "Moved {} item(s); skipped {skipped} existing",
                     sources.len() - skipped
@@ -1786,6 +1775,7 @@ fn ensure_hardlink_scope_preserved(manifest: &BTreeMap<PathBuf, fs::Metadata>) -
     Ok(())
 }
 
+#[cfg(test)]
 fn verify_source_manifest(
     manifest: &BTreeMap<PathBuf, fs::Metadata>,
     transfer: &mut Transfer<'_>,
@@ -1801,6 +1791,7 @@ fn verify_source_manifest(
 /// and link count for its remaining names. Accept only that *known* effect
 /// of our own earlier unlinks; require the same inode, bytes, mode and mtime.
 #[cfg(unix)]
+#[cfg(test)]
 fn ensure_cleanup_source(
     original: &fs::Metadata,
     current: &fs::Metadata,
@@ -1829,6 +1820,7 @@ fn ensure_cleanup_source(
     ensure_same_source_metadata(original, current)
 }
 
+#[cfg(test)]
 fn remove_verified_tree(
     source: &Path,
     destination: &Path,
@@ -5469,7 +5461,7 @@ mod tests {
         let source = root.join("move.txt");
         fs::write(&source, b"cross-device").unwrap();
         let cancelled = AtomicBool::new(false);
-        perform_with_progress_in(
+        let summary = perform_with_progress_in(
             &Action::Move {
                 sources: vec![source.clone()],
                 destination: target.clone(),
@@ -5480,10 +5472,70 @@ mod tests {
             Some(&root.join("test-journals")),
         )
         .unwrap();
-        assert!(!source.exists());
+        assert!(
+            summary.contains("originals kept for manual cleanup"),
+            "{summary}"
+        );
+        assert_eq!(fs::read(&source).unwrap(), b"cross-device");
         assert_eq!(fs::read(target.join("move.txt")).unwrap(), b"cross-device");
         assert_eq!(fs::read_dir(&target).unwrap().count(), 1);
+        assert!(!root.join("test-journals").exists());
         fs::remove_dir_all(&target).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cross_device_move_reports_copied_source_retained() {
+        use std::os::unix::fs::MetadataExt;
+
+        let root = test_root();
+        let shared = Path::new("/dev/shm");
+        if !shared.is_dir()
+            || fs::metadata(&root).unwrap().dev() == fs::metadata(shared).unwrap().dev()
+        {
+            fs::remove_dir_all(root).unwrap();
+            return;
+        }
+        let destination = shared.join(format!(
+            "rice-explorer-retained-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        if fs::create_dir(&destination).is_err() {
+            fs::remove_dir_all(root).unwrap();
+            return;
+        }
+        let source = root.join("keep.txt");
+        fs::write(&source, b"leave source intact").unwrap();
+
+        let report = perform_with_report(
+            &Action::Move {
+                sources: vec![source.clone()],
+                destination: destination.clone(),
+                conflict: ConflictPolicy::KeepBoth,
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert!(report.result.unwrap().contains("originals kept"));
+        assert_eq!(report.items[0].state, ItemState::CopiedSourceRetained);
+        assert!(
+            report.items[0]
+                .detail
+                .as_deref()
+                .unwrap()
+                .contains("remove the original manually")
+        );
+        assert_eq!(fs::read(source).unwrap(), b"leave source intact");
+        assert_eq!(
+            fs::read(destination.join("keep.txt")).unwrap(),
+            b"leave source intact"
+        );
+        fs::remove_dir_all(destination).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -5572,15 +5624,19 @@ mod tests {
             },
             &cancelled,
             &mut |progress: Progress| {
-                if progress.phase == "Finishing" && !injected {
+                if progress.phase == "Publishing" && !injected {
                     fs::write(source.join("newly-created.txt"), b"after").unwrap();
                     injected = true;
                 }
             },
             Some(&root.join("test-journals")),
         );
-        assert!(injected, "test did not reach the EXDEV finishing phase");
-        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert!(injected, "test did not reach cross-device publication");
+        assert!(
+            result
+                .unwrap()
+                .contains("originals kept for manual cleanup")
+        );
         assert_eq!(fs::read(source.join("original.txt")).unwrap(), b"before");
         assert_eq!(
             fs::read(source.join("newly-created.txt")).unwrap(),
@@ -5591,6 +5647,7 @@ mod tests {
             b"before"
         );
         assert!(!target.join("source-dir/newly-created.txt").exists());
+        assert!(!root.join("test-journals").exists());
         fs::remove_dir_all(target).unwrap();
         fs::remove_dir_all(root).unwrap();
     }

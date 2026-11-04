@@ -211,6 +211,7 @@ struct CompletedOperation {
 #[derive(Clone, Copy, Default)]
 struct ItemCounts {
     completed: usize,
+    retained: usize,
     skipped: usize,
     failed: usize,
     not_started: usize,
@@ -287,6 +288,7 @@ impl ItemCounts {
         for item in items {
             match item.state {
                 filesystem::ItemState::Completed => counts.completed += 1,
+                filesystem::ItemState::CopiedSourceRetained => counts.retained += 1,
                 filesystem::ItemState::Skipped => counts.skipped += 1,
                 filesystem::ItemState::Failed | filesystem::ItemState::Cancelled => {
                     counts.failed += 1;
@@ -342,18 +344,27 @@ fn choose_paste_clipboard(
 }
 
 /// Reconcile cut paths after any result, including a partially failed batch.
-/// `None` means nothing moved and the original clipboard stays untouched.
+/// A verified cross-device copy also consumes the cut intent, avoiding
+/// accidental duplicate pastes while leaving its original file untouched.
+/// `None` means no cut item was completed or safely copied.
 fn remaining_cut_paths(items: &[filesystem::ItemResult]) -> Option<Vec<PathBuf>> {
-    if !items
-        .iter()
-        .any(|item| item.state == filesystem::ItemState::Completed)
-    {
+    if !items.iter().any(|item| {
+        matches!(
+            item.state,
+            filesystem::ItemState::Completed | filesystem::ItemState::CopiedSourceRetained
+        )
+    }) {
         return None;
     }
     Some(
         items
             .iter()
-            .filter(|item| item.state != filesystem::ItemState::Completed)
+            .filter(|item| {
+                !matches!(
+                    item.state,
+                    filesystem::ItemState::Completed | filesystem::ItemState::CopiedSourceRetained
+                )
+            })
             .map(|item| item.source.clone())
             .collect(),
     )
@@ -1492,13 +1503,14 @@ impl Explorer {
                         if !entry.items.is_empty() {
                             let ItemCounts {
                                 completed,
+                                retained,
                                 skipped,
                                 failed,
                                 not_started,
                             } = entry.counts;
                             ui.collapsing(
                                 format!(
-                                    "Per-file results: {completed} done · {skipped} skipped · {failed} errors · {not_started} not started"
+                                    "Per-file results: {completed} done · {retained} copied (source kept) · {skipped} skipped · {failed} errors · {not_started} not started"
                                 ),
                                 |ui| {
                                     egui::ScrollArea::vertical()
@@ -1511,6 +1523,7 @@ impl Explorer {
                                                             "Not started"
                                                         }
                                                         filesystem::ItemState::Completed => "Done",
+                                                        filesystem::ItemState::CopiedSourceRetained => "Copied — source kept",
                                                         filesystem::ItemState::Skipped => "Skipped",
                                                         filesystem::ItemState::Failed => "Failed",
                                                         filesystem::ItemState::Cancelled => {
@@ -3327,6 +3340,12 @@ impl Explorer {
                                 clipboard.paths.len(),
                                 destination.display()
                             ));
+                            if clipboard.cut {
+                                ui.colored_label(
+                                    Color32::LIGHT_YELLOW,
+                                    "Across filesystems, Move makes a verified copy and keeps the original. Remove it manually after reviewing the copy.",
+                                );
+                            }
                             ui.separator();
                             let mut policy_changed = ui.radio_value(
                                 conflict,
@@ -3859,7 +3878,7 @@ fn paint_file_icon(painter: &egui::Painter, rect: Rect, file: &Entry, theme: &Th
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, CLIPBOARD_WAIT, Clipboard, Dialog, NameMode, PasteMode, PendingPaste,
+        Action, CLIPBOARD_WAIT, Clipboard, Dialog, ItemCounts, NameMode, PasteMode, PendingPaste,
         PropertyResult, PropertySnapshot, Tab, accept_property_result, choose_paste_clipboard,
         elapsed_label, next_search_repaint_delay, read_property_snapshot, remaining_cut_paths,
         transfer_progress_details,
@@ -4016,6 +4035,31 @@ mod tests {
                 PathBuf::from("/original/unstarted.txt")
             ])
         );
+    }
+
+    #[test]
+    fn source_retained_copy_consumes_cut_intent_without_hiding_failed_items() {
+        let copied = ItemResult {
+            source: PathBuf::from("/original/kept.txt"),
+            target: Some(PathBuf::from("/destination/kept.txt")),
+            state: ItemState::CopiedSourceRetained,
+            detail: Some("Original retained".into()),
+        };
+        let failed = ItemResult {
+            source: PathBuf::from("/original/failed.txt"),
+            target: None,
+            state: ItemState::Failed,
+            detail: None,
+        };
+        assert_eq!(
+            remaining_cut_paths(std::slice::from_ref(&copied)),
+            Some(vec![])
+        );
+        assert_eq!(
+            remaining_cut_paths(&[copied.clone(), failed]),
+            Some(vec![PathBuf::from("/original/failed.txt")])
+        );
+        assert_eq!(ItemCounts::from_items(&[copied]).retained, 1);
     }
 
     #[test]
