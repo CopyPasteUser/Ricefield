@@ -1353,10 +1353,17 @@ fn decode_mountinfo_path(raw: &[u8]) -> Option<PathBuf> {
     Some(PathBuf::from(OsString::from_vec(decoded)))
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MountedVolume {
+    pub path: PathBuf,
+    pub network: bool,
+}
+
 /// Mount points useful to a desktop user, without presenting /proc and other pseudo-filesystems.
-pub fn mounted_volumes() -> Vec<PathBuf> {
+/// Enumeration is performed by the refresh worker, never by the render thread.
+pub fn mounted_volumes() -> Vec<MountedVolume> {
     let mut paths = std::collections::BTreeSet::new();
-    paths.insert(PathBuf::from("/"));
+    paths.insert((PathBuf::from("/"), false));
     #[cfg(target_os = "linux")]
     if let Ok(contents) = fs::read("/proc/self/mountinfo") {
         for line in contents.split(|byte| *byte == b'\n') {
@@ -1388,16 +1395,19 @@ pub fn mounted_volumes() -> Vec<PathBuf> {
                     {
                         for entry in entries.flatten() {
                             if entry.path().is_dir() {
-                                paths.insert(entry.path());
+                                paths.insert((entry.path(), true));
                             }
                         }
                     }
-                    paths.insert(path);
+                    paths.insert((path, remote));
                 }
             }
         }
     }
-    paths.into_iter().collect()
+    paths
+        .into_iter()
+        .map(|(path, network)| MountedVolume { path, network })
+        .collect()
 }
 
 fn free_destination_reserved(
@@ -2738,6 +2748,13 @@ pub fn age(modified: Option<SystemTime>) -> String {
 mod tests {
     use super::*;
     use std::time::UNIX_EPOCH;
+
+    #[test]
+    fn mounted_volumes_include_local_system_root() {
+        assert!(mounted_volumes().iter().any(|volume| {
+            volume.path == Path::new("/") && !volume.network
+        }));
+    }
 
     #[cfg(target_os = "linux")]
     #[test]

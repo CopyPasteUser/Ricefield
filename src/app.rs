@@ -110,7 +110,7 @@ struct ScanResult {
 
 struct RefreshResult {
     folders: Vec<(u64, PathBuf, Option<SystemTime>)>,
-    volumes: Vec<PathBuf>,
+    volumes: Vec<filesystem::MountedVolume>,
 }
 
 struct PreviewResult {
@@ -503,7 +503,7 @@ pub struct Explorer {
     busy: bool,
     progress: Option<Progress>,
     cancel: Arc<AtomicBool>,
-    volumes: Vec<PathBuf>,
+    volumes: Vec<filesystem::MountedVolume>,
     last_refresh_check: Instant,
     refresh_in_flight: bool,
     preview_path: Option<PathBuf>,
@@ -614,7 +614,10 @@ impl Explorer {
             busy: false,
             progress: None,
             cancel: Arc::new(AtomicBool::new(false)),
-            volumes: vec![PathBuf::from("/")],
+            volumes: vec![filesystem::MountedVolume {
+                path: PathBuf::from("/"),
+                network: false,
+            }],
             last_refresh_check: Instant::now() - Duration::from_secs(3),
             refresh_in_flight: false,
             preview_path: None,
@@ -2573,12 +2576,14 @@ impl Explorer {
                                 }
                             }
                             SidebarSection::Volumes => {
-                                for path in self.volumes.clone() {
+                                for volume in self.volumes.clone() {
+                                    let path = volume.path;
                                     let label = if path == Path::new("/") {
                                         "System disk".to_owned()
                                     } else {
                                         format!(
-                                            "Volume: {}",
+                                            "{}: {}",
+                                            if volume.network { "Network" } else { "Volume" },
                                             path.file_name().unwrap_or_default().to_string_lossy()
                                         )
                                     };

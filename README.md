@@ -16,7 +16,9 @@ RiceExplorer is designed as the file-management companion to [RiceBowl](https://
 **0.4 groundwork (in development):** the CLI and address bar now share a
 typed parser for local paths, `file://` URIs and validated SMB/SFTP/WebDAV/MTP
 addresses. Remote addresses cannot yet be browsed: they fail clearly without
-being misinterpreted as local paths. GIO/GVfs connection handling comes next.
+being misinterpreted as local paths. The Volumes sidebar now distinguishes
+detected network mounts from local volumes, without treating mounted paths as
+permission to mount or eject devices. GIO/GVfs connection handling comes next.
 
 **Built for structural customization.** RiceExplorer is not intended to be
 one file manager with seven recolors. Its TOML shells can move whole navigation,

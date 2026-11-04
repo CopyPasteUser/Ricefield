@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Label mounted network shares separately from local volumes in the sidebar.
+  This is discovery-only: no mount, eject, credentials or remote browsing yet.
 - Start 0.4 location handling with a shared typed local/remote address parser
   for the CLI and GUI path field. Recognize SMB, SFTP, WebDAV and MTP URIs,
   reject embedded credentials/invalid encodings, and report unsupported remote

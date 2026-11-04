@@ -279,6 +279,9 @@ recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
   typed remote locations end-to-end; preserve all local POSIX operations.
 - [ ] Integrate GIO/GVfs with a correctly driven GLib main context.
 - [ ] Discover drives/volumes/mounts and their capabilities dynamically.
+  Existing background mountinfo enumeration now labels detected network mounts
+  separately in the Volumes sidebar. Device capabilities and unmounted drives
+  still require UDisks2/GIO integration.
 - [ ] Mount/unmount/eject/unlock through OS APIs and Polkit.
 - [ ] Connect SMB/SFTP/WebDAV, browse system NFS and supported MTP devices.
 - [ ] Connect dialog, secure credential handling, favorites and reconnect.
