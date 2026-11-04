@@ -1,0 +1,58 @@
+# Release process (Linux x86_64)
+
+RiceExplorer 0.3 is **not yet signed off** for use with irreplaceable files.
+The code can produce a tested distribution bundle, but a green CI run alone
+does not satisfy the safety, recovery and Linux Mint hardware gates in
+[ROADMAP.md](ROADMAP.md).
+
+## Build a preview bundle
+
+Requires Rust/Cargo, GNU tar, gzip, sha256sum and a Linux x86_64 build host.
+Build on Ubuntu 24.04 or an equivalent environment for broad Linux Mint 22.x
+compatibility. Distribution dependencies such as graphics libraries still
+need to be installed on the target system.
+
+```bash
+cargo test --locked --all-targets
+cargo build --locked --release
+bash scripts/package-release.sh
+cd dist
+sha256sum --check rice-explorer-*.tar.gz.sha256
+```
+
+The archive contains the binary, an unprivileged installer, an uninstaller,
+desktop integration, license and docs. The script refuses a mismatched binary
+version or an existing archive; given the same binary and source tree it
+produces byte-identical archives. Set `SOURCE_DATE_EPOCH` to the source commit
+timestamp when making a reproducible build.
+
+To install a downloaded and SHA-256-verified archive, extract it and run
+`bash install.sh` **inside the extracted directory**. The executable goes to
+`~/.local/bin` and the launcher and SVG icon to `~/.local/share`. Running
+`bash uninstall.sh` there removes only those installed files, retaining
+configuration and custom themes. No system file-manager defaults are changed.
+
+The [Linux release bundle workflow](.github/workflows/release.yml) is also
+manually dispatchable: it builds, runs unit and GUI smoke tests, creates two
+bundles, compares them byte-for-byte, verifies checksums, smoke-tests an
+isolated installation and uploads the bundle as an Actions artifact. It does
+**not** publish anything on a manual dispatch.
+
+## Before publishing v0.3.0
+
+1. Complete the P0 0.3 data-integrity, recovery and adversarial tests in the
+   roadmap. In particular, do not mark recursive source deletion or
+   crash recovery safe based only on metadata snapshots or matching bytes.
+2. Perform the documented physical Linux Mint X11/Xfce acceptance with real
+   permission, ACL, extended-attribute and USB/mount fixtures. Keep Thunar as
+   fallback and use disposable files until that work passes.
+3. Re-run formatting, Clippy, all tests, CLI and seven-rice Xvfb smoke, then
+   inspect CI artifacts. Perform a final dependency/license/secret scan.
+4. Review `CHANGELOG.md`, `ROADMAP.md` and README for accurate scope. Only
+   then move Cargo/package version to `0.3.0`, commit on `main`, protect and
+   push the matching `v0.3.0` tag.
+
+Pushing a `v0.3.*` tag triggers a **separate** validation workflow, which
+publishes a GitHub Release only after all tests, archive integrity, staging
+installation and tag/version match pass. Alpha/pre-release tags are marked
+as prereleases. Do **not** create the final tag before these gates pass.
