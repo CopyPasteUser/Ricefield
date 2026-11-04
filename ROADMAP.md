@@ -66,6 +66,11 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   local copies and cross-device moves in CI and on Linux Mint.
 - [ ] Eliminate the remaining cross-device source mutation race and preserve
   timestamp, owner, ACL, xattr and hardlink metadata before production use.
+- [x] Refuse staged publication if a source's identity, size, modification
+  time or mode changes during the copy; open regular sources without following
+  a last-moment symlink replacement. Preserve regular-file and directory
+  access/modification times in staged copies. Still require race-free source
+  cleanup, symlink timestamps, ACL/xattr/ownership/hardlink preservation.
 - [x] Introduce a bounded, in-memory FIFO for up to 32 waiting Copy jobs,
   stable operation IDs, visible progress in every rice, and cancellation of
   waiting jobs without filesystem side effects. Pause the queue after an

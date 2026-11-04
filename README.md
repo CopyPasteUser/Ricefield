@@ -121,7 +121,36 @@ Per-user settings are stored in `~/.config/rice-explorer/config.toml` (or `$XDG_
 
 ## Safety and performance
 
-File copy uses a private hidden staging directory on the destination filesystem and publishes the completed item with an atomic no-overwrite rename. Name collisions generate ` (copy)` suffixes; copying a directory into itself is rejected. Symbolic links are reproduced as links without following them; special device files are blocked. Across filesystems a move copies first, verifies every copied byte and checks again before removing only matching source entries (extra I/O is intentional). Concurrent writers can still cause a partial move; the complete published destination is retained for recovery if source cleanup fails. Cross-filesystem moves do **not** yet preserve every timestamp, ACL, xattr, owner or hardlink relationship and are **not** production-safe for critical data. Cancelling a copy cleans its partial destination when possible; a cancellation cannot undo earlier completed items. A process crash may leave a hidden `.rice-explorer-staging-*` directory. The development branch records cross-device move states in `$XDG_STATE_HOME/rice-explorer/operations/` (default `~/.local/state/rice-explorer/operations/`). On restart, RiceExplorer warns about unfinished records and shows source, destination and staging paths; it will **not** automatically delete, resume or overwrite anything. Compare both copies manually before cleanup. This journal is an inspection aid, **not** a complete crash recovery engine or guarantee against power-loss corruption. Normal deletion uses the desktop Trash; permanent deletion requires a separate confirmation. File names are never interpolated into shell commands.
+Current safeguards:
+
+- Copies use private, hidden staging directories and publish complete entries
+  with atomic no-overwrite rename. Existing targets get ` (copy)` suffixes;
+  copying a folder into itself is rejected.
+- Symlinks are copied as links, never traversed as directories; device files
+  are rejected. A regular file swapped for a symlink while opening is refused.
+- A source that changes identity, size, modification time or mode during copy
+  fails validation before publication. Regular-file and directory access and
+  modification timestamps are preserved where supported.
+- Cross-filesystem moves verify each copied byte before publishing, then
+  reverify published contents before deleting matching source entries.
+  Extra verification I/O is intentional.
+- Cancellation stops future work and cleans partial staging when possible,
+  but does **not** undo already committed items. Deletion uses the desktop
+  Trash unless permanent deletion is separately confirmed.
+
+**Important limitations:** Concurrent writers can still cause a partial move;
+the complete published destination is retained for manual recovery if source
+cleanup fails. ACLs, extended attributes, ownership, hardlink relationships,
+some symlink timestamps and full race-free cleanup are not preserved or
+guaranteed. **Do not use development builds for irreplaceable data.**
+
+After a crash, a hidden `.rice-explorer-staging-*` directory may remain. Move
+records live in `$XDG_STATE_HOME/rice-explorer/operations/` (default
+`~/.local/state/rice-explorer/operations/`). RiceExplorer warns about unfinished
+records and displays both source and destination paths. It will **never**
+automatically delete, resume or overwrite based on these records. Inspect both
+sides manually. The journal is not a full power-loss recovery engine. Filenames
+are never interpolated into shell commands.
 
 Scanning, searching, copying and Trash operations run on worker threads. Views render only visible rows. Recursive search is bounded to protect small machines; it is not a full-text or indexed search. Image thumbnail previews are implemented; drag-out, advanced mount management, undo and full interactive desktop integration tests remain outstanding. Until these are verified on your Mint laptop, keep Thunar available as a fallback.
 

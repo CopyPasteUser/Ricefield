@@ -727,6 +727,23 @@ impl Explorer {
                             ui.colored_label(Color32::from_rgb(165, 83, 30), "Paused after error");
                         }
                     }
+                    // Several rice shells intentionally omit the bottom status bar.
+                    // Their file-operation errors must still be visible without
+                    // opening the Transfers dialog or switching themes.
+                    if !theme.shell.status_bar.unwrap_or(true)
+                        && let Some((message, failed)) = &self.status
+                    {
+                        ui.separator();
+                        ui.colored_label(
+                            if *failed {
+                                Color32::LIGHT_RED
+                            } else {
+                                theme.palette.accent()
+                            },
+                            shorten(message, 72),
+                        )
+                        .on_hover_text(message);
+                    }
                 });
             });
     }

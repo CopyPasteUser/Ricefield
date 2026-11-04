@@ -32,11 +32,18 @@
   status bar; pause further copies on error until manually resumed; prevent
   clearing a newer cut selection when an older move ends. Retain 64 recent
   operation results for the current session, including cancellation/failure.
+- Validate source identity and basic metadata before publishing staged copies,
+  refusing a file replaced or modified while being copied. Do not follow a
+  last-moment symlink replacement when opening a regular source file. Preserve
+  regular file and folder modification/access timestamps where supported.
+  Add regression tests for in-place mutation, path replacement and timestamps.
+- Keep operation feedback visible in rice shells that hide the bottom status
+  bar; the full message remains available on hover.
 
-**Validation:** Earlier v0.2 feature branch CI passed formatting, Clippy,
-36 tests, release build, CLI and seven-theme Xvfb smoke. New journal and CI
-hardening changes need a fresh CI run; real Linux Mint acceptance is still
-pending. These changes are not a v1.0 release.
+**Validation:** Earlier feature-branch CI passed formatting, Clippy, unit tests,
+release build, CLI and seven-theme Xvfb smoke. This newer metadata/race-safety
+increment needs CI verification. Real Linux Mint acceptance is still pending.
+These changes are not a v1.0 release.
 
 ## 0.2.0
 

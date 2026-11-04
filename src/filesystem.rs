@@ -1,7 +1,7 @@
 use crate::journal::{Journal, State};
 use std::{
     ffi::OsString,
-    fs::{self, File, OpenOptions},
+    fs::{self, File, FileTimes, OpenOptions},
     io::{self, Read, Write},
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
@@ -787,6 +787,7 @@ fn stage_and_publish_with_journal(
     }
     let staged = staging_dir.join("payload");
     let result = (|| {
+        let original = fs::symlink_metadata(source)?;
         transfer.phase = "Copying";
         copy_tree(source, &staged, 0, transfer)?;
         if verify {
@@ -797,6 +798,7 @@ fn stage_and_publish_with_journal(
                 record.advance(State::StagedVerified)?;
             }
         }
+        ensure_same_source(source, &original)?;
         transfer.check()?;
         transfer.phase = "Publishing";
         transfer.report(destination);
@@ -926,7 +928,9 @@ fn copy_tree(
     if metadata.file_type().is_symlink() {
         #[cfg(unix)]
         {
-            std::os::unix::fs::symlink(fs::read_link(source)?, destination)?;
+            let target = fs::read_link(source)?;
+            ensure_same_source(source, &metadata)?;
+            std::os::unix::fs::symlink(target, destination)?;
             transfer.advance(metadata.len(), source);
             return Ok(());
         }
@@ -949,7 +953,11 @@ fn copy_tree(
                     transfer,
                 )?;
             }
-            fs::set_permissions(destination, metadata.permissions())?;
+            ensure_same_source(source, &metadata)?;
+            let output = File::open(destination)?;
+            output.set_permissions(metadata.permissions())?;
+            output.set_times(source_times(&metadata))?;
+            output.sync_all()?;
             Ok(())
         })();
         if result.is_err() {
@@ -957,7 +965,16 @@ fn copy_tree(
         }
         result
     } else if metadata.is_file() {
-        let mut input = File::open(source)?;
+        let mut options = OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            // Refuse a symlink swapped in between lstat and open.
+            options.custom_flags(libc::O_NOFOLLOW);
+        }
+        let mut input = options.open(source)?;
+        ensure_same_source_metadata(&metadata, &input.metadata()?)?;
         let mut output = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -973,8 +990,11 @@ fn copy_tree(
                 output.write_all(&buffer[..n])?;
                 transfer.advance(n as u64, source);
             }
+            ensure_same_source_metadata(&metadata, &input.metadata()?)?;
+            ensure_same_source(source, &metadata)?;
+            output.set_permissions(metadata.permissions())?;
+            output.set_times(source_times(&metadata))?;
             output.sync_all()?;
-            fs::set_permissions(destination, metadata.permissions())?;
             Ok(())
         })();
         if result.is_err() {
@@ -987,6 +1007,50 @@ fn copy_tree(
             "Special device files cannot be copied",
         ))
     }
+}
+
+/// Reject a replaced or modified source before exposing a staged copy.
+/// This is a best-effort non-snapshot check, not an atomic lock on other writers.
+fn ensure_same_source(path: &Path, initial: &fs::Metadata) -> io::Result<()> {
+    ensure_same_source_metadata(initial, &fs::symlink_metadata(path)?)
+}
+
+fn ensure_same_source_metadata(initial: &fs::Metadata, current: &fs::Metadata) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if initial.dev() != current.dev()
+            || initial.ino() != current.ino()
+            || initial.mtime() != current.mtime()
+            || initial.mtime_nsec() != current.mtime_nsec()
+            || initial.size() != current.size()
+            || initial.mode() != current.mode()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Source changed during copy; destination was not published",
+            ));
+        }
+    }
+    #[cfg(not(unix))]
+    if initial.len() != current.len() || initial.modified().ok() != current.modified().ok() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Source changed during copy; destination was not published",
+        ));
+    }
+    Ok(())
+}
+
+fn source_times(metadata: &fs::Metadata) -> FileTimes {
+    let mut times = FileTimes::new();
+    if let Ok(modified) = metadata.modified() {
+        times = times.set_modified(modified);
+    }
+    if let Ok(accessed) = metadata.accessed() {
+        times = times.set_accessed(accessed);
+    }
+    times
 }
 
 pub fn human_size(bytes: u64) -> String {
@@ -1210,6 +1274,116 @@ mod tests {
             b"nested"
         );
         assert_eq!(fs::read_dir(&output).unwrap().count(), 2);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn copied_files_and_directories_preserve_modification_time() {
+        let root = test_root();
+        let folder = root.join("folder");
+        fs::create_dir(&folder).unwrap();
+        let file = folder.join("note.txt");
+        fs::write(&file, b"unchanged").unwrap();
+        let expected_file_time = UNIX_EPOCH + Duration::from_secs(946_684_800);
+        let expected_folder_time = UNIX_EPOCH + Duration::from_secs(978_307_200);
+        File::open(&file)
+            .unwrap()
+            .set_modified(expected_file_time)
+            .unwrap();
+        File::open(&folder)
+            .unwrap()
+            .set_modified(expected_folder_time)
+            .unwrap();
+        let output = root.join("output");
+        fs::create_dir(&output).unwrap();
+
+        perform(&Action::Copy {
+            sources: vec![folder],
+            destination: output.clone(),
+        })
+        .unwrap();
+
+        assert_eq!(
+            fs::metadata(output.join("folder/note.txt"))
+                .unwrap()
+                .modified()
+                .unwrap(),
+            expected_file_time
+        );
+        assert_eq!(
+            fs::metadata(output.join("folder"))
+                .unwrap()
+                .modified()
+                .unwrap(),
+            expected_folder_time
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn source_modified_during_copy_is_not_published() {
+        let root = test_root();
+        let source = root.join("large.bin");
+        fs::write(&source, vec![42u8; 8 * 1024 * 1024]).unwrap();
+        let output = root.join("output");
+        fs::create_dir(&output).unwrap();
+        let cancelled = AtomicBool::new(false);
+        let mut modified = false;
+        let result = perform_with_progress(
+            &Action::Copy {
+                sources: vec![source.clone()],
+                destination: output.clone(),
+            },
+            &cancelled,
+            &mut |progress| {
+                if !modified && progress.transferred >= 4 * 1024 * 1024 {
+                    fs::write(&source, vec![99u8; 8 * 1024 * 1024]).unwrap();
+                    modified = true;
+                }
+            },
+        );
+        assert!(modified);
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read_dir(&output).unwrap().count(), 0);
+        assert_eq!(fs::read(&source).unwrap(), vec![99u8; 8 * 1024 * 1024]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replacement_source_path_is_not_removed_or_published() {
+        use std::os::unix::fs::symlink;
+
+        let root = test_root();
+        let source = root.join("large.bin");
+        fs::write(&source, vec![42u8; 8 * 1024 * 1024]).unwrap();
+        let output = root.join("output");
+        fs::create_dir(&output).unwrap();
+        let original = root.join("original.bin");
+        let unrelated = root.join("unrelated.txt");
+        fs::write(&unrelated, b"must remain private").unwrap();
+        let cancelled = AtomicBool::new(false);
+        let mut swapped = false;
+        let result = perform_with_progress(
+            &Action::Copy {
+                sources: vec![source.clone()],
+                destination: output.clone(),
+            },
+            &cancelled,
+            &mut |progress| {
+                if !swapped && progress.transferred >= 4 * 1024 * 1024 {
+                    fs::rename(&source, &original).unwrap();
+                    symlink(&unrelated, &source).unwrap();
+                    swapped = true;
+                }
+            },
+        );
+        assert!(swapped);
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read_dir(&output).unwrap().count(), 0);
+        assert_eq!(fs::read(&unrelated).unwrap(), b"must remain private");
+        assert!(fs::symlink_metadata(&source).unwrap().file_type().is_symlink());
+        assert_eq!(fs::metadata(&original).unwrap().len(), 8 * 1024 * 1024);
         fs::remove_dir_all(root).unwrap();
     }
 

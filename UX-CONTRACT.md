@@ -29,7 +29,9 @@ Only one mutation worker runs at a time; folder reads may proceed concurrently. 
 - **File list/table:** `Explorer::file_listing`, shared for all themes; virtualized rows.
 - **Search and clear:** `Explorer::navigation_bar`/`rebuild_visible`.
 - **Dialog/confirmation:** `Explorer::dialogs`; no system-wide native dialog side effects.
-- **Feedback:** `Explorer::status_bar`; persistent until the next result.
+- **Feedback:** `Explorer::status_bar` when enabled, otherwise the shared
+  `Explorer::transfer_strip` displays the latest status with a full-message
+  tooltip. Errors must remain visible even in themes without a bottom bar.
 - **Unfinished cross-device moves:** `journal::scan_incomplete` runs on a
   background thread; `Explorer::recovery_banner` remains visible regardless
   of theme/status-bar settings. The review window is inspection-only: journal
