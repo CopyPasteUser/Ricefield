@@ -1233,7 +1233,10 @@ fn plan_transfer(
     if !destination_meta.is_dir() {
         return Err(PlanFailure::global(io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("Transfer destination is not a folder: {}", destination.display()),
+            format!(
+                "Transfer destination is not a folder: {}",
+                destination.display()
+            ),
         )));
     }
     let canonical_destination = fs::canonicalize(destination).map_err(PlanFailure::global)?;
@@ -1245,10 +1248,13 @@ fn plan_transfer(
     let mut selected_directories = BTreeSet::new();
     for (index, source) in sources.iter().enumerate() {
         if cancelled.load(Ordering::Relaxed) {
-            return Err(PlanFailure::at(index, io::Error::new(
-                io::ErrorKind::Interrupted,
-                "Operation cancelled during preflight",
-            )));
+            return Err(PlanFailure::at(
+                index,
+                io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "Operation cancelled during preflight",
+                ),
+            ));
         }
         let name = source
             .file_name()
@@ -1258,14 +1264,16 @@ fn plan_transfer(
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
-        let parent = fs::canonicalize(parent_path)
-            .map_err(|e| PlanFailure::at(index, e))?;
+        let parent = fs::canonicalize(parent_path).map_err(|e| PlanFailure::at(index, e))?;
         let normalized = parent.join(name);
         if !selected.insert(normalized.clone()) {
-            return Err(PlanFailure::at(index, io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("Source was selected twice: {}", source.display()),
-            )));
+            return Err(PlanFailure::at(
+                index,
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("Source was selected twice: {}", source.display()),
+                ),
+            ));
         }
         if snapshot.is_dir() {
             selected_directories.insert(normalized.clone());
@@ -1278,10 +1286,13 @@ fn plan_transfer(
             .skip(1)
             .any(|ancestor| selected_directories.contains(ancestor))
         {
-            return Err(PlanFailure::at(index, io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "An item is also inside another selected folder; split the transfer to avoid overlapping sources",
-            )));
+            return Err(PlanFailure::at(
+                index,
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "An item is also inside another selected folder; split the transfer to avoid overlapping sources",
+                ),
+            ));
         }
     }
 
@@ -1294,10 +1305,13 @@ fn plan_transfer(
     };
     for (index, (source, (normalized, snapshot))) in sources.iter().zip(snapshots).enumerate() {
         if cancelled.load(Ordering::Relaxed) {
-            return Err(PlanFailure::at(index, io::Error::new(
-                io::ErrorKind::Interrupted,
-                "Operation cancelled during preflight",
-            )));
+            return Err(PlanFailure::at(
+                index,
+                io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "Operation cancelled during preflight",
+                ),
+            ));
         }
         let name = source
             .file_name()
@@ -1319,10 +1333,13 @@ fn plan_transfer(
         } else if collision && conflict == ConflictPolicy::SkipExisting {
             (intended.clone(), PlannedDisposition::Skip)
         } else if collision && conflict == ConflictPolicy::AbortOnConflict {
-            return Err(PlanFailure::at(index, io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                format!("Destination already exists: {}", intended.display()),
-            )));
+            return Err(PlanFailure::at(
+                index,
+                io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!("Destination already exists: {}", intended.display()),
+                ),
+            ));
         } else {
             let target = free_destination_reserved(destination, name, &reserved)
                 .map_err(|e| PlanFailure::at(index, e))?;
@@ -2326,11 +2343,17 @@ mod tests {
             &AtomicBool::new(false),
             &mut |_| {},
         );
-        assert_eq!(report.result.unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            report.result.unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
         assert_eq!(report.items[0].state, ItemState::NotStarted);
         assert_eq!(report.items[1].state, ItemState::Failed);
         assert!(!destination.join("fresh.txt").exists());
-        assert_eq!(fs::read(destination.join("existing.txt")).unwrap(), b"original");
+        assert_eq!(
+            fs::read(destination.join("existing.txt")).unwrap(),
+            b"original"
+        );
         assert_eq!(fs::read(fresh).unwrap(), b"fresh");
         assert_eq!(fs::read(existing).unwrap(), b"incoming");
         fs::remove_dir_all(root).unwrap();
@@ -2355,13 +2378,8 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
         let inside = parent.join("inside");
         fs::create_dir(&inside).unwrap();
-        let err = preview_transfer(
-            &[parent.clone()],
-            &inside,
-            ConflictPolicy::KeepBoth,
-            false,
-        )
-        .unwrap_err();
+        let err = preview_transfer(&[parent.clone()], &inside, ConflictPolicy::KeepBoth, false)
+            .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
         assert_eq!(fs::read(child).unwrap(), b"safe");
         fs::remove_dir_all(root).unwrap();
@@ -2392,7 +2410,10 @@ mod tests {
             },
         );
         assert!(changed);
-        assert_eq!(report.result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            report.result.unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
         assert_eq!(report.items[0].state, ItemState::Completed);
         assert_eq!(report.items[1].state, ItemState::Failed);
         assert!(destination.join("first.txt").exists());

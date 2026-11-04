@@ -692,9 +692,10 @@ impl Explorer {
                         .unwrap_or_else(|| "File operation".into());
                     self.progress = None;
                     if let Some(moved) = moved_paths
-                        && self.clipboard.as_ref().is_some_and(|clipboard| {
-                            clipboard.cut && clipboard.paths == moved
-                        })
+                        && self
+                            .clipboard
+                            .as_ref()
+                            .is_some_and(|clipboard| clipboard.cut && clipboard.paths == moved)
                         && let Some(remaining) = remaining_cut_paths(&report.items)
                     {
                         // A cut batch may have partially succeeded even when its overall
@@ -716,9 +717,7 @@ impl Explorer {
                         }
                     }
                     let (summary, outcome) = match report.result {
-                        Ok(success) => {
-                            (success, OperationOutcome::Succeeded)
-                        }
+                        Ok(success) => (success, OperationOutcome::Succeeded),
                         Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
                             self.queue_paused = !self.operation_queue.is_empty();
                             let detail = if self.queue_paused {
@@ -1189,8 +1188,7 @@ impl Explorer {
         if let Some(clipboard) = self.clipboard_for_paste() {
             let destination = self.current().path.clone();
             let conflict = ConflictPolicy::KeepBoth;
-            let preview_generation =
-                self.request_paste_preview(&clipboard, &destination, conflict);
+            let preview_generation = self.request_paste_preview(&clipboard, &destination, conflict);
             self.dialog = Some(Dialog::PasteOptions {
                 clipboard,
                 destination,
@@ -3159,11 +3157,12 @@ impl eframe::App for Explorer {
             &self.dialog,
             Some(Dialog::PasteOptions { preview: None, .. })
         );
-        let idle_delay = if self.busy || waiting_for_preview || self.tabs.iter().any(|tab| tab.loading) {
-            Duration::from_millis(90)
-        } else {
-            Duration::from_secs(3)
-        };
+        let idle_delay =
+            if self.busy || waiting_for_preview || self.tabs.iter().any(|tab| tab.loading) {
+                Duration::from_millis(90)
+            } else {
+                Duration::from_secs(3)
+            };
         let delay = next_search_repaint_delay(&self.tabs, Instant::now())
             .map_or(idle_delay, |search_delay| search_delay.min(idle_delay));
         context.request_repaint_after(delay);
