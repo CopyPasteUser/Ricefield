@@ -5,6 +5,7 @@ on:
   push:
     tags:
       - 'v0.3.*'
+      - 'v0.4.*'
 
 permissions:
   contents: read
@@ -63,7 +64,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/v0.3.')
+    if: startsWith(github.ref, 'refs/tags/v0.3.') || startsWith(github.ref, 'refs/tags/v0.4.')
     needs: bundle
     runs-on: ubuntu-24.04
     permissions:

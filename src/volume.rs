@@ -13,6 +13,7 @@ use std::{
 
 const MAX_REMOTE_LIST_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_REMOTE_ENTRIES: usize = 10_000;
+const MAX_REMOTE_TEXT_BYTES: u64 = 32 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct RemoteEntry {
@@ -34,32 +35,69 @@ pub fn list_remote(
     if show_hidden {
         command.arg("--hidden");
     }
+    command.arg(uri).env("LC_ALL", "C");
+    let bytes = capture_gio(
+        command,
+        MAX_REMOTE_LIST_BYTES,
+        Duration::from_secs(20),
+        cancelled,
+        "Network listing",
+    )?;
+    parse_remote_listing(uri, &bytes)
+}
+
+/// Reading a remote file never grants a POSIX path or a mutating capability.
+/// Only bounded plain-text previews are supported until native GIO is ready.
+pub fn preview_remote_text(uri: &str, cancelled: &AtomicBool) -> Result<String, String> {
+    if !matches!(
+        crate::location::Location::parse(uri.into()),
+        Ok(crate::location::Location::Remote(_))
+    ) {
+        return Err("Invalid network preview address".into());
+    }
+    let mut command = Command::new("gio");
+    command.args(["cat", uri]);
+    let bytes = capture_gio(
+        command,
+        MAX_REMOTE_TEXT_BYTES,
+        Duration::from_secs(12),
+        cancelled,
+        "Network preview",
+    )?;
+    decode_remote_text(&bytes)
+}
+
+fn capture_gio(
+    mut command: Command,
+    limit: u64,
+    timeout: Duration,
+    cancelled: &AtomicBool,
+    operation: &str,
+) -> Result<Vec<u8>, String> {
     let mut child = command
-        .arg(uri)
-        .env("LC_ALL", "C")
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .stdout(Stdio::piped())
         .spawn()
-        .map_err(|error| format!("Cannot start GIO listing: {error}"))?;
+        .map_err(|error| format!("Cannot start {operation}: {error}"))?;
     let stdout = child
         .stdout
         .take()
-        .ok_or("GIO listing output unavailable")?;
+        .ok_or_else(|| format!("{operation} output unavailable"))?;
     let reader = thread::spawn(move || {
         let mut bytes = Vec::new();
         stdout
-            .take(MAX_REMOTE_LIST_BYTES + 1)
+            .take(limit + 1)
             .read_to_end(&mut bytes)
             .map(|_| bytes)
     });
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + timeout;
     let status = loop {
         if cancelled.load(Ordering::Relaxed) {
             let _ = child.kill();
             let _ = child.wait();
             let _ = reader.join();
-            return Err("Network listing cancelled".into());
+            return Err(format!("{operation} cancelled"));
         }
         match child.try_wait() {
             Ok(Some(status)) => break status,
@@ -68,24 +106,46 @@ pub fn list_remote(
                 let _ = child.kill();
                 let _ = child.wait();
                 let _ = reader.join();
-                return Err("Network listing timed out after 20 seconds".into());
+                return Err(format!(
+                    "{operation} timed out after {} seconds",
+                    timeout.as_secs()
+                ));
             }
             Err(error) => {
                 let _ = child.kill();
                 let _ = child.wait();
                 let _ = reader.join();
-                return Err(format!("GIO listing failed: {error}"));
+                return Err(format!("{operation} failed: {error}"));
             }
         }
     };
     let bytes = reader
         .join()
-        .map_err(|_| "GIO listing reader panicked")?
-        .map_err(|error| format!("Cannot read GIO listing: {error}"))?;
-    if !status.success() {
-        return Err("Cannot browse network location. Check connection and permissions.".into());
+        .map_err(|_| format!("{operation} reader panicked"))?
+        .map_err(|error| format!("Cannot read {operation}: {error}"))?;
+    if bytes.len() as u64 > limit {
+        return Err(format!(
+            "{operation} exceeds the {} KiB limit",
+            limit / 1024
+        ));
     }
-    parse_remote_listing(uri, &bytes)
+    if !status.success() {
+        return Err(format!(
+            "{operation} failed. Check connection and permissions."
+        ));
+    }
+    Ok(bytes)
+}
+
+fn decode_remote_text(bytes: &[u8]) -> Result<String, String> {
+    let text = std::str::from_utf8(bytes).map_err(|_| "Cannot preview binary or non-UTF-8 data")?;
+    if text
+        .chars()
+        .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\r' | '\t'))
+    {
+        return Err("Cannot preview binary or control-character data".into());
+    }
+    Ok(text.to_owned())
 }
 
 fn parse_remote_listing(parent: &str, bytes: &[u8]) -> Result<Vec<RemoteEntry>, String> {
@@ -223,5 +283,31 @@ mod tests {
         assert!(
             parse_remote_listing(uri, &vec![b'a'; MAX_REMOTE_LIST_BYTES as usize + 1]).is_err()
         );
+    }
+
+    #[test]
+    fn remote_preview_rejects_local_uris_and_binary_data() {
+        assert!(preview_remote_text("file:///etc/passwd", &AtomicBool::new(false)).is_err());
+        assert_eq!(
+            decode_remote_text(b"a\n\tUnicode: \xe2\x9c\x93").unwrap(),
+            "a\n\tUnicode: ✓"
+        );
+        assert!(decode_remote_text(b"text\0hidden").is_err());
+        assert!(decode_remote_text(&[0xff]).is_err());
+        assert!(decode_remote_text(b"\x1b[31mcolored").is_err());
+    }
+
+    #[test]
+    fn bounded_capture_rejects_output_above_budget() {
+        let mut command = Command::new("printf");
+        command.arg("abcdef");
+        let result = capture_gio(
+            command,
+            3,
+            Duration::from_secs(2),
+            &AtomicBool::new(false),
+            "Test output",
+        );
+        assert!(result.unwrap_err().contains("limit"));
     }
 }

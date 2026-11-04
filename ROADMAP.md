@@ -298,7 +298,9 @@ recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
   URI credentials. Read-only remote listing works in normal tabs; native remote
   file operations and interactive authentication are not yet available. A
   bounded metadata listing distinguishes traversable directories from files
-  that still cannot be opened or transferred.
+  that cannot yet be opened or transferred. Small UTF-8 remote files can now
+  be inspected through a bounded, cancellable, read-only text preview; binary
+  preview, downloading and writes still require the native operation backend.
 - [ ] Connect dialog, secure credential handling, favorites and reconnect.
   A basic URI dialog, 32 validated persistent URI favorites and manual
   reconnect are implemented. Credential prompts/keyring integration and

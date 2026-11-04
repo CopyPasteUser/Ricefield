@@ -4,7 +4,7 @@
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Development preview: v0.3.0-alpha.4** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move now publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Reliable restart recovery and physical Mint/USB acceptance remain outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+> **Development preview: v0.4.0-alpha.1 candidate** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Native remote writes, reliable restart recovery and physical Mint/USB acceptance remain outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
 **Distribution:** An [automated Linux x86_64 preview bundle](RELEASE.md) can
 be built without distributing Rust sources to every end user. The verified
@@ -20,9 +20,10 @@ connected, a remote directory opens as a **read-only normal tab**, with
 Back/Forward history that also works across local and remote folders,
 parent navigation, asynchronous refresh and stale
 scan cancellation. Show-hidden also works on remote listings. The listing
-distinguishes folders from non-openable files;
-remote file previews and downloads await a safe backend. The address bar
-accepts remote URIs; the sidebar exposes
+distinguishes folders from files and provides a **read-only, bounded text
+preview** (32 KiB, UTF-8 only, 12-second timeout, cancellable) without writing
+to the remote location. Binary previews, full file opening and downloads still
+await a safe backend. The address bar accepts remote URIs; the sidebar exposes
 network mounts, confirmed GIO unmount/eject actions, up to 32 validated
 persistent network favorites and explicit reconnect. The system `gio`
 executable and suitable GVfs backends are required. Optional session restore

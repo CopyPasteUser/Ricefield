@@ -38,6 +38,10 @@ struct Tab {
     address: String,
     remote_uri: Option<String>,
     remote_entries: Vec<volume::RemoteEntry>,
+    remote_preview_uri: Option<String>,
+    remote_preview_result: Option<Result<String, String>>,
+    remote_preview_generation: u64,
+    remote_preview_cancel: Arc<AtomicBool>,
     query: String,
     back: Vec<Location>,
     forward: Vec<Location>,
@@ -63,6 +67,10 @@ impl Tab {
             path,
             remote_uri: None,
             remote_entries: Vec::new(),
+            remote_preview_uri: None,
+            remote_preview_result: None,
+            remote_preview_generation: 0,
+            remote_preview_cancel: Arc::new(AtomicBool::new(false)),
             query: String::new(),
             back: Vec::new(),
             forward: Vec::new(),
@@ -98,6 +106,28 @@ impl Tab {
             && !self.scan_cancel.load(Ordering::Relaxed)
     }
 
+    fn clear_remote_preview(&mut self) {
+        self.remote_preview_cancel.store(true, Ordering::Relaxed);
+        self.remote_preview_uri = None;
+        self.remote_preview_result = None;
+    }
+
+    fn next_remote_preview_token(&mut self, uri: String) -> Arc<AtomicBool> {
+        self.clear_remote_preview();
+        self.remote_preview_generation = self.remote_preview_generation.wrapping_add(1);
+        self.remote_preview_uri = Some(uri);
+        let token = Arc::new(AtomicBool::new(false));
+        self.remote_preview_cancel = Arc::clone(&token);
+        token
+    }
+
+    fn accepts_remote_preview(&self, tab_id: u64, generation: u64, uri: &str) -> bool {
+        self.id == tab_id
+            && self.remote_preview_generation == generation
+            && self.remote_preview_uri.as_deref() == Some(uri)
+            && !self.remote_preview_cancel.load(Ordering::Relaxed)
+    }
+
     fn location(&self) -> Location {
         self.remote_uri
             .as_ref()
@@ -106,6 +136,7 @@ impl Tab {
     }
 
     fn set_location(&mut self, location: Location) {
+        self.clear_remote_preview();
         match location {
             Location::Local(path) => {
                 self.path = path;
@@ -180,6 +211,13 @@ struct RemoteScanResult {
     generation: u64,
     uri: String,
     result: Result<Vec<volume::RemoteEntry>, String>,
+}
+
+struct RemotePreviewResult {
+    tab: u64,
+    generation: u64,
+    uri: String,
+    result: Result<String, String>,
 }
 
 struct RefreshResult {
@@ -529,6 +567,8 @@ pub struct Explorer {
     scan_receiver: Receiver<ScanResult>,
     remote_scan_sender: Sender<RemoteScanResult>,
     remote_scan_receiver: Receiver<RemoteScanResult>,
+    remote_preview_sender: Sender<RemotePreviewResult>,
+    remote_preview_receiver: Receiver<RemotePreviewResult>,
     refresh_sender: Sender<RefreshResult>,
     refresh_receiver: Receiver<RefreshResult>,
     volume_sender: Sender<Result<(String, Option<String>), String>>,
@@ -623,6 +663,7 @@ impl Explorer {
 
         let (scan_sender, scan_receiver) = mpsc::channel();
         let (remote_scan_sender, remote_scan_receiver) = mpsc::channel();
+        let (remote_preview_sender, remote_preview_receiver) = mpsc::channel();
         let (refresh_sender, refresh_receiver) = mpsc::channel();
         let (volume_sender, volume_receiver) = mpsc::channel();
         let (preview_sender, preview_receiver) = mpsc::channel();
@@ -651,6 +692,8 @@ impl Explorer {
             scan_receiver,
             remote_scan_sender,
             remote_scan_receiver,
+            remote_preview_sender,
+            remote_preview_receiver,
             refresh_sender,
             refresh_receiver,
             volume_sender,
@@ -830,6 +873,7 @@ impl Explorer {
             return;
         }
         self.tabs[index].cancel_scan();
+        self.tabs[index].clear_remote_preview();
         self.tabs.remove(index);
         if self.active >= self.tabs.len() {
             self.active = self.tabs.len() - 1;
@@ -847,6 +891,7 @@ impl Explorer {
         tab.loading = true;
         tab.error = None;
         if let Some(uri) = tab.remote_uri.clone() {
+            tab.clear_remote_preview();
             let sender = self.remote_scan_sender.clone();
             let id = tab.id;
             let generation = tab.generation;
@@ -895,6 +940,35 @@ impl Explorer {
         for index in 0..self.tabs.len() {
             self.scan(index);
         }
+    }
+
+    fn start_remote_preview(&mut self, uri: String) {
+        if self.current().remote_uri.is_none()
+            || !self
+                .current()
+                .remote_entries
+                .iter()
+                .any(|entry| !entry.is_directory && entry.uri == uri)
+        {
+            self.status = Some(("Select a file from the current network folder".into(), true));
+            return;
+        }
+        let tab = self.current_mut();
+        let cancel = tab.next_remote_preview_token(uri.clone());
+        let id = tab.id;
+        let generation = tab.remote_preview_generation;
+        let sender = self.remote_preview_sender.clone();
+        thread::spawn(move || {
+            let result = volume::preview_remote_text(&uri, &cancel);
+            if !cancel.load(Ordering::Relaxed) {
+                let _ = sender.send(RemotePreviewResult {
+                    tab: id,
+                    generation,
+                    uri,
+                    result,
+                });
+            }
+        });
     }
 
     fn toggle_hidden(&mut self) {
@@ -1313,6 +1387,13 @@ impl Explorer {
                         tab.error = Some(error);
                     }
                 }
+            }
+        }
+        while let Ok(message) = self.remote_preview_receiver.try_recv() {
+            if let Some(tab) = self.tabs.iter_mut().find(|tab| {
+                tab.accepts_remote_preview(message.tab, message.generation, &message.uri)
+            }) {
+                tab.remote_preview_result = Some(message.result);
             }
         }
         while let Ok(event) = self.op_receiver.try_recv() {
@@ -3362,7 +3443,7 @@ impl Explorer {
             .show(ui, |ui| {
                 ui.heading("Network location");
                 ui.monospace(self.current().remote_uri.as_deref().unwrap_or_default());
-                ui.small("Read-only: remote file previews, transfers and modifications are disabled.");
+                ui.small("Read-only: open folders or preview small text files. Transfers and modifications are disabled.");
                 ui.horizontal(|ui| {
                     if ui.button("Parent").clicked() {
                         self.parent();
@@ -3409,22 +3490,62 @@ impl Explorer {
                     ui.label("No entries.");
                 } else {
                     let mut open = None;
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        for entry in &self.current().remote_entries {
+                    let mut preview = None;
+                    let entries = &self.current().remote_entries;
+                    let list_height = if self.current().remote_preview_uri.is_some() {
+                        (ui.available_height() * 0.45).max(120.0)
+                    } else {
+                        ui.available_height().max(120.0)
+                    };
+                    egui::ScrollArea::vertical().max_height(list_height).show_rows(ui, 26.0, entries.len(), |ui, rows| {
+                        for entry in &entries[rows] {
                             ui.horizontal(|ui| {
                                 if entry.is_directory {
                                     if ui.button(format!("Folder  {}", entry.name)).on_hover_text(&entry.uri).clicked() {
                                         open = Some(entry.uri.clone());
                                     }
                                 } else {
-                                    ui.add_enabled(false, egui::Button::new(format!("File  {}", entry.name)))
-                                        .on_disabled_hover_text("Remote file opening will require the safe GIO file backend");
+                                    if ui.button(format!("Text preview  {}", entry.name)).on_hover_text(&entry.uri).clicked() {
+                                        preview = Some(entry.uri.clone());
+                                    }
                                 }
                             });
                         }
                     });
                     if let Some(uri) = open {
                         self.navigate_remote(uri);
+                    } else if let Some(uri) = preview {
+                        self.start_remote_preview(uri);
+                    }
+                }
+                if let Some(uri) = self.current().remote_preview_uri.clone() {
+                    ui.separator();
+                    let mut close = false;
+                    ui.horizontal(|ui| {
+                        ui.strong("Read-only text preview (32 KiB max)");
+                        close = ui.small_button("Close preview").clicked();
+                    });
+                    if close {
+                        self.current_mut().clear_remote_preview();
+                    } else {
+                        ui.small(uri);
+                        match &self.current().remote_preview_result {
+                            None => {
+                                ui.spinner();
+                                ui.label("Reading remote file…");
+                            }
+                            Some(Err(error)) => {
+                                ui.colored_label(Color32::LIGHT_RED, error);
+                            }
+                            Some(Ok(content)) if content.is_empty() => {
+                                ui.label("The text file is empty.");
+                            }
+                            Some(Ok(content)) => {
+                                egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+                                    ui.monospace(content);
+                                });
+                            }
+                        }
                     }
                 }
             });
@@ -4325,6 +4446,22 @@ mod tests {
         assert!(old.load(Ordering::Relaxed));
         assert!(!tab.accepts_scan_result(5, 2));
         assert!(!tab.accepts_scan_result(4, 2));
+    }
+
+    #[test]
+    fn remote_preview_results_cannot_survive_new_selection_or_navigation() {
+        let mut tab = Tab::new(5, PathBuf::from("/local"));
+        tab.visit(Location::parse("smb://nas/share".into()).unwrap());
+        let first = tab.next_remote_preview_token("smb://nas/share/a.txt".into());
+        let generation = tab.remote_preview_generation;
+        assert!(tab.accepts_remote_preview(5, generation, "smb://nas/share/a.txt"));
+        assert!(!tab.accepts_remote_preview(7, generation, "smb://nas/share/a.txt"));
+        let second = tab.next_remote_preview_token("smb://nas/share/b.txt".into());
+        assert!(first.load(Ordering::Relaxed));
+        assert!(!tab.accepts_remote_preview(5, generation, "smb://nas/share/a.txt"));
+        tab.visit(Location::Local("/another".into()));
+        assert!(second.load(Ordering::Relaxed));
+        assert!(tab.remote_preview_uri.is_none());
     }
 
     #[test]
