@@ -61,7 +61,8 @@ The renderer uses egui's bundled system-like proportional font, with a technical
   composes `top` and `bottom` regions from `menu-bar`, `tabs`, `navigation`
   and `command-bar` components. No component may render in both regions.
   Legacy themes without it use the established layout-family defaults.
-- `[shell.sidebar]` selects left/right placement, width and ordered visible
+- `[shell.sidebar]` selects left/right placement, width, independently
+  expandable (`collapsible`) or flat section presentation, and ordered visible
   `tasks`, `places`, `favorites` and `volumes` sections. The XP Luna task shelf
   provides real file actions vertically; it is not a cosmetic duplicate.
 - `[shell.preview]` selects the side and width of the on-demand preview pane.

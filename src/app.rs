@@ -6,7 +6,8 @@ use crate::{
     operation_queue::OperationQueue,
     preview,
     theme::{
-        BUILTIN_IDS, ChromeComponent, Layout, ShellKind, SidebarPosition, SidebarSection, Theme,
+        BUILTIN_IDS, ChromeComponent, Layout, ShellKind, SidebarPosition, SidebarSection,
+        SidebarSectionMode, Theme,
     },
 };
 use eframe::egui::{
@@ -1624,13 +1625,7 @@ impl Explorer {
                             SidebarSection::Favorites => "FAVORITES",
                             SidebarSection::Volumes => "VOLUMES",
                         };
-                        ui.label(
-                            egui::RichText::new(title)
-                                .small()
-                                .strong()
-                                .color(theme.palette.muted()),
-                        );
-                        match section {
+                        let mut render_section = |ui: &mut egui::Ui| match section {
                             SidebarSection::Tasks => self.sidebar_tasks(ui),
                             SidebarSection::Places => {
                                 ui.add_space(8.0);
@@ -1700,6 +1695,20 @@ impl Explorer {
                                     }
                                 }
                             }
+                        };
+                        if theme.sidebar_section_mode() == SidebarSectionMode::Collapsible {
+                            egui::CollapsingHeader::new(title)
+                                .id_salt((theme.id.as_str(), index))
+                                .default_open(true)
+                                .show(ui, |ui| render_section(ui));
+                        } else {
+                            ui.label(
+                                egui::RichText::new(title)
+                                    .small()
+                                    .strong()
+                                    .color(theme.palette.muted()),
+                            );
+                            render_section(ui);
                         }
                     }
                 });

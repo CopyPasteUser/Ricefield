@@ -14,6 +14,9 @@
   previews to either side and order a real file-tasks module in the sidebar.
   Give XP Luna a task-oriented sidebar and Frutiger Aero a bottom command
   strip; reject duplicated/missing navigation and invalid preview widths.
+- Give each skin flat or independently collapsible sidebar modules; enable
+  collapsible task/place/favorite/volume groups in XP Luna, while preserving
+  legacy flat rendering for other profiles.
 - Improve search debounce repaint timing and Linux mountinfo path decoding.
 - Cancel obsolete local folder scans and recursive searches as soon as a tab
   navigates, closes or changes its query. Workers check cancellation between

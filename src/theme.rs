@@ -75,12 +75,20 @@ pub enum SidebarSection {
     Volumes,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SidebarSectionMode {
+    Flat,
+    Collapsible,
+}
+
 #[derive(Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SidebarConfig {
     pub position: Option<SidebarPosition>,
     pub width: Option<f32>,
     pub sections: Option<Vec<SidebarSection>>,
+    pub mode: Option<SidebarSectionMode>,
 }
 
 #[derive(Clone, Default, Deserialize)]
@@ -236,6 +244,10 @@ impl Theme {
                 SidebarSection::Volumes,
             ]
         })
+    }
+
+    pub fn sidebar_section_mode(&self) -> SidebarSectionMode {
+        self.shell.sidebar.mode.unwrap_or(SidebarSectionMode::Flat)
     }
 
     pub fn sidebar_position(&self) -> SidebarPosition {
@@ -572,10 +584,23 @@ mod tests {
         assert_eq!(theme.preview_position(), SidebarPosition::Left);
         assert_eq!(theme.preview_width(), 320.0);
         assert!(theme.sidebar_sections().contains(&SidebarSection::Tasks));
+        assert_eq!(theme.sidebar_section_mode(), SidebarSectionMode::Collapsible);
         theme.validate().unwrap();
 
         theme.shell.preview.width = Some(190.0);
         assert!(theme.validate().is_err());
+    }
+
+    #[test]
+    fn sidebar_section_mode_is_skin_specific_and_backwards_compatible() {
+        let win7 = Theme::builtin("win7").unwrap();
+        assert_eq!(win7.sidebar_section_mode(), SidebarSectionMode::Flat);
+        let luna = Theme::builtin("xp-luna").unwrap();
+        assert_eq!(luna.sidebar_section_mode(), SidebarSectionMode::Collapsible);
+
+        let source = include_str!("../themes/win7.toml");
+        let unknown = format!("{source}\n[shell.sidebar]\nmode = 'floating'\n");
+        assert!(toml::from_str::<Theme>(&unknown).is_err());
     }
 
     #[test]

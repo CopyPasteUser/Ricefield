@@ -97,6 +97,7 @@ status_bar = true
 [shell.sidebar]
 position = "left"
 width = 230
+mode = "collapsible"
 sections = ["tasks", "places", "favorites", "volumes"]
 
 [shell.preview]
@@ -111,8 +112,10 @@ in **one region only**; navigation must remain present. If `top` is omitted,
 moving a default component to `bottom` automatically removes it from the
 default top region. Either region can be empty, but not both.
 
-The sidebar supports `left`/`right`, width (120–420) and ordered `tasks`,
-`places`, `favorites`, `volumes` modules. `tasks` provides real New Folder,
+The sidebar supports `left`/`right`, width (120–420), `mode = "flat"` or
+`mode = "collapsible"`, and ordered `tasks`, `places`, `favorites`, `volumes`
+modules. Collapsible modules can be expanded and collapsed independently; XP
+Luna enables this by default, while older themes remain flat. `tasks` provides real New Folder,
 Copy, Cut, Paste, Rename, Trash and Properties controls; it does not duplicate
 file-operation logic. `[shell.preview]` independently controls the preview
 pane's `left`/`right` placement and width (210–520) when a preview is open.

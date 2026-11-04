@@ -26,4 +26,5 @@ kind = "luna"
 top = ["menu-bar", "navigation", "tabs"]
 
 [shell.sidebar]
+mode = "collapsible"
 sections = ["tasks", "places", "favorites", "volumes"]

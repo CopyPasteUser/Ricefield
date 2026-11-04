@@ -56,8 +56,9 @@ particularly after an interrupted cross-volume move.
   `bottom_components` place maintained controls in distinct regions. A chrome
   component may appear only once; path navigation must remain accessible.
   Shell changes never replace state or the semantics/safety of mutations.
-- **Sidebar composition:** `Theme::sidebar_sections`, `sidebar_position` and
-  `sidebar_width` provide per-rice layout. The optional `tasks` section uses
+- **Sidebar composition:** `Theme::sidebar_sections`, `sidebar_position`,
+  `sidebar_width` and `sidebar_section_mode` provide per-rice layout. XP-style
+  collapsible groups retain their open/closed state independently. The optional `tasks` section uses
   the same New Folder/Copy/Cut/Paste/Rename/Trash/Properties handlers as the
   top menus. Task availability follows the current selection.
 - **Preview placement:** `Theme::preview_position` and `preview_width` govern
