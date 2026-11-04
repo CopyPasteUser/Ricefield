@@ -88,7 +88,10 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   replacement races but does not make recursive cleanup atomic.
 - [x] Retain regular-file hardlink relationships when multiple names for the
   same inode occur inside a single directory tree being copied. Cross-item
-  and out-of-tree links, extended metadata and ACL preservation remain open.
+  and out-of-tree links remain outside the scope of Copy. Cross-device Move
+  now refuses out-of-tree regular-file links and hardlinked symlinks before
+  staging rather than silently severing them. Extended metadata and ACL
+  correctness are still subject to strict target equivalence checks.
   Reject a staged hardlink reuse if its source inode was changed since the
   first copy, instead of silently reusing stale bytes.
 - [x] Snapshot every source entry before cross-device Move staging and

@@ -1071,6 +1071,7 @@ fn perform_with_progress_and_items(
                                 &mut source_manifest,
                                 &mut transfer,
                             )?;
+                            ensure_hardlink_scope_preserved(&source_manifest)?;
                             let mut journal = match journal_directory {
                                 Some(directory) => {
                                     Journal::begin_in(directory, source, &planned.target)?
@@ -1735,6 +1736,53 @@ fn capture_source_manifest(
         ensure_same_source(path, &metadata)?;
     }
     manifest.insert(path.to_path_buf(), metadata);
+    Ok(())
+}
+
+/// A cross-device Move cannot retain the identity of a hardlink whose other
+/// names live outside the single staged source tree. A Copy may intentionally
+/// create an independent inode, but deleting the original during Move would
+/// silently break that external relationship. Refuse the Move before staging.
+fn ensure_hardlink_scope_preserved(manifest: &BTreeMap<PathBuf, fs::Metadata>) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+
+        let mut copied_names = BTreeMap::<(u64, u64), u64>::new();
+        for metadata in manifest.values().filter(|meta| meta.is_file()) {
+            *copied_names
+                .entry((metadata.dev(), metadata.ino()))
+                .or_default() += 1;
+        }
+        for (path, metadata) in manifest {
+            if metadata.file_type().is_symlink() && metadata.nlink() > 1 {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    format!(
+                        "Cannot preserve a hardlinked symlink during cross-device Move: {}",
+                        path.display()
+                    ),
+                ));
+            }
+            if metadata.is_file()
+                && copied_names
+                    .get(&(metadata.dev(), metadata.ino()))
+                    .copied()
+                    .unwrap_or_default()
+                    != metadata.nlink()
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    format!(
+                        "Cross-device Move would break hardlinks outside the selected source tree: {}",
+                        path.display()
+                    ),
+                ));
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = manifest;
     Ok(())
 }
 
@@ -3096,6 +3144,73 @@ mod tests {
             first.ino(),
             fs::metadata(original.join("first.txt")).unwrap().ino()
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cross_device_move_refuses_hardlinks_outside_selected_tree() {
+        let root = test_root();
+        let source = root.join("original");
+        fs::create_dir(&source).unwrap();
+        let inside = source.join("inside.txt");
+        let outside = root.join("outside.txt");
+        fs::write(&inside, b"shared bytes").unwrap();
+        fs::hard_link(&inside, &outside).unwrap();
+
+        let mut manifest = BTreeMap::new();
+        manifest.insert(source.clone(), fs::symlink_metadata(&source).unwrap());
+        manifest.insert(inside.clone(), fs::symlink_metadata(&inside).unwrap());
+        let error = ensure_hardlink_scope_preserved(&manifest).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+        assert_eq!(fs::read(&inside).unwrap(), b"shared bytes");
+        assert_eq!(fs::read(&outside).unwrap(), b"shared bytes");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cross_device_move_accepts_hardlinks_fully_within_selected_tree() {
+        let root = test_root();
+        let source = root.join("original");
+        fs::create_dir(&source).unwrap();
+        let first = source.join("first.txt");
+        let second = source.join("second.txt");
+        fs::write(&first, b"shared bytes").unwrap();
+        fs::hard_link(&first, &second).unwrap();
+
+        let mut manifest = BTreeMap::new();
+        manifest.insert(source.clone(), fs::symlink_metadata(&source).unwrap());
+        manifest.insert(first.clone(), fs::symlink_metadata(&first).unwrap());
+        manifest.insert(second.clone(), fs::symlink_metadata(&second).unwrap());
+        ensure_hardlink_scope_preserved(&manifest).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cross_device_move_refuses_hardlinked_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let root = test_root();
+        let source = root.join("original");
+        fs::create_dir(&source).unwrap();
+        let first = source.join("link1");
+        let second = source.join("link2");
+        symlink("target", &first).unwrap();
+        fs::hard_link(&first, &second).unwrap();
+
+        let mut manifest = BTreeMap::new();
+        manifest.insert(source.clone(), fs::symlink_metadata(&source).unwrap());
+        manifest.insert(first.clone(), fs::symlink_metadata(&first).unwrap());
+        manifest.insert(second.clone(), fs::symlink_metadata(&second).unwrap());
+        assert_eq!(
+            ensure_hardlink_scope_preserved(&manifest)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Unsupported
+        );
+        assert_eq!(fs::read_link(first).unwrap(), Path::new("target"));
         fs::remove_dir_all(root).unwrap();
     }
 

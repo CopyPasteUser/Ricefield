@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Reject cross-device Move before staging when a regular-file inode also has
+  hardlink names outside the selected tree, or when a hardlinked symlink cannot
+  be reproduced. Internal regular-file hardlinks remain preserved. This avoids
+  silently severing external hardlink relationships; ordinary Copy remains
+  available for intentionally creating independent copies.
 - Offer session-only Undo for successfully renamed individual files/folders
   through the shared Transfers history. Capture the original raw filename and
   post-rename inode/metadata snapshot; restore with Linux's atomic
