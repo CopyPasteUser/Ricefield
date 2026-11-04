@@ -221,6 +221,10 @@ Current safeguards:
 - Multiple names for the same regular-file inode **inside one copied directory
   tree** remain hardlinked in the staged destination. Separate top-level paste
   items and hardlinks outside the selected tree are not linked together.
+- On Linux, accessible `user.*` extended attributes are copied for files,
+  directories and links. A destination that refuses one of these attributes
+  aborts staged publication instead of silently discarding it. System ACLs,
+  privileged metadata and file ownership are not yet migrated.
 - A source that changes identity, size, modification time or mode during copy
   fails validation before publication. Regular-file and directory access and
   modification timestamps are preserved where supported.
@@ -243,7 +247,7 @@ Current safeguards:
 
 **Important limitations:** Concurrent writers can still cause a partial move;
 the complete published destination is retained for manual recovery if source
-cleanup fails. ACLs, extended attributes, ownership, hardlink relationships
+cleanup fails. ACLs, non-`user.*` extended attributes, ownership, hardlink relationships
 *between separately copied source trees*, some symlink timestamps and full
 race-free cleanup are not preserved or guaranteed. **Do not use development
 builds for irreplaceable data.**

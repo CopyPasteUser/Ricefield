@@ -80,6 +80,9 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   Refuse a same-content replacement inode; handle ctime/link-count changes
   caused by our own earlier hardlink removals. The final check/unlink is
   still not atomic under a concurrent writer.
+- [x] Preserve readable Linux `user.*` xattrs in staged files, directories
+  and symlinks; refuse publication when the target cannot accept a copied
+  attribute. System ACLs, privileged namespaces and ownership remain open.
 - [x] Introduce a bounded, in-memory FIFO for up to 32 waiting Copy jobs,
   stable operation IDs, visible progress in every rice, and cancellation of
   waiting jobs without filesystem side effects. Pause the queue after an

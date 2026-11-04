@@ -1,4 +1,6 @@
 use crate::journal::{Journal, State};
+#[cfg(target_os = "linux")]
+use std::{ffi::CString, os::unix::ffi::OsStrExt};
 use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::{OsStr, OsString},
@@ -1932,6 +1934,12 @@ fn copy_tree(
             let target = fs::read_link(source)?;
             ensure_same_source(source, &metadata)?;
             std::os::unix::fs::symlink(target, destination)?;
+            #[cfg(target_os = "linux")]
+            if let Err(error) = copy_user_xattrs(source, destination, false) {
+                let _ = fs::remove_file(destination);
+                return Err(error);
+            }
+            ensure_same_source(source, &metadata)?;
             transfer.advance(metadata.len(), source);
             return Ok(());
         }
@@ -1959,6 +1967,9 @@ fn copy_tree(
             let output = File::open(destination)?;
             output.set_permissions(metadata.permissions())?;
             output.set_times(source_times(&metadata))?;
+            #[cfg(target_os = "linux")]
+            copy_user_xattrs(source, destination, true)?;
+            ensure_same_source(source, &metadata)?;
             output.sync_all()?;
             Ok(())
         })();
@@ -2010,6 +2021,9 @@ fn copy_tree(
             ensure_same_source(source, &metadata)?;
             output.set_permissions(metadata.permissions())?;
             output.set_times(source_times(&metadata))?;
+            #[cfg(target_os = "linux")]
+            copy_user_xattrs(source, destination, true)?;
+            ensure_same_source(source, &metadata)?;
             output.sync_all()?;
             Ok(())
         })();
@@ -2028,6 +2042,98 @@ fn copy_tree(
             "Special device files cannot be copied",
         ))
     }
+}
+
+/// Copy the unprivileged Linux user namespace without silently stripping
+/// user metadata on a cross-device Move. Unsupported destination xattrs fail
+/// the staged copy, leaving the source untouched. ACL/security namespaces
+/// still require a separate, privilege-aware implementation.
+#[cfg(target_os = "linux")]
+fn copy_user_xattrs(source: &Path, destination: &Path, follow: bool) -> io::Result<()> {
+    const MAX_NAMES: usize = 64 * 1024;
+    const MAX_VALUE: usize = 1024 * 1024;
+    let left = CString::new(source.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "NUL in source path"))?;
+    let right = CString::new(destination.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "NUL in destination path"))?;
+    let count = unsafe {
+        if follow {
+            libc::listxattr(left.as_ptr(), std::ptr::null_mut(), 0)
+        } else {
+            libc::llistxattr(left.as_ptr(), std::ptr::null_mut(), 0)
+        }
+    };
+    if count < 0 {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::EOPNOTSUPP) {
+            return Ok(());
+        }
+        return Err(error);
+    }
+    if count as usize > MAX_NAMES {
+        return Err(io::Error::other(
+            "Too many extended-attribute names to copy safely",
+        ));
+    }
+    if count == 0 {
+        return Ok(());
+    }
+    let mut names = vec![0u8; count as usize];
+    let actual = unsafe {
+        if follow {
+            libc::listxattr(left.as_ptr(), names.as_mut_ptr().cast(), names.len())
+        } else {
+            libc::llistxattr(left.as_ptr(), names.as_mut_ptr().cast(), names.len())
+        }
+    };
+    if actual < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    for name in names[..actual as usize].split(|byte| *byte == 0) {
+        if !name.starts_with(b"user.") {
+            continue;
+        }
+        let key = CString::new(name)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid xattr name"))?;
+        let length = unsafe {
+            if follow {
+                libc::getxattr(left.as_ptr(), key.as_ptr(), std::ptr::null_mut(), 0)
+            } else {
+                libc::lgetxattr(left.as_ptr(), key.as_ptr(), std::ptr::null_mut(), 0)
+            }
+        };
+        if length < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if length as usize > MAX_VALUE {
+            return Err(io::Error::other("Extended-attribute value is too large"));
+        }
+        let mut value = vec![0u8; length as usize];
+        let read = unsafe {
+            if follow {
+                libc::getxattr(left.as_ptr(), key.as_ptr(), value.as_mut_ptr().cast(), value.len())
+            } else {
+                libc::lgetxattr(left.as_ptr(), key.as_ptr(), value.as_mut_ptr().cast(), value.len())
+            }
+        };
+        if read < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if read != length {
+            return Err(io::Error::other("Extended attribute changed during copy"));
+        }
+        let written = unsafe {
+            if follow {
+                libc::setxattr(right.as_ptr(), key.as_ptr(), value.as_ptr().cast(), value.len(), 0)
+            } else {
+                libc::lsetxattr(right.as_ptr(), key.as_ptr(), value.as_ptr().cast(), value.len(), 0)
+            }
+        };
+        if written != 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok(())
 }
 
 /// Reject a replaced or modified source before exposing a staged copy.
@@ -2490,6 +2596,65 @@ mod tests {
         assert!(!source.exists());
         assert_eq!(fs::read(destination.join("a.txt")).unwrap(), b"shared");
         assert_eq!(fs::read(destination.join("b.txt")).unwrap(), b"shared");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn copying_tree_preserves_user_extended_attributes() {
+        let root = test_root();
+        let original = root.join("original");
+        let file = original.join("note.txt");
+        let output = root.join("output");
+        fs::create_dir(&original).unwrap();
+        fs::create_dir(&output).unwrap();
+        fs::write(&file, b"body").unwrap();
+        let key = CString::new("user.rice_explorer_test").unwrap();
+        let value = b"valuable metadata";
+        for path in [&original, &file] {
+            let name = CString::new(path.as_os_str().as_bytes()).unwrap();
+            let result = unsafe {
+                libc::setxattr(
+                    name.as_ptr(),
+                    key.as_ptr(),
+                    value.as_ptr().cast(),
+                    value.len(),
+                    0,
+                )
+            };
+            if result != 0 {
+                let error = io::Error::last_os_error();
+                if matches!(
+                    error.raw_os_error(),
+                    Some(libc::EOPNOTSUPP) | Some(libc::EPERM)
+                ) {
+                    fs::remove_dir_all(root).unwrap();
+                    return;
+                }
+                panic!("Cannot prepare xattr fixture: {error}");
+            }
+        }
+        perform(&Action::Copy {
+            sources: vec![original.clone()],
+            destination: output.clone(),
+            conflict: ConflictPolicy::KeepBoth,
+        })
+        .unwrap();
+
+        for path in [output.join("original"), output.join("original/note.txt")] {
+            let name = CString::new(path.as_os_str().as_bytes()).unwrap();
+            let mut found = [0u8; 64];
+            let size = unsafe {
+                libc::getxattr(
+                    name.as_ptr(),
+                    key.as_ptr(),
+                    found.as_mut_ptr().cast(),
+                    found.len(),
+                )
+            };
+            assert_eq!(size as usize, value.len());
+            assert_eq!(&found[..value.len()], value);
+        }
         fs::remove_dir_all(root).unwrap();
     }
 

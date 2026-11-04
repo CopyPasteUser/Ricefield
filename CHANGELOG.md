@@ -2,6 +2,10 @@
 
 ## Unreleased — v0.2 stability and v0.3 safety groundwork
 
+- Preserve accessible `user.*` extended attributes on Linux while staging
+  local copies and cross-filesystem moves. Fail safely if the destination
+  cannot store a source attribute; privileged labels, ACLs and ownership
+  remain explicitly unsupported.
 - Preserve internal hardlink relationships when copying a directory tree:
   repeated source inodes are hardlinked in private staging instead of creating
   unrelated independent files. The optimization is scoped to one published
