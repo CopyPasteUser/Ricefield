@@ -46,6 +46,12 @@ changed or the original name is occupied, Undo fails without replacing files;
 the control remains available for a deliberate retry. The action is not
 persisted across restarts and is not a general rollback guarantee.
 
+Cross-device Move must refuse a selected source tree with hardlinks to names
+outside the selected tree, or a hardlinked symlink, before it stages output.
+Copy may produce independent inodes; Move may not silently sever surviving
+hardlink relationships. Neither check provides atomic protection from an
+external writer changing source link counts after the preflight.
+
 Copy/cut immediately updates the internal file clipboard and synchronizes
 the desktop clipboard in a worker. Outstanding desktop writes coalesce to the
 latest selection. Paste reads the desktop clipboard asynchronously and never

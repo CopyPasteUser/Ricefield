@@ -271,7 +271,10 @@ Current safeguards:
   checks both opened file descriptors and their original paths for changes.
 - Multiple names for the same regular-file inode **inside one copied directory
   tree** remain hardlinked in the staged destination. Separate top-level paste
-  items and hardlinks outside the selected tree are not linked together.
+  items and hardlinks outside the selected tree are not linked together. Unlike
+  Copy, cross-device Move now refuses an inode with hardlink names outside the
+  selected tree, or a hardlinked symlink, before staging; deleting its source
+  would otherwise silently sever those relationships.
 - On Linux, accessible `user.*` extended attributes are copied for files,
   directories and links. A destination that refuses one of these attributes
   aborts staged publication instead of silently discarding it. POSIX access
