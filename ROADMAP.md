@@ -164,6 +164,10 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   multi-item Copy or Move stops; extend this report to Trash, Delete, Link and
   Batch Rename. This is an error diagnostic, not yet a full
   structured per-item result or rollback system.
+- [x] Provide structured per-item Link outcomes, read-only unique-destination
+  preflight and item-based progress. Test same-basename sources, a competing
+  writer after the first completed link, and cancellation of later items.
+  Completed links are not automatically rolled back or undone.
 - [ ] Finish advanced conflict choices (verified replace/compare, rename
   manually, per-item overrides) and recoverable user-facing error decisions.
   Current whole-batch preflight, Keep both, Skip existing and Abort on conflict

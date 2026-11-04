@@ -218,7 +218,10 @@ struct ItemCounts {
 /// Average-rate estimate based on transferred byte progress, not wall-clock
 /// samples. It is deliberately hidden until enough time and data exist.
 fn transfer_progress_details(progress: &Progress, elapsed: Duration) -> String {
-    let measures_items = matches!(progress.phase, "Trashing" | "Deleting" | "Renaming");
+    let measures_items = matches!(
+        progress.phase,
+        "Trashing" | "Deleting" | "Renaming" | "Linking"
+    );
     let mut detail = if measures_items && progress.total > 0 {
         format!("{} / {} items", progress.transferred, progress.total)
     } else if progress.total > 0 {
@@ -3994,8 +3997,8 @@ mod tests {
     }
 
     #[test]
-    fn destructive_progress_uses_items_not_bytes_or_byte_eta() {
-        for phase in ["Trashing", "Deleting", "Renaming"] {
+    fn item_progress_uses_counts_not_bytes_or_byte_eta() {
+        for phase in ["Trashing", "Deleting", "Renaming", "Linking"] {
             let progress = Progress {
                 transferred: 2,
                 total: 3,

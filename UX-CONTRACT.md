@@ -58,6 +58,12 @@ worker verifies all source identities and destination vacancies before its
 first mutation; individual renames use atomic no-overwrite semantics on Linux.
 Concurrent writers can still cause a partial batch and earlier renames remain.
 
+Symbolic-link batches reserve unique destination names before any creation,
+use atomic create-if-absent behavior, and report every requested source and
+actual link target in Transfers. A concurrent destination collision stops
+the batch and preserves the other writer's entry. Already created links are
+not silently rolled back; cancelled/unstarted entries remain explicit.
+
 ## Ownership and recovery
 
 - **File list/table:** `Explorer::file_listing`, shared for all themes; virtualized rows.

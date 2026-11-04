@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Track every symbolic-Link operation in Transfers, with a read-only batch
+  destination preflight, reserved unique names, item-count progress and
+  individual success/failure/cancel outcomes. A racing external destination
+  cannot be overwritten; earlier completed links remain visible after a
+  partial failure. Add tests for duplicate basenames, collisions and cancel.
 - Add byte-reproducible Linux x86_64 release bundles with SHA-256 manifests,
   binary-version guards and an unprivileged installer. Validate archive
   equivalence, checksums and install/uninstall behavior in isolated fixtures.
