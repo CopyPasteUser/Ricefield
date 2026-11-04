@@ -1,3 +1,4 @@
+use crate::location::Location;
 use serde::{Deserialize, Serialize};
 use std::{env, fs, io, path::PathBuf};
 
@@ -15,7 +16,9 @@ pub struct Config {
     pub bookmarks: Vec<PathBuf>,
     pub remote_favorites: Vec<String>,
     pub restore_session: bool,
-    pub session_tabs: Vec<PathBuf>,
+    // Local absolute paths and validated network URIs share this legacy TOML
+    // string field, so existing saved sessions remain readable.
+    pub session_tabs: Vec<String>,
     pub session_active: usize,
 }
 
@@ -51,46 +54,51 @@ pub fn config_file() -> PathBuf {
 }
 
 impl Config {
-    /// Restore only bounded, absolute, UTF-8 paths. Do not stat paths here:
-    /// checking an unavailable remote mount could freeze the UI at startup.
-    pub fn restored_session(&self) -> (Vec<PathBuf>, usize) {
+    /// Restore only validated local paths and network URIs. Never stat paths or
+    /// contact remote servers here: unavailable mounts must not block startup.
+    pub fn restored_session(&self) -> (Vec<Location>, usize) {
         if !self.restore_session {
             return (Vec::new(), 0);
         }
-        let mut paths = Vec::new();
+        let mut locations = Vec::new();
         let mut active = 0;
-        for (index, path) in self.session_tabs.iter().enumerate() {
-            if paths.len() >= MAX_SAVED_TABS {
+        for (index, text) in self.session_tabs.iter().enumerate() {
+            if locations.len() >= MAX_SAVED_TABS {
                 break;
             }
-            if !path.is_absolute() || path.to_str().is_none() {
+            let Some(location) = validated_session_location(text) else {
                 continue;
-            }
+            };
             if index == self.session_active {
-                active = paths.len();
+                active = locations.len();
             }
-            paths.push(path.clone());
+            locations.push(location);
         }
-        (paths, active)
+        (locations, active)
     }
 
     /// A private user setting, never a background replay of file mutations.
     /// Non-UTF-8 paths remain navigable but are excluded from TOML snapshots.
-    pub fn remember_session(&mut self, paths: &[PathBuf], active_index: usize) -> bool {
+    pub fn remember_session(&mut self, locations: &[Location], active_index: usize) -> bool {
         let (remembered, active) = if self.restore_session {
             let mut remembered = Vec::new();
             let mut active = 0;
-            for (index, path) in paths.iter().enumerate() {
+            for (index, location) in locations.iter().enumerate() {
                 if remembered.len() >= MAX_SAVED_TABS {
                     break;
                 }
-                if !path.is_absolute() || path.to_str().is_none() {
+                let text = match location {
+                    Location::Local(path) => path.to_str().map(str::to_owned),
+                    Location::Remote(remote) => Some(remote.uri.clone()),
+                };
+                let Some(text) = text.filter(|text| validated_session_location(text).is_some())
+                else {
                     continue;
-                }
+                };
                 if index == active_index {
                     active = remembered.len();
                 }
-                remembered.push(path.clone());
+                remembered.push(text);
             }
             (remembered, active)
         } else {
@@ -123,6 +131,17 @@ impl Config {
     }
 }
 
+fn validated_session_location(text: &str) -> Option<Location> {
+    if text.len() > 4096 {
+        return None;
+    }
+    match Location::parse(text.into()).ok()? {
+        Location::Local(path) if path.is_absolute() => Some(Location::Local(path)),
+        Location::Remote(remote) => Some(Location::Remote(remote)),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,7 +158,10 @@ mod tests {
     #[test]
     fn session_snapshots_preserve_tab_order_and_selected_index() {
         let mut config = Config::default();
-        let paths = vec![PathBuf::from("/one"), PathBuf::from("/two")];
+        let paths = vec![
+            Location::Local("/one".into()),
+            Location::Local("/two".into()),
+        ];
         assert!(config.remember_session(&paths, 1));
         assert!(!config.remember_session(&paths, 1));
         let encoded = toml::to_string(&config).unwrap();
@@ -150,21 +172,24 @@ mod tests {
     #[test]
     fn session_restore_is_bounded_and_never_checks_filesystem_state() {
         let mut config = Config::default();
-        let mut paths = vec![PathBuf::from("relative"), PathBuf::from("/offline/share")];
-        paths.extend((0..40).map(|index| PathBuf::from(format!("/folder-{index}"))));
+        let mut paths = vec![
+            Location::Local("relative".into()),
+            Location::Local("/offline/share".into()),
+        ];
+        paths.extend((0..40).map(|index| Location::Local(format!("/folder-{index}").into())));
         assert!(config.remember_session(&paths, 1));
         let (restored, active) = config.restored_session();
         assert_eq!(restored.len(), MAX_SAVED_TABS);
-        assert_eq!(restored[0], PathBuf::from("/offline/share"));
+        assert_eq!(restored[0], Location::Local("/offline/share".into()));
         assert_eq!(active, 0);
     }
 
     #[test]
     fn opting_out_discards_saved_tab_paths() {
         let mut config = Config::default();
-        config.remember_session(&[PathBuf::from("/private")], 0);
+        config.remember_session(&[Location::Local("/private".into())], 0);
         config.restore_session = false;
-        assert!(config.remember_session(&[PathBuf::from("/another")], 0));
+        assert!(config.remember_session(&[Location::Local("/another".into())], 0));
         assert!(config.session_tabs.is_empty());
         assert_eq!(config.restored_session(), (Vec::new(), 0));
     }
@@ -175,11 +200,43 @@ mod tests {
         use std::os::unix::ffi::OsStringExt;
         let mut config = Config::default();
         let raw = PathBuf::from(std::ffi::OsString::from_vec(b"/dir-\xff".to_vec()));
-        assert!(config.remember_session(&[raw, PathBuf::from("/visible")], 0));
+        assert!(config.remember_session(
+            &[Location::Local(raw), Location::Local("/visible".into())],
+            0
+        ));
         assert_eq!(
             config.restored_session(),
-            (vec![PathBuf::from("/visible")], 0)
+            (vec![Location::Local("/visible".into())], 0)
         );
         assert!(toml::to_string(&config).is_ok());
+    }
+
+    #[test]
+    fn restores_remote_tabs_without_persisting_unsafe_uris() {
+        let remote = Location::parse("smb://nas/share/Projects".into()).unwrap();
+        let locations = vec![Location::Local("/home/user".into()), remote.clone()];
+        let mut config = Config::default();
+        assert!(config.remember_session(&locations, 1));
+        let decoded: Config = toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
+        assert_eq!(decoded.restored_session(), (locations, 1));
+
+        config.session_tabs = vec![
+            "sftp://user:password@server/path".into(),
+            "relative/path".into(),
+            "smb://nas/share".into(),
+        ];
+        config.session_active = 2;
+        assert_eq!(
+            config.restored_session(),
+            (vec![Location::parse("smb://nas/share".into()).unwrap()], 0)
+        );
+
+        // Existing configs serialized local PathBuf values as TOML strings.
+        let legacy: Config =
+            toml::from_str("session_tabs = ['/old/home']\nsession_active = 0").unwrap();
+        assert_eq!(
+            legacy.restored_session().0,
+            vec![Location::Local("/old/home".into())]
+        );
     }
 }

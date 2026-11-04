@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Restore validated, read-only SMB/SFTP/WebDAV/MTP tabs alongside local tabs
+  in the existing 32-entry session snapshot, preserving selection and active
+  tab. Legacy local-only settings remain readable. Reject credentials and
+  malformed or oversized remote URIs; network scans stay asynchronous and
+  no remote file mutation is enabled.
+- Read GIO entry types in a single bounded background listing, so directory
+  entries are navigable while remote files remain visibly non-openable until
+  the safe file backend exists. Avoid turning file clicks into failed scans.
 - Allow read-only remote URIs in regular tabs with per-tab navigation/history
   and asynchronous GIO scans. Keep remote entries separate from local POSIX
   entries and block mutating local actions on remote tabs.
@@ -11,19 +19,18 @@
   cancel superseded scans and show timeout/offline errors without blocking
   the GUI. Add safe persisted
   URI favorites and an explicit reconnect control. This does not
-  enable remote file mutations or integrate remote paths into local tabs.
+  enable remote file mutations.
 - Add a GIO-backed, non-blocking network connection attempt and confirmed
   unmount/eject actions to the Volumes sidebar. Commands are argument-based,
-  have a bounded runtime, never call sudo, and do not claim a remote file
-  browsing backend or interactive authentication.
+  have a bounded runtime, never call sudo, and do not provide interactive
+  authentication.
 - Label mounted network shares separately from local volumes in the sidebar.
-  This is discovery-only: no mount, eject, credentials or remote browsing yet.
+  Volume detection alone does not confer mount or eject permission.
 - Start 0.4 location handling with a shared typed local/remote address parser
   for the CLI and GUI path field. Recognize SMB, SFTP, WebDAV and MTP URIs,
-  reject embedded credentials/invalid encodings, and report unsupported remote
-  navigation without scanning a fake local folder. Existing `file://` and raw
-  non-UTF-8 local pathname behavior remains unchanged. GIO/GVfs browsing is
-  **not** implemented yet.
+  reject embedded credentials/invalid encodings without scanning a fake local
+  folder. Existing `file://` and raw non-UTF-8 local pathname behavior remains
+  unchanged.
 
 ## 0.3.0-alpha.4 — 2026-11-04
 

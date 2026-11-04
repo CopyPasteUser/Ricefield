@@ -18,10 +18,15 @@ and validated SMB/SFTP/WebDAV/MTP addresses share a typed location parser.
 Network shares can be connected through a non-blocking GIO attempt. Once
 connected, a remote directory opens as a **read-only normal tab**, with its
 own Back/Forward history, parent navigation, asynchronous refresh and stale
-scan cancellation. The address bar accepts remote URIs; the sidebar exposes
+scan cancellation. The listing distinguishes folders from non-openable files;
+remote file previews and downloads await a safe backend. The address bar
+accepts remote URIs; the sidebar exposes
 network mounts, confirmed GIO unmount/eject actions, up to 32 validated
 persistent network favorites and explicit reconnect. The system `gio`
-executable and suitable GVfs backends are required.
+executable and suitable GVfs backends are required. Optional session restore
+now remembers remote tabs alongside local folders without storing credentials;
+offline shares report errors through background scans rather than delaying
+startup.
 
 **Safety boundary:** remote file modification, copy/move, rename, delete and
 paste remain disabled; remote tabs never fall through to local POSIX file
@@ -176,9 +181,10 @@ On ordinary launches, RiceExplorer restores the previously opened tabs and
 active location. **Explicit CLI folder arguments override the saved session.**
 Use **Session → Restore tabs on startup** in the shared actions toolbar to opt
 out and erase stored tab paths; the switch applies across all seven skins.
-Sessions are limited to 32 absolute UTF-8 paths. Non-UTF-8 paths remain usable
-but are not written to the TOML session; offline mounts are scanned in the
-background and may show an error rather than blocking launch. Tab history,
+Sessions are limited to 32 absolute UTF-8 local paths or validated remote URIs.
+Non-UTF-8 paths remain usable but are not written to the TOML session; offline
+mounts and network locations are scanned in the background and may show an
+error rather than blocking launch. No passwords or URI userinfo are saved. Tab history,
 search queries and pending file operations are **not** replayed on restart.
 
 To uninstall the application files, run `bash uninstall.sh` from the

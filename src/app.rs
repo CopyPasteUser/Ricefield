@@ -575,12 +575,13 @@ impl Explorer {
         let (recovery_comparison_sender, recovery_comparison_receiver) = mpsc::channel();
         let (clipboard_sender, clipboard_receiver) = mpsc::channel();
         // Explicit CLI paths take precedence over the saved session. Restored
-        // paths are inspected by asynchronous scans, never by synchronous stat.
+        // local and network locations are scanned asynchronously, never stat'ed
+        // or contacted while reading preferences.
         let from_session = locations.is_empty();
-        let (startup_paths, startup_active) = if from_session {
+        let (startup_locations, startup_active) = if from_session {
             config.restored_session()
         } else {
-            (locations, 0)
+            (locations.into_iter().map(Location::Local).collect(), 0)
         };
         let mut explorer = Self {
             config,
@@ -661,16 +662,24 @@ impl Explorer {
             focus_address: false,
             focus_search: false,
         };
-        if startup_paths.is_empty() {
+        if startup_locations.is_empty() {
             explorer.new_tab(config::home());
         } else {
-            for location in startup_paths {
-                let path = if !from_session && location.is_file() {
-                    location.parent().unwrap_or(Path::new("/")).to_path_buf()
-                } else {
-                    location
-                };
-                explorer.new_tab(path);
+            for location in startup_locations {
+                match location {
+                    Location::Local(path) => {
+                        let path = if !from_session && path.is_file() {
+                            path.parent().unwrap_or(Path::new("/")).to_path_buf()
+                        } else {
+                            path
+                        };
+                        explorer.new_tab(path);
+                    }
+                    Location::Remote(remote) => {
+                        explorer.new_tab(config::home());
+                        explorer.navigate_remote(remote.uri);
+                    }
+                }
             }
             explorer.active = startup_active.min(explorer.tabs.len() - 1);
             explorer.remember_session();
@@ -727,8 +736,17 @@ impl Explorer {
     }
 
     fn remember_session(&mut self) {
-        let paths: Vec<_> = self.tabs.iter().map(|tab| tab.path.clone()).collect();
-        if self.config.remember_session(&paths, self.active) {
+        let locations: Vec<_> = self
+            .tabs
+            .iter()
+            .map(|tab| {
+                tab.remote_uri
+                    .as_ref()
+                    .and_then(|uri| Location::parse(uri.clone().into()).ok())
+                    .unwrap_or_else(|| Location::Local(tab.path.clone()))
+            })
+            .collect();
+        if self.config.remember_session(&locations, self.active) {
             self.dirty_config = true;
         }
     }
@@ -977,6 +995,7 @@ impl Explorer {
         tab.query.clear();
         tab.address = uri;
         self.scan(self.active);
+        self.remember_session();
     }
 
     fn history(&mut self, backwards: bool) {
@@ -997,6 +1016,7 @@ impl Explorer {
                 tab.address = uri;
                 tab.remote_entries.clear();
                 self.scan(self.active);
+                self.remember_session();
             } else if backwards {
                 self.navigate(self.current().path.clone());
             }
@@ -3366,7 +3386,7 @@ impl Explorer {
             .show(ui, |ui| {
                 ui.heading("Network location");
                 ui.monospace(self.current().remote_uri.as_deref().unwrap_or_default());
-                ui.small("Read-only: remote file modifications and transfers are disabled.");
+                ui.small("Read-only: remote file previews, transfers and modifications are disabled.");
                 ui.horizontal(|ui| {
                     if ui.button("Parent").clicked() {
                         self.parent();
@@ -3415,9 +3435,16 @@ impl Explorer {
                     let mut open = None;
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         for entry in &self.current().remote_entries {
-                            if ui.button(&entry.name).on_hover_text(&entry.uri).clicked() {
-                                open = Some(entry.uri.clone());
-                            }
+                            ui.horizontal(|ui| {
+                                if entry.is_directory {
+                                    if ui.button(format!("Folder  {}", entry.name)).on_hover_text(&entry.uri).clicked() {
+                                        open = Some(entry.uri.clone());
+                                    }
+                                } else {
+                                    ui.add_enabled(false, egui::Button::new(format!("File  {}", entry.name)))
+                                        .on_disabled_hover_text("Remote file opening will require the safe GIO file backend");
+                                }
+                            });
                         }
                     });
                     if let Some(uri) = open {
