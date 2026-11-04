@@ -13,26 +13,22 @@ not replace the outstanding real-device acceptance.
 
 RiceExplorer is designed as the file-management companion to [RiceBowl](https://github.com/CopyPasteUser/RiceBowl). Its renderer, filesystem operations and visual profiles are separate: switching from Windows 98 to Windows 7 or ChromeOS changes the chrome, geometry, controls and icons without replacing the file manager or disturbing an open folder.
 
-**0.4 groundwork (in development):** the CLI and address bar now share a
-typed parser for local paths, `file://` URIs and validated SMB/SFTP/WebDAV/MTP
-addresses. Remote addresses cannot yet be browsed: they fail clearly without
-being misinterpreted as local paths. The Volumes sidebar now distinguishes
-detected network mounts from local volumes, without treating mounted paths as
-permission to mount or eject devices. The sidebar now offers a non-blocking
-GIO connection attempt and explicit, confirmed unmount/eject actions for
-mounted volumes. These actions require the system `gio` executable and
-appropriate GVfs backends/desktop authorization; password-protected shares
-cannot yet use an in-app credential prompt. Valid remote URI entry in the
-address bar, or a successful GIO connection, now opens a **read-only network
-browser** with bounded asynchronous listing, back/refresh and explicit
-connection errors. Superseded network listings are cancelled. Remote files
-cannot yet be copied, changed or deleted,
-and network directories now have read-only views in the regular tab bar,
-with per-tab Back/Forward and asynchronous refresh. Remote mutating actions
-are blocked before reaching the POSIX worker; the general remote entry and
-operation model is not yet unified with local file operations.
-The read-only browser offers up to 32 persistent validated network favorites
-and an explicit reconnect action, without saving passwords.
+**0.4 progress on `main` (not yet released):** Local paths, `file://`
+and validated SMB/SFTP/WebDAV/MTP addresses share a typed location parser.
+Network shares can be connected through a non-blocking GIO attempt. Once
+connected, a remote directory opens as a **read-only normal tab**, with its
+own Back/Forward history, parent navigation, asynchronous refresh and stale
+scan cancellation. The address bar accepts remote URIs; the sidebar exposes
+network mounts, confirmed GIO unmount/eject actions, up to 32 validated
+persistent network favorites and explicit reconnect. The system `gio`
+executable and suitable GVfs backends are required.
+
+**Safety boundary:** remote file modification, copy/move, rename, delete and
+paste remain disabled; remote tabs never fall through to local POSIX file
+workers. Native GIO/UDisks2 operation and capability APIs, safe remote
+transfers, application credential/keyring prompts, and real-device/disconnect
+acceptance are still outstanding. No passwords are stored. This is incremental
+0.4 development, **not** a complete or stable 0.4 release.
 
 **Built for structural customization.** RiceExplorer is not intended to be
 one file manager with seven recolors. Its TOML shells can move whole navigation,
@@ -44,7 +40,7 @@ renderers remain part of the roadmap.
 
 ![RiceExplorer icon](assets/rice-explorer.svg)
 
-## Implemented on `main` — v0.3.0-alpha.4
+## Implemented on `main` — v0.3 core and 0.4 groundwork
 
 - Native Rust GUI with GPU-accelerated drawing; no Electron, browser or persistent background daemon.
 - Seven bundled visual profiles: `win98`, `xp-luna`, `win7`, `win10`, `frutiger-aero`, `chromeos` and `macos`.
