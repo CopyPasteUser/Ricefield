@@ -37,12 +37,10 @@ struct Tab {
     path: PathBuf,
     address: String,
     remote_uri: Option<String>,
-    remote_back: Vec<String>,
-    remote_forward: Vec<String>,
     remote_entries: Vec<volume::RemoteEntry>,
     query: String,
-    back: Vec<PathBuf>,
-    forward: Vec<PathBuf>,
+    back: Vec<Location>,
+    forward: Vec<Location>,
     entries: Vec<Entry>,
     folded_names: Vec<String>,
     visible: Vec<usize>,
@@ -64,8 +62,6 @@ impl Tab {
             address: path.display().to_string(),
             path,
             remote_uri: None,
-            remote_back: Vec::new(),
-            remote_forward: Vec::new(),
             remote_entries: Vec::new(),
             query: String::new(),
             back: Vec::new(),
@@ -100,6 +96,68 @@ impl Tab {
         self.id == tab_id
             && self.generation == generation
             && !self.scan_cancel.load(Ordering::Relaxed)
+    }
+
+    fn location(&self) -> Location {
+        self.remote_uri
+            .as_ref()
+            .and_then(|uri| Location::parse(uri.clone().into()).ok())
+            .unwrap_or_else(|| Location::Local(self.path.clone()))
+    }
+
+    fn set_location(&mut self, location: Location) {
+        match location {
+            Location::Local(path) => {
+                self.path = path;
+                self.remote_uri = None;
+                self.address = self.path.display().to_string();
+            }
+            Location::Remote(remote) => {
+                self.address = remote.uri.clone();
+                self.remote_uri = Some(remote.uri);
+            }
+        }
+        self.remote_entries.clear();
+        self.entries.clear();
+        self.folded_names.clear();
+        self.visible.clear();
+        self.selected.clear();
+        self.last_selected = None;
+        self.query.clear();
+        self.search_pending = None;
+        self.dir_mtime = None;
+    }
+
+    fn visit(&mut self, location: Location) {
+        self.back.push(self.location());
+        if self.back.len() > 100 {
+            self.back.remove(0);
+        }
+        self.forward.clear();
+        self.set_location(location);
+    }
+
+    fn travel(&mut self, backwards: bool) -> bool {
+        let target = if backwards {
+            self.back.pop()
+        } else {
+            self.forward.pop()
+        };
+        let Some(target) = target else {
+            return false;
+        };
+        let previous = self.location();
+        let opposite = if backwards {
+            &mut self.forward
+        } else {
+            &mut self.back
+        };
+        opposite.push(previous);
+        if opposite.len() > 100 {
+            opposite.remove(0);
+        }
+        self.set_location(target);
+        true
     }
 }
 
@@ -678,6 +736,9 @@ impl Explorer {
                     Location::Remote(remote) => {
                         explorer.new_tab(config::home());
                         explorer.navigate_remote(remote.uri);
+                        // The local Home placeholder used to initialize the tab
+                        // is not a real step in the restored history.
+                        explorer.current_mut().back.clear();
                     }
                 }
             }
@@ -736,16 +797,7 @@ impl Explorer {
     }
 
     fn remember_session(&mut self) {
-        let locations: Vec<_> = self
-            .tabs
-            .iter()
-            .map(|tab| {
-                tab.remote_uri
-                    .as_ref()
-                    .and_then(|uri| Location::parse(uri.clone().into()).ok())
-                    .unwrap_or_else(|| Location::Local(tab.path.clone()))
-            })
-            .collect();
+        let locations: Vec<_> = self.tabs.iter().map(Tab::location).collect();
         if self.config.remember_session(&locations, self.active) {
             self.dirty_config = true;
         }
@@ -766,6 +818,9 @@ impl Explorer {
         self.new_tab(path);
         if let Some(uri) = uri {
             self.navigate_remote(uri);
+            // Duplicating a tab should not invent a visit to its last local
+            // fallback folder.
+            self.current_mut().back.clear();
         }
     }
 
@@ -785,6 +840,7 @@ impl Explorer {
     }
 
     fn scan(&mut self, index: usize) {
+        let show_hidden = self.config.show_hidden;
         let tab = &mut self.tabs[index];
         let cancel = tab.next_scan_token();
         tab.generation += 1;
@@ -795,7 +851,7 @@ impl Explorer {
             let id = tab.id;
             let generation = tab.generation;
             thread::spawn(move || {
-                let result = volume::list_remote(&uri, &cancel);
+                let result = volume::list_remote(&uri, show_hidden, &cancel);
                 if !cancel.load(Ordering::Relaxed) {
                     let _ = sender.send(RemoteScanResult {
                         tab: id,
@@ -810,7 +866,6 @@ impl Explorer {
         let task = (tab.id, tab.generation, tab.path.clone());
         let recursive = tab.recursive_search && !tab.query.is_empty();
         let query = tab.query.clone();
-        let show_hidden = self.config.show_hidden;
         let sender = self.scan_sender.clone();
         thread::spawn(move || {
             let result = if recursive {
@@ -839,6 +894,18 @@ impl Explorer {
     fn refresh_all(&mut self) {
         for index in 0..self.tabs.len() {
             self.scan(index);
+        }
+    }
+
+    fn toggle_hidden(&mut self) {
+        self.config.show_hidden = !self.config.show_hidden;
+        self.dirty_config = true;
+        for index in 0..self.tabs.len() {
+            if self.tabs[index].remote_uri.is_some() || self.tabs[index].recursive_search {
+                self.scan(index);
+            } else {
+                self.rebuild_visible(index);
+            }
         }
     }
 
@@ -934,22 +1001,9 @@ impl Explorer {
             self.scan(self.active);
             return;
         }
-        let tab = self.current_mut();
-        tab.remote_uri = None;
-        tab.remote_entries.clear();
-        tab.remote_back.clear();
-        tab.remote_forward.clear();
-        tab.back.push(tab.path.clone());
-        if tab.back.len() > 100 {
-            tab.back.remove(0);
-        }
-        tab.forward.clear();
-        tab.path = path;
-        tab.address = tab.path.display().to_string();
-        tab.query.clear();
-        tab.search_pending = None;
-        tab.selected.clear();
-        tab.last_selected = None;
+        self.preview_path = None;
+        self.preview_content = None;
+        self.current_mut().visit(Location::Local(path));
         self.scan(self.active);
         self.remember_session();
     }
@@ -975,71 +1029,25 @@ impl Explorer {
     }
 
     fn navigate_remote(&mut self, uri: String) {
-        self.preview_path = None;
-        self.preview_content = None;
-        let tab = self.current_mut();
-        if tab.remote_uri.as_deref() == Some(&uri) {
+        if self.current().remote_uri.as_deref() == Some(&uri) {
             self.scan(self.active);
             return;
         }
-        if let Some(previous) = tab.remote_uri.replace(uri.clone()) {
-            tab.remote_back.push(previous);
-            if tab.remote_back.len() > 100 {
-                tab.remote_back.remove(0);
-            }
-        }
-        tab.remote_forward.clear();
-        tab.remote_entries.clear();
-        tab.selected.clear();
-        tab.last_selected = None;
-        tab.query.clear();
-        tab.address = uri;
+        let Ok(remote @ Location::Remote(_)) = Location::parse(uri.into()) else {
+            self.status = Some(("Invalid network address".into(), true));
+            return;
+        };
+        self.preview_path = None;
+        self.preview_content = None;
+        self.current_mut().visit(remote);
         self.scan(self.active);
         self.remember_session();
     }
 
     fn history(&mut self, backwards: bool) {
-        if self.current().remote_uri.is_some() {
-            let tab = self.current_mut();
-            let target = if backwards {
-                tab.remote_back.pop()
-            } else {
-                tab.remote_forward.pop()
-            };
-            if let Some(uri) = target {
-                let current = tab.remote_uri.replace(uri.clone()).expect("remote tab");
-                if backwards {
-                    tab.remote_forward.push(current);
-                } else {
-                    tab.remote_back.push(current);
-                }
-                tab.address = uri;
-                tab.remote_entries.clear();
-                self.scan(self.active);
-                self.remember_session();
-            } else if backwards {
-                self.navigate(self.current().path.clone());
-            }
-            return;
-        }
-        let tab = self.current_mut();
-        let destination = if backwards {
-            tab.back.pop()
-        } else {
-            tab.forward.pop()
-        };
-        if let Some(destination) = destination {
-            if backwards {
-                tab.forward.push(tab.path.clone());
-            } else {
-                tab.back.push(tab.path.clone());
-            }
-            tab.path = destination;
-            tab.address = tab.path.display().to_string();
-            tab.query.clear();
-            tab.search_pending = None;
-            tab.selected.clear();
-            tab.last_selected = None;
+        if self.current_mut().travel(backwards) {
+            self.preview_path = None;
+            self.preview_content = None;
             self.scan(self.active);
             self.remember_session();
         }
@@ -1237,11 +1245,9 @@ impl Explorer {
             self.refresh_in_flight = false;
             self.volumes = result.volumes;
             for (tab_id, path, modified) in result.folders {
-                if let Some(index) = self
-                    .tabs
-                    .iter()
-                    .position(|tab| tab.id == tab_id && tab.path == path)
-                    && !self.tabs[index].loading
+                if let Some(index) = self.tabs.iter().position(|tab| {
+                    tab.id == tab_id && tab.path == path && tab.remote_uri.is_none()
+                }) && !self.tabs[index].loading
                     && self.tabs[index].dir_mtime != modified
                 {
                     self.scan(index);
@@ -2315,15 +2321,7 @@ impl Explorer {
             }
         }
         if ctrl && h {
-            self.config.show_hidden = !self.config.show_hidden;
-            self.dirty_config = true;
-            for index in 0..self.tabs.len() {
-                if self.tabs[index].recursive_search {
-                    self.scan(index);
-                } else {
-                    self.rebuild_visible(index);
-                }
-            }
+            self.toggle_hidden();
         }
         if ctrl && r {
             self.scan(self.active);
@@ -2529,15 +2527,7 @@ impl Explorer {
                     ui.close();
                 }
                 if ui.button("Show hidden files").clicked() {
-                    self.config.show_hidden = !self.config.show_hidden;
-                    for index in 0..self.tabs.len() {
-                        if self.tabs[index].recursive_search {
-                            self.scan(index);
-                        } else {
-                            self.rebuild_visible(index);
-                        }
-                    }
-                    self.dirty_config = true;
+                    self.toggle_hidden();
                     ui.close();
                 }
             });
@@ -2676,20 +2666,14 @@ impl Explorer {
     fn navigation_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             if ui
-                .add_enabled(
-                    !self.current().back.is_empty() || self.current().remote_uri.is_some(),
-                    egui::Button::new("<"),
-                )
+                .add_enabled(!self.current().back.is_empty(), egui::Button::new("<"))
                 .on_hover_text("Back (Alt+Left)")
                 .clicked()
             {
                 self.history(true);
             }
             if ui
-                .add_enabled(
-                    !self.current().forward.is_empty() || !self.current().remote_forward.is_empty(),
-                    egui::Button::new(">"),
-                )
+                .add_enabled(!self.current().forward.is_empty(), egui::Button::new(">"))
                 .on_hover_text("Forward (Alt+Right)")
                 .clicked()
             {
@@ -3313,15 +3297,7 @@ impl Explorer {
                         .on_hover_text("Toggle hidden files (Ctrl+H)")
                         .clicked()
                     {
-                        self.config.show_hidden = !self.config.show_hidden;
-                        self.dirty_config = true;
-                        for i in 0..self.tabs.len() {
-                            if self.tabs[i].recursive_search {
-                                self.scan(i);
-                            } else {
-                                self.rebuild_visible(i);
-                            }
-                        }
+                        self.toggle_hidden();
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let name = self.theme.name.clone();
@@ -4180,6 +4156,7 @@ impl eframe::App for Explorer {
             let folders: Vec<_> = self
                 .tabs
                 .iter()
+                .filter(|tab| tab.remote_uri.is_none())
                 .map(|tab| (tab.id, tab.path.clone()))
                 .collect();
             let sender = self.refresh_sender.clone();
@@ -4330,6 +4307,7 @@ mod tests {
     };
     use crate::clipboard;
     use crate::filesystem::{ItemResult, ItemState, Progress};
+    use crate::location::Location;
     use std::path::PathBuf;
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
@@ -4347,6 +4325,26 @@ mod tests {
         assert!(old.load(Ordering::Relaxed));
         assert!(!tab.accepts_scan_result(5, 2));
         assert!(!tab.accepts_scan_result(4, 2));
+    }
+
+    #[test]
+    fn one_history_tracks_local_and_network_steps_in_order() {
+        let mut tab = Tab::new(5, PathBuf::from("/local"));
+        let network = Location::parse("smb://nas/share".into()).unwrap();
+        tab.visit(network.clone());
+        tab.visit(Location::Local("/elsewhere".into()));
+        assert_eq!(tab.location(), Location::Local("/elsewhere".into()));
+
+        assert!(tab.travel(true));
+        assert_eq!(tab.location(), network);
+        assert!(tab.travel(true));
+        assert_eq!(tab.location(), Location::Local("/local".into()));
+        assert!(!tab.travel(true));
+        assert!(tab.travel(false));
+        assert!(tab.remote_uri.is_some());
+        tab.visit(Location::Local("/new".into()));
+        assert!(!tab.travel(false));
+        assert_eq!(tab.location(), Location::Local("/new".into()));
     }
 
     #[test]

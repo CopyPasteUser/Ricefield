@@ -16,9 +16,11 @@ RiceExplorer is designed as the file-management companion to [RiceBowl](https://
 **0.4 progress on `main` (not yet released):** Local paths, `file://`
 and validated SMB/SFTP/WebDAV/MTP addresses share a typed location parser.
 Network shares can be connected through a non-blocking GIO attempt. Once
-connected, a remote directory opens as a **read-only normal tab**, with its
-own Back/Forward history, parent navigation, asynchronous refresh and stale
-scan cancellation. The listing distinguishes folders from non-openable files;
+connected, a remote directory opens as a **read-only normal tab**, with
+Back/Forward history that also works across local and remote folders,
+parent navigation, asynchronous refresh and stale
+scan cancellation. Show-hidden also works on remote listings. The listing
+distinguishes folders from non-openable files;
 remote file previews and downloads await a safe backend. The address bar
 accepts remote URIs; the sidebar exposes
 network mounts, confirmed GIO unmount/eject actions, up to 32 validated
