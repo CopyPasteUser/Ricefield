@@ -180,6 +180,16 @@ pub struct Inspection {
 }
 
 impl Inspection {
+    /// Only offer an explicit, separate Copy preview when the recorded source
+    /// is still a supported object and its saved identity matches. The worker
+    /// still validates paths before copying; this never authorizes deletion.
+    pub fn can_offer_fresh_copy(&self) -> bool {
+        matches!(
+            self.source,
+            PathStatus::File | PathStatus::Directory | PathStatus::Symlink
+        ) && matches!(self.source_identity, IdentityStatus::SameSnapshot)
+    }
+
     /// Conservative triage only: metadata presence cannot authorize an undo,
     /// source deletion, or dismissal of a recovery record.
     pub fn guidance(&self) -> &'static str {
@@ -1425,6 +1435,44 @@ mod tests {
         let matched = IdentityStatus::SameSnapshot.label();
         assert!(matched.contains("contents not proven"));
         assert!(!matched.contains("safe to delete"));
+    }
+
+    #[test]
+    fn recovery_fresh_copy_offer_requires_visible_source_and_unchanged_identity() {
+        let mut inspection = Inspection {
+            record: Record {
+                id: "copy-check".into(),
+                state: State::Published,
+                source: PathBuf::from("/source"),
+                destination: PathBuf::from("/target"),
+                staging: None,
+                source_identity: None,
+                destination_identity: None,
+            },
+            source: PathStatus::File,
+            destination: PathStatus::File,
+            staging: None,
+            source_identity: IdentityStatus::SameSnapshot,
+            destination_identity: IdentityStatus::Changed,
+        };
+        assert!(inspection.can_offer_fresh_copy());
+        inspection.source = PathStatus::Directory;
+        assert!(inspection.can_offer_fresh_copy());
+        inspection.source = PathStatus::Symlink;
+        assert!(inspection.can_offer_fresh_copy());
+        inspection.source = PathStatus::Missing;
+        assert!(!inspection.can_offer_fresh_copy());
+        inspection.source = PathStatus::File;
+        for identity in [
+            IdentityStatus::Changed,
+            IdentityStatus::Replaced,
+            IdentityStatus::NotRecorded,
+            IdentityStatus::Unreadable("offline".into()),
+            IdentityStatus::Missing,
+        ] {
+            inspection.source_identity = identity;
+            assert!(!inspection.can_offer_fresh_copy());
+        }
     }
 
     #[cfg(unix)]

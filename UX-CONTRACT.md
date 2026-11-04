@@ -92,7 +92,11 @@ not silently rolled back; cancelled/unstarted entries remain explicit.
   states do not authorize automatic deletion, resume or overwriting. Show source
   and destination saved-inode evidence independently, with clear missing,
   changed and replaced states. Browse buttons navigate to the recorded paths'
-  parent folders without following the recorded entry as a symlink.
+  parent folders without following the recorded entry as a symlink. An optional
+  separate Copy is only offered for a visible source with matching recorded
+  identity, opens normal asynchronous Paste options with Keep both and an
+  explicit second confirmation, and never modifies journal evidence or
+  performs destructive move cleanup.
 - **Operations:** `filesystem::perform`; worker response includes actual completion result.
 - **Properties:** `Explorer::open_properties` schedules one background metadata
   reader at a time; a later request replaces the pending one. The shared

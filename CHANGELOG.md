@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Offer an opt-in fresh Copy preview from the unfinished-move review when the
+  original source's recorded identity still matches. It reuses the normal
+  background preflight, defaults to Keep both and requires a second explicit
+  Start transfer action. It never retries a destructive Move or clears the
+  original recovery record; replaced, changed, missing and legacy source
+  identity states cannot use this shortcut.
 - Recovery review now displays recorded source and destination inode/metadata
   observations separately, including missing evidence and replacement warnings.
   Browse the containing source, destination or staging folders directly from
