@@ -1852,7 +1852,7 @@ mod tests {
         let source = root.join(OsString::from_vec(b"raw-\xfe".to_vec()));
         fs::write(&source, b"payload").unwrap();
         assert!(plan_batch_rename(&[source.clone(), source.clone()], "x-", "").is_err());
-        let changes = plan_batch_rename(&[source.clone()], "x-", "-end").unwrap();
+        let changes = plan_batch_rename(std::slice::from_ref(&source), "x-", "-end").unwrap();
         perform(&Action::BatchRename { changes }).unwrap();
         let target = root.join(OsString::from_vec(b"x-raw-\xfe-end".to_vec()));
         assert_eq!(fs::read(target).unwrap(), b"payload");
