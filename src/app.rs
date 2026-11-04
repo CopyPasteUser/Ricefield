@@ -157,7 +157,10 @@ fn transfer_progress_details(progress: &Progress, elapsed: Duration) -> String {
             filesystem::human_size(progress.total)
         )
     } else {
-        format!("{} transferred", filesystem::human_size(progress.transferred))
+        format!(
+            "{} transferred",
+            filesystem::human_size(progress.transferred)
+        )
     };
     detail.push_str(&format!(" · {} elapsed", elapsed_label(elapsed)));
     if elapsed >= Duration::from_secs(1) && progress.transferred > 0 {
