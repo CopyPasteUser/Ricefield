@@ -747,8 +747,7 @@ impl Explorer {
     fn run_action(&mut self, action: Action) {
         if self.queue_paused && !matches!(&action, Action::Copy { .. }) {
             self.status = Some((
-                "Waiting copies are paused after an error. Resume or remove them first."
-                    .into(),
+                "Waiting copies are paused after an error. Resume or remove them first.".into(),
                 true,
             ));
             return;
