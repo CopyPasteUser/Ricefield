@@ -7,6 +7,7 @@ mod location;
 mod operation_queue;
 mod preview;
 mod theme;
+mod volume;
 
 use std::{env, ffi::OsString, path::PathBuf};
 

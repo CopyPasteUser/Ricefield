@@ -18,7 +18,12 @@ typed parser for local paths, `file://` URIs and validated SMB/SFTP/WebDAV/MTP
 addresses. Remote addresses cannot yet be browsed: they fail clearly without
 being misinterpreted as local paths. The Volumes sidebar now distinguishes
 detected network mounts from local volumes, without treating mounted paths as
-permission to mount or eject devices. GIO/GVfs connection handling comes next.
+permission to mount or eject devices. The sidebar now offers a non-blocking
+GIO connection attempt and explicit, confirmed unmount/eject actions for
+mounted volumes. These actions require the system `gio` executable and
+appropriate GVfs backends/desktop authorization; password-protected shares
+cannot yet use an in-app credential prompt. Direct remote browsing and
+remote file operations are **not** implemented yet.
 
 **Built for structural customization.** RiceExplorer is not intended to be
 one file manager with seven recolors. Its TOML shells can move whole navigation,

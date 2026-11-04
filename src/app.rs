@@ -10,6 +10,7 @@ use crate::{
         BUILTIN_IDS, ChromeComponent, Layout, ShellKind, SidebarPosition, SidebarSection,
         SidebarSectionMode, Theme,
     },
+    volume::{self, VolumeAction},
 };
 use eframe::egui::{
     self, Align2, Color32, FontId, Key, Modifiers, Pos2, Rect, Sense, Stroke, Vec2,
@@ -455,6 +456,12 @@ pub struct Explorer {
     scan_receiver: Receiver<ScanResult>,
     refresh_sender: Sender<RefreshResult>,
     refresh_receiver: Receiver<RefreshResult>,
+    volume_sender: Sender<Result<String, String>>,
+    volume_receiver: Receiver<Result<String, String>>,
+    volume_connect_open: bool,
+    volume_connect_uri: String,
+    volume_confirm: Option<VolumeAction>,
+    volume_busy: bool,
     preview_sender: Sender<PreviewResult>,
     preview_receiver: Receiver<PreviewResult>,
     property_sender: Sender<PropertyResult>,
@@ -541,6 +548,7 @@ impl Explorer {
 
         let (scan_sender, scan_receiver) = mpsc::channel();
         let (refresh_sender, refresh_receiver) = mpsc::channel();
+        let (volume_sender, volume_receiver) = mpsc::channel();
         let (preview_sender, preview_receiver) = mpsc::channel();
         let (property_sender, property_receiver) = mpsc::channel();
         let (op_sender, op_receiver) = mpsc::channel();
@@ -566,6 +574,12 @@ impl Explorer {
             scan_receiver,
             refresh_sender,
             refresh_receiver,
+            volume_sender,
+            volume_receiver,
+            volume_connect_open: false,
+            volume_connect_uri: String::new(),
+            volume_confirm: None,
+            volume_busy: false,
             preview_sender,
             preview_receiver,
             property_sender,
@@ -761,6 +775,80 @@ impl Explorer {
     fn refresh_all(&mut self) {
         for index in 0..self.tabs.len() {
             self.scan(index);
+        }
+    }
+
+    fn start_volume_action(&mut self, action: VolumeAction) {
+        if self.volume_busy {
+            return;
+        }
+        self.volume_busy = true;
+        let sender = self.volume_sender.clone();
+        thread::spawn(move || {
+            let label = action.label();
+            let result = volume::execute(&action)
+                .map(|()| format!("{label} succeeded. Refreshing mounted volumes…"));
+            let _ = sender.send(result);
+        });
+    }
+
+    fn volume_dialog(&mut self, context: &egui::Context) {
+        if self.volume_connect_open {
+            let mut open = true;
+            let mut connect = false;
+            egui::Window::new("Connect to network location")
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .show(context, |ui| {
+                    ui.label("SMB, SFTP, WebDAV or MTP address (no passwords in the URL):");
+                    ui.add_sized(
+                        [420.0, 26.0],
+                        egui::TextEdit::singleline(&mut self.volume_connect_uri)
+                            .hint_text("smb://server/share"),
+                    );
+                    ui.small("Uses system GIO/GVfs. Authentication prompts are not yet integrated; shares requiring credentials may fail.");
+                    connect = ui.add_enabled(!self.volume_busy, egui::Button::new("Connect")).clicked();
+                });
+            self.volume_connect_open = open;
+            if connect {
+                match Location::parse(self.volume_connect_uri.clone().into()) {
+                    Ok(Location::Remote(remote)) => {
+                        self.start_volume_action(VolumeAction::Connect(remote.uri));
+                        self.volume_connect_open = false;
+                        self.volume_connect_uri.clear();
+                    }
+                    Ok(Location::Local(_)) => {
+                        self.status = Some(("Enter a supported network URI".into(), true))
+                    }
+                    Err(error) => self.status = Some((error.into(), true)),
+                }
+            }
+        }
+        if let Some(action) = self.volume_confirm.clone() {
+            let mut approve = false;
+            let mut dismiss = false;
+            egui::Window::new(format!("Confirm {}", action.label()))
+                .collapsible(false)
+                .resizable(false)
+                .show(context, |ui| {
+                    ui.label(
+                        "Open files or transfers on this volume may fail after disconnecting it.",
+                    );
+                    ui.label("Make sure writes are complete before continuing.");
+                    ui.horizontal(|ui| {
+                        approve = ui
+                            .add_enabled(!self.volume_busy, egui::Button::new(action.label()))
+                            .clicked();
+                        dismiss = ui.button("Cancel").clicked();
+                    });
+                });
+            if approve {
+                self.start_volume_action(action);
+            }
+            if approve || dismiss {
+                self.volume_confirm = None;
+            }
         }
     }
 
@@ -1020,6 +1108,14 @@ impl Explorer {
                     self.scan(index);
                 }
             }
+        }
+        while let Ok(result) = self.volume_receiver.try_recv() {
+            self.volume_busy = false;
+            self.status = Some(match result {
+                Ok(message) => (message, false),
+                Err(error) => (error, true),
+            });
+            self.last_refresh_check = Instant::now() - Duration::from_secs(3);
         }
         while let Ok(message) = self.scan_receiver.try_recv() {
             if let Some(index) = self
@@ -2576,6 +2672,18 @@ impl Explorer {
                                 }
                             }
                             SidebarSection::Volumes => {
+                                if ui
+                                    .add_enabled(
+                                        !self.volume_busy,
+                                        egui::Button::new("+ Connect to network…"),
+                                    )
+                                    .clicked()
+                                {
+                                    self.volume_connect_open = true;
+                                }
+                                if self.volume_busy {
+                                    ui.small("GIO device operation in progress…");
+                                }
                                 for volume in self.volumes.clone() {
                                     let path = volume.path;
                                     let label = if path == Path::new("/") {
@@ -2587,15 +2695,43 @@ impl Explorer {
                                             path.file_name().unwrap_or_default().to_string_lossy()
                                         )
                                     };
-                                    if ui
+                                    let response = ui
                                         .add_sized(
                                             [ui.available_width(), 29.0],
                                             egui::Button::new(label)
                                                 .selected(self.current().path == path),
                                         )
-                                        .on_hover_text(path.display().to_string())
-                                        .clicked()
-                                    {
+                                        .on_hover_text(format!(
+                                            "{}\nRight-click for mount actions",
+                                            path.display()
+                                        ));
+                                    if path != Path::new("/") {
+                                        response.context_menu(|ui| {
+                                            if ui
+                                                .add_enabled(
+                                                    !self.volume_busy,
+                                                    egui::Button::new("Unmount safely…"),
+                                                )
+                                                .clicked()
+                                            {
+                                                self.volume_confirm =
+                                                    Some(VolumeAction::Unmount(path.clone()));
+                                                ui.close();
+                                            }
+                                            if ui
+                                                .add_enabled(
+                                                    !self.volume_busy,
+                                                    egui::Button::new("Eject…"),
+                                                )
+                                                .clicked()
+                                            {
+                                                self.volume_confirm =
+                                                    Some(VolumeAction::Eject(path.clone()));
+                                                ui.close();
+                                            }
+                                        });
+                                    }
+                                    if response.clicked() {
                                         self.navigate(path);
                                     }
                                 }
@@ -3805,6 +3941,7 @@ impl eframe::App for Explorer {
         self.preview_panel(ui);
         self.main_panel(ui);
         self.dialogs(&context);
+        self.volume_dialog(&context);
         self.recovery_dialog(&context);
         self.transfer_dialog(&context);
         if self.dirty_config {
@@ -3820,6 +3957,7 @@ impl eframe::App for Explorer {
         let waiting_for_properties =
             matches!(&self.dialog, Some(Dialog::Properties { details: None, .. }));
         let idle_delay = if self.busy
+            || self.volume_busy
             || waiting_for_preview
             || waiting_for_properties
             || self.tabs.iter().any(|tab| tab.loading)
