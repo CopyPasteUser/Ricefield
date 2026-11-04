@@ -77,8 +77,13 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   operation error/cancellation until the user explicitly resumes it. Keep a
   bounded 64-entry session-only result history with success/failure/cancel.
 - [ ] Extend the queue to Move and other operations only after stale-source
-  preflight and safe confirmation are implemented; add per-item results,
-  persistent history, elapsed time/rate/ETA and failure recovery.
+  preflight and safe confirmation are implemented; add persistent history
+  and failure recovery. Per-item results and elapsed time/rate/ETA are tracked
+  below as complete; in-memory history is not durable.
+- [x] Show elapsed wall-clock time, average transferred-byte throughput and a
+  conservative approximate ETA on active transfers across all rice layouts;
+  show final elapsed time in session results. Hide estimates before enough
+  progress has been measured, and test rate/ETA formatting.
 - [x] Add structured Copy/Move results for every requested source, including
   completed/renamed targets, explicit skips, failures, cancellations and
   unstarted items. Show a bounded-height, virtualized detail list in Transfers

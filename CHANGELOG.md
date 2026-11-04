@@ -2,6 +2,9 @@
 
 ## Unreleased — v0.2 stability and v0.3 safety groundwork
 
+- Show transfer elapsed time, average transferred-byte speed and approximate
+  ETA in all rice layouts, with per-job durations in session history. Avoid
+  misleading estimates on very short or unknown-sized transfers.
 - Preflight full Copy/Move batches before the first mutation: validate source
   identities, destination directories, duplicate and nested selected sources,
   and destinations inside a source tree. Reserve names within a batch so two

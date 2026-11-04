@@ -134,6 +134,7 @@ struct CompletedOperation {
     summary: String,
     outcome: OperationOutcome,
     finished_at: SystemTime,
+    elapsed: Duration,
     items: Vec<filesystem::ItemResult>,
     counts: ItemCounts,
 }
@@ -144,6 +145,48 @@ struct ItemCounts {
     skipped: usize,
     failed: usize,
     not_started: usize,
+}
+
+/// Average-rate estimate based on transferred byte progress, not wall-clock
+/// samples. It is deliberately hidden until enough time and data exist.
+fn transfer_progress_details(progress: &Progress, elapsed: Duration) -> String {
+    let mut detail = if progress.total > 0 {
+        format!(
+            "{} / {}",
+            filesystem::human_size(progress.transferred),
+            filesystem::human_size(progress.total)
+        )
+    } else {
+        format!("{} transferred", filesystem::human_size(progress.transferred))
+    };
+    detail.push_str(&format!(" · {} elapsed", elapsed_label(elapsed)));
+    if elapsed >= Duration::from_secs(1) && progress.transferred > 0 {
+        let rate = progress.transferred as f64 / elapsed.as_secs_f64();
+        if rate.is_finite() && rate > 0.0 {
+            detail.push_str(&format!(" · {}/s avg", filesystem::human_size(rate as u64)));
+            if progress.total > progress.transferred {
+                let remaining = (progress.total - progress.transferred) as f64 / rate;
+                if remaining.is_finite() && remaining <= 24.0 * 3600.0 * 365.0 {
+                    detail.push_str(&format!(
+                        " · ~{} remaining",
+                        elapsed_label(Duration::from_secs_f64(remaining.ceil()))
+                    ));
+                }
+            }
+        }
+    }
+    detail
+}
+
+fn elapsed_label(duration: Duration) -> String {
+    let seconds = duration.as_secs();
+    if seconds >= 3600 {
+        format!("{}h {:02}m", seconds / 3600, seconds % 3600 / 60)
+    } else if seconds >= 60 {
+        format!("{}m {:02}s", seconds / 60, seconds % 60)
+    } else {
+        format!("{seconds}s")
+    }
 }
 
 impl ItemCounts {
@@ -278,6 +321,7 @@ pub struct Explorer {
     paste_preview_generation: u64,
     operation_queue: OperationQueue,
     active_operation: Option<(u64, String)>,
+    active_started: Option<Instant>,
     queue_paused: bool,
     show_operations: bool,
     recent_operations: VecDeque<CompletedOperation>,
@@ -364,6 +408,7 @@ impl Explorer {
             paste_preview_generation: 0,
             operation_queue: OperationQueue::default(),
             active_operation: None,
+            active_started: None,
             queue_paused: false,
             show_operations: false,
             recent_operations: VecDeque::new(),
@@ -691,6 +736,11 @@ impl Explorer {
                         .map(|(_, label)| label)
                         .unwrap_or_else(|| "File operation".into());
                     self.progress = None;
+                    let elapsed = self
+                        .active_started
+                        .take()
+                        .map(|start| start.elapsed())
+                        .unwrap_or_default();
                     if let Some(moved) = moved_paths
                         && self
                             .clipboard
@@ -749,6 +799,7 @@ impl Explorer {
                         summary,
                         outcome,
                         finished_at: SystemTime::now(),
+                        elapsed,
                         counts: ItemCounts::from_items(&report.items),
                         items: report.items,
                     });
@@ -886,6 +937,9 @@ impl Explorer {
                             } else {
                                 ui.spinner();
                             }
+                            if let Some(started) = self.active_started {
+                                ui.small(transfer_progress_details(progress, started.elapsed()));
+                            }
                         }
                     }
                     if !self.operation_queue.is_empty() {
@@ -930,6 +984,9 @@ impl Explorer {
                     ui.strong(format!("Running #{id}: {label}"));
                     if let Some(progress) = &self.progress {
                         ui.label(format!("{}: {}", progress.phase, progress.current.display()));
+                        if let Some(started) = self.active_started {
+                            ui.small(transfer_progress_details(progress, started.elapsed()));
+                        }
                     }
                     if ui.button("Cancel running transfer").clicked() {
                         self.cancel.store(true, Ordering::Relaxed);
@@ -968,6 +1025,7 @@ impl Explorer {
                             ui.strong(format!("#{} · {outcome}", entry.id));
                             ui.label(&entry.label);
                             ui.small(filesystem::age(Some(entry.finished_at)));
+                            ui.small(format!("Took {}", elapsed_label(entry.elapsed)));
                         });
                         if entry.outcome == OperationOutcome::Failed {
                             ui.colored_label(Color32::LIGHT_RED, &entry.summary);
@@ -1076,6 +1134,7 @@ impl Explorer {
         };
         self.busy = true;
         self.active_operation = Some((job.id, job.label));
+        self.active_started = Some(Instant::now());
         self.progress = None;
         self.cancel = Arc::new(AtomicBool::new(false));
         let cancel = Arc::clone(&self.cancel);
@@ -3230,8 +3289,11 @@ fn paint_file_icon(painter: &egui::Painter, rect: Rect, file: &Entry, theme: &Th
 
 #[cfg(test)]
 mod tests {
-    use super::{Action, NameMode, Tab, next_search_repaint_delay, remaining_cut_paths};
-    use crate::filesystem::{ItemResult, ItemState};
+    use super::{
+        Action, NameMode, Tab, elapsed_label, next_search_repaint_delay, remaining_cut_paths,
+        transfer_progress_details,
+    };
+    use crate::filesystem::{ItemResult, ItemState, Progress};
     use std::path::PathBuf;
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
@@ -3334,5 +3396,35 @@ mod tests {
             detail: None,
         }];
         assert_eq!(remaining_cut_paths(&items), None);
+    }
+
+    #[test]
+    fn transfer_metrics_show_average_rate_and_reasonable_eta() {
+        let progress = Progress {
+            transferred: 4 * 1024 * 1024,
+            total: 16 * 1024 * 1024,
+            current: PathBuf::from("/file"),
+            phase: "Copying",
+        };
+        let details = transfer_progress_details(&progress, Duration::from_secs(2));
+        assert!(details.contains("4.0 MiB / 16.0 MiB"));
+        assert!(details.contains("2.0 MiB/s avg"));
+        assert!(details.contains("~6s remaining"));
+    }
+
+    #[test]
+    fn transfer_metrics_hide_unreliable_rate_before_first_second() {
+        let progress = Progress {
+            transferred: 0,
+            total: 0,
+            current: PathBuf::from("/empty"),
+            phase: "Copying",
+        };
+        let details = transfer_progress_details(&progress, Duration::from_millis(200));
+        assert!(details.contains("0 B transferred"));
+        assert!(!details.contains("/s avg"));
+        assert!(!details.contains("remaining"));
+        assert_eq!(elapsed_label(Duration::from_secs(71)), "1m 11s");
+        assert_eq!(elapsed_label(Duration::from_secs(3661)), "1h 01m");
     }
 }
