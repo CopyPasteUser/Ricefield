@@ -1,0 +1,99 @@
+name: Linux release bundle
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v0.3.*'
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Linux development and GUI smoke dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libgl1-mesa-dev xvfb xauth xdotool imagemagick libgl1-mesa-dri libxkbcommon-x11-0
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked --all-targets
+      - run: cargo build --locked --release
+      - name: CLI and seven-theme graphical smoke
+        run: |
+          target/release/rice-explorer --help
+          target/release/rice-explorer --version
+          target/release/rice-explorer --list-themes
+          xvfb-run -a -s '-screen 0 1280x800x24' bash scripts/gui_smoke.sh
+      - name: Build and verify reproducible release bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          bash scripts/package-release.sh target/release/rice-explorer dist
+          bash scripts/package-release.sh target/release/rice-explorer dist-repeat
+          (cd dist && sha256sum --check -- *.sha256)
+          archive="$(find dist -maxdepth 1 -type f -name '*.tar.gz' -print -quit)"
+          cmp -- "$archive" "dist-repeat/$(basename "$archive")"
+          unpack_dir="$(mktemp -d)"
+          test_home="$(mktemp -d)"
+          tar xzf "$archive" -C "$unpack_dir"
+          bundle_dir="$(find "$unpack_dir" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          HOME="$test_home" bash "$bundle_dir/install.sh"
+          HOME="$test_home" "$test_home/.local/bin/rice-explorer" --version
+          HOME="$test_home" bash "$bundle_dir/uninstall.sh"
+          test ! -e "$test_home/.local/bin/rice-explorer"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rice-explorer-release-bundle
+          path: dist/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rice-explorer-release-gui-smoke
+          path: screenshots/
+          if-no-files-found: error
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v0.3.')
+    needs: bundle
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate tag matches Cargo package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_tag="v$(sed -nE 's/^version = "([^"]+)"$/\1/p' Cargo.toml)"
+          test "$GITHUB_REF_NAME" = "$expected_tag"
+      - name: Download verified workflow bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh run download "$GITHUB_RUN_ID" --name rice-explorer-release-bundle --dir dist
+      - name: Publish GitHub release from existing tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum --check -- *.sha256)
+          options=(--verify-tag --generate-notes)
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            options+=(--prerelease)
+          fi
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.sha256 "${options[@]}"

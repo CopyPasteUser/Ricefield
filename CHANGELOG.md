@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add byte-reproducible Linux x86_64 release bundles with SHA-256 manifests,
+  binary-version guards and an unprivileged installer. Validate archive
+  equivalence, checksums and install/uninstall behavior in isolated fixtures.
+  Provide a manually dispatchable CI packaging job and tag-gated GitHub
+  prerelease/publication workflow; do not tag final 0.3 before the outstanding
+  recovery and Linux Mint acceptance gates pass.
 - Serialize the recovery-journal capacity check and creation across cooperating
   Unix RiceExplorer processes with an advisory directory lock. Open that
   directory without following symlinks and validate its private permissions.
