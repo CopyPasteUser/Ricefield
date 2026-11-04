@@ -90,6 +90,22 @@ pub enum IdentityStatus {
     Replaced,
 }
 
+impl IdentityStatus {
+    /// Human-readable observation only; never enough to authorize cleanup.
+    pub fn label(&self) -> String {
+        match self {
+            Self::NotRecorded => "No saved inode evidence for this path".into(),
+            Self::Missing => "Recorded path is missing".into(),
+            Self::Unreadable(error) => format!("Cannot inspect saved identity: {error}"),
+            Self::SameSnapshot => {
+                "Saved inode and metadata still match (contents not proven)".into()
+            }
+            Self::Changed => "Same inode, but recorded metadata has changed".into(),
+            Self::Replaced => "Different inode or object type now occupies this path".into(),
+        }
+    }
+}
+
 fn inspect_identity(path: &Path, recorded: Option<&ObjectIdentity>) -> IdentityStatus {
     let Some(recorded) = recorded else {
         return IdentityStatus::NotRecorded;
@@ -1389,6 +1405,26 @@ mod tests {
         );
         inspection.destination = PathStatus::File;
         assert!(inspection.guidance().contains("destination is visible"));
+    }
+
+    #[test]
+    fn recovery_identity_labels_distinguish_evidence_without_authorizing_cleanup() {
+        assert!(IdentityStatus::NotRecorded.label().contains("No saved"));
+        assert!(IdentityStatus::Missing.label().contains("missing"));
+        assert!(
+            IdentityStatus::Unreadable("mount offline".into())
+                .label()
+                .contains("mount offline")
+        );
+        assert!(
+            IdentityStatus::Changed
+                .label()
+                .contains("metadata has changed")
+        );
+        assert!(IdentityStatus::Replaced.label().contains("Different inode"));
+        let matched = IdentityStatus::SameSnapshot.label();
+        assert!(matched.contains("contents not proven"));
+        assert!(!matched.contains("safe to delete"));
     }
 
     #[cfg(unix)]

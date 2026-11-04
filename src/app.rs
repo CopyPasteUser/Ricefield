@@ -1163,6 +1163,7 @@ impl Explorer {
         let mut open = true;
         let mut rescan = false;
         let mut compare = None;
+        let mut browse_parent = None;
         egui::Window::new("Unfinished cross-device moves")
             .open(&mut open)
             .default_width(610.0)
@@ -1186,10 +1187,18 @@ impl Explorer {
                             ui.strong(format!("{} — {:?}", record.id, record.state));
                             ui.label(format!("Source: {}", record.source.display()));
                             ui.small(format!("Current source: {}", inspection.source.label()));
+                            ui.small(format!(
+                                "Source identity: {}",
+                                inspection.source_identity.label()
+                            ));
                             ui.label(format!("Destination: {}", record.destination.display()));
                             ui.small(format!(
                                 "Current destination: {}",
                                 inspection.destination.label()
+                            ));
+                            ui.small(format!(
+                                "Destination identity: {}",
+                                inspection.destination_identity.label()
                             ));
                             if let Some(staging) = &record.staging {
                                 ui.label(format!("Staging: {}", staging.display()));
@@ -1197,6 +1206,19 @@ impl Explorer {
                             if let Some(staging) = &inspection.staging {
                                 ui.small(format!("Current staging: {}", staging.label()));
                             }
+                            ui.horizontal_wrapped(|ui| {
+                                if ui.button("Browse source folder").clicked() {
+                                    browse_parent = record.source.parent().map(Path::to_path_buf);
+                                }
+                                if ui.button("Browse destination folder").clicked() {
+                                    browse_parent = record.destination.parent().map(Path::to_path_buf);
+                                }
+                                if let Some(staging) = &record.staging
+                                    && ui.button("Browse staging folder").clicked()
+                                {
+                                    browse_parent = staging.parent().map(Path::to_path_buf);
+                                }
+                            });
                             let guidance = match record.state {
                                 JournalState::Prepared => "Copy may be incomplete or may not have started.",
                                 JournalState::StagedVerified => "Staged data was verified; final publication may have occurred.",
@@ -1253,6 +1275,14 @@ impl Explorer {
         }
         if rescan {
             self.check_unfinished_moves();
+        }
+        if let Some(folder) = browse_parent {
+            self.recovery_open = false;
+            self.recovery_comparison_cancel
+                .store(true, Ordering::Relaxed);
+            // Navigate to the parent rather than following a potentially
+            // replaced source/destination symlink. Navigation scans on a worker.
+            self.navigate(folder);
         }
     }
 
