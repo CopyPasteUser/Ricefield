@@ -332,7 +332,10 @@ fn plan_removal_batch(
         if !path.is_absolute() {
             return Err(PlanFailure::at(
                 index,
-                io::Error::new(io::ErrorKind::InvalidInput, "Removal paths must be absolute"),
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Removal paths must be absolute",
+                ),
             ));
         }
         let normalized = fs::canonicalize(parent)
@@ -353,8 +356,7 @@ fn plan_removal_batch(
                 ));
             }
         }
-        let metadata =
-            fs::symlink_metadata(path).map_err(|error| PlanFailure::at(index, error))?;
+        let metadata = fs::symlink_metadata(path).map_err(|error| PlanFailure::at(index, error))?;
         resolved_paths.push(normalized);
         snapshots.push(metadata);
     }
@@ -3008,7 +3010,13 @@ mod tests {
             &AtomicBool::new(false),
             &mut |_| {},
         );
-        assert!(report.result.unwrap_err().to_string().contains("No items were removed"));
+        assert!(
+            report
+                .result
+                .unwrap_err()
+                .to_string()
+                .contains("No items were removed")
+        );
         assert_eq!(report.items[0].state, ItemState::NotStarted);
         assert_eq!(report.items[1].state, ItemState::Failed);
         assert_eq!(report.items[2].state, ItemState::NotStarted);
@@ -3064,7 +3072,10 @@ mod tests {
             },
         );
         assert!(changed);
-        assert_eq!(report.result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            report.result.unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
         assert_eq!(report.items[0].state, ItemState::Completed);
         assert_eq!(report.items[1].state, ItemState::Failed);
         assert!(!first.exists());
