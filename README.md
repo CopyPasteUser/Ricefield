@@ -2,6 +2,10 @@
 
 **A Linux-first file explorer written in Rust, with a different personality for every desktop rice.**
 
+[![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+
+> **Latest source:** [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main) — actively developed toward 1.0. The package currently identifies as **v0.2.0** (`Cargo.toml`); the **v0.3 file-operation improvements are implemented incrementally but have not passed the complete v0.3 release gate**. No version 1.0 release is claimed. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+
 RiceExplorer is designed as the file-management companion to [RiceBowl](https://github.com/CopyPasteUser/RiceBowl). Its renderer, filesystem operations and visual profiles are separate: switching from Windows 98 to Windows 7 or ChromeOS changes the chrome, geometry, controls and icons without replacing the file manager or disturbing an open folder.
 
 **Built for structural customization.** RiceExplorer is not intended to be
@@ -14,7 +18,7 @@ renderers remain part of the roadmap.
 
 ![RiceExplorer icon](assets/rice-explorer.svg)
 
-## Current features — v0.2
+## Implemented on `main` — v0.2 baseline + ongoing v0.3 work
 
 - Native Rust GUI with GPU-accelerated drawing; no Electron, browser or persistent background daemon.
 - Seven bundled visual profiles: `win98`, `xp-luna`, `win7`, `win10`, `frutiger-aero`, `chromeos` and `macos`.
@@ -36,6 +40,14 @@ renderers remain part of the roadmap.
 - Background folder scanning and file operations; superseded local scans and recursive searches are cooperatively cancelled and cannot overwrite current results. Virtualized file listing for large directories.
 - Copy files into the open folder by dragging them from the desktop or another file manager.
 - External TOML themes with configurable top/bottom tool regions, reorderable sidebar modules and left/right preview; persistent user settings. A single executable works with all rices.
+
+**Most recent functional work:** a worker-based batch rename with a complete
+prefix/suffix, literal replacement and sequence-number preview; atomic
+no-overwrite renames on Linux; more precise partial-batch diagnostics;
+and strict error reporting for missing permanent-delete targets. The last
+verified workflow checks Rust formatting, Clippy, unit tests, a release
+build, CLI startup and Xvfb GUI startup for all seven skins. These are
+development checks, **not** a production release or full Linux Mint acceptance.
 
 ### Install on Linux Mint / Xfce
 
