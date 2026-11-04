@@ -39,6 +39,8 @@ Only one mutation worker runs at a time; folder reads may proceed concurrently. 
   the 32-job bound; `Explorer::start_next_operation` alone dispatches workers.
   `Explorer::transfer_strip` and `transfer_dialog` are shared by all shells.
   Pending copies are volatile and never replay automatically after restart.
+  The dialog keeps 64 recent session outcomes (completed, cancelled, failed)
+  without claiming that earlier successful items in a failed batch rolled back.
 - **Theme:** `Theme::apply` and runtime TOML files; no theme-specific copy/move behavior.
 - **Shell composition:** `Theme::shell_kind` and `Theme::top_components` select
   existing controls and their order. A shell may change the interface, never

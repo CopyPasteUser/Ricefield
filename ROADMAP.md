@@ -69,7 +69,8 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
 - [x] Introduce a bounded, in-memory FIFO for up to 32 waiting Copy jobs,
   stable operation IDs, visible progress in every rice, and cancellation of
   waiting jobs without filesystem side effects. Pause the queue after an
-  operation error/cancellation until the user explicitly resumes it.
+  operation error/cancellation until the user explicitly resumes it. Keep a
+  bounded 64-entry session-only result history with success/failure/cancel.
 - [ ] Extend the queue to Move and other operations only after stale-source
   preflight and safe confirmation are implemented; add per-item results,
   persistent history, elapsed time/rate/ETA and failure recovery.

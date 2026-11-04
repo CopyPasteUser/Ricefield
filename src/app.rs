@@ -13,7 +13,7 @@ use eframe::egui::{
     self, Align2, Color32, FontId, Key, Modifiers, Pos2, Rect, Sense, Stroke, Vec2,
 };
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, VecDeque},
     path::{Path, PathBuf},
     process::Command,
     sync::{
@@ -26,6 +26,7 @@ use std::{
 };
 
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(350);
+const MAX_RECENT_OPERATIONS: usize = 64;
 
 struct Tab {
     id: u64,
@@ -107,6 +108,21 @@ struct OperationResult {
     moved_paths: Option<Vec<PathBuf>>,
 }
 
+struct CompletedOperation {
+    id: u64,
+    label: String,
+    summary: String,
+    outcome: OperationOutcome,
+    finished_at: SystemTime,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OperationOutcome {
+    Succeeded,
+    Cancelled,
+    Failed,
+}
+
 enum OperationEvent {
     Progress(Progress),
     Finished(OperationResult),
@@ -168,6 +184,7 @@ pub struct Explorer {
     active_operation: Option<(u64, String)>,
     queue_paused: bool,
     show_operations: bool,
+    recent_operations: VecDeque<CompletedOperation>,
     recovery_sender: Sender<(u64, std::io::Result<Vec<JournalRecord>>)>,
     recovery_receiver: Receiver<(u64, std::io::Result<Vec<JournalRecord>>)>,
     recovery_generation: u64,
@@ -240,6 +257,7 @@ impl Explorer {
             active_operation: None,
             queue_paused: false,
             show_operations: false,
+            recent_operations: VecDeque::new(),
             recovery_sender,
             recovery_receiver,
             recovery_generation: 0,
@@ -530,11 +548,14 @@ impl Explorer {
                 OperationEvent::Progress(progress) => self.progress = Some(progress),
                 OperationEvent::Finished(message) => {
                     self.busy = false;
-                    self.active_operation = None;
+                    let label = self
+                        .active_operation
+                        .take()
+                        .map(|(_, label)| label)
+                        .unwrap_or_else(|| "File operation".into());
                     self.progress = None;
-                    match message.result {
+                    let (summary, outcome) = match message.result {
                         Ok(success) => {
-                            self.status = Some((format!("#{}: {success}", message.id), false));
                             if message.moved_paths.as_ref().is_some_and(|moved| {
                                 self.clipboard.as_ref().is_some_and(|clipboard| {
                                     clipboard.cut && &clipboard.paths == moved
@@ -542,23 +563,38 @@ impl Explorer {
                             }) {
                                 self.clipboard = None;
                             }
+                            (success, OperationOutcome::Succeeded)
                         }
                         Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
                             self.queue_paused = !self.operation_queue.is_empty();
-                            self.status = Some((
+                            (
                                 if self.queue_paused {
                                     "Cancelled. Completed items remain; waiting copies are paused."
                                 } else {
                                     "Cancelled. Previously completed items remain in place."
                                 }
-                                .into(),
-                                false,
-                            ));
+                                .to_owned(),
+                                OperationOutcome::Cancelled,
+                            )
                         }
                         Err(error) => {
                             self.queue_paused = !self.operation_queue.is_empty();
-                            self.status = Some((format!("Operation failed: {error}"), true))
+                            (format!("Operation failed: {error}"), OperationOutcome::Failed)
                         }
+                    };
+                    self.status = Some((
+                        format!("#{}: {summary}", message.id),
+                        outcome == OperationOutcome::Failed,
+                    ));
+                    self.recent_operations.push_front(CompletedOperation {
+                        id: message.id,
+                        label,
+                        summary,
+                        outcome,
+                        finished_at: SystemTime::now(),
+                    });
+                    if self.recent_operations.len() > MAX_RECENT_OPERATIONS {
+                        self.recent_operations.pop_back();
                     }
                     self.refresh_all();
                     self.check_unfinished_moves();
@@ -731,14 +767,37 @@ impl Explorer {
                         });
                     }
                 });
+                ui.separator();
+                ui.strong(format!("Recent results ({})", self.recent_operations.len()));
+                ui.small("This session only. A failed batch may have completed earlier items.");
+                egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                    for entry in &self.recent_operations {
+                        let outcome = match entry.outcome {
+                            OperationOutcome::Succeeded => "Completed",
+                            OperationOutcome::Cancelled => "Cancelled",
+                            OperationOutcome::Failed => "Failed",
+                        };
+                        ui.horizontal_wrapped(|ui| {
+                            ui.strong(format!("#{} · {outcome}", entry.id));
+                            ui.label(&entry.label);
+                            ui.small(filesystem::age(Some(entry.finished_at)));
+                        });
+                        if entry.outcome == OperationOutcome::Failed {
+                            ui.colored_label(Color32::LIGHT_RED, &entry.summary);
+                        } else {
+                            ui.small(&entry.summary);
+                        }
+                        ui.separator();
+                    }
+                });
             });
         self.show_operations = open;
-        if let Some(id) = remove {
-            if self.operation_queue.remove(id) {
-                self.status = Some((format!("Removed waiting copy #{id}"), false));
-                if self.operation_queue.is_empty() {
-                    self.queue_paused = false;
-                }
+        if let Some(id) = remove
+            && self.operation_queue.remove(id)
+        {
+            self.status = Some((format!("Removed waiting copy #{id}"), false));
+            if self.operation_queue.is_empty() {
+                self.queue_paused = false;
             }
         }
         self.start_next_operation();
