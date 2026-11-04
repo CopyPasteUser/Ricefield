@@ -4,7 +4,7 @@
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Development preview: v0.3.0-alpha.2** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not the completed v0.3 release gate or a safe replacement for Thunar with irreplaceable data. It adds hardened local operations and recovery inspection while ACLs, ownership, fully race-free cleanup and hardware acceptance remain outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+> **Development preview: v0.3.0-alpha.3** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not the completed v0.3 release gate or a safe replacement for Thunar with irreplaceable data. This preview adds per-item Link results, asynchronous Properties, safe completed-journal retirement, queue controls and reproducible Linux packages. Race-free source cleanup, verified restart recovery and physical Mint/USB acceptance remain outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
 **Distribution:** An [automated Linux x86_64 preview bundle](RELEASE.md) can
 be built without distributing Rust sources to every end user. The verified
@@ -23,7 +23,7 @@ renderers remain part of the roadmap.
 
 ![RiceExplorer icon](assets/rice-explorer.svg)
 
-## Implemented on `main` — v0.3.0-alpha.2
+## Implemented on `main` — v0.3.0-alpha.3
 
 - Native Rust GUI with GPU-accelerated drawing; no Electron, browser or persistent background daemon.
 - Seven bundled visual profiles: `win98`, `xp-luna`, `win7`, `win10`, `frutiger-aero`, `chromeos` and `macos`.
