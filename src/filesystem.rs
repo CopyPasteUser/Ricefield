@@ -3187,6 +3187,33 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn cross_device_move_refuses_partially_selected_hardlink_group() {
+        let root = test_root();
+        let source = root.join("original");
+        fs::create_dir(&source).unwrap();
+        let first = source.join("first.txt");
+        let second = source.join("second.txt");
+        let outside = root.join("outside.txt");
+        fs::write(&first, b"shared bytes").unwrap();
+        fs::hard_link(&first, &second).unwrap();
+        fs::hard_link(&first, &outside).unwrap();
+
+        let mut manifest = BTreeMap::new();
+        manifest.insert(source.clone(), fs::symlink_metadata(&source).unwrap());
+        manifest.insert(first.clone(), fs::symlink_metadata(&first).unwrap());
+        manifest.insert(second.clone(), fs::symlink_metadata(&second).unwrap());
+        assert_eq!(
+            ensure_hardlink_scope_preserved(&manifest)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Unsupported
+        );
+        assert_eq!(fs::read(outside).unwrap(), b"shared bytes");
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn cross_device_move_refuses_hardlinked_symlink() {
