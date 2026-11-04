@@ -1,6 +1,4 @@
 use crate::journal::{Journal, State};
-#[cfg(target_os = "linux")]
-use std::{ffi::CString, os::unix::ffi::OsStrExt};
 use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::{OsStr, OsString},
@@ -10,6 +8,8 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant, SystemTime},
 };
+#[cfg(target_os = "linux")]
+use std::{ffi::CString, os::unix::ffi::OsStrExt};
 
 /// A snapshot of a file operation; callbacks run on the worker thread.
 #[derive(Clone, Debug)]
@@ -2111,9 +2111,19 @@ fn copy_user_xattrs(source: &Path, destination: &Path, follow: bool) -> io::Resu
         let mut value = vec![0u8; length as usize];
         let read = unsafe {
             if follow {
-                libc::getxattr(left.as_ptr(), key.as_ptr(), value.as_mut_ptr().cast(), value.len())
+                libc::getxattr(
+                    left.as_ptr(),
+                    key.as_ptr(),
+                    value.as_mut_ptr().cast(),
+                    value.len(),
+                )
             } else {
-                libc::lgetxattr(left.as_ptr(), key.as_ptr(), value.as_mut_ptr().cast(), value.len())
+                libc::lgetxattr(
+                    left.as_ptr(),
+                    key.as_ptr(),
+                    value.as_mut_ptr().cast(),
+                    value.len(),
+                )
             }
         };
         if read < 0 {
@@ -2124,9 +2134,21 @@ fn copy_user_xattrs(source: &Path, destination: &Path, follow: bool) -> io::Resu
         }
         let written = unsafe {
             if follow {
-                libc::setxattr(right.as_ptr(), key.as_ptr(), value.as_ptr().cast(), value.len(), 0)
+                libc::setxattr(
+                    right.as_ptr(),
+                    key.as_ptr(),
+                    value.as_ptr().cast(),
+                    value.len(),
+                    0,
+                )
             } else {
-                libc::lsetxattr(right.as_ptr(), key.as_ptr(), value.as_ptr().cast(), value.len(), 0)
+                libc::lsetxattr(
+                    right.as_ptr(),
+                    key.as_ptr(),
+                    value.as_ptr().cast(),
+                    value.len(),
+                    0,
+                )
             }
         };
         if written != 0 {
