@@ -1217,6 +1217,10 @@ impl Explorer {
                                 "Destination identity: {}",
                                 inspection.destination_identity.label()
                             ));
+                            ui.small(format!(
+                                "Staging → publication: {}",
+                                inspection.publication_evidence.label()
+                            ));
                             if let Some(staging) = &record.staging {
                                 ui.label(format!("Staging: {}", staging.display()));
                             }

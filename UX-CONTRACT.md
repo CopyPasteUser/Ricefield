@@ -52,6 +52,13 @@ Copy may produce independent inodes; Move may not silently sever surviving
 hardlink relationships. Neither check provides atomic protection from an
 external writer changing source link counts after the preflight.
 
+The v3 Move journal saves the verified staged object's inode before it is
+published. If publication races with another writer or a crash, recovery
+can report whether the destination still names that staged inode. This
+evidence is read-only and cannot itself authorize retry, rollback, cleanup
+or dismissal. Legacy journal versions without staged inode evidence remain
+inspectable and explicitly marked as unproven.
+
 Copy/cut immediately updates the internal file clipboard and synchronizes
 the desktop clipboard in a worker. Outstanding desktop writes coalesce to the
 latest selection. Paste reads the desktop clipboard asynchronously and never

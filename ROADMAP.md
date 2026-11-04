@@ -218,6 +218,11 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   before/after reads; do not interpret matches as permission to delete.
 - [x] Persist Unix source inode and metadata evidence before staging and
   published-destination identity after the durable publication barrier.
+  Journal v3 additionally persists the staged payload inode identity after
+  verification and refuses the Published transition unless the destination
+  still names that same inode. After restart the read-only review shows this
+  relationship even after publication with an incomplete StagedVerified record;
+  v1/v2 records retain read-only legacy compatibility.
   Recovery inspection distinguishes changed and replaced recorded objects;
   v1 records remain inspectable without pretending that evidence exists.
   v2 records with missing evidence are rejected. Refuse new move journals at
@@ -232,7 +237,7 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   reader used for recovery. Keep incomplete, malformed or changing records,
   and sync the journal directory after cleanup. No incomplete record expiry,
   resume, rollback or comprehensive long-term retention policy is implied.
-- [ ] Add durable provenance evidence, safe restart resume/rollback and
+- [ ] Complete durable content provenance, safe restart resume/rollback and
   race-free source cleanup; a matching read-only scan is insufficient.
 - [x] Isolate test journals and GUI smoke XDG state from the developer's real
   state, including tests that intentionally leave unfinished transfers.

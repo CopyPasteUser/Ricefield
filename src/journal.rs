@@ -16,7 +16,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 const MAX_RECORD_BYTES: u64 = 64 * 1024;
 const MAX_RECORDS: usize = 4096;
 // Recovery comparisons are explicitly requested, never run during startup.
@@ -43,6 +43,7 @@ pub struct Record {
     pub destination: PathBuf,
     pub staging: Option<PathBuf>,
     pub source_identity: Option<ObjectIdentity>,
+    pub staged_identity: Option<ObjectIdentity>,
     pub destination_identity: Option<ObjectIdentity>,
 }
 
@@ -177,6 +178,64 @@ pub struct Inspection {
     pub staging: Option<PathStatus>,
     pub source_identity: IdentityStatus,
     pub destination_identity: IdentityStatus,
+    pub publication_evidence: PublicationEvidence,
+}
+
+/// A persisted staging inode can be compared to the destination inode after
+/// restart, even if the process died between rename and the Published record.
+/// An inode match alone never proves that file contents are still unchanged.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PublicationEvidence {
+    NotRecorded,
+    DestinationMissing,
+    SameInode,
+    DifferentObject,
+    Unreadable(String),
+}
+
+impl PublicationEvidence {
+    pub fn label(&self) -> String {
+        match self {
+            Self::NotRecorded => "No staging-to-publication inode evidence".into(),
+            Self::DestinationMissing => "Recorded staged object is not at the destination".into(),
+            Self::SameInode => {
+                "Published inode matches the staged inode (contents not proven)".into()
+            }
+            Self::DifferentObject => "Destination is not the recorded staged inode".into(),
+            Self::Unreadable(error) => format!("Cannot verify staged inode: {error}"),
+        }
+    }
+}
+
+fn inspect_publication(record: &Record) -> PublicationEvidence {
+    let Some(staged) = &record.staged_identity else {
+        return PublicationEvidence::NotRecorded;
+    };
+    #[cfg(unix)]
+    {
+        match fs::symlink_metadata(&record.destination) {
+            Ok(current) => {
+                let current = identity_of(&current);
+                if staged.dev == current.dev
+                    && staged.ino == current.ino
+                    && staged.mode & libc::S_IFMT == current.mode & libc::S_IFMT
+                {
+                    PublicationEvidence::SameInode
+                } else {
+                    PublicationEvidence::DifferentObject
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                PublicationEvidence::DestinationMissing
+            }
+            Err(error) => PublicationEvidence::Unreadable(error.to_string()),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = staged;
+        PublicationEvidence::NotRecorded
+    }
 }
 
 impl Inspection {
@@ -203,6 +262,10 @@ impl Inspection {
             "At least one path cannot be inspected. Check mounts and permissions before taking action."
         } else if matches!(self.source_identity, IdentityStatus::Replaced)
             || matches!(self.destination_identity, IdentityStatus::Replaced)
+            || matches!(
+                self.publication_evidence,
+                PublicationEvidence::DifferentObject
+            )
         {
             "A recorded path now names a different filesystem object. Treat recovery as unsafe; do not remove or overwrite either side."
         } else if matches!(self.source_identity, IdentityStatus::Changed)
@@ -244,6 +307,7 @@ fn path_status(path: &Path) -> PathStatus {
 
 fn inspect_record(record: Record) -> Inspection {
     Inspection {
+        publication_evidence: inspect_publication(&record),
         source: path_status(&record.source),
         destination: path_status(&record.destination),
         staging: record.staging.as_ref().map(|path| path_status(path)),
@@ -514,6 +578,8 @@ struct StoredRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     source_identity: Option<ObjectIdentity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    staged_identity: Option<ObjectIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     destination_identity: Option<ObjectIdentity>,
 }
 
@@ -569,6 +635,7 @@ impl Journal {
                 destination: destination.clone(),
                 staging: None,
                 source_identity: source_identity.clone(),
+                staged_identity: None,
                 destination_identity: None,
             };
             match write_record(&path, &record, true) {
@@ -622,12 +689,34 @@ impl Journal {
         }
         let mut updated = self.record.clone();
         updated.state = next;
+        if next == State::StagedVerified {
+            #[cfg(unix)]
+            {
+                let staged = self
+                    .record
+                    .staging
+                    .as_ref()
+                    .ok_or_else(|| invalid_input("Staging path was not recorded"))?
+                    .join("payload");
+                updated.staged_identity = Some(identity_of(&fs::symlink_metadata(staged)?));
+            }
+        }
         if next == State::Published {
             #[cfg(unix)]
             {
-                updated.destination_identity = Some(identity_of(&fs::symlink_metadata(
-                    &self.record.destination,
-                )?));
+                let current = identity_of(&fs::symlink_metadata(&self.record.destination)?);
+                let staged = updated.staged_identity.as_ref().ok_or_else(|| {
+                    invalid_data("Cannot publish a move without staged inode evidence")
+                })?;
+                if current.dev != staged.dev
+                    || current.ino != staged.ino
+                    || current.mode & libc::S_IFMT != staged.mode & libc::S_IFMT
+                {
+                    return Err(invalid_data(
+                        "Published destination is not the recorded staged object",
+                    ));
+                }
+                updated.destination_identity = Some(current);
             }
         }
         self.persist(updated)?;
@@ -923,25 +1012,30 @@ fn to_stored(record: &Record) -> io::Result<StoredRecord> {
             .map(|path| hex_path(path.as_path()))
             .transpose()?,
         source_identity: record.source_identity.clone(),
+        staged_identity: record.staged_identity.clone(),
         destination_identity: record.destination_identity.clone(),
     })
 }
 
 fn from_stored(stored: StoredRecord) -> io::Result<Record> {
-    if !matches!(stored.version, 1 | VERSION) || !valid_id(&stored.id) {
+    if !matches!(stored.version, 1 | 2 | VERSION) || !valid_id(&stored.id) {
         return Err(invalid_data("Unsupported or invalid journal record"));
     }
-    if stored.version == VERSION {
+    if stored.version >= 2 {
         #[cfg(unix)]
         if stored.source_identity.is_none()
             || (matches!(stored.state, State::Published | State::Completed)
                 && stored.destination_identity.is_none())
+            || (stored.version >= 3
+                && stored.state != State::Prepared
+                && stored.staged_identity.is_none())
         {
             return Err(invalid_data("Journal identity evidence is missing"));
         }
     }
     for evidence in [
         stored.source_identity.as_ref(),
+        stored.staged_identity.as_ref(),
         stored.destination_identity.as_ref(),
     ]
     .into_iter()
@@ -983,6 +1077,7 @@ fn from_stored(stored: StoredRecord) -> io::Result<Record> {
         destination,
         staging,
         source_identity: stored.source_identity,
+        staged_identity: stored.staged_identity,
         destination_identity: stored.destination_identity,
     })
 }
@@ -1092,6 +1187,16 @@ mod tests {
         path
     }
 
+    fn publish_test_staging(journal: &mut Journal, destination: &Path, bytes: &[u8]) {
+        let staging = journal.record().staging.as_ref().unwrap();
+        fs::create_dir(staging).unwrap();
+        let payload = staging.join("payload");
+        fs::write(&payload, bytes).unwrap();
+        journal.advance(State::StagedVerified).unwrap();
+        fs::rename(payload, destination).unwrap();
+        journal.advance(State::Published).unwrap();
+    }
+
     #[test]
     fn states_are_durable_and_scan_ignores_completed() {
         let directory = test_directory();
@@ -1104,9 +1209,7 @@ mod tests {
         assert_eq!(scan_incomplete_in(&directory).unwrap().len(), 1);
 
         journal.set_staging(&directory.join("stage")).unwrap();
-        journal.advance(State::StagedVerified).unwrap();
-        fs::write(&destination, b"original").unwrap();
-        journal.advance(State::Published).unwrap();
+        publish_test_staging(&mut journal, &destination, b"original");
         let incomplete = scan_incomplete_in(&directory).unwrap();
         assert_eq!(incomplete.len(), 1);
         assert_eq!(incomplete[0].state, State::Published);
@@ -1114,6 +1217,11 @@ mod tests {
         assert_eq!(incomplete[0].destination, destination);
         assert_eq!(incomplete[0].staging, Some(directory.join("stage")));
         assert!(incomplete[0].destination_identity.is_some());
+        assert!(incomplete[0].staged_identity.is_some());
+        assert_eq!(
+            inspect_record(incomplete[0].clone()).publication_evidence,
+            PublicationEvidence::SameInode
+        );
         journal.advance(State::Completed).unwrap();
         assert!(scan_incomplete_in(&directory).unwrap().is_empty());
         assert!(
@@ -1133,9 +1241,7 @@ mod tests {
         fs::write(&source, b"same bytes").unwrap();
         let mut journal = Journal::begin_in(&directory, &source, &destination).unwrap();
         journal.set_staging(&directory.join("stage")).unwrap();
-        journal.advance(State::StagedVerified).unwrap();
-        fs::write(&destination, b"same bytes").unwrap();
-        journal.advance(State::Published).unwrap();
+        publish_test_staging(&mut journal, &destination, b"same bytes");
 
         let record = scan_incomplete_in(&directory).unwrap().remove(0);
         let first = inspect_record(record.clone());
@@ -1161,7 +1267,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_records_remain_inspectable_but_version_two_requires_evidence() {
+    fn legacy_records_remain_inspectable_but_new_records_require_evidence() {
         let directory = test_directory();
         let source = directory.join("original");
         fs::write(&source, b"original").unwrap();
@@ -1177,12 +1283,85 @@ mod tests {
             IdentityStatus::NotRecorded
         );
 
+        // A persisted v2 record predates staged inode provenance but retains
+        // source/destination evidence. Keep it readable after the v3 upgrade.
+        stored.version = 2;
+        stored.source_identity = journal.record().source_identity.clone();
+        fs::write(&path, toml::to_string(&stored).unwrap()).unwrap();
+        assert_eq!(scan_incomplete_in(&directory).unwrap().len(), 1);
+
         stored.version = VERSION;
+        stored.source_identity = None;
         fs::write(&path, toml::to_string(&stored).unwrap()).unwrap();
         #[cfg(unix)]
         assert_eq!(
             scan_incomplete_in(&directory).unwrap_err().kind(),
             io::ErrorKind::InvalidData
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn publication_refuses_destination_not_derived_from_verified_staging() {
+        let directory = test_directory();
+        let source = directory.join("source");
+        let destination = directory.join("destination");
+        let stage = directory.join("stage");
+        fs::write(&source, b"source bytes").unwrap();
+        let mut journal = Journal::begin_in(&directory, &source, &destination).unwrap();
+        fs::create_dir(&stage).unwrap();
+        journal.set_staging(&stage).unwrap();
+        fs::write(stage.join("payload"), b"source bytes").unwrap();
+        journal.advance(State::StagedVerified).unwrap();
+        // The same bytes written under another inode cannot masquerade as
+        // the already verified object, even if the journal state is stale.
+        fs::write(&destination, b"source bytes").unwrap();
+        assert_eq!(
+            journal.advance(State::Published).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        let record = scan_incomplete_in(&directory).unwrap().remove(0);
+        assert_eq!(record.state, State::StagedVerified);
+        assert_eq!(
+            inspect_record(record).publication_evidence,
+            PublicationEvidence::DifferentObject
+        );
+        assert_eq!(fs::read(source).unwrap(), b"source bytes");
+        assert_eq!(fs::read(destination).unwrap(), b"source bytes");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn older_published_records_remain_readable_but_cannot_claim_v3_provenance() {
+        let directory = test_directory();
+        let source = directory.join("source");
+        let destination = directory.join("destination");
+        fs::write(&source, b"source bytes").unwrap();
+        let mut journal = Journal::begin_in(&directory, &source, &destination).unwrap();
+        journal.set_staging(&directory.join("stage")).unwrap();
+        publish_test_staging(&mut journal, &destination, b"source bytes");
+
+        let mut stored = to_stored(journal.record()).unwrap();
+        stored.staged_identity = None;
+        fs::write(&journal.path, toml::to_string(&stored).unwrap()).unwrap();
+        assert_eq!(
+            scan_incomplete_in(&directory).unwrap_err().kind(),
+            io::ErrorKind::InvalidData,
+            "v3 Published must retain staged provenance"
+        );
+        stored.version = 2;
+        fs::write(&journal.path, toml::to_string(&stored).unwrap()).unwrap();
+        let legacy = scan_incomplete_in(&directory).unwrap().remove(0);
+        let inspection = inspect_record(legacy);
+        assert_eq!(
+            inspection.publication_evidence,
+            PublicationEvidence::NotRecorded
+        );
+        assert_eq!(
+            inspection.destination_identity,
+            IdentityStatus::SameSnapshot
         );
         fs::remove_dir_all(directory).unwrap();
     }
@@ -1213,9 +1392,7 @@ mod tests {
         fs::write(&original, b"source").unwrap();
         let mut complete = Journal::begin_in(&directory, &original, &published).unwrap();
         complete.set_staging(&directory.join("staging")).unwrap();
-        complete.advance(State::StagedVerified).unwrap();
-        fs::write(&published, b"source").unwrap();
-        complete.advance(State::Published).unwrap();
+        publish_test_staging(&mut complete, &published, b"source");
 
         // Simulate a crash after Completed is durable but before the
         // normally immediate unlink of the journal record.
@@ -1241,9 +1418,7 @@ mod tests {
         fs::write(&original, b"source").unwrap();
         let mut journal = Journal::begin_in(&directory, &original, &published).unwrap();
         journal.set_staging(&directory.join("staging")).unwrap();
-        journal.advance(State::StagedVerified).unwrap();
-        fs::write(&published, b"source").unwrap();
-        journal.advance(State::Published).unwrap();
+        publish_test_staging(&mut journal, &published, b"source");
 
         let invalid = directory.join("unexpected.toml");
         let mut masquerading = journal.record().clone();
@@ -1330,16 +1505,22 @@ mod tests {
         fs::write(&source, b"source bytes").unwrap();
         let mut journal = Journal::begin_in(&directory, &source, &destination).unwrap();
         journal.set_staging(&directory.join("staging")).unwrap();
+        fs::create_dir(directory.join("staging")).unwrap();
+        fs::write(directory.join("staging/payload"), b"source bytes").unwrap();
         journal.advance(State::StagedVerified).unwrap();
         // Simulate a process dying after atomic publication but before it
         // could durably advance the journal to Published.
-        fs::write(&destination, b"source bytes").unwrap();
+        fs::rename(directory.join("staging/payload"), &destination).unwrap();
         drop(journal);
 
         let restored = scan_incomplete_in(&directory).unwrap().remove(0);
         assert_eq!(restored.state, State::StagedVerified);
         assert!(restored.destination_identity.is_none());
         let inspection = inspect_record(restored);
+        assert_eq!(
+            inspection.publication_evidence,
+            PublicationEvidence::SameInode
+        );
         assert_eq!(inspection.source_identity, IdentityStatus::SameSnapshot);
         assert_eq!(inspection.destination_identity, IdentityStatus::NotRecorded);
         assert!(
@@ -1367,6 +1548,7 @@ mod tests {
             destination: destination.clone(),
             staging: Some(staging.clone()),
             source_identity: None,
+            staged_identity: None,
             destination_identity: None,
         };
         let first = inspect_record(record.clone());
@@ -1394,6 +1576,7 @@ mod tests {
                 destination: PathBuf::from("/missing-destination"),
                 staging: None,
                 source_identity: None,
+                staged_identity: None,
                 destination_identity: None,
             },
             source: PathStatus::Missing,
@@ -1401,6 +1584,7 @@ mod tests {
             staging: None,
             source_identity: IdentityStatus::NotRecorded,
             destination_identity: IdentityStatus::NotRecorded,
+            publication_evidence: PublicationEvidence::NotRecorded,
         };
         assert!(
             inspection
@@ -1447,6 +1631,7 @@ mod tests {
                 destination: PathBuf::from("/target"),
                 staging: None,
                 source_identity: None,
+                staged_identity: None,
                 destination_identity: None,
             },
             source: PathStatus::File,
@@ -1454,6 +1639,7 @@ mod tests {
             staging: None,
             source_identity: IdentityStatus::SameSnapshot,
             destination_identity: IdentityStatus::Changed,
+            publication_evidence: PublicationEvidence::NotRecorded,
         };
         assert!(inspection.can_offer_fresh_copy());
         inspection.source = PathStatus::Directory;
@@ -1490,6 +1676,7 @@ mod tests {
             destination: destination.clone(),
             staging: Some(directory.join("staging")),
             source_identity: None,
+            staged_identity: None,
             destination_identity: None,
         });
         assert_eq!(inspection.source, PathStatus::Symlink);

@@ -58,6 +58,11 @@ renderers remain part of the roadmap.
   Undo refuses to overwrite an occupied original name or rename an entry
   whose inode/metadata changed since the completed rename; it is not a
   persistent action log or a batch rollback.
+- The v3 cross-device Move journal now records the checked staging payload's
+  inode before publication and verifies that the published destination is
+  that same object. The restart review shows this relationship separately
+  from current source/destination metadata. Old v1/v2 records remain readable;
+  a matching inode alone does **not** authorize automatic recovery or deletion.
 - Native GTK file clipboard interoperability (when `xclip` or `wl-clipboard` is installed); otherwise use the internal file clipboard. Desktop copy/cut and paste run in background workers so a stuck helper cannot freeze the window. External payloads are capped at 4 MiB. Paste waits at most two seconds in the UI; on timeout **nothing is pasted** and a late result is ignored. Switching folders/tabs while a read is pending cancels that paste. Internal copies remain immediately available while desktop synchronization is pending.
 - Cross-device moves with copy-first semantics and byte-for-byte verification, symlink-preserving copies, transfer progress and cancellation.
 - Staged file payloads and directories are synced before no-overwrite
