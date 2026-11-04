@@ -2704,6 +2704,105 @@ mod tests {
     }
 
     #[test]
+    fn competing_destination_created_before_publication_is_never_overwritten() {
+        let root = test_root();
+        let source = root.join("source.txt");
+        let destination = root.join("target.txt");
+        fs::write(&source, b"source bytes").unwrap();
+        let cancelled = AtomicBool::new(false);
+        let mut no_op = |_: Progress| {};
+        let mut transfer = Transfer {
+            cancelled: &cancelled,
+            notify: &mut no_op,
+            transferred: 0,
+            total: 12,
+            last_report: Instant::now(),
+            last_reported_bytes: 0,
+            phase: "Copying",
+        };
+        let mut sync_count = 0;
+        let mut sync = |path: &Path| {
+            sync_count += 1;
+            if sync_count == 1 {
+                // Simulate an unrelated writer winning the destination name
+                // after complete staging but before the atomic rename.
+                fs::write(&destination, b"other writer")?;
+            }
+            sync_directory(path)
+        };
+
+        let error = stage_and_publish_with_sync(
+            &source,
+            &destination,
+            false,
+            &mut transfer,
+            None,
+            &mut sync,
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(sync_count, 1);
+        assert_eq!(fs::read(&source).unwrap(), b"source bytes");
+        assert_eq!(fs::read(&destination).unwrap(), b"other writer");
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 2);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn changed_source_after_verified_staging_is_not_published_or_deleted() {
+        let root = test_root();
+        let source = root.join("source.txt");
+        let destination = root.join("target.txt");
+        fs::write(&source, b"before").unwrap();
+        let mut journal = Journal::begin_in(&root.join("journal"), &source, &destination).unwrap();
+        let cancelled = AtomicBool::new(false);
+        let mut no_op = |_: Progress| {};
+        let mut transfer = Transfer {
+            cancelled: &cancelled,
+            notify: &mut no_op,
+            transferred: 0,
+            total: 6,
+            last_report: Instant::now(),
+            last_reported_bytes: 0,
+            phase: "Copying",
+        };
+        let mut sync_count = 0;
+        let mut sync = |path: &Path| {
+            sync_count += 1;
+            if sync_count == 1 {
+                fs::write(&source, b"source changed during publication")?;
+            }
+            sync_directory(path)
+        };
+
+        let error = stage_and_publish_with_sync(
+            &source,
+            &destination,
+            true,
+            &mut transfer,
+            Some(&mut journal),
+            &mut sync,
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(sync_count, 1);
+        assert_eq!(journal.record().state, State::StagedVerified);
+        assert_eq!(
+            fs::read(&source).unwrap(),
+            b"source changed during publication"
+        );
+        assert!(!destination.exists());
+        assert!(
+            journal
+                .record()
+                .staging
+                .as_ref()
+                .is_some_and(|path| !path.exists())
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn destination_directory_sync_failure_retains_source_and_recovery_record() {
         let root = test_root();
         let source = root.join("original");

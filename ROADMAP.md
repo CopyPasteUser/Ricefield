@@ -134,6 +134,15 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   provider gets a two-second UI deadline and cannot issue a late mutation;
   a tab/folder change also cancels the pending paste. Properties and remaining
   filesystem/network UI calls still require a separate responsiveness audit.
+- [x] Load file properties and Unix permission metadata in a bounded
+  background worker, not on each render frame. Keep only the latest requested
+  dialog when a slow mount stalls an earlier query; reject stale results and
+  disable permission edits until the current snapshot is available. More
+  render-thread filesystem call sites still require review.
+- [x] Fault-inject a destination created after staging but before atomic
+  publication and a source modified after staging verification. Confirm no
+  overwrite, no source cleanup, correct journal evidence and no staging debris
+  in both cases. Physical mount/USB publication tests remain outstanding.
 - [x] Add a side-effect-free, asynchronous Paste preflight with per-item
   destinations, reserved targets for repeated basenames, automatic rename/skip
   counts and a third *Require no conflicts* policy. Repeat the complete
