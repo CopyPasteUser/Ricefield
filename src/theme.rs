@@ -216,7 +216,9 @@ impl Theme {
             });
         // Moving a default component to the lower region does not require
         // copying the entire default top list into a custom theme.
-        if self.shell.top.is_none() && let Some(bottom) = &self.shell.bottom {
+        if self.shell.top.is_none()
+            && let Some(bottom) = &self.shell.bottom
+        {
             top.retain(|component| !bottom.contains(component));
         }
         top
@@ -248,7 +250,10 @@ impl Theme {
     }
 
     pub fn preview_position(&self) -> SidebarPosition {
-        self.shell.preview.position.unwrap_or(SidebarPosition::Right)
+        self.shell
+            .preview
+            .position
+            .unwrap_or(SidebarPosition::Right)
     }
 
     pub fn preview_width(&self) -> f32 {
@@ -580,8 +585,16 @@ mod tests {
         let frutiger = Theme::builtin("frutiger-aero").unwrap();
         assert!(xp.sidebar_sections().contains(&SidebarSection::Tasks));
         assert!(!win10.sidebar_sections().contains(&SidebarSection::Tasks));
-        assert!(win10.top_components().contains(&ChromeComponent::CommandBar));
-        assert!(!frutiger.top_components().contains(&ChromeComponent::CommandBar));
+        assert!(
+            win10
+                .top_components()
+                .contains(&ChromeComponent::CommandBar)
+        );
+        assert!(
+            !frutiger
+                .top_components()
+                .contains(&ChromeComponent::CommandBar)
+        );
         assert_eq!(
             frutiger.bottom_components(),
             vec![ChromeComponent::CommandBar]
