@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Run desktop file clipboard copy/cut and paste helpers off the render thread.
+  Coalesce queued copies, limit external payloads to 4 MiB and give desktop
+  reads a two-second UI deadline. Ignore late paste responses and cancel a
+  pending paste when its tab or folder changes, rather than moving old files
+  into an unexpected location. A stuck provider cannot spawn unbounded readers.
 - Refuse to reuse a staged hardlink if its source inode changed after the
   first link name was copied; this prevents publishing stale content under
   another name in a mutable source directory.

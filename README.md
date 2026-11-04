@@ -42,7 +42,7 @@ renderers remain part of the roadmap.
   every candidate before confirming. Prefix/suffix and numbering preserve raw
   non-UTF-8 filename bytes; find/replace requires UTF-8 names. Existing targets
   are rejected before any rename, with atomic no-overwrite behavior on Linux.
-- Native GTK file clipboard interoperability (when `xclip` or `wl-clipboard` is installed); otherwise use the internal file clipboard.
+- Native GTK file clipboard interoperability (when `xclip` or `wl-clipboard` is installed); otherwise use the internal file clipboard. Desktop copy/cut and paste run in background workers so a stuck helper cannot freeze the window. External payloads are capped at 4 MiB. Paste waits at most two seconds in the UI; on timeout **nothing is pasted** and a late result is ignored. Switching folders/tabs while a read is pending cancels that paste. Internal copies remain immediately available while desktop synchronization is pending.
 - Cross-device moves with copy-first semantics and byte-for-byte verification, symlink-preserving copies, transfer progress and cancellation.
 - Staged file payloads and directories are synced before no-overwrite
   publication; the destination parent is synced after publication. If a
