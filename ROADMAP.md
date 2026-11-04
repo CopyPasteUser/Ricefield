@@ -65,6 +65,10 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
 
 ### 0.3 — Reliable file operations
 
+- [x] Produce byte-reproducible Linux x86_64 archives with checksum manifests,
+  unprivileged installer, isolated install/uninstall smoke and CI tag-gated
+  release automation. The release workflow is **not** evidence of complete
+  safety, recovery or physical Linux Mint acceptance.
 - [ ] Verify initial hidden staging and atomic no-overwrite publication for
   local copies and cross-device moves in CI and on Linux Mint.
 - [ ] Eliminate the remaining cross-device source mutation race and preserve

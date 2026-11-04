@@ -28,6 +28,19 @@ export LIBGL_ALWAYS_SOFTWARE=1
 export XDG_STATE_HOME="$fixture_dir/.state"
 export XDG_CONFIG_HOME="$fixture_dir/.config"
 export XDG_CACHE_HOME="$fixture_dir/.cache"
+
+report_startup_failure() {
+  local theme="$1"
+  echo "GUI startup failed for theme $theme (DISPLAY=${DISPLAY:-unset})" >&2
+  ps -o pid,etime,stat,cmd -p "$app_pid" >&2 || true
+  echo 'Visible X11 window titles:' >&2
+  while IFS= read -r id; do
+    xdotool getwindowname "$id" >&2 || true
+  done < <(xdotool search --onlyvisible --name '.*' 2>/dev/null | head -n 12 || true)
+  echo 'Application stderr/stdout:' >&2
+  sed -n '1,100p' "$fixture_dir/app.log" >&2
+}
+
 for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sidebar; do
   if [[ "$theme" == custom-sidebar ]]; then
     ./target/release/rice-explorer --theme-file "$fixture_dir/custom-theme.toml" "$fixture_dir" > "$fixture_dir/app.log" 2>&1 &
@@ -35,17 +48,24 @@ for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sideba
     ./target/release/rice-explorer --theme "$theme" "$fixture_dir" > "$fixture_dir/app.log" 2>&1 &
   fi
   app_pid=$!
-  sleep 5
-  if ! kill -0 "$app_pid" 2>/dev/null; then
-    echo "GUI exited unexpectedly in theme $theme" >&2
-    sed -n '1,100p' "$fixture_dir/app.log" >&2
-    exit 1
-  fi
-  # Capture the application, not merely an empty Xvfb root window.
-  window_id="$(xdotool search --onlyvisible --name '^RiceExplorer$' | head -n 1 || true)"
+  # Xvfb/Mesa can take longer to initialize on a cold CI runner. Poll for the
+  # mapped application window instead of assuming startup always takes 5s.
+  window_id=''
+  for ((attempt = 0; attempt < 35; attempt++)); do
+    if ! kill -0 "$app_pid" 2>/dev/null; then
+      echo "GUI exited unexpectedly in theme $theme" >&2
+      report_startup_failure "$theme"
+      exit 1
+    fi
+    window_id="$(xdotool search --onlyvisible --name '^RiceExplorer$' | head -n 1 || true)"
+    if [[ -n "$window_id" ]]; then
+      break
+    fi
+    sleep 1
+  done
   if [[ -z "$window_id" ]]; then
-    echo "No visible RiceExplorer window for theme $theme" >&2
-    sed -n '1,100p' "$fixture_dir/app.log" >&2
+    echo "No visible RiceExplorer window for theme $theme after 35 seconds" >&2
+    report_startup_failure "$theme"
     exit 1
   fi
   # Avoid capturing an incidental hover tooltip over the file list.
