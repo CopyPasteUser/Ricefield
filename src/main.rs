@@ -3,6 +3,7 @@ mod clipboard;
 mod config;
 mod filesystem;
 mod journal;
+mod operation_queue;
 mod preview;
 mod theme;
 

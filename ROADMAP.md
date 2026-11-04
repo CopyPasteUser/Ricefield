@@ -66,7 +66,12 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   local copies and cross-device moves in CI and on Linux Mint.
 - [ ] Eliminate the remaining cross-device source mutation race and preserve
   timestamp, owner, ACL, xattr and hardlink metadata before production use.
-- [ ] Bounded queue with operation IDs and per-item results.
+- [x] Introduce a bounded, in-memory FIFO for up to 32 waiting Copy jobs,
+  stable operation IDs, visible progress in every rice, and cancellation of
+  waiting jobs without filesystem side effects.
+- [ ] Extend the queue to Move and other operations only after stale-source
+  preflight and safe confirmation are implemented; add per-item results,
+  persistent history, elapsed time/rate/ETA and failure recovery.
 - [ ] Preflight, conflict choices (replace/skip/keep both/rename/compare,
   apply to all), user-facing error recovery.
 - [ ] Stage output, synchronize and publish atomically when possible.

@@ -3,6 +3,7 @@ use crate::{
     config::{self, Config},
     filesystem::{self, Action, Entry, Progress},
     journal::{self, Record as JournalRecord, State as JournalState},
+    operation_queue::OperationQueue,
     preview,
     theme::{
         BUILTIN_IDS, ChromeComponent, Layout, ShellKind, SidebarPosition, SidebarSection, Theme,
@@ -101,8 +102,9 @@ enum PreviewContent {
 }
 
 struct OperationResult {
+    id: u64,
     result: std::io::Result<String>,
-    clear_clipboard: bool,
+    moved_paths: Option<Vec<PathBuf>>,
 }
 
 enum OperationEvent {
@@ -162,6 +164,9 @@ pub struct Explorer {
     preview_receiver: Receiver<PreviewResult>,
     op_sender: Sender<OperationEvent>,
     op_receiver: Receiver<OperationEvent>,
+    operation_queue: OperationQueue,
+    active_operation: Option<(u64, String)>,
+    show_operations: bool,
     recovery_sender: Sender<(u64, std::io::Result<Vec<JournalRecord>>)>,
     recovery_receiver: Receiver<(u64, std::io::Result<Vec<JournalRecord>>)>,
     recovery_generation: u64,
@@ -230,6 +235,9 @@ impl Explorer {
             preview_receiver,
             op_sender,
             op_receiver,
+            operation_queue: OperationQueue::default(),
+            active_operation: None,
+            show_operations: false,
             recovery_sender,
             recovery_receiver,
             recovery_generation: 0,
@@ -520,11 +528,16 @@ impl Explorer {
                 OperationEvent::Progress(progress) => self.progress = Some(progress),
                 OperationEvent::Finished(message) => {
                     self.busy = false;
+                    self.active_operation = None;
                     self.progress = None;
                     match message.result {
                         Ok(success) => {
-                            self.status = Some((success, false));
-                            if message.clear_clipboard {
+                            self.status = Some((format!("#{}: {success}", message.id), false));
+                            if message.moved_paths.as_ref().is_some_and(|moved| {
+                                self.clipboard
+                                    .as_ref()
+                                    .is_some_and(|clipboard| clipboard.cut && &clipboard.paths == moved)
+                            }) {
                                 self.clipboard = None;
                             }
                         }
@@ -540,6 +553,7 @@ impl Explorer {
                     }
                     self.refresh_all();
                     self.check_unfinished_moves();
+                    self.start_next_operation();
                 }
             }
         }
@@ -627,24 +641,137 @@ impl Explorer {
         }
     }
 
-    fn run_action(&mut self, action: Action) {
-        if self.busy {
-            self.status = Some(("Wait for the current operation to finish".into(), true));
+    /// One shared transfer surface for every rice, including shells without
+    /// a status bar. It intentionally reserves a stable row while idle.
+    fn transfer_strip(&mut self, ui: &mut egui::Ui) {
+        let theme = self.theme.clone();
+        egui::Panel::top("transfer_status")
+            .frame(
+                egui::Frame::new()
+                    .fill(theme.palette.background())
+                    .inner_margin(egui::Margin::symmetric(10, 3)),
+            )
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    let count = self.operation_queue.len() + usize::from(self.busy);
+                    if ui.small_button(format!("Transfers ({count})")).clicked() {
+                        self.show_operations = true;
+                    }
+                    if let Some((id, label)) = &self.active_operation {
+                        ui.label(format!("#{id} {label}"));
+                        if let Some(progress) = &self.progress {
+                            if progress.total > 0 {
+                                ui.add_sized(
+                                    [110.0, 14.0],
+                                    egui::ProgressBar::new(
+                                        (progress.transferred as f32 / progress.total as f32)
+                                            .clamp(0.0, 1.0),
+                                    ),
+                                );
+                            } else {
+                                ui.spinner();
+                            }
+                        }
+                    }
+                    if !self.operation_queue.is_empty() {
+                        ui.label(format!("{} waiting", self.operation_queue.len()));
+                    }
+                });
+            });
+    }
+
+    fn transfer_dialog(&mut self, context: &egui::Context) {
+        if !self.show_operations {
             return;
         }
+        let mut open = true;
+        let mut remove = None;
+        egui::Window::new("Transfers")
+            .open(&mut open)
+            .default_width(440.0)
+            .resizable(true)
+            .show(context, |ui| {
+                if let Some((id, label)) = &self.active_operation {
+                    ui.strong(format!("Running #{id}: {label}"));
+                    if let Some(progress) = &self.progress {
+                        ui.label(format!("{}: {}", progress.phase, progress.current.display()));
+                    }
+                    if ui.button("Cancel running transfer").clicked() {
+                        self.cancel.store(true, Ordering::Relaxed);
+                    }
+                    ui.small("Cancellation stops future work; already completed items are not undone.");
+                } else {
+                    ui.label("No transfer is running.");
+                }
+                ui.separator();
+                ui.strong(format!("Waiting ({})", self.operation_queue.len()));
+                ui.small("Only copy requests can wait. Removing a waiting job makes no filesystem changes.");
+                egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+                    for job in self.operation_queue.iter() {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(format!("#{} {}", job.id, job.label));
+                            if ui.button("Remove").clicked() {
+                                remove = Some(job.id);
+                            }
+                        });
+                    }
+                });
+            });
+        self.show_operations = open;
+        if let Some(id) = remove {
+            if self.operation_queue.remove(id) {
+                self.status = Some((format!("Removed waiting copy #{id}"), false));
+            }
+        }
+    }
+
+    fn run_action(&mut self, action: Action) {
+        if self.busy && !matches!(&action, Action::Copy { .. }) {
+            self.status = Some((
+                "A transfer is running. Only Copy can be queued; retry this action when it finishes."
+                    .into(),
+                true,
+            ));
+            return;
+        }
+        match self.operation_queue.enqueue(action) {
+            Ok(id) => {
+                if self.busy {
+                    self.status = Some((format!("Copy #{id} queued"), false));
+                }
+                self.start_next_operation();
+            }
+            Err(error) => {
+                self.status = Some((format!("Cannot queue transfer: {error}"), true));
+            }
+        }
+    }
+
+    fn start_next_operation(&mut self) {
+        if self.busy {
+            return;
+        }
+        let Some(job) = self.operation_queue.dequeue() else {
+            return;
+        };
         self.busy = true;
+        self.active_operation = Some((job.id, job.label));
         self.progress = None;
         self.cancel = Arc::new(AtomicBool::new(false));
         let cancel = Arc::clone(&self.cancel);
-        let clear_clipboard = matches!(action, Action::Move { .. });
+        let moved_paths = match &job.action {
+            Action::Move { sources, .. } => Some(sources.clone()),
+            _ => None,
+        };
         let sender = self.op_sender.clone();
         thread::spawn(move || {
-            let result = filesystem::perform_with_progress(&action, &cancel, &mut |progress| {
+            let result = filesystem::perform_with_progress(&job.action, &cancel, &mut |progress| {
                 let _ = sender.send(OperationEvent::Progress(progress));
             });
             let _ = sender.send(OperationEvent::Finished(OperationResult {
+                id: job.id,
                 result,
-                clear_clipboard,
+                moved_paths,
             }));
         });
     }
@@ -2272,6 +2399,7 @@ impl eframe::App for Explorer {
         }
         self.top_bar(ui);
         self.recovery_banner(ui);
+        self.transfer_strip(ui);
         if self.theme.shell.status_bar.unwrap_or(true) {
             self.status_bar(ui);
         }
@@ -2280,6 +2408,7 @@ impl eframe::App for Explorer {
         self.main_panel(ui);
         self.dialogs(&context);
         self.recovery_dialog(&context);
+        self.transfer_dialog(&context);
         if self.dirty_config {
             if let Err(error) = self.config.save() {
                 self.status = Some((format!("Cannot save preferences: {error}"), true));
