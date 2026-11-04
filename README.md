@@ -4,7 +4,7 @@
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Development preview: v0.3.0-alpha.3** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not the completed v0.3 release gate or a safe replacement for Thunar with irreplaceable data. This preview adds per-item Link results, asynchronous Properties, safe completed-journal retirement, queue controls and reproducible Linux packages. Race-free source cleanup, verified restart recovery and physical Mint/USB acceptance remain outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+> **Development preview: v0.3.0-alpha.3** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not the completed v0.3 release gate or a safe replacement for Thunar with irreplaceable data. This preview adds per-item Link results, asynchronous Properties, safe completed-journal retirement, queue controls, a content-verified skip mode and reproducible Linux packages. Race-free source cleanup, verified restart recovery and physical Mint/USB acceptance remain outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
 **Distribution:** An [automated Linux x86_64 preview bundle](RELEASE.md) can
 be built without distributing Rust sources to every end user. The verified
@@ -36,12 +36,18 @@ renderers remain part of the roadmap.
 - **Paste with options…** in the shared Actions menu: an asynchronous,
   read-only preflight lists each source and intended target, counting
   collisions, automatic renames and skips before enabling Start. Choose
-  **Keep both** (` (copy)` names, also normal Ctrl+V), **Skip existing**,
-  or **Require no conflicts** (abort the entire batch if any target already
-  exists). The worker repeats validation before making changes, rejects
+  **Keep both** (` (copy)` names, also normal Ctrl+V), **Skip existing**
+  (skip without comparing), **Require no conflicts** (abort the entire batch
+  if a target already exists), or **Skip only matching contents** (read-only
+  comparison; fail the batch for different or unverifiable data). Content
+  comparison has a 512 MiB / 10,000-entry safety budget, covers directories
+  and symlink targets, and never deletes a skipped cut source. The worker
+  repeats validation before making changes, rejects
   duplicate/overlapping sources and self-copy destinations, and never
   overwrites existing files. A concurrent filesystem change may still stop
-  the operation safely. No replace/overwrite operation is currently offered.
+  the operation safely. A successful comparison is only a momentary observation,
+  not an atomic guarantee against other writers or permission to clean up
+  a source. No replace/overwrite operation is currently offered.
 - Batch rename for 2–256 selected entries (F2 or Rename): add a prefix/suffix,
   literal find/replace or configurable zero-padded sequence numbers. Preview
   every candidate before confirming. Prefix/suffix and numbering preserve raw

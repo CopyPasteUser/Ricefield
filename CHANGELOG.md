@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Add a fourth non-destructive Paste conflict policy, **Skip only matching
+  contents**. Compare colliding files, directories and symlink targets using
+  bounded, cancellable, no-follow reads (512 MiB / 10,000 entries); accept a
+  skip only after a complete match. Different, unavailable or too-large
+  comparisons fail the whole preflight before any transfer. Preserve cut
+  sources when a collision is skipped, reject two incoming items targeting
+  the same new name, and repeat verification on the worker after preview.
+  This is a read-only observation, not atomic protection against concurrent
+  writers, verified replacement, or permission to delete the original.
+
 ## 0.3.0-alpha.3 — 2026-11-04
 
 - Add a manual Pause / Resume toggle for pending Copy jobs in the shared
