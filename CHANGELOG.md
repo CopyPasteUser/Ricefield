@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.0-alpha.3 — 2026-11-04
+
 - Add a manual Pause / Resume toggle for pending Copy jobs in the shared
   Transfers view. Running work continues; only not-yet-started queue entries
   wait. Label the paused state consistently across rice shells.
