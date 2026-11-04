@@ -1,6 +1,25 @@
 # Changelog
 
-## Unreleased — 0.4.0-alpha.1 candidate
+## Unreleased — 0.5.0-alpha.1 candidate
+
+- Start 0.5 archive management with a runtime-loaded libarchive backend.
+  Browse and verify local ZIP, tar, tar.gz, tar.xz, tar.zst and 7z archives,
+  with optional RAR support determined by installed libarchive; create ZIP,
+  tar.gz, tar.xz, tar.zst and 7z. The Archive menu works with all visual
+  rice profiles. Integrity reads, compression and selected extraction run in
+  a cancellable worker with bounded progress updates.
+- Validate every archive entry path before extraction; reject parent/absolute
+  traversal, foreign separators, symbolic/hard links, device/special files,
+  duplicate paths and excessively large or deep archives. Extract into a
+  private stage and publish a new output directory by atomic no-overwrite
+  rename; failed/cancelled work leaves no exposed partial extraction.
+- Explicitly defer keyring work and physical Mint/USB/network-disconnect
+  acceptance at the owner's request. Keep network writes and credential
+  persistence disabled. Do not claim 0.4 stable acceptance from this decision.
+- Encrypted archives, interactive passwords and expanded hostile-corpus
+  fuzzing remain open; this is not a stable 0.5 release.
+
+## 0.4.0-alpha.1 — merged groundwork, not a stable release
 
 - Add bounded, asynchronous, read-only GIO text previews for files in remote
   tabs, with a 32 KiB cap, 12-second timeout, cancellation and stale-result

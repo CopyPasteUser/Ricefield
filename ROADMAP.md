@@ -309,14 +309,33 @@ recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
 **Gate:** offline shares, disconnections, bad credentials and removed USB
 devices produce clear errors without frozen UI or silent data loss.
 
+**Owner decision (2026-11-04):** Defer keyring/interactive credential work and
+all real-device, unplug and disconnection acceptance until a later phase.
+Keep remote mutations disabled; do not present these untested integrations as
+stable or infer that skipping the tests satisfies the 0.4 release gate.
+
 ### 0.5 — Archive management
 
-- [ ] Compress/extract ZIP, tar.gz, tar.xz, tar.zst and 7z; optional RAR.
-- [ ] Entry browsing, selected extraction, integrity check, progress/cancel.
+- [x] Compress/extract ZIP, tar.gz, tar.xz, tar.zst and 7z through runtime
+  libarchive. Read/extract uncompressed `.tar` and optionally supported RAR;
+  RAR creation is out of scope. All operations are local only.
+- [x] Background archive entry browser, selected extraction (including
+  selected directories), full-stream integrity check, bounded progress
+  updates and cooperative cancellation in a shared archive dialog.
 - [ ] Password prompts where supported, no plaintext password persistence.
-- [ ] Reject traversal, symlink escape, archive bombs and unsafe overwrites.
+  Encrypted archives currently fail closed; keyring integration is not required.
+- [x] Validate every entry name; reject absolute/parent traversal, symlinks,
+  hardlinks, special files, duplicate normalized entry paths and excessive
+  depth, entries and inflated size. Extract into a private stage and publish
+  through Linux atomic no-overwrite rename. Cancellation/failure discards
+  the unpublished stage. Adversarial regression fixtures include `../` ZIP
+  entries, existing target collision and symlink sources.
+- [ ] Expand hostile archive/format fuzzing and password workflows; perform
+  complete native Mint acceptance before labelling the release stable.
 
 **Gate:** hostile archives cannot write outside the selected destination.
+The core extraction invariants are in place and unit-tested; wider hostile
+corpora and real Mint device acceptance are still open for stable 0.5.
 
 ### 0.6 — Everyday navigation and quick actions
 

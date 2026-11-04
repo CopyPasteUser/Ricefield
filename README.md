@@ -4,7 +4,7 @@
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Development preview: v0.4.0-alpha.1 candidate** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Native remote writes, reliable restart recovery and physical Mint/USB acceptance remain outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+> **Development preview: v0.5.0-alpha.1 candidate** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
 **Distribution:** An [automated Linux x86_64 preview bundle](RELEASE.md) can
 be built without distributing Rust sources to every end user. The verified
@@ -33,10 +33,24 @@ startup.
 
 **Safety boundary:** remote file modification, copy/move, rename, delete and
 paste remain disabled; remote tabs never fall through to local POSIX file
-workers. Native GIO/UDisks2 operation and capability APIs, safe remote
-transfers, application credential/keyring prompts, and real-device/disconnect
-acceptance are still outstanding. No passwords are stored. This is incremental
-0.4 development, **not** a complete or stable 0.4 release.
+workers. Native GIO/UDisks2 operation and capability APIs and safe remote
+transfers are still outstanding. **Keyring integration is explicitly deferred**
+by the project owner; unattended credential persistence remains disabled.
+Physical Mint/USB and network-disconnect acceptance is also postponed. These
+are recorded limitations, not passed tests or a stable 0.4 sign-off.
+
+**0.5 archive preview:** Select local files/folders and use **Archive → Compress
+selected…**, or select a ZIP, tar, tar.gz, tar.xz, tar.zst, 7z or optional RAR
+archive and choose **Archive → Browse / extract archive…**. The native Rust UI
+uses the system `libarchive.so.13` backend (install `libarchive13t64` on Mint
+22/Ubuntu 24.04). Browse entries, select files or directories, verify archive
+integrity, or extract into a **new folder**. Create ZIP, tar.gz, tar.xz,
+tar.zst and 7z archives. Work happens in background, with progress and Cancel.
+Archive paths cannot escape the selected destination; symlinks, hardlinks and
+special files are refused, extraction has explicit size/entry limits and uses
+private staging plus atomic no-overwrite publication. Existing targets are
+never replaced. Encrypted/password-protected archives are **not supported yet**.
+Do not open unknown archives with other tools as a workaround.
 
 **Built for structural customization.** RiceExplorer is not intended to be
 one file manager with seven recolors. Its TOML shells can move whole navigation,
@@ -48,7 +62,7 @@ renderers remain part of the roadmap.
 
 ![RiceExplorer icon](assets/rice-explorer.svg)
 
-## Implemented on `main` — v0.3 core and 0.4 groundwork
+## Implemented on `main` — v0.3 core, 0.4 groundwork and 0.5 archive preview
 
 - Native Rust GUI with GPU-accelerated drawing; no Electron, browser or persistent background daemon.
 - Seven bundled visual profiles: `win98`, `xp-luna`, `win7`, `win10`, `frutiger-aero`, `chromeos` and `macos`.
