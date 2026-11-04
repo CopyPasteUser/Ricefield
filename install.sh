@@ -7,7 +7,7 @@ if ! command -v cargo >/dev/null 2>&1; then
   exit 1
 fi
 
-cargo build --manifest-path "$project_dir/Cargo.toml" --release
+cargo build --manifest-path "$project_dir/Cargo.toml" --locked --release
 install -Dm755 "$project_dir/target/release/rice-explorer" "$HOME/.local/bin/rice-explorer"
 install -Dm644 "$project_dir/assets/rice-explorer.desktop" "$HOME/.local/share/applications/rice-explorer.desktop"
 install -Dm644 "$project_dir/assets/rice-explorer.svg" "$HOME/.local/share/icons/hicolor/scalable/apps/rice-explorer.svg"

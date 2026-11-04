@@ -52,6 +52,7 @@
   32 MiB cap to avoid reopening a path substituted with a FIFO/device. Reject
   special files before preview and test a real PNG, a large linked target and
   a Unix socket.
+- Use the committed Cargo lockfile for the local installer just as in CI.
 
 **Validation:** Earlier feature-branch CI passed formatting, Clippy, unit tests,
 release build, CLI and seven-theme Xvfb smoke. This newer metadata/race-safety

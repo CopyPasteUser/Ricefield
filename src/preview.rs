@@ -60,7 +60,9 @@ pub fn load(path: &Path) -> io::Result<Preview> {
         // Decoding from memory avoids a second path-open race (e.g. a FIFO
         // substituted between dimension detection and image::open).
         let mut bytes = Vec::new();
-        (&mut file).take(MAX_IMAGE_BYTES + 1).read_to_end(&mut bytes)?;
+        (&mut file)
+            .take(MAX_IMAGE_BYTES + 1)
+            .read_to_end(&mut bytes)?;
         if bytes.len() as u64 > MAX_IMAGE_BYTES {
             return Ok(Preview::Info(
                 "Image too large for in-app preview (32 MiB limit)".into(),
@@ -114,10 +116,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "rice-preview-test-{}-{nonce}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("rice-preview-test-{}-{nonce}", std::process::id()));
         fs::create_dir(&root).unwrap();
         root
     }
