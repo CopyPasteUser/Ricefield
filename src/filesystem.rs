@@ -2762,11 +2762,7 @@ mod tests {
         let desired = UNIX_EPOCH + Duration::from_secs(1_600_000_000);
         File::open(&timestamp_fixture)
             .unwrap()
-            .set_times(
-                FileTimes::new()
-                    .set_accessed(desired)
-                    .set_modified(desired),
-            )
+            .set_times(FileTimes::new().set_accessed(desired).set_modified(desired))
             .unwrap();
         symlink("missing-target", &source).unwrap();
         preserve_symlink_times(&source, &fs::metadata(&timestamp_fixture).unwrap()).unwrap();
