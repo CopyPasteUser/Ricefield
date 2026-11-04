@@ -22,8 +22,14 @@ permission to mount or eject devices. The sidebar now offers a non-blocking
 GIO connection attempt and explicit, confirmed unmount/eject actions for
 mounted volumes. These actions require the system `gio` executable and
 appropriate GVfs backends/desktop authorization; password-protected shares
-cannot yet use an in-app credential prompt. Direct remote browsing and
-remote file operations are **not** implemented yet.
+cannot yet use an in-app credential prompt. Valid remote URI entry in the
+address bar, or a successful GIO connection, now opens a **read-only network
+browser** with bounded asynchronous listing, back/refresh and explicit
+connection errors. Superseded network listings are cancelled. Remote files
+cannot yet be copied, changed or deleted,
+and network directories do not yet share the main local tab/history model.
+The read-only browser offers up to 32 persistent validated network favorites
+and an explicit reconnect action, without saving passwords.
 
 **Built for structural customization.** RiceExplorer is not intended to be
 one file manager with seven recolors. Its TOML shells can move whole navigation,

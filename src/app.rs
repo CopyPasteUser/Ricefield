@@ -456,8 +456,18 @@ pub struct Explorer {
     scan_receiver: Receiver<ScanResult>,
     refresh_sender: Sender<RefreshResult>,
     refresh_receiver: Receiver<RefreshResult>,
-    volume_sender: Sender<Result<String, String>>,
-    volume_receiver: Receiver<Result<String, String>>,
+    volume_sender: Sender<Result<(String, Option<String>), String>>,
+    volume_receiver: Receiver<Result<(String, Option<String>), String>>,
+    remote_sender: Sender<(u64, String, Result<Vec<volume::RemoteEntry>, String>)>,
+    remote_receiver: Receiver<(u64, String, Result<Vec<volume::RemoteEntry>, String>)>,
+    remote_generation: u64,
+    remote_browser_open: bool,
+    remote_uri: String,
+    remote_history: Vec<String>,
+    remote_entries: Vec<volume::RemoteEntry>,
+    remote_loading: bool,
+    remote_cancel: Arc<AtomicBool>,
+    remote_error: Option<String>,
     volume_connect_open: bool,
     volume_connect_uri: String,
     volume_confirm: Option<VolumeAction>,
@@ -549,6 +559,7 @@ impl Explorer {
         let (scan_sender, scan_receiver) = mpsc::channel();
         let (refresh_sender, refresh_receiver) = mpsc::channel();
         let (volume_sender, volume_receiver) = mpsc::channel();
+        let (remote_sender, remote_receiver) = mpsc::channel();
         let (preview_sender, preview_receiver) = mpsc::channel();
         let (property_sender, property_receiver) = mpsc::channel();
         let (op_sender, op_receiver) = mpsc::channel();
@@ -576,6 +587,16 @@ impl Explorer {
             refresh_receiver,
             volume_sender,
             volume_receiver,
+            remote_sender,
+            remote_receiver,
+            remote_generation: 0,
+            remote_browser_open: false,
+            remote_uri: String::new(),
+            remote_history: Vec::new(),
+            remote_entries: Vec::new(),
+            remote_loading: false,
+            remote_cancel: Arc::new(AtomicBool::new(false)),
+            remote_error: None,
             volume_connect_open: false,
             volume_connect_uri: String::new(),
             volume_confirm: None,
@@ -786,10 +807,129 @@ impl Explorer {
         let sender = self.volume_sender.clone();
         thread::spawn(move || {
             let label = action.label();
-            let result = volume::execute(&action)
-                .map(|()| format!("{label} succeeded. Refreshing mounted volumes…"));
+            let connected_uri = match &action {
+                VolumeAction::Connect(uri) => Some(uri.clone()),
+                _ => None,
+            };
+            let result = volume::execute(&action).map(|()| {
+                (
+                    format!("{label} succeeded. Refreshing mounted volumes…"),
+                    connected_uri,
+                )
+            });
             let _ = sender.send(result);
         });
+    }
+
+    fn browse_remote(&mut self, uri: String) {
+        self.remote_cancel.store(true, Ordering::Relaxed);
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.remote_cancel = Arc::clone(&cancelled);
+        self.remote_generation = self.remote_generation.wrapping_add(1);
+        let generation = self.remote_generation;
+        let sender = self.remote_sender.clone();
+        self.remote_uri = uri.clone();
+        self.remote_browser_open = true;
+        self.remote_entries.clear();
+        self.remote_error = None;
+        self.remote_loading = true;
+        thread::spawn(move || {
+            let result = volume::list_remote(&uri, &cancelled);
+            let _ = sender.send((generation, uri, result));
+        });
+    }
+
+    fn remote_browser_dialog(&mut self, context: &egui::Context) {
+        if !self.remote_browser_open {
+            return;
+        }
+        let mut open = true;
+        let mut navigate = None;
+        let mut go_back = false;
+        egui::Window::new("Network browser (read-only)")
+            .open(&mut open)
+            .default_width(560.0)
+            .default_height(400.0)
+            .resizable(true)
+            .show(context, |ui| {
+                ui.horizontal(|ui| {
+                    go_back = ui
+                        .add_enabled(
+                            !self.remote_loading && !self.remote_history.is_empty(),
+                            egui::Button::new("Back"),
+                        )
+                        .clicked();
+                    if ui
+                        .add_enabled(!self.remote_loading, egui::Button::new("Refresh"))
+                        .clicked()
+                    {
+                        navigate = Some(self.remote_uri.clone());
+                    }
+                    if ui
+                        .add_enabled(!self.volume_busy, egui::Button::new("Reconnect"))
+                        .clicked()
+                    {
+                        let uri = self.remote_uri.clone();
+                        self.start_volume_action(VolumeAction::Connect(uri));
+                    }
+                    let saved = self.config.remote_favorites.contains(&self.remote_uri);
+                    if ui
+                        .button(if saved {
+                            "Remove favorite"
+                        } else {
+                            "Save favorite"
+                        })
+                        .clicked()
+                    {
+                        if saved {
+                            self.config
+                                .remote_favorites
+                                .retain(|uri| uri != &self.remote_uri);
+                            self.dirty_config = true;
+                        } else if self.config.remote_favorites.len() < 32
+                            && self.remote_uri.len() <= 2048
+                        {
+                            self.config.remote_favorites.push(self.remote_uri.clone());
+                            self.dirty_config = true;
+                        }
+                    }
+                });
+                ui.monospace(&self.remote_uri);
+                ui.small(
+                    "Browse only. Remote files cannot yet be modified, copied or deleted here.",
+                );
+                ui.separator();
+                if self.remote_loading {
+                    ui.spinner();
+                    ui.label("Loading network directory…");
+                } else if let Some(error) = &self.remote_error {
+                    ui.colored_label(Color32::LIGHT_RED, error);
+                } else if self.remote_entries.is_empty() {
+                    ui.label("Folder is empty.");
+                } else {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        for entry in &self.remote_entries {
+                            if ui.button(&entry.name).on_hover_text(&entry.uri).clicked() {
+                                navigate = Some(entry.uri.clone());
+                            }
+                        }
+                    });
+                }
+            });
+        self.remote_browser_open = open;
+        if !open {
+            self.remote_cancel.store(true, Ordering::Relaxed);
+        }
+        if go_back {
+            if let Some(uri) = self.remote_history.pop() {
+                self.browse_remote(uri);
+            }
+        } else if let Some(uri) = navigate {
+            if uri != self.remote_uri {
+                self.remote_history.push(self.remote_uri.clone());
+            }
+            self.browse_remote(uri);
+        }
     }
 
     fn volume_dialog(&mut self, context: &egui::Context) {
@@ -879,8 +1019,13 @@ impl Explorer {
     }
 
     fn navigate_address(&mut self, address: String) {
-        match Location::parse(address.into()).and_then(Location::into_local_path) {
-            Ok(path) => self.navigate(path),
+        match Location::parse(address.into()) {
+            Ok(Location::Local(path)) => self.navigate(path),
+            Ok(Location::Remote(remote)) => {
+                self.current_mut().address = self.current().path.display().to_string();
+                self.remote_history.clear();
+                self.browse_remote(remote.uri);
+            }
             Err(error) => {
                 // Preserve the actual local tab; never scan an unsupported URI
                 // as a relative filename or leak URI credentials into status.
@@ -1112,10 +1257,32 @@ impl Explorer {
         while let Ok(result) = self.volume_receiver.try_recv() {
             self.volume_busy = false;
             self.status = Some(match result {
-                Ok(message) => (message, false),
+                Ok((message, connected_uri)) => {
+                    if let Some(uri) = connected_uri {
+                        self.remote_history.clear();
+                        self.browse_remote(uri);
+                    }
+                    (message, false)
+                }
                 Err(error) => (error, true),
             });
             self.last_refresh_check = Instant::now() - Duration::from_secs(3);
+        }
+        while let Ok((generation, uri, result)) = self.remote_receiver.try_recv() {
+            if generation != self.remote_generation || uri != self.remote_uri {
+                continue;
+            }
+            self.remote_loading = false;
+            match result {
+                Ok(entries) => {
+                    self.remote_entries = entries;
+                    self.remote_error = None;
+                }
+                Err(error) => {
+                    self.remote_entries.clear();
+                    self.remote_error = Some(error);
+                }
+            }
         }
         while let Ok(message) = self.scan_receiver.try_recv() {
             if let Some(index) = self
@@ -2684,6 +2851,22 @@ impl Explorer {
                                 if self.volume_busy {
                                     ui.small("GIO device operation in progress…");
                                 }
+                                for uri in self.config.remote_favorites.clone() {
+                                    if !matches!(
+                                        Location::parse(uri.clone().into()),
+                                        Ok(Location::Remote(_))
+                                    ) {
+                                        continue;
+                                    }
+                                    if ui
+                                        .button(format!("Network favorite: {}", shorten(&uri, 27)))
+                                        .on_hover_text(&uri)
+                                        .clicked()
+                                    {
+                                        self.remote_history.clear();
+                                        self.browse_remote(uri);
+                                    }
+                                }
                                 for volume in self.volumes.clone() {
                                     let path = volume.path;
                                     let label = if path == Path::new("/") {
@@ -3942,6 +4125,7 @@ impl eframe::App for Explorer {
         self.main_panel(ui);
         self.dialogs(&context);
         self.volume_dialog(&context);
+        self.remote_browser_dialog(&context);
         self.recovery_dialog(&context);
         self.transfer_dialog(&context);
         if self.dirty_config {
@@ -3958,6 +4142,7 @@ impl eframe::App for Explorer {
             matches!(&self.dialog, Some(Dialog::Properties { details: None, .. }));
         let idle_delay = if self.busy
             || self.volume_busy
+            || self.remote_loading
             || waiting_for_preview
             || waiting_for_properties
             || self.tabs.iter().any(|tab| tab.loading)

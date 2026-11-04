@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add a bounded, read-only GIO network browser accessible from remote address
+  entry or a completed connection attempt. Decode no untrusted URI into a
+  local path; cap listing output and item count, reject unexpected entries,
+  cancel superseded scans and show timeout/offline errors without blocking
+  the GUI. Add safe persisted
+  URI favorites and an explicit reconnect control. This does not
+  enable remote file mutations or integrate remote paths into local tabs.
 - Add a GIO-backed, non-blocking network connection attempt and confirmed
   unmount/eject actions to the Volumes sidebar. Commands are argument-based,
   have a bounded runtime, never call sudo, and do not claim a remote file
