@@ -29,7 +29,8 @@
 - Add a bounded in-memory copy queue: 32 waiting jobs maximum, stable operation
   IDs, FIFO dispatch after each finish, read-only inspection and removing jobs
   before they run. Show the active transfer in every theme, even without a
-  status bar; prevent clearing a newer cut selection when an older move ends.
+  status bar; pause further copies on error until manually resumed; prevent
+  clearing a newer cut selection when an older move ends.
 
 **Validation:** Earlier v0.2 feature branch CI passed formatting, Clippy,
 36 tests, release build, CLI and seven-theme Xvfb smoke. New journal and CI

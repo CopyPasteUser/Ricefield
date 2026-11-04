@@ -166,6 +166,7 @@ pub struct Explorer {
     op_receiver: Receiver<OperationEvent>,
     operation_queue: OperationQueue,
     active_operation: Option<(u64, String)>,
+    queue_paused: bool,
     show_operations: bool,
     recovery_sender: Sender<(u64, std::io::Result<Vec<JournalRecord>>)>,
     recovery_receiver: Receiver<(u64, std::io::Result<Vec<JournalRecord>>)>,
@@ -237,6 +238,7 @@ impl Explorer {
             op_receiver,
             operation_queue: OperationQueue::default(),
             active_operation: None,
+            queue_paused: false,
             show_operations: false,
             recovery_sender,
             recovery_receiver,
@@ -534,20 +536,27 @@ impl Explorer {
                         Ok(success) => {
                             self.status = Some((format!("#{}: {success}", message.id), false));
                             if message.moved_paths.as_ref().is_some_and(|moved| {
-                                self.clipboard
-                                    .as_ref()
-                                    .is_some_and(|clipboard| clipboard.cut && &clipboard.paths == moved)
+                                self.clipboard.as_ref().is_some_and(|clipboard| {
+                                    clipboard.cut && &clipboard.paths == moved
+                                })
                             }) {
                                 self.clipboard = None;
                             }
                         }
                         Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
+                            self.queue_paused = !self.operation_queue.is_empty();
                             self.status = Some((
-                                "Cancelled. Previously completed items remain in place.".into(),
+                                if self.queue_paused {
+                                    "Cancelled. Completed items remain; waiting copies are paused."
+                                } else {
+                                    "Cancelled. Previously completed items remain in place."
+                                }
+                                .into(),
                                 false,
                             ));
                         }
                         Err(error) => {
+                            self.queue_paused = !self.operation_queue.is_empty();
                             self.status = Some((format!("Operation failed: {error}"), true))
                         }
                     }
@@ -675,6 +684,9 @@ impl Explorer {
                     }
                     if !self.operation_queue.is_empty() {
                         ui.label(format!("{} waiting", self.operation_queue.len()));
+                        if self.queue_paused {
+                            ui.colored_label(Color32::from_rgb(165, 83, 30), "Paused after error");
+                        }
                     }
                 });
             });
@@ -706,6 +718,9 @@ impl Explorer {
                 ui.separator();
                 ui.strong(format!("Waiting ({})", self.operation_queue.len()));
                 ui.small("Only copy requests can wait. Removing a waiting job makes no filesystem changes.");
+                if self.queue_paused && ui.button("Resume waiting copies").clicked() {
+                    self.queue_paused = false;
+                }
                 egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
                     for job in self.operation_queue.iter() {
                         ui.horizontal_wrapped(|ui| {
@@ -721,11 +736,23 @@ impl Explorer {
         if let Some(id) = remove {
             if self.operation_queue.remove(id) {
                 self.status = Some((format!("Removed waiting copy #{id}"), false));
+                if self.operation_queue.is_empty() {
+                    self.queue_paused = false;
+                }
             }
         }
+        self.start_next_operation();
     }
 
     fn run_action(&mut self, action: Action) {
+        if self.queue_paused && !matches!(&action, Action::Copy { .. }) {
+            self.status = Some((
+                "Waiting copies are paused after an error. Resume or remove them first."
+                    .into(),
+                true,
+            ));
+            return;
+        }
         if self.busy && !matches!(&action, Action::Copy { .. }) {
             self.status = Some((
                 "A transfer is running. Only Copy can be queued; retry this action when it finishes."
@@ -748,7 +775,7 @@ impl Explorer {
     }
 
     fn start_next_operation(&mut self) {
-        if self.busy {
+        if self.busy || self.queue_paused {
             return;
         }
         let Some(job) = self.operation_queue.dequeue() else {

@@ -16,7 +16,7 @@ RiceExplorer is designed as the file-management companion to [RiceBowl](https://
 - Multiple selection (Ctrl/Shift/Ctrl+A), copy, cut, paste, duplicate, rename, new folder/file, symbolic links, desktop Trash and confirmed permanent deletion.
 - Native GTK file clipboard interoperability (when `xclip` or `wl-clipboard` is installed); otherwise use the internal file clipboard.
 - Cross-device moves with copy-first semantics and byte-for-byte verification, symlink-preserving copies, transfer progress and cancellation.
-- Bounded transfer queue for up to 32 waiting copy requests with FIFO job IDs, a shared Transfers panel, active progress/cancel, and removal of jobs before they run. The waiting queue is in memory only and is never replayed after a restart; moves and destructive requests do not wait automatically.
+- Bounded transfer queue for up to 32 waiting copy requests with FIFO job IDs, a shared Transfers panel, active progress/cancel, and removal of jobs before they run. The queue pauses after a failed/cancelled operation until explicitly resumed. It is in memory only and never replayed after a restart; moves and destructive requests do not wait automatically.
 - Development preview: durable cross-device move journals and an always-visible, read-only warning for unfinished transfers, even when a rice hides its status bar. No automatic destructive recovery.
 - File properties and editable Unix permission bits; external changes to folder contents are detected.
 - On-demand preview pane for bounded image and text previews, decoded off the UI thread.
