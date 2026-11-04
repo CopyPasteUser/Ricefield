@@ -218,12 +218,18 @@ Current safeguards:
   copying a folder into itself is rejected.
 - Symlinks are copied as links, never traversed as directories; device files
   are rejected. A regular file swapped for a symlink while opening is refused.
+- Multiple names for the same regular-file inode **inside one copied directory
+  tree** remain hardlinked in the staged destination. Separate top-level paste
+  items and hardlinks outside the selected tree are not linked together.
 - A source that changes identity, size, modification time or mode during copy
   fails validation before publication. Regular-file and directory access and
   modification timestamps are preserved where supported.
 - Cross-filesystem moves verify each copied byte before publishing, then
-  reverify published contents before deleting matching source entries.
-  Extra verification I/O is intentional.
+  reverify published contents before deleting matching source entries. A
+  bounded source-entry manifest also checks device/inode/mtime/ctime/mode
+  identities to refuse deletion of a newly substituted file with identical
+  bytes. Extra verification I/O is intentional; the final unlink is not an
+  atomic compare-and-delete against a concurrent writer.
 - Cancellation stops future work and cleans partial staging when possible,
   but does **not** undo already committed items. Deletion uses the desktop
   Trash unless permanent deletion is separately confirmed.
@@ -237,9 +243,10 @@ Current safeguards:
 
 **Important limitations:** Concurrent writers can still cause a partial move;
 the complete published destination is retained for manual recovery if source
-cleanup fails. ACLs, extended attributes, ownership, hardlink relationships,
-some symlink timestamps and full race-free cleanup are not preserved or
-guaranteed. **Do not use development builds for irreplaceable data.**
+cleanup fails. ACLs, extended attributes, ownership, hardlink relationships
+*between separately copied source trees*, some symlink timestamps and full
+race-free cleanup are not preserved or guaranteed. **Do not use development
+builds for irreplaceable data.**
 
 After a crash, a hidden `.rice-explorer-staging-*` directory may remain. Move
 records live in `$XDG_STATE_HOME/rice-explorer/operations/` (default

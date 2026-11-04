@@ -2,6 +2,15 @@
 
 ## Unreleased — v0.2 stability and v0.3 safety groundwork
 
+- Preserve internal hardlink relationships when copying a directory tree:
+  repeated source inodes are hardlinked in private staging instead of creating
+  unrelated independent files. The optimization is scoped to one published
+  tree; cross-item and external hardlink identities remain unsupported.
+- Before cleaning a published cross-device Move, take a bounded source-tree
+  identity manifest and recheck each entry. Refuse substituted files even if
+  their bytes match the published copy. Account for inode ctime changes
+  caused by RiceExplorer's own earlier hardlink removals. This narrows but
+  does not eliminate the remaining non-atomic check/unlink race.
 - Add an explicit read-only source/destination comparison in the unfinished
   move inspector. Compare regular-file bytes and nested directory names,
   symlink targets and object types on demand; run in a cancellable worker

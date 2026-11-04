@@ -1,6 +1,6 @@
 use crate::journal::{Journal, State};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     ffi::{OsStr, OsString},
     fs::{self, File, FileTimes, OpenOptions},
     io::{self, Read, Write},
@@ -972,6 +972,16 @@ fn perform_with_progress_and_items(
                             // A durable record must exist before copying. Never delete
                             // the source if publishing the journal state fails.
                             let original_source = fs::symlink_metadata(source)?;
+                            // Keep the identity of every original entry, not merely
+                            // the root. A different file with identical contents
+                            // must not become a candidate for source cleanup.
+                            let mut source_manifest = BTreeMap::new();
+                            capture_source_manifest(
+                                source,
+                                0,
+                                &mut source_manifest,
+                                &mut transfer,
+                            )?;
                             let mut journal = match journal_directory {
                                 Some(directory) => {
                                     Journal::begin_in(directory, source, &planned.target)?
@@ -994,8 +1004,16 @@ fn perform_with_progress_and_items(
                             // recovery; no unverified new directory entries are removed.
                             ensure_same_source(source, &original_source)?;
                             verify_tree(source, &planned.target, 0, &mut transfer)?;
+                            verify_source_manifest(&source_manifest, &mut transfer)?;
                             ensure_same_source(source, &original_source)?;
-                            remove_verified_tree(source, &planned.target, 0, &mut transfer)?;
+                            remove_verified_tree(
+                                source,
+                                &planned.target,
+                                0,
+                                &source_manifest,
+                                &mut BTreeSet::new(),
+                                &mut transfer,
+                            )?;
                             journal.advance(State::Completed)?;
                             transfer.phase = "Copying";
                         }
@@ -1530,10 +1548,80 @@ fn remove_selected(path: &Path) -> io::Result<()> {
 /// Delete only source entries that have a matching published destination.
 /// Unlike remove_dir_all, a concurrent writer adding an unexpected entry
 /// prevents the final rmdir and leaves that entry available for recovery.
+const MAX_MOVE_MANIFEST_ENTRIES: usize = 250_000;
+
+fn capture_source_manifest(
+    path: &Path,
+    depth: usize,
+    manifest: &mut BTreeMap<PathBuf, fs::Metadata>,
+    transfer: &mut Transfer<'_>,
+) -> io::Result<()> {
+    transfer.check()?;
+    if depth > 128 || manifest.len() >= MAX_MOVE_MANIFEST_ENTRIES {
+        return Err(io::Error::other(
+            "Move has too many entries or nested directories to track safely",
+        ));
+    }
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.is_dir() {
+        for item in fs::read_dir(path)? {
+            capture_source_manifest(&item?.path(), depth + 1, manifest, transfer)?;
+        }
+        ensure_same_source(path, &metadata)?;
+    }
+    manifest.insert(path.to_path_buf(), metadata);
+    Ok(())
+}
+
+fn verify_source_manifest(
+    manifest: &BTreeMap<PathBuf, fs::Metadata>,
+    transfer: &mut Transfer<'_>,
+) -> io::Result<()> {
+    for (path, snapshot) in manifest {
+        transfer.check()?;
+        ensure_same_source(path, snapshot)?;
+    }
+    Ok(())
+}
+
+/// Unlinking an earlier name of a hardlinked inode changes the inode's ctime
+/// and link count for its remaining names. Accept only that *known* effect
+/// of our own earlier unlinks; require the same inode, bytes, mode and mtime.
+#[cfg(unix)]
+fn ensure_cleanup_source(
+    original: &fs::Metadata,
+    current: &fs::Metadata,
+    removed_links: &BTreeSet<(u64, u64)>,
+) -> io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+
+    if ensure_same_source_metadata(original, current).is_ok() {
+        return Ok(());
+    }
+    let key = (original.dev(), original.ino());
+    if original.is_file()
+        && current.is_file()
+        && removed_links.contains(&key)
+        && original.nlink() > current.nlink()
+        && current.nlink() > 0
+        && original.size() == current.size()
+        && original.mode() == current.mode()
+        && original.mtime() == current.mtime()
+        && original.mtime_nsec() == current.mtime_nsec()
+        && original.dev() == current.dev()
+        && original.ino() == current.ino()
+    {
+        return Ok(());
+    }
+    ensure_same_source_metadata(original, current)
+}
+
 fn remove_verified_tree(
     source: &Path,
     destination: &Path,
     depth: usize,
+    manifest: &BTreeMap<PathBuf, fs::Metadata>,
+    removed_links: &mut BTreeSet<(u64, u64)>,
     transfer: &mut Transfer<'_>,
 ) -> io::Result<()> {
     transfer.check()?;
@@ -1544,6 +1632,13 @@ fn remove_verified_tree(
         ));
     }
     let metadata = fs::symlink_metadata(source)?;
+    let original = manifest.get(source).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidData, "Source was not in the original move")
+    })?;
+    #[cfg(unix)]
+    ensure_cleanup_source(original, &metadata, removed_links)?;
+    #[cfg(not(unix))]
+    ensure_same_source_metadata(original, &metadata)?;
     if metadata.is_dir() {
         if !fs::symlink_metadata(destination)?.is_dir() {
             return Err(io::Error::new(
@@ -1557,6 +1652,8 @@ fn remove_verified_tree(
                 &source.join(entry.file_name()),
                 &entry.path(),
                 depth + 1,
+                manifest,
+                removed_links,
                 transfer,
             )?;
         }
@@ -1566,7 +1663,15 @@ fn remove_verified_tree(
         // source path still may be mutated by another process; crash-safe
         // identity tracking and journaling remain required for a 1.0 gate.
         verify_tree(source, destination, depth, transfer)?;
-        fs::remove_file(source)
+        fs::remove_file(source)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if original.is_file() && original.nlink() > 1 {
+                removed_links.insert((original.dev(), original.ino()));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1659,7 +1764,7 @@ fn stage_and_publish_with_sync(
     let result = (|| {
         let original = fs::symlink_metadata(source)?;
         transfer.phase = "Copying";
-        copy_tree(source, &staged, 0, transfer)?;
+        copy_tree(source, &staged, 0, transfer, &mut CopyContext::default())?;
         if verify {
             transfer.phase = "Verifying";
             transfer.report(source);
@@ -1795,11 +1900,20 @@ fn verify_tree(
     Ok(())
 }
 
+/// Tracks links within one source tree. Separate top-level paste items are
+/// independently published and cannot share this staging map.
+#[derive(Default)]
+struct CopyContext {
+    #[cfg(unix)]
+    hardlinks: BTreeMap<(u64, u64), PathBuf>,
+}
+
 fn copy_tree(
     source: &Path,
     destination: &Path,
     depth: usize,
     transfer: &mut Transfer<'_>,
+    context: &mut CopyContext,
 ) -> io::Result<()> {
     transfer.check()?;
     if depth > 128 {
@@ -1835,6 +1949,7 @@ fn copy_tree(
                     &destination.join(item.file_name()),
                     depth + 1,
                     transfer,
+                    context,
                 )?;
             }
             ensure_same_source(source, &metadata)?;
@@ -1849,6 +1964,20 @@ fn copy_tree(
         }
         result
     } else if metadata.is_file() {
+        #[cfg(unix)]
+        let hardlink_key = {
+            use std::os::unix::fs::MetadataExt;
+            (metadata.nlink() > 1).then_some((metadata.dev(), metadata.ino()))
+        };
+        #[cfg(unix)]
+        if let Some(existing) = hardlink_key.and_then(|key| context.hardlinks.get(&key)) {
+            // Keep a shared inode within the copied tree. Only use links
+            // created under our private staging directory.
+            ensure_same_source(source, &metadata)?;
+            fs::hard_link(existing, destination)?;
+            transfer.advance(metadata.len(), source);
+            return Ok(());
+        }
         let mut options = OpenOptions::new();
         options.read(true);
         #[cfg(unix)]
@@ -1883,6 +2012,11 @@ fn copy_tree(
         })();
         if result.is_err() {
             let _ = fs::remove_file(destination);
+        } else {
+            #[cfg(unix)]
+            if let Some(key) = hardlink_key {
+                context.hardlinks.insert(key, destination.to_path_buf());
+            }
         }
         result
     } else {
@@ -2227,6 +2361,126 @@ mod tests {
         assert_eq!(fs::read(dst.join("note (copy).txt")).unwrap(), b"original");
         assert_eq!(fs::read(source).unwrap(), b"original");
         assert_eq!(fs::read_dir(&dst).unwrap().count(), 2);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copying_directory_preserves_internal_hardlink_relationships() {
+        use std::os::unix::fs::MetadataExt;
+
+        let root = test_root();
+        let original = root.join("original");
+        let nested = original.join("nested");
+        fs::create_dir(&original).unwrap();
+        fs::create_dir(&nested).unwrap();
+        fs::write(original.join("first.txt"), b"shared content").unwrap();
+        fs::hard_link(original.join("first.txt"), nested.join("second.txt")).unwrap();
+        let output = root.join("out");
+        fs::create_dir(&output).unwrap();
+
+        perform(&Action::Copy {
+            sources: vec![original.clone()],
+            destination: output.clone(),
+            conflict: ConflictPolicy::KeepBoth,
+        })
+        .unwrap();
+
+        let copied = output.join("original");
+        let first = fs::metadata(copied.join("first.txt")).unwrap();
+        let second = fs::metadata(copied.join("nested/second.txt")).unwrap();
+        assert_eq!(first.ino(), second.ino());
+        assert_eq!(first.nlink(), 2);
+        assert_eq!(fs::read(copied.join("nested/second.txt")).unwrap(), b"shared content");
+        assert_ne!(first.ino(), fs::metadata(original.join("first.txt")).unwrap().ino());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn move_cleanup_rejects_replaced_source_even_with_identical_bytes() {
+        let root = test_root();
+        let source = root.join("original.txt");
+        let retired = root.join("retired.txt");
+        let destination = root.join("destination.txt");
+        fs::write(&source, b"same bytes").unwrap();
+        fs::write(&destination, b"same bytes").unwrap();
+        let cancelled = AtomicBool::new(false);
+        let mut no_op = |_: Progress| {};
+        let mut transfer = Transfer {
+            cancelled: &cancelled,
+            notify: &mut no_op,
+            transferred: 0,
+            total: 10,
+            last_report: Instant::now(),
+            last_reported_bytes: 0,
+            phase: "Verifying",
+        };
+        let mut manifest = BTreeMap::new();
+        capture_source_manifest(&source, 0, &mut manifest, &mut transfer).unwrap();
+        fs::rename(&source, &retired).unwrap();
+        fs::write(&source, b"same bytes").unwrap();
+
+        assert_eq!(
+            verify_source_manifest(&manifest, &mut transfer)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(
+            remove_verified_tree(
+                &source,
+                &destination,
+                0,
+                &manifest,
+                &mut BTreeSet::new(),
+                &mut transfer,
+            )
+            .unwrap_err()
+            .kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(fs::read(source).unwrap(), b"same bytes");
+        assert_eq!(fs::read(retired).unwrap(), b"same bytes");
+        assert_eq!(fs::read(destination).unwrap(), b"same bytes");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cleanup_allows_own_hardlink_unlinks_without_losing_other_entries() {
+        let root = test_root();
+        let source = root.join("original");
+        let destination = root.join("published");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("a.txt"), b"shared").unwrap();
+        fs::hard_link(source.join("a.txt"), source.join("b.txt")).unwrap();
+        let cancelled = AtomicBool::new(false);
+        let mut no_op = |_: Progress| {};
+        let mut transfer = Transfer {
+            cancelled: &cancelled,
+            notify: &mut no_op,
+            transferred: 0,
+            total: 12,
+            last_report: Instant::now(),
+            last_reported_bytes: 0,
+            phase: "Verifying",
+        };
+        let mut manifest = BTreeMap::new();
+        capture_source_manifest(&source, 0, &mut manifest, &mut transfer).unwrap();
+        stage_and_publish(&source, &destination, true, &mut transfer).unwrap();
+        verify_source_manifest(&manifest, &mut transfer).unwrap();
+        remove_verified_tree(
+            &source,
+            &destination,
+            0,
+            &manifest,
+            &mut BTreeSet::new(),
+            &mut transfer,
+        )
+        .unwrap();
+        assert!(!source.exists());
+        assert_eq!(fs::read(destination.join("a.txt")).unwrap(), b"shared");
+        assert_eq!(fs::read(destination.join("b.txt")).unwrap(), b"shared");
         fs::remove_dir_all(root).unwrap();
     }
 

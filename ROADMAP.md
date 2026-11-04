@@ -72,6 +72,14 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   a last-moment symlink replacement. Preserve regular-file and directory
   access/modification times in staged copies. Still require race-free source
   cleanup, symlink timestamps, ACL/xattr/ownership/hardlink preservation.
+- [x] Retain regular-file hardlink relationships when multiple names for the
+  same inode occur inside a single directory tree being copied. Cross-item
+  and out-of-tree links, extended metadata and ACL preservation remain open.
+- [x] Snapshot every source entry before cross-device Move staging and
+  revalidate the entire manifest before cleanup and each entry before unlink.
+  Refuse a same-content replacement inode; handle ctime/link-count changes
+  caused by our own earlier hardlink removals. The final check/unlink is
+  still not atomic under a concurrent writer.
 - [x] Introduce a bounded, in-memory FIFO for up to 32 waiting Copy jobs,
   stable operation IDs, visible progress in every rice, and cancellation of
   waiting jobs without filesystem side effects. Pause the queue after an
