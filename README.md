@@ -64,7 +64,10 @@ renderers remain part of the roadmap.
   read-only warning for unfinished transfers, even when a rice hides its
   status bar. The recovery window checks whether the recorded source,
   destination and staging paths currently exist (including broken symlinks)
-  and gives cautious guidance. Optional bounded read-only content comparison
+  and gives cautious guidance. New records also retain Unix source/published
+  destination inode and metadata snapshots, so inspection can flag changed or
+  replaced objects. Older records remain readable without identity evidence.
+  Optional bounded read-only content comparison
   is available, but even matching bytes are **not** permission to delete
   anything. No automatic
   destructive recovery. Repeated rescans are coalesced while a filesystem
@@ -282,6 +285,12 @@ After a crash, a hidden `.rice-explorer-staging-*` directory may remain. Move
 records live in `$XDG_STATE_HOME/rice-explorer/operations/` (default
 `~/.local/state/rice-explorer/operations/`). RiceExplorer warns about unfinished
 records and displays source, destination and staging status. The recovery window
+uses recorded inode/metadata snapshots for additional read-only warnings about
+changed or replaced paths; identity matching is not proof of matching bytes,
+authentic ownership or safety after reboot. Legacy v1 journals have no such
+evidence. New cross-device moves refuse to start when the directory already
+holds 4,096 journal records; unfinished evidence is never pruned automatically.
+The recovery window
 also offers an **opt-in, read-only byte comparison** of source and destination,
 including nested folders and symlink targets. It runs on a worker, can be
 cancelled and stops after 512 MiB, 10,000 entries or 128 nesting levels; very

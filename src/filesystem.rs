@@ -4788,6 +4788,12 @@ mod tests {
         let destination = root.join("destination.txt");
         fs::write(&source, b"same bytes").unwrap();
         fs::write(&destination, b"same bytes").unwrap();
+        // Metadata parity is checked before xattrs. Ensure the fixture has
+        // identical mtimes so this test reaches the attribute comparison.
+        File::open(&destination)
+            .unwrap()
+            .set_times(source_times(&fs::symlink_metadata(&source).unwrap()))
+            .unwrap();
         let path = CString::new(source.as_os_str().as_bytes()).unwrap();
         let key = CString::new("user.rice_explorer_verification").unwrap();
         let value = b"must survive";
@@ -4824,7 +4830,7 @@ mod tests {
         };
         let error = verify_tree(&source, &destination, 0, &mut transfer).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-        assert!(error.to_string().contains("extended-attribute"));
+        assert!(error.to_string().contains("extended-attribute"), "{error}");
         assert_eq!(fs::read(&source).unwrap(), b"same bytes");
         fs::remove_dir_all(root).unwrap();
     }

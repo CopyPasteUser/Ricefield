@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Record the original source's Unix inode/metadata identity before staging and
+  the published destination's identity after its durable publication barrier.
+  Version 2 recovery records remain inspection-only: they can flag a replaced
+  inode or changed metadata but never authorize automatic deletion, resume or
+  rollback. Continue reading legacy version 1 records without inventing
+  missing provenance. Reject malformed v2 evidence and refuse new moves when
+  the journal is at its 4,096-record scan limit; preserve every incomplete
+  record instead of silently pruning it. Add restart/identity/capacity tests.
 - Preserve Linux POSIX access/default ACLs when staging regular files and
   directories. Apply ACLs after chmod to retain their masks; remove ACLs
   inherited from the private staging hierarchy when the source has none.

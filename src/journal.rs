@@ -16,7 +16,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const MAX_RECORD_BYTES: u64 = 64 * 1024;
 const MAX_RECORDS: usize = 4096;
 // Recovery comparisons are explicitly requested, never run during startup.
@@ -42,6 +42,83 @@ pub struct Record {
     pub source: PathBuf,
     pub destination: PathBuf,
     pub staging: Option<PathBuf>,
+    pub source_identity: Option<ObjectIdentity>,
+    pub destination_identity: Option<ObjectIdentity>,
+}
+
+/// An observation of one inode, not an authenticated proof of ownership or
+/// contents. Device/inode numbers can be reused after deletion or reboot.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ObjectIdentity {
+    dev: u64,
+    ino: u64,
+    mode: u32,
+    uid: u32,
+    gid: u32,
+    len: u64,
+    mtime: i64,
+    mtime_nsec: i64,
+    ctime: i64,
+    ctime_nsec: i64,
+}
+
+#[cfg(unix)]
+fn identity_of(metadata: &fs::Metadata) -> ObjectIdentity {
+    use std::os::unix::fs::MetadataExt;
+
+    ObjectIdentity {
+        dev: metadata.dev(),
+        ino: metadata.ino(),
+        mode: metadata.mode(),
+        uid: metadata.uid(),
+        gid: metadata.gid(),
+        len: metadata.len(),
+        mtime: metadata.mtime(),
+        mtime_nsec: metadata.mtime_nsec(),
+        ctime: metadata.ctime(),
+        ctime_nsec: metadata.ctime_nsec(),
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum IdentityStatus {
+    NotRecorded,
+    Missing,
+    Unreadable(String),
+    SameSnapshot,
+    Changed,
+    Replaced,
+}
+
+fn inspect_identity(path: &Path, recorded: Option<&ObjectIdentity>) -> IdentityStatus {
+    let Some(recorded) = recorded else {
+        return IdentityStatus::NotRecorded;
+    };
+    #[cfg(unix)]
+    {
+        match fs::symlink_metadata(path) {
+            Ok(current) => {
+                let current = identity_of(&current);
+                if current.dev != recorded.dev
+                    || current.ino != recorded.ino
+                    || (current.mode & libc::S_IFMT) != (recorded.mode & libc::S_IFMT)
+                {
+                    IdentityStatus::Replaced
+                } else if &current == recorded {
+                    IdentityStatus::SameSnapshot
+                } else {
+                    IdentityStatus::Changed
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => IdentityStatus::Missing,
+            Err(error) => IdentityStatus::Unreadable(error.to_string()),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, recorded);
+        IdentityStatus::NotRecorded
+    }
 }
 
 /// Read-only observation; presence is not proof of matching contents or of
@@ -82,6 +159,8 @@ pub struct Inspection {
     pub source: PathStatus,
     pub destination: PathStatus,
     pub staging: Option<PathStatus>,
+    pub source_identity: IdentityStatus,
+    pub destination_identity: IdentityStatus,
 }
 
 impl Inspection {
@@ -96,10 +175,28 @@ impl Inspection {
                 .is_some_and(|status| matches!(status, PathStatus::Inaccessible(_)))
         {
             "At least one path cannot be inspected. Check mounts and permissions before taking action."
+        } else if matches!(self.source_identity, IdentityStatus::Replaced)
+            || matches!(self.destination_identity, IdentityStatus::Replaced)
+        {
+            "A recorded path now names a different filesystem object. Treat recovery as unsafe; do not remove or overwrite either side."
+        } else if matches!(self.source_identity, IdentityStatus::Changed)
+            || matches!(self.destination_identity, IdentityStatus::Changed)
+        {
+            "A recorded inode has changed metadata since the move. This may reflect partial cleanup or another writer; manual verification is required."
+        } else if matches!(self.source_identity, IdentityStatus::Unreadable(_))
+            || matches!(self.destination_identity, IdentityStatus::Unreadable(_))
+        {
+            "Recorded filesystem identity cannot be checked. Verify mounts and permissions before touching either path."
         } else if !self.source.present() && !self.destination.present() {
             "Neither recorded path is visible. Check mounts and backups; do not discard this record."
         } else if self.source.present() && self.destination.present() {
-            "Both paths exist. Compare their actual contents before deciding what to keep; neither is removed automatically."
+            if matches!(self.source_identity, IdentityStatus::SameSnapshot)
+                && matches!(self.destination_identity, IdentityStatus::SameSnapshot)
+            {
+                "Both recorded inodes still match their observed metadata, but this does not prove their contents or authorize deletion."
+            } else {
+                "Both paths exist. Compare their actual contents before deciding what to keep; neither is removed automatically."
+            }
         } else if self.source.present() {
             "The original is visible, but the destination is missing. Inspect the staging path and verify mount availability before retrying."
         } else {
@@ -124,6 +221,11 @@ fn inspect_record(record: Record) -> Inspection {
         source: path_status(&record.source),
         destination: path_status(&record.destination),
         staging: record.staging.as_ref().map(|path| path_status(path)),
+        source_identity: inspect_identity(&record.source, record.source_identity.as_ref()),
+        destination_identity: inspect_identity(
+            &record.destination,
+            record.destination_identity.as_ref(),
+        ),
         record,
     }
 }
@@ -383,6 +485,10 @@ struct StoredRecord {
     source_hex: String,
     destination_hex: String,
     staging_hex: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_identity: Option<ObjectIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    destination_identity: Option<ObjectIdentity>,
 }
 
 /// One writer owns the journal for a single move; it is not a recovery handle.
@@ -403,11 +509,16 @@ impl Journal {
         destination: &Path,
     ) -> io::Result<Self> {
         ensure_private_directory(directory)?;
+        ensure_capacity(directory, MAX_RECORDS)?;
         let source = absolute_path(source)?;
         let destination = absolute_path(destination)?;
         if source == destination {
             return Err(invalid_input("Journal source and destination must differ"));
         }
+        #[cfg(unix)]
+        let source_identity = Some(identity_of(&fs::symlink_metadata(&source)?));
+        #[cfg(not(unix))]
+        let source_identity = None;
         for _ in 0..128 {
             let id = next_id();
             let path = directory.join(format!("{id}.toml"));
@@ -417,6 +528,8 @@ impl Journal {
                 source: source.clone(),
                 destination: destination.clone(),
                 staging: None,
+                source_identity: source_identity.clone(),
+                destination_identity: None,
             };
             match write_record(&path, &record, true) {
                 Ok(()) => return Ok(Self { path, record }),
@@ -469,6 +582,14 @@ impl Journal {
         }
         let mut updated = self.record.clone();
         updated.state = next;
+        if next == State::Published {
+            #[cfg(unix)]
+            {
+                updated.destination_identity = Some(identity_of(&fs::symlink_metadata(
+                    &self.record.destination,
+                )?));
+            }
+        }
         self.persist(updated)?;
         if next == State::Completed {
             // Completed transfers need no recovery. Retire their records so
@@ -491,6 +612,29 @@ impl Journal {
         self.record = updated;
         Ok(())
     }
+}
+
+/// Never prune incomplete recovery evidence automatically. Refuse to start
+/// another cross-device Move if the scan's fixed capacity is already full,
+/// rather than creating records that make startup inspection impossible.
+fn ensure_capacity(directory: &Path, limit: usize) -> io::Result<()> {
+    let mut count = 0usize;
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        if entry
+            .path()
+            .extension()
+            .is_some_and(|extension| extension == "toml")
+        {
+            count += 1;
+            if count >= limit {
+                return Err(io::Error::other(
+                    "Move journal capacity reached; inspect existing recovery records before starting another cross-device Move",
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Inspect incomplete moves without modifying any files or triggering recovery.
@@ -685,12 +829,36 @@ fn to_stored(record: &Record) -> io::Result<StoredRecord> {
             .as_ref()
             .map(|path| hex_path(path.as_path()))
             .transpose()?,
+        source_identity: record.source_identity.clone(),
+        destination_identity: record.destination_identity.clone(),
     })
 }
 
 fn from_stored(stored: StoredRecord) -> io::Result<Record> {
-    if stored.version != VERSION || !valid_id(&stored.id) {
+    if !matches!(stored.version, 1 | VERSION) || !valid_id(&stored.id) {
         return Err(invalid_data("Unsupported or invalid journal record"));
+    }
+    if stored.version == VERSION {
+        #[cfg(unix)]
+        if stored.source_identity.is_none()
+            || (matches!(stored.state, State::Published | State::Completed)
+                && stored.destination_identity.is_none())
+        {
+            return Err(invalid_data("Journal identity evidence is missing"));
+        }
+    }
+    for evidence in [
+        stored.source_identity.as_ref(),
+        stored.destination_identity.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if !(0..1_000_000_000).contains(&evidence.mtime_nsec)
+            || !(0..1_000_000_000).contains(&evidence.ctime_nsec)
+        {
+            return Err(invalid_data("Journal identity timestamp is invalid"));
+        }
     }
     let source = path_from_hex(&stored.source_hex)?;
     let destination = path_from_hex(&stored.destination_hex)?;
@@ -721,6 +889,8 @@ fn from_stored(stored: StoredRecord) -> io::Result<Record> {
         source,
         destination,
         staging,
+        source_identity: stored.source_identity,
+        destination_identity: stored.destination_identity,
     })
 }
 
@@ -834,12 +1004,15 @@ mod tests {
         let directory = test_directory();
         let source = directory.join("from");
         let destination = directory.join("to");
+        fs::write(&source, b"original").unwrap();
         let mut journal = Journal::begin_in(&directory, &source, &destination).unwrap();
         assert_eq!(journal.record().state, State::Prepared);
+        assert!(journal.record().source_identity.is_some());
         assert_eq!(scan_incomplete_in(&directory).unwrap().len(), 1);
 
         journal.set_staging(&directory.join("stage")).unwrap();
         journal.advance(State::StagedVerified).unwrap();
+        fs::write(&destination, b"original").unwrap();
         journal.advance(State::Published).unwrap();
         let incomplete = scan_incomplete_in(&directory).unwrap();
         assert_eq!(incomplete.len(), 1);
@@ -847,6 +1020,7 @@ mod tests {
         assert_eq!(incomplete[0].source, source);
         assert_eq!(incomplete[0].destination, destination);
         assert_eq!(incomplete[0].staging, Some(directory.join("stage")));
+        assert!(incomplete[0].destination_identity.is_some());
         journal.advance(State::Completed).unwrap();
         assert!(scan_incomplete_in(&directory).unwrap().is_empty());
         assert!(
@@ -854,6 +1028,87 @@ mod tests {
                 .join(format!("{}.toml", journal.record().id))
                 .exists()
         );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recovery_identity_detects_same_inode_drift_and_replaced_source() {
+        let directory = test_directory();
+        let source = directory.join("original");
+        let destination = directory.join("published");
+        fs::write(&source, b"same bytes").unwrap();
+        let mut journal = Journal::begin_in(&directory, &source, &destination).unwrap();
+        journal.set_staging(&directory.join("stage")).unwrap();
+        journal.advance(State::StagedVerified).unwrap();
+        fs::write(&destination, b"same bytes").unwrap();
+        journal.advance(State::Published).unwrap();
+
+        let record = scan_incomplete_in(&directory).unwrap().remove(0);
+        let first = inspect_record(record.clone());
+        assert_eq!(first.source_identity, IdentityStatus::SameSnapshot);
+        assert_eq!(first.destination_identity, IdentityStatus::SameSnapshot);
+        assert!(first.guidance().contains("recorded inodes"));
+
+        // A same-sized mutation must not be confused with the captured state.
+        fs::write(&destination, b"other data").unwrap();
+        let changed = inspect_record(record.clone());
+        assert_eq!(changed.destination_identity, IdentityStatus::Changed);
+        assert!(changed.guidance().contains("changed metadata"));
+
+        // Keep the old inode open to prevent immediate reuse of its number.
+        let old_inode = File::open(&source).unwrap();
+        fs::remove_file(&source).unwrap();
+        fs::write(&source, b"same bytes").unwrap();
+        let replaced = inspect_record(record);
+        assert_eq!(replaced.source_identity, IdentityStatus::Replaced);
+        assert!(replaced.guidance().contains("different filesystem object"));
+        drop(old_inode);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn legacy_records_remain_inspectable_but_version_two_requires_evidence() {
+        let directory = test_directory();
+        let source = directory.join("original");
+        fs::write(&source, b"original").unwrap();
+        let journal = Journal::begin_in(&directory, &source, &directory.join("target")).unwrap();
+        let path = directory.join(format!("{}.toml", journal.record().id));
+        let mut stored = to_stored(journal.record()).unwrap();
+        stored.version = 1;
+        stored.source_identity = None;
+        fs::write(&path, toml::to_string(&stored).unwrap()).unwrap();
+        let record = scan_incomplete_in(&directory).unwrap().remove(0);
+        assert_eq!(
+            inspect_record(record).source_identity,
+            IdentityStatus::NotRecorded
+        );
+
+        stored.version = VERSION;
+        fs::write(&path, toml::to_string(&stored).unwrap()).unwrap();
+        #[cfg(unix)]
+        assert_eq!(
+            scan_incomplete_in(&directory).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn journal_capacity_refuses_new_moves_without_purging_records() {
+        let directory = test_directory();
+        fs::write(directory.join("a.toml"), b"test").unwrap();
+        fs::write(directory.join("not-a-record.tmp"), b"ignored").unwrap();
+        ensure_capacity(&directory, 2).unwrap();
+        fs::write(directory.join("b.toml"), b"test").unwrap();
+        assert!(
+            ensure_capacity(&directory, 2)
+                .unwrap_err()
+                .to_string()
+                .contains("capacity reached")
+        );
+        assert!(directory.join("a.toml").exists());
+        assert!(directory.join("b.toml").exists());
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -871,6 +1126,8 @@ mod tests {
             source: source.clone(),
             destination: destination.clone(),
             staging: Some(staging.clone()),
+            source_identity: None,
+            destination_identity: None,
         };
         let first = inspect_record(record.clone());
         assert_eq!(first.source, PathStatus::File);
@@ -896,10 +1153,14 @@ mod tests {
                 source: PathBuf::from("/missing-source"),
                 destination: PathBuf::from("/missing-destination"),
                 staging: None,
+                source_identity: None,
+                destination_identity: None,
             },
             source: PathStatus::Missing,
             destination: PathStatus::Missing,
             staging: None,
+            source_identity: IdentityStatus::NotRecorded,
+            destination_identity: IdentityStatus::NotRecorded,
         };
         assert!(
             inspection
@@ -930,6 +1191,8 @@ mod tests {
             source: source.clone(),
             destination: destination.clone(),
             staging: Some(directory.join("staging")),
+            source_identity: None,
+            destination_identity: None,
         });
         assert_eq!(inspection.source, PathStatus::Symlink);
         assert_eq!(inspection.destination, PathStatus::Missing);
@@ -1040,8 +1303,9 @@ mod tests {
     #[test]
     fn invalid_transitions_do_not_change_disk() {
         let directory = test_directory();
-        let mut journal =
-            Journal::begin_in(&directory, Path::new("from"), Path::new("to")).unwrap();
+        let source = directory.join("from");
+        fs::write(&source, b"from").unwrap();
+        let mut journal = Journal::begin_in(&directory, &source, &directory.join("to")).unwrap();
         assert_eq!(
             journal.advance(State::Published).unwrap_err().kind(),
             io::ErrorKind::InvalidInput
@@ -1069,6 +1333,7 @@ mod tests {
         let directory = test_directory();
         let source = directory.join(OsString::from_vec(b"source-\xff".to_vec()));
         let destination = directory.join(OsString::from_vec(b"destination-\xfe".to_vec()));
+        fs::write(&source, b"non utf8 source").unwrap();
         let journal = Journal::begin_in(&directory, &source, &destination).unwrap();
         let loaded = scan_incomplete_in(&directory).unwrap();
         assert_eq!(loaded[0].source, source);
@@ -1085,14 +1350,16 @@ mod tests {
                 & 0o777,
             0o600
         );
-        assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 2);
         fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
     fn corrupted_and_oversized_records_fail_closed() {
         let directory = test_directory();
-        let journal = Journal::begin_in(&directory, Path::new("from"), Path::new("to")).unwrap();
+        let source = directory.join("from");
+        fs::write(&source, b"from").unwrap();
+        let journal = Journal::begin_in(&directory, &source, &directory.join("to")).unwrap();
         let path = directory.join(format!("{}.toml", journal.record().id));
         fs::write(&path, "version = 999\n").unwrap();
         assert_eq!(
@@ -1113,7 +1380,9 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let directory = test_directory();
-        let journal = Journal::begin_in(&directory, Path::new("from"), Path::new("to")).unwrap();
+        let source = directory.join("from");
+        fs::write(&source, b"from").unwrap();
+        let journal = Journal::begin_in(&directory, &source, &directory.join("to")).unwrap();
         let path = directory.join(format!("{}.toml", journal.record().id));
         let snapshot = fs::symlink_metadata(&path).unwrap();
         let sensitive = directory.join("unrelated");
