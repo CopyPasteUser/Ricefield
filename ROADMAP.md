@@ -183,6 +183,14 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   recorded source/destination contents (including nested bytes and symlink
   targets) with clear match/mismatch/inconclusive results. Check snapshots
   before/after reads; do not interpret matches as permission to delete.
+- [x] Persist Unix source inode and metadata evidence before staging and
+  published-destination identity after the durable publication barrier.
+  Recovery inspection distinguishes changed and replaced recorded objects;
+  v1 records remain inspectable without pretending that evidence exists.
+  v2 records with missing evidence are rejected. Refuse new move journals at
+  the 4,096-record scan cap without deleting incomplete recovery evidence.
+  These snapshots are advisory and do not prove unchanged contents or permit
+  automatic deletion; full provenance, crash replay and retention remain open.
 - [ ] Add durable provenance evidence, safe restart resume/rollback and
   race-free source cleanup; a matching read-only scan is insufficient.
 - [x] Isolate test journals and GUI smoke XDG state from the developer's real
