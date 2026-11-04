@@ -5489,6 +5489,57 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn cross_device_move_leaves_external_hardlinks_and_source_untouched() {
+        use std::os::unix::fs::MetadataExt;
+
+        let root = test_root();
+        let shared = Path::new("/dev/shm");
+        if !shared.is_dir()
+            || fs::metadata(&root).unwrap().dev() == fs::metadata(shared).unwrap().dev()
+        {
+            fs::remove_dir_all(root).unwrap();
+            return;
+        }
+        let destination = shared.join(format!(
+            "rice-explorer-hardlink-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        if fs::create_dir(&destination).is_err() {
+            fs::remove_dir_all(root).unwrap();
+            return;
+        }
+
+        let source = root.join("original.txt");
+        let outside = root.join("outside.txt");
+        fs::write(&source, b"shared bytes").unwrap();
+        fs::hard_link(&source, &outside).unwrap();
+        let journal_directory = root.join("test-journals");
+        let error = perform_with_progress_in(
+            &Action::Move {
+                sources: vec![source.clone()],
+                destination: destination.clone(),
+                conflict: ConflictPolicy::KeepBoth,
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+            Some(&journal_directory),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+        assert_eq!(fs::read(source).unwrap(), b"shared bytes");
+        assert_eq!(fs::read(outside).unwrap(), b"shared bytes");
+        assert_eq!(fs::read_dir(&destination).unwrap().count(), 0);
+        assert!(!journal_directory.exists());
+        fs::remove_dir_all(destination).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn cross_device_move_keeps_new_source_files_created_after_publication() {
         use std::os::unix::fs::MetadataExt;
         let root = test_root();

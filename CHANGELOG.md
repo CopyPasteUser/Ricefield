@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Upgrade the durable cross-device Move journal to v3 while keeping v1/v2
+  records readable. Save the verified staging payload's inode identity before
+  publication and refuse the Published transition if the destination is not
+  that same inode. Crash-recovery review now reports the staging-to-destination
+  identity relationship, including publication that happened before the
+  Published record could be written. This is provenance evidence, **not**
+  proof of unchanged bytes, safe automatic resume or source deletion.
 - Reject cross-device Move before staging when a regular-file inode also has
   hardlink names outside the selected tree, or when a hardlinked symlink cannot
   be reproduced. Internal regular-file hardlinks remain preserved. This avoids
