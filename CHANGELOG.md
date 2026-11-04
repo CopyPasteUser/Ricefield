@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Track every symbolic-Link operation in Transfers, with a read-only batch
+  destination preflight, reserved unique names, item-count progress and
+  individual success/failure/cancel outcomes. A racing external destination
+  cannot be overwritten; earlier completed links remain visible after a
+  partial failure. Add tests for duplicate basenames, collisions and cancel.
 - Serialize the recovery-journal capacity check and creation across cooperating
   Unix RiceExplorer processes with an advisory directory lock. Open that
   directory without following symlinks and validate its private permissions.

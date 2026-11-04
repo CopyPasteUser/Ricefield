@@ -638,7 +638,9 @@ pub fn perform_with_report(
     notify: &mut dyn FnMut(Progress),
 ) -> OperationReport {
     let sources: Vec<PathBuf> = match action {
-        Action::Copy { sources, .. } | Action::Move { sources, .. } => sources.clone(),
+        Action::Copy { sources, .. }
+        | Action::Move { sources, .. }
+        | Action::Link { sources, .. } => sources.clone(),
         Action::Trash { paths } | Action::Delete { paths } => paths.clone(),
         _ => Vec::new(),
     };
@@ -681,7 +683,9 @@ fn perform_with_progress_and_items(
     on_item: &mut dyn FnMut(ItemUpdate),
 ) -> io::Result<String> {
     let sources: &[PathBuf] = match action {
-        Action::Copy { sources, .. } | Action::Move { sources, .. } => sources,
+        Action::Copy { sources, .. }
+        | Action::Move { sources, .. }
+        | Action::Link { sources, .. } => sources,
         Action::Trash { paths } | Action::Delete { paths } => paths,
         _ => &[],
     };
@@ -780,6 +784,7 @@ fn perform_with_progress_and_items(
         transferred: 0,
         total: match action {
             Action::Trash { paths } | Action::Delete { paths } => paths.len() as u64,
+            Action::Link { sources, .. } => sources.len() as u64,
             _ => total,
         },
         last_report: Instant::now(),
@@ -787,6 +792,7 @@ fn perform_with_progress_and_items(
         phase: match action {
             Action::Trash { .. } => "Trashing",
             Action::Delete { .. } => "Deleting",
+            Action::Link { .. } => "Linking",
             _ => "Copying",
         },
     };
@@ -1099,25 +1105,59 @@ fn perform_with_progress_and_items(
             sources,
             destination,
         } => {
+            if !fs::metadata(destination)?.is_dir() {
+                return Err(invalid_name());
+            }
+            // Reserve destinations for the entire batch first. Two sources
+            // sharing a basename must not race each other for the same name.
+            // This preflight does not alter filesystem state or follow a
+            // source symlink (dangling link targets are intentional).
+            let mut reserved = BTreeSet::new();
+            let mut planned = Vec::with_capacity(sources.len());
             for (index, source) in sources.iter().enumerate() {
                 let result = (|| {
                     transfer.check()?;
-                    let target = free_destination(
+                    let target = free_destination_reserved(
                         destination,
                         source.file_name().ok_or_else(invalid_name)?,
+                        &reserved,
                     )?;
+                    let absolute = if source.is_absolute() {
+                        source.clone()
+                    } else {
+                        std::env::current_dir()?.join(source)
+                    };
+                    Ok((absolute, target))
+                })();
+                match result {
+                    Ok((absolute, target)) => {
+                        reserved.insert(target.clone());
+                        planned.push((absolute, target));
+                    }
+                    Err(error) => {
+                        on_item(ItemUpdate::error(index, None, &error));
+                        return Err(io::Error::new(
+                            error.kind(),
+                            format!(
+                                "Link preflight failed at item {} of {} ({}): {error}. No links were created",
+                                index + 1,
+                                sources.len(),
+                                source.display()
+                            ),
+                        ));
+                    }
+                }
+            }
+            for (index, (absolute, target)) in planned.iter().enumerate() {
+                let result = (|| {
+                    transfer.check()?;
                     #[cfg(unix)]
                     {
-                        let absolute = if source.is_absolute() {
-                            source.clone()
-                        } else {
-                            std::env::current_dir()?.join(source)
-                        };
                         std::os::unix::fs::symlink(absolute, target)
                     }
                     #[cfg(not(unix))]
                     {
-                        let _ = target;
+                        let _ = (absolute, target);
                         Err(io::Error::new(
                             io::ErrorKind::Unsupported,
                             "Unix links only",
@@ -1125,8 +1165,22 @@ fn perform_with_progress_and_items(
                     }
                 })();
                 if let Err(error) = result {
-                    return Err(batch_failure("Link", index, sources.len(), source, error));
+                    on_item(ItemUpdate::error(index, Some(target.clone()), &error));
+                    return Err(batch_failure(
+                        "Link",
+                        index,
+                        sources.len(),
+                        &sources[index],
+                        error,
+                    ));
                 }
+                on_item(ItemUpdate::new(
+                    index,
+                    ItemState::Completed,
+                    Some(target.clone()),
+                ));
+                transfer.transferred = (index + 1) as u64;
+                transfer.report(target);
             }
             Ok(format!("Created {} link(s)", sources.len()))
         }
@@ -1273,10 +1327,6 @@ pub fn mounted_volumes() -> Vec<PathBuf> {
         }
     }
     paths.into_iter().collect()
-}
-
-fn free_destination(parent: &Path, original: &std::ffi::OsStr) -> io::Result<PathBuf> {
-    free_destination_reserved(parent, original, &BTreeSet::new())
 }
 
 fn free_destination_reserved(
@@ -4674,6 +4724,149 @@ mod tests {
         );
         perform(&Action::Delete { paths: vec![link] }).unwrap();
         assert_eq!(fs::read(original).unwrap(), b"keep");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn link_batch_reports_each_created_target_and_never_overwrites() {
+        let root = test_root();
+        let source_a = root.join("a").join("same.txt");
+        let source_b = root.join("b").join("same.txt");
+        let output = root.join("out");
+        fs::create_dir_all(source_a.parent().unwrap()).unwrap();
+        fs::create_dir_all(source_b.parent().unwrap()).unwrap();
+        fs::create_dir(&output).unwrap();
+        fs::write(&source_a, b"first").unwrap();
+        fs::write(&source_b, b"second").unwrap();
+        fs::write(output.join("same.txt"), b"existing").unwrap();
+        let report = perform_with_report(
+            &Action::Link {
+                sources: vec![source_a.clone(), source_b.clone()],
+                destination: output.clone(),
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert!(report.result.is_ok());
+        assert_eq!(report.items.len(), 2);
+        assert_eq!(report.items[0].state, ItemState::Completed);
+        assert_eq!(report.items[1].state, ItemState::Completed);
+        assert_eq!(report.items[0].target, Some(output.join("same (copy).txt")));
+        assert_eq!(
+            report.items[1].target,
+            Some(output.join("same (copy 2).txt"))
+        );
+        assert_eq!(fs::read(output.join("same.txt")).unwrap(), b"existing");
+        assert_eq!(fs::read(output.join("same (copy).txt")).unwrap(), b"first");
+        assert_eq!(
+            fs::read(output.join("same (copy 2).txt")).unwrap(),
+            b"second"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn link_preflight_rejects_bad_later_source_without_creating_earlier_link() {
+        let root = test_root();
+        let first = root.join("first");
+        let output = root.join("out");
+        fs::create_dir(&output).unwrap();
+        fs::write(&first, b"keep").unwrap();
+        let report = perform_with_report(
+            &Action::Link {
+                sources: vec![first.clone(), PathBuf::from("/")],
+                destination: output.clone(),
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert_eq!(
+            report.result.unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+        assert_eq!(report.items[0].state, ItemState::NotStarted);
+        assert_eq!(report.items[1].state, ItemState::Failed);
+        assert_eq!(fs::read_dir(&output).unwrap().count(), 0);
+        assert_eq!(fs::read(&first).unwrap(), b"keep");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn link_batch_racing_destination_reports_partial_success_without_overwrite() {
+        let root = test_root();
+        let first = root.join("first");
+        let second = root.join("second");
+        let output = root.join("out");
+        fs::create_dir(&output).unwrap();
+        fs::write(&first, b"first").unwrap();
+        fs::write(&second, b"second").unwrap();
+        let mut raced = false;
+        let report = perform_with_report(
+            &Action::Link {
+                sources: vec![first.clone(), second.clone()],
+                destination: output.clone(),
+            },
+            &AtomicBool::new(false),
+            &mut |progress| {
+                if progress.phase == "Linking" && progress.transferred == 1 && !raced {
+                    fs::write(output.join("second"), b"competing writer").unwrap();
+                    raced = true;
+                }
+            },
+        );
+        assert!(raced);
+        assert_eq!(
+            report.result.unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(report.items[0].state, ItemState::Completed);
+        assert_eq!(report.items[0].target, Some(output.join("first")));
+        assert_eq!(report.items[1].state, ItemState::Failed);
+        assert_eq!(report.items[1].target, Some(output.join("second")));
+        assert_eq!(fs::read(output.join("first")).unwrap(), b"first");
+        assert_eq!(
+            fs::read(output.join("second")).unwrap(),
+            b"competing writer"
+        );
+        assert_eq!(fs::read(second).unwrap(), b"second");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancelling_link_batch_preserves_unstarted_items() {
+        let root = test_root();
+        let first = root.join("first");
+        let second = root.join("second");
+        let output = root.join("out");
+        fs::create_dir(&output).unwrap();
+        fs::write(&first, b"first").unwrap();
+        fs::write(&second, b"second").unwrap();
+        let cancelled = AtomicBool::new(false);
+        let report = perform_with_report(
+            &Action::Link {
+                sources: vec![first.clone(), second.clone()],
+                destination: output.clone(),
+            },
+            &cancelled,
+            &mut |progress| {
+                if progress.phase == "Linking" && progress.transferred == 1 {
+                    cancelled.store(true, Ordering::Relaxed);
+                }
+            },
+        );
+        assert_eq!(
+            report.result.unwrap_err().kind(),
+            io::ErrorKind::Interrupted
+        );
+        assert_eq!(report.items[0].state, ItemState::Completed);
+        assert_eq!(report.items[1].state, ItemState::Cancelled);
+        assert!(output.join("first").exists());
+        assert!(!output.join("second").exists());
+        assert_eq!(fs::read(second).unwrap(), b"second");
         fs::remove_dir_all(root).unwrap();
     }
 
