@@ -27,7 +27,10 @@ address bar, or a successful GIO connection, now opens a **read-only network
 browser** with bounded asynchronous listing, back/refresh and explicit
 connection errors. Superseded network listings are cancelled. Remote files
 cannot yet be copied, changed or deleted,
-and network directories do not yet share the main local tab/history model.
+and network directories now have read-only views in the regular tab bar,
+with per-tab Back/Forward and asynchronous refresh. Remote mutating actions
+are blocked before reaching the POSIX worker; the general remote entry and
+operation model is not yet unified with local file operations.
 The read-only browser offers up to 32 persistent validated network favorites
 and an explicit reconnect action, without saving passwords.
 

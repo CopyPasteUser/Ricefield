@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Allow read-only remote URIs in regular tabs with per-tab navigation/history
+  and asynchronous GIO scans. Keep remote entries separate from local POSIX
+  entries and block mutating local actions on remote tabs.
 - Add a bounded, read-only GIO network browser accessible from remote address
   entry or a completed connection attempt. Decode no untrusted URI into a
   local path; cap listing output and item count, reject unexpected entries,
