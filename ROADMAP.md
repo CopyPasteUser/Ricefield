@@ -277,8 +277,8 @@ recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
   visible unsupported-backend error without accidentally scanning local paths.
 - [ ] Evolve navigation, tab history, entries and worker results to carry
   typed remote locations end-to-end; preserve all local POSIX operations.
-  Read-only remote URI tabs now have per-tab navigation, back/forward and
-  bounded worker scans without exposing any remote path to the POSIX file
+  Read-only remote URI tabs now have shared local/remote history and bounded
+  worker scans without exposing any remote path to the POSIX file
   engine. Validated remote tabs now persist in the opt-out 32-tab session
   snapshot. Unified entry operations and remote search are still open.
 - [ ] Integrate GIO/GVfs with a correctly driven GLib main context.

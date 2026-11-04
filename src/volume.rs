@@ -24,9 +24,18 @@ pub struct RemoteEntry {
 /// Enumerate URIs rather than unescaped names: newline and tab in a remote
 /// filename are encoded in the URI, so each output line stays unambiguous.
 /// GIO creates/drives its own GLib context in a worker process.
-pub fn list_remote(uri: &str, cancelled: &AtomicBool) -> Result<Vec<RemoteEntry>, String> {
-    let mut child = Command::new("gio")
-        .args(["list", "-l", "-a", "standard::type", "-u", uri])
+pub fn list_remote(
+    uri: &str,
+    show_hidden: bool,
+    cancelled: &AtomicBool,
+) -> Result<Vec<RemoteEntry>, String> {
+    let mut command = Command::new("gio");
+    command.args(["list", "-l", "-a", "standard::type", "-u"]);
+    if show_hidden {
+        command.arg("--hidden");
+    }
+    let mut child = command
+        .arg(uri)
         .env("LC_ALL", "C")
         .stdin(Stdio::null())
         .stderr(Stdio::null())

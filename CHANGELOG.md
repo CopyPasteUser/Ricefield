@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Unify Back/Forward history across local and network locations, preserving
+  exact native local paths. Clear stale tab results on navigation, avoid
+  false Home history entries when restoring/duplicating remote tabs, skip
+  inactive local fallback paths in periodic remote-tab refresh checks, and
+  verify local → remote → local navigation by regression test. The shared
+  Show hidden toggle now refreshes remote GIO listings with hidden entries.
 - Restore validated, read-only SMB/SFTP/WebDAV/MTP tabs alongside local tabs
   in the existing 32-entry session snapshot, preserving selection and active
   tab. Legacy local-only settings remain readable. Reject credentials and
