@@ -134,7 +134,11 @@ devices produce clear errors without frozen UI or silent data loss.
   TOML theme files compatible and enforce safe structural validation.
 - [x] Support skin-selectable collapsible versus flat sidebar modules; XP
   task groups can fold without changing file operations or legacy skins.
-- [ ] Split view, tab duplicate/reorder/restore and multiple windows.
+- [x] Remember up to 32 absolute UTF-8 tab locations and the active tab across
+  app restarts, with CLI path override and an opt-out that clears stored paths.
+  Restore without statting possibly offline mounts on the render thread.
+- [ ] Split view, tab duplicate/reorder, deeper history/session restore and
+  multiple windows.
 - [ ] Extract shared navigation, file list, toolbar, sidebar and dialog
   primitives so new shell renderers consume a common command dispatcher.
 - [ ] Real drag in/out, context menus, toolbar actions and keyboard shortcuts.

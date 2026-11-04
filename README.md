@@ -23,7 +23,9 @@ renderers remain part of the roadmap.
 - Native Rust GUI with GPU-accelerated drawing; no Electron, browser or persistent background daemon.
 - Seven bundled visual profiles: `win98`, `xp-luna`, `win7`, `win10`, `frutiger-aero`, `chromeos` and `macos`.
 - Configurable structural shells: classic menu/toolbar, XP task sidebar, Aero command bar, Windows 10 ribbon-like toolbar and modern condensed navigation. A universal actions menu exposes core file operations on every profile.
-- Multiple tabs, history, path entry, home/parent navigation, bookmarks, mount-point navigation and a collapsible sidebar.
+- Multiple tabs, history, path entry, home/parent navigation, bookmarks,
+  mount-point navigation and a collapsible sidebar. Optional session restore
+  remembers up to 32 tab locations and the active tab across restarts.
 - List and icon layouts, local and bounded recursive filename search, hidden-file toggle and sorting by name, kind, size or modification time.
 - Multiple selection (Ctrl/Shift/Ctrl+A), copy, cut, paste, duplicate, rename, new folder/file, symbolic links, desktop Trash and confirmed permanent deletion.
 - Batch rename for 2–256 selected entries (F2 or Rename): add a prefix/suffix,
@@ -44,7 +46,8 @@ renderers remain part of the roadmap.
 **Most recent functional work:** a worker-based batch rename with a complete
 prefix/suffix, literal replacement and sequence-number preview; atomic
 no-overwrite renames on Linux; more precise partial-batch diagnostics;
-and strict error reporting for missing permanent-delete targets. The last
+strict error reporting for missing permanent-delete targets; and bounded,
+opt-out tab-session restoration. The last
 verified workflow checks Rust formatting, Clippy, unit tests, a release
 build, CLI startup and Xvfb GUI startup for all seven skins. These are
 development checks, **not** a production release or full Linux Mint acceptance.
@@ -65,6 +68,15 @@ For file copy/paste interoperability with other file managers, install `xclip` o
 Or run directly from source: `cargo run --release -- --theme win7 "$HOME"`.
 
 The installer places the executable at `~/.local/bin/rice-explorer`, a scalable icon under `~/.local/share/icons/hicolor/` and a `.desktop` launcher under `~/.local/share/applications/`. It does **not** change your default file manager or Xfce associations. It doesn't touch Thunar.
+
+On ordinary launches, RiceExplorer restores the previously opened tabs and
+active location. **Explicit CLI folder arguments override the saved session.**
+Use **Session → Restore tabs on startup** in the shared actions toolbar to opt
+out and erase stored tab paths; the switch applies across all seven skins.
+Sessions are limited to 32 absolute UTF-8 paths. Non-UTF-8 paths remain usable
+but are not written to the TOML session; offline mounts are scanned in the
+background and may show an error rather than blocking launch. Tab history,
+search queries and pending file operations are **not** replayed on restart.
 
 To uninstall the application files, run `bash uninstall.sh` from the
 repository. This leaves personal settings and themes intact; it does not

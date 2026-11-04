@@ -275,6 +275,14 @@ impl Explorer {
         let (preview_sender, preview_receiver) = mpsc::channel();
         let (op_sender, op_receiver) = mpsc::channel();
         let (recovery_sender, recovery_receiver) = mpsc::channel();
+        // Explicit CLI paths take precedence over the saved session. Restored
+        // paths are inspected by asynchronous scans, never by synchronous stat.
+        let from_session = locations.is_empty();
+        let (startup_paths, startup_active) = if from_session {
+            config.restored_session()
+        } else {
+            (locations, 0)
+        };
         let mut explorer = Self {
             config,
             theme,
@@ -317,18 +325,19 @@ impl Explorer {
             focus_address: false,
             focus_search: false,
         };
-        if locations.is_empty() {
+        if startup_paths.is_empty() {
             explorer.new_tab(config::home());
         } else {
-            for location in locations {
-                let path = if location.is_file() {
+            for location in startup_paths {
+                let path = if !from_session && location.is_file() {
                     location.parent().unwrap_or(Path::new("/")).to_path_buf()
                 } else {
                     location
                 };
                 explorer.new_tab(path);
             }
-            explorer.active = 0;
+            explorer.active = startup_active.min(explorer.tabs.len() - 1);
+            explorer.remember_session();
         }
         explorer.check_unfinished_moves();
         explorer
@@ -353,12 +362,20 @@ impl Explorer {
         &mut self.tabs[self.active]
     }
 
+    fn remember_session(&mut self) {
+        let paths: Vec<_> = self.tabs.iter().map(|tab| tab.path.clone()).collect();
+        if self.config.remember_session(&paths, self.active) {
+            self.dirty_config = true;
+        }
+    }
+
     fn new_tab(&mut self, path: PathBuf) {
         let id = self.next_tab;
         self.next_tab += 1;
         self.tabs.push(Tab::new(id, path));
         self.active = self.tabs.len() - 1;
         self.scan(self.active);
+        self.remember_session();
     }
 
     fn close_tab(&mut self, index: usize) {
@@ -373,6 +390,7 @@ impl Explorer {
         } else if index < self.active {
             self.active -= 1;
         }
+        self.remember_session();
     }
 
     fn scan(&mut self, index: usize) {
@@ -439,6 +457,7 @@ impl Explorer {
         tab.selected.clear();
         tab.last_selected = None;
         self.scan(self.active);
+        self.remember_session();
     }
 
     fn history(&mut self, backwards: bool) {
@@ -461,6 +480,7 @@ impl Explorer {
             tab.selected.clear();
             tab.last_selected = None;
             self.scan(self.active);
+            self.remember_session();
         }
     }
 
@@ -1530,6 +1550,7 @@ impl Explorer {
                     self.close_tab(index);
                 } else {
                     self.active = index;
+                    self.remember_session();
                 }
             }
         });
@@ -2031,6 +2052,28 @@ impl Explorer {
                             if let Some(path) = self.selected_paths().first() {
                                 self.open_properties(path.clone());
                             }
+                            ui.close();
+                        }
+                    });
+                    ui.menu_button("Session", |ui| {
+                        if ui
+                            .checkbox(&mut self.config.restore_session, "Restore tabs on startup")
+                            .changed()
+                        {
+                            self.remember_session();
+                            self.dirty_config = true;
+                        }
+                        ui.small("Remembers up to 32 local paths, not file operations.");
+                        if ui
+                            .add_enabled(
+                                self.config.restore_session,
+                                egui::Button::new("Save current tabs now"),
+                            )
+                            .clicked()
+                        {
+                            self.remember_session();
+                            self.dirty_config = true;
+                            self.status = Some(("Tab session saved".into(), false));
                             ui.close();
                         }
                     });

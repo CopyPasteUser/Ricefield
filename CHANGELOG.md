@@ -64,6 +64,11 @@
   text replacement of non-UTF-8 names rather than corrupting filename bytes.
   Distinguish strict permanent deletion (missing input is an error) from
   idempotent cleanup of internal staging files, with regression tests.
+- Persist a bounded, opt-out tab session with up to 32 absolute locations and
+  the active tab; update it on navigation and tab changes. Explicit command-line
+  paths take precedence. Restore without synchronous mount checks; skip
+  non-UTF-8 names when serializing TOML, and do not replay file operations.
+  Expose the setting in the shared Session menu for every rice.
 - Keep failure-injection journals in per-test temporary directories and isolate
   the Xvfb smoke test's XDG config/state/cache. This prevents a fabricated
   unfinished-move warning in GUI screenshots and protects a developer's real
