@@ -75,12 +75,12 @@ renderers remain part of the roadmap.
 - Copy files into the open folder by dragging them from the desktop or another file manager.
 - External TOML themes with configurable top/bottom tool regions, reorderable sidebar modules and left/right preview; persistent user settings. A single executable works with all rices.
 
-**Most recent functional work:** whole-batch Trash/Delete preflight and
-per-item outcomes; transfer elapsed time, average speed and approximate ETA;
-read-only, asynchronous Paste conflict previews; full-batch
-worker preflight and a third *Require no conflicts* policy; unique target
-reservations within multi-source transfers; and clipboard reconciliation
-after partial Move failures. Detailed per-file results remain available in
+**Most recent functional work:** synced staging and destination directories;
+read-only crash-recovery triage showing source, destination and staging status;
+coalesced recovery rescans; whole-batch Trash/Delete preflight with per-item
+outcomes; and transfer elapsed time, average speed and approximate ETA.
+Asynchronous Paste conflict previews, full-batch worker preflight and
+*Require no conflicts* remain available. Detailed per-file results appear in
 the Transfers window. The CI workflow checks
 Rust formatting, Clippy, unit tests, a release
 build, CLI startup and Xvfb GUI startup for all seven skins. These are
