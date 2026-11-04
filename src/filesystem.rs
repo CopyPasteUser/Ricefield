@@ -271,6 +271,7 @@ fn valid_os_name(name: &OsStr) -> bool {
 
 /// Build a side-effect-free preview from snapshotted selection paths.
 /// OsString preserves arbitrary Linux filename bytes, including non-UTF-8.
+#[cfg(test)]
 pub fn plan_batch_rename(
     paths: &[PathBuf],
     prefix: &str,
