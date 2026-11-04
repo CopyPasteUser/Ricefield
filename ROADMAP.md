@@ -67,7 +67,8 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
 - [ ] Eliminate the remaining cross-device source mutation race and preserve
   timestamp, owner, ACL, xattr and hardlink metadata before production use.
 - [x] Refuse staged publication if a source's identity, size, modification
-  time or mode changes during the copy; open regular sources without following
+  time, inode change time or mode changes during the copy; open regular
+  sources without following
   a last-moment symlink replacement. Preserve regular-file and directory
   access/modification times in staged copies. Still require race-free source
   cleanup, symlink timestamps, ACL/xattr/ownership/hardlink preservation.
@@ -96,6 +97,12 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   preflight on the worker before mutations; reject duplicate/overlapping
   sources and destinations inside selected folders. Preserve only unfinished
   cut items after a partially completed **failed** Move, not just success.
+- [x] Validate all selected Trash/Delete paths before any mutation, rejecting
+  missing, duplicate or ancestor/descendant selections. Recheck each source's
+  identity before its removal, report per-item outcomes and item-count progress.
+  A later runtime failure remains a partial operation; directory traversal is
+  not a race-free transaction. Add regression tests for missing later inputs,
+  overlaps and source changes during a batch.
 - [x] Report the index, source and count of earlier committed items when a
   multi-item Copy or Move stops; extend this report to Trash, Delete, Link and
   Batch Rename. This is an error diagnostic, not yet a full

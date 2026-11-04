@@ -150,7 +150,10 @@ struct ItemCounts {
 /// Average-rate estimate based on transferred byte progress, not wall-clock
 /// samples. It is deliberately hidden until enough time and data exist.
 fn transfer_progress_details(progress: &Progress, elapsed: Duration) -> String {
-    let mut detail = if progress.total > 0 {
+    let measures_items = matches!(progress.phase, "Trashing" | "Deleting" | "Renaming");
+    let mut detail = if measures_items && progress.total > 0 {
+        format!("{} / {} items", progress.transferred, progress.total)
+    } else if progress.total > 0 {
         format!(
             "{} / {}",
             filesystem::human_size(progress.transferred),
@@ -163,7 +166,7 @@ fn transfer_progress_details(progress: &Progress, elapsed: Duration) -> String {
         )
     };
     detail.push_str(&format!(" · {} elapsed", elapsed_label(elapsed)));
-    if elapsed >= Duration::from_secs(1) && progress.transferred > 0 {
+    if !measures_items && elapsed >= Duration::from_secs(1) && progress.transferred > 0 {
         let rate = progress.transferred as f64 / elapsed.as_secs_f64();
         if rate.is_finite() && rate > 0.0 {
             detail.push_str(&format!(" · {}/s avg", filesystem::human_size(rate as u64)));
@@ -3429,5 +3432,22 @@ mod tests {
         assert!(!details.contains("remaining"));
         assert_eq!(elapsed_label(Duration::from_secs(71)), "1m 11s");
         assert_eq!(elapsed_label(Duration::from_secs(3661)), "1h 01m");
+    }
+
+    #[test]
+    fn destructive_progress_uses_items_not_bytes_or_byte_eta() {
+        for phase in ["Trashing", "Deleting", "Renaming"] {
+            let progress = Progress {
+                transferred: 2,
+                total: 3,
+                current: PathBuf::from("/file"),
+                phase,
+            };
+            let details = transfer_progress_details(&progress, Duration::from_secs(15));
+            assert!(details.contains("2 / 3 items"));
+            assert!(details.contains("15s elapsed"));
+            assert!(!details.contains("/s avg"));
+            assert!(!details.contains("remaining"));
+        }
     }
 }

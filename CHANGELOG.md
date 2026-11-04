@@ -2,6 +2,13 @@
 
 ## Unreleased — v0.2 stability and v0.3 safety groundwork
 
+- Preflight complete multi-item Trash and permanent Delete requests before
+  removing any paths. Reject missing, duplicate and overlapping selections;
+  revalidate each selected source at execution time. Surface per-item
+  outcomes and count-based progress, including explicit not-started entries.
+  Earlier deletions remain irreversible if a later runtime failure occurs.
+- Strengthen source identity checks with Unix inode change time (ctime), so a
+  same-sized in-place rewrite with a restored modification time is refused.
 - Show transfer elapsed time, average transferred-byte speed and approximate
   ETA in all rice layouts, with per-job durations in session history. Avoid
   misleading estimates on very short or unknown-sized transfers.

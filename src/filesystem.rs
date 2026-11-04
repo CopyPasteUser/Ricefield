@@ -310,6 +310,57 @@ impl PlanFailure {
     }
 }
 
+/// Inspect all requested deletions before touching any file. Canonicalizing
+/// the parent (not the final component) recognizes aliases without following
+/// a selected symlink into its target.
+fn plan_removal_batch(
+    paths: &[PathBuf],
+    cancelled: &AtomicBool,
+) -> Result<Vec<fs::Metadata>, PlanFailure> {
+    let mut resolved_paths: Vec<PathBuf> = Vec::with_capacity(paths.len());
+    let mut snapshots = Vec::with_capacity(paths.len());
+    for (index, path) in paths.iter().enumerate() {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(PlanFailure::at(
+                index,
+                io::Error::new(io::ErrorKind::Interrupted, "Operation cancelled"),
+            ));
+        }
+        let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+            return Err(PlanFailure::at(index, invalid_name()));
+        };
+        if !path.is_absolute() {
+            return Err(PlanFailure::at(
+                index,
+                io::Error::new(io::ErrorKind::InvalidInput, "Removal paths must be absolute"),
+            ));
+        }
+        let normalized = fs::canonicalize(parent)
+            .map(|parent| parent.join(name))
+            .map_err(|error| PlanFailure::at(index, error))?;
+        for (other, resolved) in paths[..index].iter().zip(&resolved_paths) {
+            if path.starts_with(other)
+                || other.starts_with(path)
+                || normalized.starts_with(resolved)
+                || resolved.starts_with(&normalized)
+            {
+                return Err(PlanFailure::at(
+                    index,
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "Duplicate or overlapping removal paths; select each item only once",
+                    ),
+                ));
+            }
+        }
+        let metadata =
+            fs::symlink_metadata(path).map_err(|error| PlanFailure::at(index, error))?;
+        resolved_paths.push(normalized);
+        snapshots.push(metadata);
+    }
+    Ok(snapshots)
+}
+
 #[derive(Clone)]
 pub enum Action {
     NewFolder {
@@ -584,6 +635,7 @@ pub fn perform_with_report(
 ) -> OperationReport {
     let sources: Vec<PathBuf> = match action {
         Action::Copy { sources, .. } | Action::Move { sources, .. } => sources.clone(),
+        Action::Trash { paths } | Action::Delete { paths } => paths.clone(),
         _ => Vec::new(),
     };
     let mut items: Vec<ItemResult> = sources
@@ -667,6 +719,28 @@ fn perform_with_progress_and_items(
         }
         _ => None,
     };
+    let removal_snapshots = match action {
+        Action::Trash { paths } | Action::Delete { paths } => {
+            match plan_removal_batch(paths, cancelled) {
+                Ok(snapshots) => Some(snapshots),
+                Err(failure) => {
+                    let index = failure.index.unwrap_or(0);
+                    on_item(ItemUpdate::error(index, None, &failure.error));
+                    return Err(io::Error::new(
+                        failure.error.kind(),
+                        format!(
+                            "Removal preflight failed at item {} of {} ({}): {}. No items were removed",
+                            index + 1,
+                            paths.len(),
+                            paths[index].display(),
+                            failure.error
+                        ),
+                    ));
+                }
+            }
+        }
+        _ => None,
+    };
     let mut estimated: Vec<u64> = Vec::with_capacity(sources.len());
     for (index, source) in sources.iter().enumerate() {
         let estimate =
@@ -700,10 +774,17 @@ fn perform_with_progress_and_items(
         cancelled,
         notify,
         transferred: 0,
-        total,
+        total: match action {
+            Action::Trash { paths } | Action::Delete { paths } => paths.len() as u64,
+            _ => total,
+        },
         last_report: Instant::now(),
         last_reported_bytes: 0,
-        phase: "Copying",
+        phase: match action {
+            Action::Trash { .. } => "Trashing",
+            Action::Delete { .. } => "Deleting",
+            _ => "Copying",
+        },
     };
     transfer.report(
         sources
@@ -953,26 +1034,42 @@ fn perform_with_progress_and_items(
             }
         }
         Action::Trash { paths } => {
-            for (index, path) in paths.iter().enumerate() {
+            let snapshots = removal_snapshots.as_ref().expect("Trash has preflight");
+            for (index, (path, snapshot)) in paths.iter().zip(snapshots).enumerate() {
                 let result = (|| {
                     transfer.check()?;
+                    ensure_same_source(path, snapshot)?;
                     trash::delete(path).map_err(io::Error::other)
                 })();
-                if let Err(error) = result {
-                    return Err(batch_failure("Trash", index, paths.len(), path, error));
+                match result {
+                    Ok(()) => on_item(ItemUpdate::new(index, ItemState::Completed, None)),
+                    Err(error) => {
+                        on_item(ItemUpdate::error(index, None, &error));
+                        return Err(batch_failure("Trash", index, paths.len(), path, error));
+                    }
                 }
+                transfer.transferred = (index + 1) as u64;
+                transfer.report(path);
             }
             Ok(format!("Moved {} item(s) to Trash", paths.len()))
         }
         Action::Delete { paths } => {
-            for (index, path) in paths.iter().enumerate() {
+            let snapshots = removal_snapshots.as_ref().expect("Delete has preflight");
+            for (index, (path, snapshot)) in paths.iter().zip(snapshots).enumerate() {
                 let result = (|| {
                     transfer.check()?;
+                    ensure_same_source(path, snapshot)?;
                     remove_selected(path)
                 })();
-                if let Err(error) = result {
-                    return Err(batch_failure("Delete", index, paths.len(), path, error));
+                match result {
+                    Ok(()) => on_item(ItemUpdate::new(index, ItemState::Completed, None)),
+                    Err(error) => {
+                        on_item(ItemUpdate::error(index, None, &error));
+                        return Err(batch_failure("Delete", index, paths.len(), path, error));
+                    }
                 }
+                transfer.transferred = (index + 1) as u64;
+                transfer.report(path);
             }
             Ok(format!("Permanently deleted {} item(s)", paths.len()))
         }
@@ -1770,12 +1867,14 @@ fn ensure_same_source_metadata(initial: &fs::Metadata, current: &fs::Metadata) -
             || initial.ino() != current.ino()
             || initial.mtime() != current.mtime()
             || initial.mtime_nsec() != current.mtime_nsec()
+            || initial.ctime() != current.ctime()
+            || initial.ctime_nsec() != current.ctime_nsec()
             || initial.size() != current.size()
             || initial.mode() != current.mode()
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "Source changed during copy; destination was not published",
+                "Selected source changed since preflight; refusing to process it",
             ));
         }
     }
@@ -1783,7 +1882,7 @@ fn ensure_same_source_metadata(initial: &fs::Metadata, current: &fs::Metadata) -
     if initial.len() != current.len() || initial.modified().ok() != current.modified().ok() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "Source changed during copy; destination was not published",
+            "Selected source changed since preflight; refusing to process it",
         ));
     }
     Ok(())
@@ -2895,20 +2994,106 @@ mod tests {
     }
 
     #[test]
-    fn delete_batch_reports_completed_count_without_touching_later_items() {
+    fn delete_batch_preflight_refuses_missing_later_item_without_deletion() {
         let root = test_root();
         let first = root.join("first");
         let missing = root.join("missing");
         let last = root.join("last");
         fs::write(&first, b"first").unwrap();
         fs::write(&last, b"last").unwrap();
-        let error = perform(&Action::Delete {
-            paths: vec![first.clone(), missing, last.clone()],
+        let report = perform_with_report(
+            &Action::Delete {
+                paths: vec![first.clone(), missing, last.clone()],
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert!(report.result.unwrap_err().to_string().contains("No items were removed"));
+        assert_eq!(report.items[0].state, ItemState::NotStarted);
+        assert_eq!(report.items[1].state, ItemState::Failed);
+        assert_eq!(report.items[2].state, ItemState::NotStarted);
+        assert_eq!(fs::read(first).unwrap(), b"first");
+        assert_eq!(fs::read(last).unwrap(), b"last");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn destructive_batch_rejects_duplicate_and_nested_paths_before_changes() {
+        let root = test_root();
+        let parent = root.join("folder");
+        fs::create_dir(&parent).unwrap();
+        let child = parent.join("file");
+        fs::write(&child, b"safe").unwrap();
+        for paths in [
+            vec![parent.clone(), parent.clone()],
+            vec![child.clone(), parent.clone()],
+            vec![parent.clone(), child.clone()],
+        ] {
+            let result = perform(&Action::Delete { paths }).unwrap_err();
+            assert_eq!(result.kind(), io::ErrorKind::InvalidInput);
+            assert!(parent.is_dir());
+            assert_eq!(fs::read(&child).unwrap(), b"safe");
+        }
+        let result = perform(&Action::Trash {
+            paths: vec![parent.clone(), parent.clone()],
         })
         .unwrap_err();
-        assert!(error.to_string().contains("1 earlier item(s) completed"));
+        assert_eq!(result.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(fs::read(&child).unwrap(), b"safe");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn delete_batch_reports_success_and_stops_on_later_source_mutation() {
+        let root = test_root();
+        let first = root.join("first");
+        let second = root.join("second");
+        fs::write(&first, b"first").unwrap();
+        fs::write(&second, b"second").unwrap();
+        let mut changed = false;
+        let report = perform_with_report(
+            &Action::Delete {
+                paths: vec![first.clone(), second.clone()],
+            },
+            &AtomicBool::new(false),
+            &mut |progress| {
+                if progress.phase == "Deleting" && progress.transferred == 1 && !changed {
+                    fs::write(&second, b"changed-by-another-process").unwrap();
+                    changed = true;
+                }
+            },
+        );
+        assert!(changed);
+        assert_eq!(report.result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert_eq!(report.items[0].state, ItemState::Completed);
+        assert_eq!(report.items[1].state, ItemState::Failed);
         assert!(!first.exists());
-        assert_eq!(fs::read(last).unwrap(), b"last");
+        assert_eq!(fs::read(second).unwrap(), b"changed-by-another-process");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn source_identity_rejects_same_size_rewrite_with_restored_mtime() {
+        let root = test_root();
+        let source = root.join("source");
+        fs::write(&source, b"before").unwrap();
+        let initial = fs::symlink_metadata(&source).unwrap();
+        std::thread::sleep(Duration::from_millis(3));
+        fs::write(&source, b"after!").unwrap();
+        File::options()
+            .write(true)
+            .open(&source)
+            .unwrap()
+            .set_times(FileTimes::new().set_modified(initial.modified().unwrap()))
+            .unwrap();
+        let current = fs::symlink_metadata(&source).unwrap();
+        assert_eq!(initial.len(), current.len());
+        assert_eq!(initial.modified().unwrap(), current.modified().unwrap());
+        assert_eq!(
+            ensure_same_source(&source, &initial).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
