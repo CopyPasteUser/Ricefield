@@ -195,6 +195,20 @@ fn elapsed_label(duration: Duration) -> String {
     }
 }
 
+/// Shared confirmation content for both recoverable Trash and irreversible
+/// Delete, independent of the active rice. Virtualize large selections.
+fn removal_confirmation_paths(ui: &mut egui::Ui, paths: &[PathBuf]) {
+    ui.label("Selected paths:");
+    egui::ScrollArea::vertical()
+        .max_height(156.0)
+        .show_rows(ui, 23.0, paths.len(), |ui, range| {
+            for path in &paths[range] {
+                let full = path.display().to_string();
+                ui.monospace(shorten(&full, 76)).on_hover_text(full);
+            }
+        });
+}
+
 impl ItemCounts {
     fn from_items(items: &[filesystem::ItemResult]) -> Self {
         let mut counts = Self::default();
@@ -3022,6 +3036,7 @@ impl Explorer {
                         .show(context, |ui| {
                             ui.label(format!("Move {} selected item(s) to Trash?", paths.len()));
                             ui.label("The items can usually be restored from your desktop Trash.");
+                            removal_confirmation_paths(ui, paths);
                             ui.horizontal(|ui| {
                                 if ui.button("Cancel").clicked() {
                                     dismiss = true;
@@ -3046,6 +3061,7 @@ impl Explorer {
                                 format!("Delete {} item(s) permanently?", paths.len()),
                             );
                             ui.label("This bypasses Trash. There is no undo.");
+                            removal_confirmation_paths(ui, paths);
                             ui.horizontal(|ui| {
                                 if ui.button("Cancel").clicked() {
                                     dismiss = true;

@@ -99,7 +99,8 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   cut items after a partially completed **failed** Move, not just success.
 - [x] Validate all selected Trash/Delete paths before any mutation, rejecting
   missing, duplicate or ancestor/descendant selections. Recheck each source's
-  identity before its removal, report per-item outcomes and item-count progress.
+  identity before its removal, report per-item outcomes and item-count progress;
+  show selected paths before confirmation even in large batches.
   A later runtime failure remains a partial operation; directory traversal is
   not a race-free transaction. Add regression tests for missing later inputs,
   overlaps and source changes during a batch.

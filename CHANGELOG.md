@@ -6,6 +6,7 @@
   removing any paths. Reject missing, duplicate and overlapping selections;
   revalidate each selected source at execution time. Surface per-item
   outcomes and count-based progress, including explicit not-started entries.
+  List exact selected paths in both confirmation dialogs before proceeding.
   Earlier deletions remain irreversible if a later runtime failure occurs.
 - Strengthen source identity checks with Unix inode change time (ctime), so a
   same-sized in-place rewrite with a restored modification time is refused.

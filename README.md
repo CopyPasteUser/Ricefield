@@ -44,7 +44,8 @@ renderers remain part of the roadmap.
   are rejected before any rename, with atomic no-overwrite behavior on Linux.
 - Native GTK file clipboard interoperability (when `xclip` or `wl-clipboard` is installed); otherwise use the internal file clipboard.
 - Cross-device moves with copy-first semantics and byte-for-byte verification, symlink-preserving copies, transfer progress and cancellation.
-- Trash and permanent deletion require explicit confirmation. Multi-item requests
+- Trash and permanent deletion require explicit confirmation with a scrollable
+  list of the actual selected paths. Multi-item requests
   now validate every selected path, reject duplicates/nested selections, and
   detect missing inputs **before removing anything**. Each attempted item has
   its own success/failure status in Transfers. A source changed after preflight
