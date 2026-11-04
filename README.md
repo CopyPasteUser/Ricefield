@@ -6,6 +6,11 @@
 
 > **Development preview: v0.3.0-alpha.2** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not the completed v0.3 release gate or a safe replacement for Thunar with irreplaceable data. It adds hardened local operations and recovery inspection while ACLs, ownership, fully race-free cleanup and hardware acceptance remain outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
+**Distribution:** An [automated Linux x86_64 preview bundle](RELEASE.md) can
+be built without distributing Rust sources to every end user. The verified
+bundle includes a user-only installer, icon and launcher; its CI checks do
+not replace the outstanding real-device acceptance.
+
 RiceExplorer is designed as the file-management companion to [RiceBowl](https://github.com/CopyPasteUser/RiceBowl). Its renderer, filesystem operations and visual profiles are separate: switching from Windows 98 to Windows 7 or ChromeOS changes the chrome, geometry, controls and icons without replacing the file manager or disturbing an open folder.
 
 **Built for structural customization.** RiceExplorer is not intended to be
