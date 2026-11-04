@@ -1005,7 +1005,11 @@ impl Explorer {
             .or_else(|| self.clipboard.clone())
     }
 
-    fn paste_action(clipboard: Clipboard, destination: PathBuf, conflict: ConflictPolicy) -> Action {
+    fn paste_action(
+        clipboard: Clipboard,
+        destination: PathBuf,
+        conflict: ConflictPolicy,
+    ) -> Action {
         if clipboard.cut {
             Action::Move {
                 sources: clipboard.paths,
