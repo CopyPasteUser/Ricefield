@@ -2751,9 +2751,11 @@ mod tests {
 
     #[test]
     fn mounted_volumes_include_local_system_root() {
-        assert!(mounted_volumes().iter().any(|volume| {
-            volume.path == Path::new("/") && !volume.network
-        }));
+        assert!(
+            mounted_volumes()
+                .iter()
+                .any(|volume| { volume.path == Path::new("/") && !volume.network })
+        );
     }
 
     #[cfg(target_os = "linux")]
