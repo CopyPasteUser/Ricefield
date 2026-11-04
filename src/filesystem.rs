@@ -551,19 +551,13 @@ pub fn perform_with_report(
             detail: None,
         })
         .collect();
-    let result = perform_with_progress_and_items(
-        action,
-        cancelled,
-        notify,
-        None,
-        &mut |update| {
-            if let Some(item) = items.get_mut(update.index) {
-                item.state = update.state;
-                item.target = update.target;
-                item.detail = update.detail;
-            }
-        },
-    );
+    let result = perform_with_progress_and_items(action, cancelled, notify, None, &mut |update| {
+        if let Some(item) = items.get_mut(update.index) {
+            item.state = update.state;
+            item.target = update.target;
+            item.detail = update.detail;
+        }
+    });
     OperationReport { result, items }
 }
 
@@ -593,13 +587,14 @@ fn perform_with_progress_and_items(
     };
     let mut estimated: Vec<u64> = Vec::with_capacity(sources.len());
     for (index, source) in sources.iter().enumerate() {
-        let estimate = match action {
-            Action::Copy { .. } => estimate_bytes(source, cancelled, 0),
-            Action::Move { .. } => fs::symlink_metadata(source).map(|metadata| {
-                if metadata.is_dir() { 0 } else { metadata.len() }
-            }),
-            _ => break,
-        };
+        let estimate =
+            match action {
+                Action::Copy { .. } => estimate_bytes(source, cancelled, 0),
+                Action::Move { .. } => fs::symlink_metadata(source).map(|metadata| {
+                    if metadata.is_dir() { 0 } else { metadata.len() }
+                }),
+                _ => break,
+            };
         match estimate {
             Ok(bytes) => estimated.push(bytes),
             Err(error) => {
@@ -767,7 +762,12 @@ fn perform_with_progress_and_items(
                     Err(error) => {
                         on_item(ItemUpdate::error(index, target, &error));
                         return Err(batch_failure_with_skips(
-                            "Copy", index, sources.len(), source, skipped, error,
+                            "Copy",
+                            index,
+                            sources.len(),
+                            source,
+                            skipped,
+                            error,
                         ));
                     }
                 }
@@ -872,7 +872,12 @@ fn perform_with_progress_and_items(
                     Err(error) => {
                         on_item(ItemUpdate::error(index, target, &error));
                         return Err(batch_failure_with_skips(
-                            "Move", index, sources.len(), source, skipped, error,
+                            "Move",
+                            index,
+                            sources.len(),
+                            source,
+                            skipped,
+                            error,
                         ));
                     }
                 }
@@ -1862,7 +1867,10 @@ mod tests {
         assert_eq!(report.items.len(), 2);
         assert_eq!(report.items[0].state, ItemState::Skipped);
         assert_eq!(report.items[0].source, existing);
-        assert_eq!(report.items[0].target, Some(destination.join("existing.txt")));
+        assert_eq!(
+            report.items[0].target,
+            Some(destination.join("existing.txt"))
+        );
         assert_eq!(report.items[1].state, ItemState::Completed);
         assert_eq!(report.items[1].source, fresh);
         assert_eq!(report.items[1].target, Some(destination.join("fresh.txt")));
@@ -1919,14 +1927,25 @@ mod tests {
             &AtomicBool::new(false),
             &mut |_| {},
         );
-        assert_eq!(report.result.unwrap_err().kind(), io::ErrorKind::Unsupported);
+        assert_eq!(
+            report.result.unwrap_err().kind(),
+            io::ErrorKind::Unsupported
+        );
         assert_eq!(report.items.len(), 3);
         assert_eq!(report.items[0].state, ItemState::Completed);
         assert_eq!(report.items[0].target, Some(destination.join("first.txt")));
         assert_eq!(report.items[1].state, ItemState::Failed);
-        assert!(report.items[1].detail.as_ref().is_some_and(|text| !text.is_empty()));
+        assert!(
+            report.items[1]
+                .detail
+                .as_ref()
+                .is_some_and(|text| !text.is_empty())
+        );
         assert_eq!(report.items[2].state, ItemState::NotStarted);
-        assert_eq!(fs::read(destination.join("first.txt")).unwrap(), b"completed");
+        assert_eq!(
+            fs::read(destination.join("first.txt")).unwrap(),
+            b"completed"
+        );
         assert!(!destination.join("last.txt").exists());
         assert_eq!(fs::read(last).unwrap(), b"not started");
         fs::remove_dir_all(root).unwrap();
@@ -1954,7 +1973,11 @@ mod tests {
             &mut |_| {},
         );
         let error = report.result.unwrap_err();
-        assert!(error.to_string().contains("0 earlier item(s) completed, 1 skipped"));
+        assert!(
+            error
+                .to_string()
+                .contains("0 earlier item(s) completed, 1 skipped")
+        );
         assert_eq!(report.items[0].state, ItemState::Skipped);
         assert_eq!(report.items[1].state, ItemState::Failed);
         assert_eq!(fs::read(existing).unwrap(), b"source");
@@ -2003,7 +2026,10 @@ mod tests {
             &AtomicBool::new(true),
             &mut |_| {},
         );
-        assert_eq!(report.result.unwrap_err().kind(), io::ErrorKind::Interrupted);
+        assert_eq!(
+            report.result.unwrap_err().kind(),
+            io::ErrorKind::Interrupted
+        );
         assert_eq!(report.items[0].state, ItemState::Cancelled);
         assert!(!destination.join("sample.txt").exists());
         assert_eq!(fs::read(source).unwrap(), b"untouched");
