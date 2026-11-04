@@ -579,7 +579,10 @@ impl Explorer {
                         }
                         Err(error) => {
                             self.queue_paused = !self.operation_queue.is_empty();
-                            (format!("Operation failed: {error}"), OperationOutcome::Failed)
+                            (
+                                format!("Operation failed: {error}"),
+                                OperationOutcome::Failed,
+                            )
                         }
                     };
                     self.status = Some((
