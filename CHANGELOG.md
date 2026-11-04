@@ -47,6 +47,11 @@
   the Xvfb smoke test's XDG config/state/cache. This prevents a fabricated
   unfinished-move warning in GUI screenshots and protects a developer's real
   state when running tests locally.
+- Bound image previews by the opened target's size and decoded dimensions,
+  including symlinks; read image bytes from one nonblocking descriptor with a
+  32 MiB cap to avoid reopening a path substituted with a FIFO/device. Reject
+  special files before preview and test a real PNG, a large linked target and
+  a Unix socket.
 
 **Validation:** Earlier feature-branch CI passed formatting, Clippy, unit tests,
 release build, CLI and seven-theme Xvfb smoke. This newer metadata/race-safety

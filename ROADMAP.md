@@ -133,6 +133,9 @@ devices produce clear errors without frozen UI or silent data loss.
 
 ### 0.7 — Previews and metadata
 
+- [x] Bound image preview input to 32 MiB on the opened file descriptor,
+  check the target of symlinks, reject special files and retain the 16 MP
+  pixel limit; add preview safety regressions.
 - [ ] Bounded thumbnail cache and lazy priorities for visible entries.
 - [ ] Quick Look and safe image/PDF/text/code/audio/video/archive preview.
 - [ ] Metadata, on-demand folder size and hashes, ACL/xattr support.
