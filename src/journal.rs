@@ -6,18 +6,24 @@
 
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeSet,
     env,
     ffi::OsString,
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 const VERSION: u32 = 1;
 const MAX_RECORD_BYTES: u64 = 64 * 1024;
 const MAX_RECORDS: usize = 4096;
+// Recovery comparisons are explicitly requested, never run during startup.
+// Limits make a remote or very large tree a deliberate manual-verification case.
+const MAX_COMPARE_ENTRIES: u64 = 10_000;
+const MAX_COMPARE_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_COMPARE_DEPTH: usize = 128;
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -126,6 +132,232 @@ fn inspect_record(record: Record) -> Inspection {
 /// This remains strictly read-only and never implies that files match.
 pub fn inspect_incomplete() -> io::Result<Vec<Inspection>> {
     Ok(scan_incomplete()?.into_iter().map(inspect_record).collect())
+}
+
+/// A read-only, bounded comparison of two currently visible trees. A match is
+/// an observation, NOT permission to delete either tree: files may change
+/// immediately afterwards, and journal state does not establish provenance.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Comparison {
+    Identical { entries: u64, bytes: u64 },
+    Different(String),
+    Inconclusive(String),
+}
+
+impl Comparison {
+    pub fn label(&self) -> String {
+        match self {
+            Self::Identical { entries, bytes } => format!(
+                "Contents matched at inspection time: {entries} entries, {bytes} bytes. This is not authorization to delete the source."
+            ),
+            Self::Different(reason) => format!("Contents differ: {reason}"),
+            Self::Inconclusive(reason) => format!("Could not verify safely: {reason}"),
+        }
+    }
+}
+
+#[derive(Default)]
+struct ComparisonBudget {
+    entries: u64,
+    bytes: u64,
+}
+
+pub fn compare_for_recovery(
+    source: &Path,
+    destination: &Path,
+    cancelled: &AtomicBool,
+) -> Comparison {
+    let mut budget = ComparisonBudget::default();
+    match compare_node(source, destination, 0, cancelled, &mut budget) {
+        Ok(Some(reason)) => Comparison::Different(reason),
+        Ok(None) => Comparison::Identical {
+            entries: budget.entries,
+            bytes: budget.bytes,
+        },
+        Err(error) => Comparison::Inconclusive(error.to_string()),
+    }
+}
+
+fn compare_node(
+    source: &Path,
+    destination: &Path,
+    depth: usize,
+    cancelled: &AtomicBool,
+    budget: &mut ComparisonBudget,
+) -> io::Result<Option<String>> {
+    if cancelled.load(Ordering::Relaxed) {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "Comparison cancelled",
+        ));
+    }
+    if depth > MAX_COMPARE_DEPTH || budget.entries >= MAX_COMPARE_ENTRIES {
+        return Err(io::Error::other(
+            "Comparison exceeded entry or nesting limit; verify manually",
+        ));
+    }
+    budget.entries += 1;
+    let left = fs::symlink_metadata(source)?;
+    let right = fs::symlink_metadata(destination)?;
+    if !same_kind(&left, &right) {
+        return Ok(Some(format!("Different item types at {}", source.display())));
+    }
+    if left.file_type().is_symlink() {
+        if fs::read_link(source)? != fs::read_link(destination)? {
+            return Ok(Some(format!(
+                "Different symbolic-link targets at {}",
+                source.display()
+            )));
+        }
+    } else if left.is_dir() {
+        let left_names = bounded_names(source, cancelled, budget)?;
+        let right_names = bounded_names(destination, cancelled, budget)?;
+        if left_names != right_names {
+            return Ok(Some(format!("Different directory entries at {}", source.display())));
+        }
+        for name in left_names {
+            if let Some(reason) = compare_node(
+                &source.join(&name),
+                &destination.join(&name),
+                depth + 1,
+                cancelled,
+                budget,
+            )? {
+                return Ok(Some(reason));
+            }
+        }
+    } else if left.is_file() {
+        if left.len() != right.len() {
+            return Ok(Some(format!("Different file sizes at {}", source.display())));
+        }
+        budget.bytes = budget
+            .bytes
+            .checked_add(left.len())
+            .ok_or_else(|| io::Error::other("Comparison size overflow"))?;
+        if budget.bytes > MAX_COMPARE_BYTES {
+            return Err(io::Error::other("Comparison exceeds 512 MiB; verify manually"));
+        }
+        if !compare_regular_files(source, destination, &left, &right, cancelled)? {
+            return Ok(Some(format!("Different file bytes at {}", source.display())));
+        }
+    } else {
+        return Err(io::Error::other(format!(
+            "Special files cannot be compared: {}",
+            source.display()
+        )));
+    }
+    // Reject comparisons made while any item was being replaced or modified.
+    if !same_snapshot(&left, &fs::symlink_metadata(source)?)
+        || !same_snapshot(&right, &fs::symlink_metadata(destination)?)
+    {
+        return Err(io::Error::other(
+            "An item changed during comparison; try again",
+        ));
+    }
+    Ok(None)
+}
+
+fn bounded_names(
+    path: &Path,
+    cancelled: &AtomicBool,
+    budget: &ComparisonBudget,
+) -> io::Result<BTreeSet<OsString>> {
+    let mut names = BTreeSet::new();
+    for entry in fs::read_dir(path)? {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Comparison cancelled",
+            ));
+        }
+        names.insert(entry?.file_name());
+        if names.len() as u64 + budget.entries > MAX_COMPARE_ENTRIES {
+            return Err(io::Error::other(
+                "Directory has too many entries to compare safely",
+            ));
+        }
+    }
+    Ok(names)
+}
+
+fn same_kind(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    left.file_type().is_symlink() == right.file_type().is_symlink()
+        && left.is_dir() == right.is_dir()
+        && left.is_file() == right.is_file()
+}
+
+fn same_snapshot(before: &fs::Metadata, after: &fs::Metadata) -> bool {
+    if !same_kind(before, after)
+        || before.len() != after.len()
+        || before.modified().ok() != after.modified().ok()
+    {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if before.dev() != after.dev()
+            || before.ino() != after.ino()
+            || before.ctime() != after.ctime()
+            || before.ctime_nsec() != after.ctime_nsec()
+            || before.mode() != after.mode()
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn open_regular_no_follow(path: &Path, snapshot: &fs::Metadata) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // Prevent substitution of the final component with a link, FIFO, etc.
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() || !same_snapshot(snapshot, &file.metadata()?) {
+        return Err(io::Error::other(
+            "A file changed before it could be compared",
+        ));
+    }
+    Ok(file)
+}
+
+fn compare_regular_files(
+    source: &Path,
+    destination: &Path,
+    left: &fs::Metadata,
+    right: &fs::Metadata,
+    cancelled: &AtomicBool,
+) -> io::Result<bool> {
+    let mut a = open_regular_no_follow(source, left)?;
+    let mut b = open_regular_no_follow(destination, right)?;
+    let mut buf_a = [0u8; 256 * 1024];
+    let mut buf_b = [0u8; 256 * 1024];
+    let mut remaining = left.len();
+    let mut identical = true;
+    while remaining > 0 {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Comparison cancelled",
+            ));
+        }
+        let n = remaining.min(buf_a.len() as u64) as usize;
+        a.read_exact(&mut buf_a[..n])?;
+        b.read_exact(&mut buf_b[..n])?;
+        if buf_a[..n] != buf_b[..n] {
+            identical = false;
+        }
+        remaining -= n as u64;
+    }
+    if !same_snapshot(left, &a.metadata()?) || !same_snapshot(right, &b.metadata()?) {
+        return Err(io::Error::other("A file was modified during comparison"));
+    }
+    Ok(identical)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -686,6 +918,94 @@ mod tests {
                 .is_symlink()
         );
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn recovery_comparison_checks_nested_bytes_and_extra_entries() {
+        let root = test_directory();
+        let source = root.join("original");
+        let destination = root.join("published");
+        fs::create_dir(&source).unwrap();
+        fs::create_dir(&destination).unwrap();
+        fs::create_dir(source.join("nested")).unwrap();
+        fs::create_dir(destination.join("nested")).unwrap();
+        fs::write(source.join("nested/data"), b"abcdef").unwrap();
+        fs::write(destination.join("nested/data"), b"abcdef").unwrap();
+        let cancelled = AtomicBool::new(false);
+        assert_eq!(
+            compare_for_recovery(&source, &destination, &cancelled),
+            Comparison::Identical { entries: 3, bytes: 6 }
+        );
+        fs::write(destination.join("nested/data"), b"abcdeg").unwrap();
+        assert!(matches!(
+            compare_for_recovery(&source, &destination, &cancelled),
+            Comparison::Different(reason) if reason.contains("file bytes")
+        ));
+        fs::write(destination.join("nested/data"), b"abcdef").unwrap();
+        fs::write(destination.join("extra"), b"unexpected").unwrap();
+        assert!(matches!(
+            compare_for_recovery(&source, &destination, &cancelled),
+            Comparison::Different(reason) if reason.contains("directory entries")
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recovery_comparison_never_treats_missing_or_cancelled_as_match() {
+        let root = test_directory();
+        let source = root.join("original");
+        let destination = root.join("missing");
+        fs::write(&source, b"hello").unwrap();
+        let cancelled = AtomicBool::new(false);
+        assert!(matches!(
+            compare_for_recovery(&source, &destination, &cancelled),
+            Comparison::Inconclusive(_)
+        ));
+        cancelled.store(true, Ordering::Relaxed);
+        assert!(matches!(
+            compare_for_recovery(&source, &source, &cancelled),
+            Comparison::Inconclusive(reason) if reason.contains("cancelled")
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recovery_comparison_does_not_follow_symlinked_file() {
+        use std::os::unix::fs::symlink;
+        let root = test_directory();
+        let original = root.join("original");
+        let published = root.join("published");
+        symlink("safe-target", &original).unwrap();
+        symlink("safe-target", &published).unwrap();
+        let cancelled = AtomicBool::new(false);
+        assert_eq!(
+            compare_for_recovery(&original, &published, &cancelled),
+            Comparison::Identical { entries: 1, bytes: 0 }
+        );
+        fs::remove_file(&published).unwrap();
+        symlink("different-target", &published).unwrap();
+        assert!(matches!(
+            compare_for_recovery(&original, &published, &cancelled),
+            Comparison::Different(reason) if reason.contains("symbolic-link")
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recovery_comparison_rejects_large_files_without_reading_them() {
+        let root = test_directory();
+        let source = root.join("original");
+        let destination = root.join("published");
+        let file = File::create(&source).unwrap();
+        file.set_len(MAX_COMPARE_BYTES + 1).unwrap();
+        let file = File::create(&destination).unwrap();
+        file.set_len(MAX_COMPARE_BYTES + 1).unwrap();
+        assert!(matches!(
+            compare_for_recovery(&source, &destination, &AtomicBool::new(false)),
+            Comparison::Inconclusive(reason) if reason.contains("512 MiB")
+        ));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

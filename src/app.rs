@@ -14,7 +14,7 @@ use eframe::egui::{
     self, Align2, Color32, FontId, Key, Modifiers, Pos2, Rect, Sense, Stroke, Vec2,
 };
 use std::{
-    collections::{BTreeSet, VecDeque},
+    collections::{BTreeSet, HashMap, VecDeque},
     path::{Path, PathBuf},
     process::Command,
     sync::{
@@ -353,6 +353,11 @@ pub struct Explorer {
     recovery_loading: bool,
     recovery_rescan_requested: bool,
     recovery_open: bool,
+    recovery_comparison_sender: Sender<(u64, String, journal::Comparison)>,
+    recovery_comparison_receiver: Receiver<(u64, String, journal::Comparison)>,
+    recovery_comparison_active: Option<String>,
+    recovery_comparison_cancel: Arc<AtomicBool>,
+    recovery_comparisons: HashMap<String, journal::Comparison>,
     clipboard: Option<Clipboard>,
     consumed_cut_paths: Option<Vec<PathBuf>>,
     dialog: Option<Dialog>,
@@ -402,6 +407,7 @@ impl Explorer {
         let (op_sender, op_receiver) = mpsc::channel();
         let (paste_preview_sender, paste_preview_receiver) = mpsc::channel();
         let (recovery_sender, recovery_receiver) = mpsc::channel();
+        let (recovery_comparison_sender, recovery_comparison_receiver) = mpsc::channel();
         // Explicit CLI paths take precedence over the saved session. Restored
         // paths are inspected by asynchronous scans, never by synchronous stat.
         let from_session = locations.is_empty();
@@ -441,6 +447,11 @@ impl Explorer {
             recovery_loading: false,
             recovery_rescan_requested: false,
             recovery_open: false,
+            recovery_comparison_sender,
+            recovery_comparison_receiver,
+            recovery_comparison_active: None,
+            recovery_comparison_cancel: Arc::new(AtomicBool::new(false)),
+            recovery_comparisons: HashMap::new(),
             clipboard: None,
             consumed_cut_paths: None,
             dialog: None,
@@ -487,10 +498,32 @@ impl Explorer {
         self.recovery_generation = self.recovery_generation.wrapping_add(1);
         let generation = self.recovery_generation;
         self.recovery_loading = true;
+        self.recovery_comparisons.clear();
+        self.recovery_comparison_cancel
+            .store(true, Ordering::Relaxed);
         let sender = self.recovery_sender.clone();
         thread::spawn(move || {
             let result = journal::inspect_incomplete();
             let _ = sender.send((generation, result));
+        });
+    }
+
+    fn compare_recovery_record(&mut self, record: &journal::Record) {
+        if self.recovery_comparison_active.is_some() || self.recovery_loading {
+            return;
+        }
+        let id = record.id.clone();
+        let source = record.source.clone();
+        let destination = record.destination.clone();
+        let generation = self.recovery_generation;
+        let sender = self.recovery_comparison_sender.clone();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.recovery_comparison_cancel = Arc::clone(&cancelled);
+        self.recovery_comparisons.remove(&id);
+        self.recovery_comparison_active = Some(id.clone());
+        thread::spawn(move || {
+            let result = journal::compare_for_recovery(&source, &destination, &cancelled);
+            let _ = sender.send((generation, id, result));
         });
     }
 
@@ -665,6 +698,16 @@ impl Explorer {
     }
 
     fn poll_background(&mut self, context: &egui::Context) {
+        while let Ok((generation, id, result)) = self.recovery_comparison_receiver.try_recv() {
+            if self.recovery_comparison_active.as_deref() == Some(id.as_str()) {
+                self.recovery_comparison_active = None;
+            }
+            if generation == self.recovery_generation
+                && self.recovery_records.iter().any(|entry| entry.record.id == id)
+            {
+                self.recovery_comparisons.insert(id, result);
+            }
+        }
         while let Ok((generation, result)) = self.recovery_receiver.try_recv() {
             if generation == self.recovery_generation {
                 self.recovery_loading = false;
@@ -892,6 +935,7 @@ impl Explorer {
         }
         let mut open = true;
         let mut rescan = false;
+        let mut compare = None;
         egui::Window::new("Unfinished cross-device moves")
             .open(&mut open)
             .default_width(610.0)
@@ -899,7 +943,7 @@ impl Explorer {
             .resizable(true)
             .show(context, |ui| {
                 ui.label("Read-only inspection. RiceExplorer will not delete, resume, or overwrite either side automatically.");
-                ui.label("Check the actual files, sizes and contents before manually deciding what to keep.");
+                ui.label("Compare file contents on demand (maximum 512 MiB and 10,000 entries). A match is only a snapshot, never authorization to delete a source.");
                 if let Some(error) = &self.recovery_error {
                     ui.colored_label(Color32::LIGHT_RED, format!("Cannot read all journal records: {error}"));
                 }
@@ -934,6 +978,36 @@ impl Explorer {
                             };
                             ui.small(guidance);
                             ui.colored_label(Color32::LIGHT_YELLOW, inspection.guidance());
+                            if self.recovery_comparison_active.as_deref() == Some(record.id.as_str()) {
+                                ui.horizontal(|ui| {
+                                    ui.spinner();
+                                    ui.label("Comparing bytes in background…");
+                                    if ui.button("Cancel comparison").clicked() {
+                                        self.recovery_comparison_cancel
+                                            .store(true, Ordering::Relaxed);
+                                    }
+                                });
+                            } else {
+                                let enabled = !self.recovery_loading
+                                    && self.recovery_comparison_active.is_none();
+                                if ui
+                                    .add_enabled(
+                                        enabled,
+                                        egui::Button::new("Compare contents (read-only)"),
+                                    )
+                                    .clicked()
+                                {
+                                    compare = Some(record.clone());
+                                }
+                            }
+                            if let Some(result) = self.recovery_comparisons.get(&record.id) {
+                                let color = match result {
+                                    journal::Comparison::Identical { .. } => Color32::LIGHT_GREEN,
+                                    journal::Comparison::Different(_) => Color32::LIGHT_RED,
+                                    journal::Comparison::Inconclusive(_) => Color32::LIGHT_YELLOW,
+                                };
+                                ui.colored_label(color, result.label());
+                            }
                         });
                     }
                 });
@@ -943,6 +1017,13 @@ impl Explorer {
                 }
             });
         self.recovery_open = open;
+        if !open {
+            self.recovery_comparison_cancel
+                .store(true, Ordering::Relaxed);
+        }
+        if let Some(record) = compare {
+            self.compare_recovery_record(&record);
+        }
         if rescan {
             self.check_unfinished_moves();
         }

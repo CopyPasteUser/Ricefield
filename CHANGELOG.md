@@ -2,6 +2,12 @@
 
 ## Unreleased — v0.2 stability and v0.3 safety groundwork
 
+- Add an explicit read-only source/destination comparison in the unfinished
+  move inspector. Compare regular-file bytes and nested directory names,
+  symlink targets and object types on demand; run in a cancellable worker
+  with 512 MiB / 10,000-entry / 128-level caps. Mark missing, unreadable,
+  changed or oversized trees as inconclusive; never automatically delete,
+  resume or dismiss records based on a matching snapshot.
 - Extend read-only crash-recovery inspection to observe source, published
   destination and staging path status asynchronously. Distinguish missing,
   present, symlink and inaccessible entries, and present conservative guidance

@@ -244,10 +244,15 @@ guaranteed. **Do not use development builds for irreplaceable data.**
 After a crash, a hidden `.rice-explorer-staging-*` directory may remain. Move
 records live in `$XDG_STATE_HOME/rice-explorer/operations/` (default
 `~/.local/state/rice-explorer/operations/`). RiceExplorer warns about unfinished
-records and displays both source and destination paths. It will **never**
-automatically delete, resume or overwrite based on these records. Inspect both
-sides manually. The journal is not a full power-loss recovery engine. Filenames
-are never interpolated into shell commands.
+records and displays source, destination and staging status. The recovery window
+also offers an **opt-in, read-only byte comparison** of source and destination,
+including nested folders and symlink targets. It runs on a worker, can be
+cancelled and stops after 512 MiB, 10,000 entries or 128 nesting levels; very
+large trees and missing/inaccessible files require manual verification. A
+matching snapshot **cannot prove that either path will stay unchanged**, and
+never authorizes source deletion. RiceExplorer will **never** automatically
+delete, resume or overwrite based on these records. The journal is not a full
+power-loss recovery engine. Filenames are never interpolated into shell commands.
 
 Scanning, searching, copying and Trash operations run on worker threads. Views render only visible rows. Recursive search is bounded to protect small machines; it is not a full-text or indexed search. Image thumbnail previews are implemented; drag-out, advanced mount management, undo and full interactive desktop integration tests remain outstanding. Until these are verified on your Mint laptop, keep Thunar available as a fallback.
 

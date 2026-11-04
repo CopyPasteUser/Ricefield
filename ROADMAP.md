@@ -133,6 +133,12 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   Distinguish missing, present and inaccessible entries; show conservative
   per-record guidance. Coalesce concurrent rescan requests. Presence alone
   cannot justify source cleanup or dismissing a journal.
+- [x] Offer opt-in background, cancellable, bounded read-only comparisons of
+  recorded source/destination contents (including nested bytes and symlink
+  targets) with clear match/mismatch/inconclusive results. Check snapshots
+  before/after reads; do not interpret matches as permission to delete.
+- [ ] Add durable provenance evidence, safe restart resume/rollback and
+  race-free source cleanup; a matching read-only scan is insufficient.
 - [x] Isolate test journals and GUI smoke XDG state from the developer's real
   state, including tests that intentionally leave unfinished transfers.
 - [ ] Complete restart recovery with verified resume/rollback choices, bounded
