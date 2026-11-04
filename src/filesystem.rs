@@ -2378,8 +2378,13 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
         let inside = parent.join("inside");
         fs::create_dir(&inside).unwrap();
-        let err = preview_transfer(&[parent.clone()], &inside, ConflictPolicy::KeepBoth, false)
-            .unwrap_err();
+        let err = preview_transfer(
+            std::slice::from_ref(&parent),
+            &inside,
+            ConflictPolicy::KeepBoth,
+            false,
+        )
+        .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
         assert_eq!(fs::read(child).unwrap(), b"safe");
         fs::remove_dir_all(root).unwrap();
