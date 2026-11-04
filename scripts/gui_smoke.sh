@@ -23,6 +23,11 @@ cp themes/win7.toml "$fixture_dir/custom-theme.toml"
 printf '\n[shell.sidebar]\nposition = "right"\nwidth = 270\nsections = ["volumes", "favorites"]\n' >> "$fixture_dir/custom-theme.toml"
 
 export LIBGL_ALWAYS_SOFTWARE=1
+# Never read or modify a developer's real config/state/cache, and never let
+# intentionally unfinished journals from cargo tests contaminate screenshots.
+export XDG_STATE_HOME="$fixture_dir/state"
+export XDG_CONFIG_HOME="$fixture_dir/config"
+export XDG_CACHE_HOME="$fixture_dir/cache"
 for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sidebar; do
   if [[ "$theme" == custom-sidebar ]]; then
     ./target/release/rice-explorer --theme-file "$fixture_dir/custom-theme.toml" "$fixture_dir" > "$fixture_dir/app.log" 2>&1 &

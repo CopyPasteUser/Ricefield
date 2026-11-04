@@ -43,6 +43,10 @@
   earlier items had already completed. Add a partial-batch regression test;
   recheck the original source identity after cross-device publication before
   beginning source cleanup.
+- Keep failure-injection journals in per-test temporary directories and isolate
+  the Xvfb smoke test's XDG config/state/cache. This prevents a fabricated
+  unfinished-move warning in GUI screenshots and protects a developer's real
+  state when running tests locally.
 
 **Validation:** Earlier feature-branch CI passed formatting, Clippy, unit tests,
 release build, CLI and seven-theme Xvfb smoke. This newer metadata/race-safety

@@ -87,6 +87,8 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
 - [ ] Stage output, synchronize and publish atomically when possible.
 - [x] Add a durable cross-device move state journal with a read-only scan on
   startup, a visible warning and manual inspection of unfinished transfers.
+- [x] Isolate test journals and GUI smoke XDG state from the developer's real
+  state, including tests that intentionally leave unfinished transfers.
 - [ ] Complete restart recovery with verified resume/rollback choices, bounded
   journal retention, interrupted-publication/power-loss fault injection,
   real mount/USB tests and source deletion safeguards. No automatic deletion

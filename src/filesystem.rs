@@ -293,6 +293,17 @@ pub fn perform_with_progress(
     cancelled: &AtomicBool,
     notify: &mut dyn FnMut(Progress),
 ) -> io::Result<String> {
+    perform_with_progress_in(action, cancelled, notify, None)
+}
+
+/// Supplying a journal directory lets failure-injection tests keep their
+/// deliberately incomplete records inside disposable fixtures.
+fn perform_with_progress_in(
+    action: &Action,
+    cancelled: &AtomicBool,
+    notify: &mut dyn FnMut(Progress),
+    journal_directory: Option<&Path>,
+) -> io::Result<String> {
     let sources: &[PathBuf] = match action {
         Action::Copy { sources, .. } | Action::Move { sources, .. } => sources,
         Action::Trash { paths } | Action::Delete { paths } => paths,
@@ -417,7 +428,10 @@ pub fn perform_with_progress(
                             // A durable record must exist before copying. Never delete
                             // the source if publishing the journal state fails.
                             let original_source = fs::symlink_metadata(source)?;
-                            let mut journal = Journal::begin(source, &target)?;
+                            let mut journal = match journal_directory {
+                                Some(directory) => Journal::begin_in(directory, source, &target)?,
+                                None => Journal::begin(source, &target)?,
+                            };
                             stage_and_publish_with_journal(
                                 source,
                                 &target,
@@ -1408,7 +1422,10 @@ mod tests {
         assert_eq!(error.kind(), io::ErrorKind::Unsupported);
         assert!(error.to_string().contains("item 2 of 2"));
         assert!(error.to_string().contains("1 earlier item(s) completed"));
-        assert_eq!(fs::read(output.join("valid.txt")).unwrap(), b"already committed");
+        assert_eq!(
+            fs::read(output.join("valid.txt")).unwrap(),
+            b"already committed"
+        );
         assert_eq!(fs::read(valid).unwrap(), b"already committed");
         assert!(fs::symlink_metadata(socket).is_ok());
         fs::remove_dir_all(root).unwrap();
@@ -1788,10 +1805,16 @@ mod tests {
         }
         let source = root.join("move.txt");
         fs::write(&source, b"cross-device").unwrap();
-        perform(&Action::Move {
-            sources: vec![source.clone()],
-            destination: target.clone(),
-        })
+        let cancelled = AtomicBool::new(false);
+        perform_with_progress_in(
+            &Action::Move {
+                sources: vec![source.clone()],
+                destination: target.clone(),
+            },
+            &cancelled,
+            &mut |_| {},
+            Some(&root.join("test-journals")),
+        )
         .unwrap();
         assert!(!source.exists());
         assert_eq!(fs::read(target.join("move.txt")).unwrap(), b"cross-device");
@@ -1826,7 +1849,7 @@ mod tests {
         fs::write(source.join("original.txt"), b"before").unwrap();
         let cancelled = AtomicBool::new(false);
         let mut injected = false;
-        let result = perform_with_progress(
+        let result = perform_with_progress_in(
             &Action::Move {
                 sources: vec![source.clone()],
                 destination: target.clone(),
@@ -1838,6 +1861,7 @@ mod tests {
                     injected = true;
                 }
             },
+            Some(&root.join("test-journals")),
         );
         assert!(injected, "test did not reach the EXDEV finishing phase");
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
