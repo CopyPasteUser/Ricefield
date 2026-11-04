@@ -81,7 +81,8 @@ pub fn load(path: &Path) -> io::Result<Preview> {
             .with_guessed_format()?
             .decode()
             .map_err(io::Error::other)?
-            .thumbnail(900, 800)
+            // Never upscale tiny images just to fit a larger preview pane.
+            .thumbnail(dimensions.0.min(900), dimensions.1.min(800))
             .to_rgba8();
         let (width, height) = image.dimensions();
         return Ok(Preview::Image {

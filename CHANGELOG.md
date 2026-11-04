@@ -51,7 +51,8 @@
   including symlinks; read image bytes from one nonblocking descriptor with a
   32 MiB cap to avoid reopening a path substituted with a FIFO/device. Reject
   special files before preview and test a real PNG, a large linked target and
-  a Unix socket.
+  a Unix socket. Keep small source images at their original size rather than
+  upscaling them to the preview pane's maximum bounds.
 - Use the committed Cargo lockfile for the local installer just as in CI.
 
 **Validation:** Earlier feature-branch CI passed formatting, Clippy, unit tests,
