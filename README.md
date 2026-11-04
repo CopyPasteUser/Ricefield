@@ -4,7 +4,7 @@
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Development preview: v0.3.0-alpha.3** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not the completed v0.3 release gate or a safe replacement for Thunar with irreplaceable data. This preview adds per-item Link results, asynchronous Properties, safe completed-journal retirement, queue controls, a content-verified skip mode and reproducible Linux packages. Race-free source cleanup, verified restart recovery and physical Mint/USB acceptance remain outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+> **Development preview: v0.3.0-alpha.4** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move now publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Reliable restart recovery and physical Mint/USB acceptance remain outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
 **Distribution:** An [automated Linux x86_64 preview bundle](RELEASE.md) can
 be built without distributing Rust sources to every end user. The verified
@@ -23,7 +23,7 @@ renderers remain part of the roadmap.
 
 ![RiceExplorer icon](assets/rice-explorer.svg)
 
-## Implemented on `main` — v0.3.0-alpha.3
+## Implemented on `main` — v0.3.0-alpha.4
 
 - Native Rust GUI with GPU-accelerated drawing; no Electron, browser or persistent background daemon.
 - Seven bundled visual profiles: `win98`, `xp-luna`, `win7`, `win10`, `frutiger-aero`, `chromeos` and `macos`.
@@ -58,19 +58,18 @@ renderers remain part of the roadmap.
   Undo refuses to overwrite an occupied original name or rename an entry
   whose inode/metadata changed since the completed rename; it is not a
   persistent action log or a batch rollback.
-- The v3 cross-device Move journal now records the checked staging payload's
+- Legacy v3 cross-device Move journals record the checked staging payload's
   inode before publication and verifies that the published destination is
   that same object. The restart review shows this relationship separately
   from current source/destination metadata. Old v1/v2 records remain readable;
   a matching inode alone does **not** authorize automatic recovery or deletion.
 - Native GTK file clipboard interoperability (when `xclip` or `wl-clipboard` is installed); otherwise use the internal file clipboard. Desktop copy/cut and paste run in background workers so a stuck helper cannot freeze the window. External payloads are capped at 4 MiB. Paste waits at most two seconds in the UI; on timeout **nothing is pasted** and a late result is ignored. Switching folders/tabs while a read is pending cancels that paste. Internal copies remain immediately available while desktop synchronization is pending.
-- Cross-device moves with copy-first semantics and byte-for-byte verification, symlink-preserving copies, transfer progress and cancellation.
+- Cross-device Move now uses a staged, byte-verified **Copy with source retained**. It never automatically removes the original, and Transfers identifies every retained source for manual review and cleanup. Same-filesystem Move remains an atomic rename. Symlinks, progress and cancellation are supported.
 - Staged file payloads and directories are synced before no-overwrite
   publication; the destination parent is synced after publication. If a
   filesystem cannot confirm the directory sync, the transfer reports an
-  error and preserves a cross-device Move source. This improves power-loss
-  durability but does not yet guarantee crash-safe recursive source cleanup,
-  preservation of all metadata or automatic recovery.
+  error and keeps the original source. This improves power-loss
+  durability but does not guarantee all metadata preservation or automatic recovery.
 - Trash and permanent deletion require explicit confirmation with a scrollable
   list of the actual selected paths. Multi-item requests
   now validate every selected path, reject duplicates/nested selections, and
@@ -107,8 +106,8 @@ renderers remain part of the roadmap.
   inspection is active, so slow or disconnected mounts cannot spawn a growing
   group of duplicate scanners. If the 4,096-record journal limit is reached,
   validated **completed** records can be retired to free a slot; incomplete or
-  unreadable recovery evidence is always retained, and new Moves fail closed
-  if no slot can safely be freed.
+  unreadable recovery evidence is always retained. Current source-retaining
+  cross-volume copies do not reserve new journal slots.
 - File properties and editable Unix permission bits, loaded asynchronously so
   an unavailable mount cannot stall the entire UI. Slow requests are
   coalesced, stale results are ignored and permission edits remain disabled
@@ -123,7 +122,7 @@ renderers remain part of the roadmap.
 read-only crash-recovery triage showing source, destination and staging status;
 coalesced recovery rescans; whole-batch Trash/Delete preflight with per-item
 outcomes; and transfer elapsed time, average speed and approximate ETA.
-Unreleased safety hardening on `main` also rejects stale hardlink payloads
+Safety hardening also rejects stale hardlink payloads
 when a source inode changes mid-copy, and refuses journal records replaced
 by symlinks, special files or different inodes while being scanned.
 The metadata safety guard requires cross-device Move copies to match
@@ -292,16 +291,13 @@ Current safeguards:
 - A source that changes identity, size, modification time or mode during copy
   fails validation before publication. Regular-file, directory and (on Linux)
   symbolic-link access and modification timestamps are preserved where supported.
-- Cross-filesystem moves verify each copied byte before publishing, then
-  reverify published contents before deleting matching source entries. A
-  bounded source-entry manifest also checks device/inode/mtime/ctime/mode
-  identities to refuse deletion of a newly substituted file with identical
-  bytes. Unix owner/group, mode and modification times must also match; on
-  Linux every readable xattr namespace, including ACL/security attributes,
-  is compared on the original and copied inode without following symlinks.
-  Missing or unreadable metadata aborts a destructive Move. Extra verification
-  I/O is intentional; the final unlink is not an atomic compare-and-delete
-  against a concurrent writer.
+- Cross-filesystem Move verifies copied bytes and supported metadata before
+  atomic no-overwrite publication. A source-tree manifest and hardlink-scope
+  check can refuse unsafe layouts. **No source entry is unlinked afterward**:
+  concurrent writers make a recursive check-and-delete race-prone. Review
+  the destination, then separately remove the source using the normal Trash
+  action if appropriate. Transfers records this as "Copied — source kept",
+  not as a finished rename. Privileged metadata may still be unsupported.
 - Cancellation stops future work and cleans partial staging when possible,
   but does **not** undo already committed items. Deletion uses the desktop
   Trash unless permanent deletion is separately confirmed.
@@ -313,29 +309,28 @@ Current safeguards:
   applies to the entire original filename (including the extension). Permanent
   deletion reports missing selected items as errors, rather than false success.
 
-**Important limitations:** Concurrent writers can still cause a partial move;
-the complete published destination is retained for manual recovery if source
-cleanup fails. Security labels, file capabilities and other privileged
+**Important limitations:** Concurrent writers can still cause a partial batch;
+cross-volume sources remain available for manual cleanup even after a verified
+copy. Security labels, file capabilities and other privileged
 extended attributes are not automatically copied; owner/group changes may
 require privileges, and hardlink relationships *between separately copied
-source trees* and full race-free cleanup are not guaranteed. Cross-device
+source trees* are not guaranteed. Cross-device
 Moves refuse copies that cannot retain the checked metadata. Linux POSIX ACLs
 are migrated when supported, but not all filesystems implement them.
 **Do not use development
 builds for irreplaceable data.**
 
-After a crash, a hidden `.rice-explorer-staging-*` directory may remain. Move
-records live in `$XDG_STATE_HOME/rice-explorer/operations/` (default
+After a crash, a hidden `.rice-explorer-staging-*` directory may remain. **New
+source-retaining cross-volume copies create no destructive Move journal.**
+Older unfinished Move records still live in `$XDG_STATE_HOME/rice-explorer/operations/` (default
 `~/.local/state/rice-explorer/operations/`). RiceExplorer warns about unfinished
 records and displays source, destination and staging status. The recovery window
 uses recorded inode/metadata snapshots for additional read-only warnings about
 changed or replaced paths; identity matching is not proof of matching bytes,
 authentic ownership or safety after reboot. Legacy v1 journals have no such
-evidence. New cross-device moves refuse to start when the directory already
-holds 4,096 journal records; unfinished evidence is never pruned automatically.
-Unix writers coordinate journal slot allocation with a private directory lock
-to avoid simultaneous over-reservation. Older noncooperating processes and
-filesystems without reliable advisory locks still require caution.
+evidence. Their old 4,096-record capacity limit and journal creation lock
+remain relevant only to compatibility/tests; unfinished evidence is never
+pruned automatically.
 The recovery window
 also offers an **opt-in, read-only byte comparison** of source and destination,
 including nested folders and symlink targets. It runs on a worker, can be

@@ -45,7 +45,7 @@ At baseline commit `214e585`, `main` and
 
 Each release requires implementation, meaningful tests and documentation.
 Untested hardware and GUI behavior is reported as **outstanding**, not done.
-`0.3.0-alpha.3` is a development preview for the completed 0.3 safety
+`0.3.0-alpha.4` is a development preview for the completed 0.3 safety
 increments, **not** a passed final v0.3 gate. Its remaining unchecked items
 must not be implied complete by the package version.
 
@@ -71,8 +71,12 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   safety, recovery or physical Linux Mint acceptance.
 - [ ] Verify initial hidden staging and atomic no-overwrite publication for
   local copies and cross-device moves in CI and on Linux Mint.
-- [ ] Eliminate the remaining cross-device source mutation race and preserve
-  timestamp, owner, ACL, xattr and hardlink metadata before production use.
+- [x] Remove automatic source deletion from cross-device Move: publish a
+  verified Copy and keep the original for manual cleanup. This sidesteps the
+  unfixable verify-then-unlink race for new cross-volume transfers, but does
+  not prove metadata completeness or production readiness.
+- [ ] Finish timestamp, ownership, ACL/xattr, privileged metadata and
+  hardlink interoperability across real target filesystems before production use.
 - [x] Refuse staged publication if a source's identity, size, modification
   time, inode change time or mode changes during the copy; open regular
   sources without following
@@ -98,7 +102,8 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   revalidate the entire manifest before cleanup and each entry before unlink.
   Refuse a same-content replacement inode; handle ctime/link-count changes
   caused by our own earlier hardlink removals. The final check/unlink is
-  still not atomic under a concurrent writer.
+  still not atomic under a concurrent writer. **Historical implementation:**
+  new cross-device transfers never invoke that cleanup path.
 - [x] Preserve readable Linux `user.*` xattrs in staged files, directories
   and symlinks; refuse publication when the target cannot accept a copied
   attribute. POSIX ACLs are now handled separately; privileged xattr
@@ -108,15 +113,16 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   Attempt to preserve uid/gid without following symlinks when permitted;
   allow an ordinary Copy to continue with its new owner if not permitted,
   but reject an ownership mismatch for a verified cross-device Move.
-  Privileged metadata, external hardlink identity, complete ownership support
-  across filesystems and atomic source cleanup remain open.
+  Privileged metadata, external hardlink identity and complete ownership
+  support across filesystems remain open. Cross-device source cleanup is now
+  intentionally manual rather than an unsafe automatic operation.
 - [x] Before publishing a verified cross-device Move or removing its source,
   require equivalent Unix mode, owner/group and nanosecond modification time
   for each copied entry. On Linux also compare **all** visible xattr names
   and values without following symlinks, including ACL/security namespaces;
   fail closed when unreadable or different. This blocks lossy moves but does
-  **not** implement ownership/ACL migration, eliminate the final unlink race
-  or guarantee that another process cannot change source metadata afterward.
+  **not** implement ownership/ACL migration or guarantee that another process
+  cannot change source metadata afterward. The final unlink was removed.
 - [x] Introduce a bounded, in-memory FIFO for up to 32 waiting Copy jobs,
   stable operation IDs, visible progress in every rice, and cancellation of
   waiting jobs without filesystem side effects. Pause the queue after an
@@ -151,7 +157,7 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   render-thread filesystem call sites still require review.
 - [x] Fault-inject a destination created after staging but before atomic
   publication and a source modified after staging verification. Confirm no
-  overwrite, no source cleanup, correct journal evidence and no staging debris
+  overwrite, no source cleanup, correct historical journal evidence and no staging debris
   in both cases. Physical mount/USB publication tests remain outstanding.
 - [x] Add a side-effect-free, asynchronous Paste preflight with per-item
   destinations, reserved targets for repeated basenames, automatic rename/skip
@@ -194,7 +200,7 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   rename and sync the destination parent. If a directory sync fails after
   publication, report the uncertain state and preserve the original source.
   Verify failure behavior with injected staging and publication sync errors.
-  Metadata completeness, source cleanup durability, FUSE/remote behavior and
+  Metadata completeness, FUSE/remote behavior and
   power-loss fault injection remain release blockers.
 - [x] Add a durable cross-device move state journal with a read-only scan on
   startup, a visible warning and manual inspection of unfinished transfers.
@@ -237,8 +243,9 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   reader used for recovery. Keep incomplete, malformed or changing records,
   and sync the journal directory after cleanup. No incomplete record expiry,
   resume, rollback or comprehensive long-term retention policy is implied.
-- [ ] Complete durable content provenance, safe restart resume/rollback and
-  race-free source cleanup; a matching read-only scan is insufficient.
+- [ ] Complete durable content provenance and safe restart resume/rollback
+  for legacy Move journals; a matching read-only scan is insufficient.
+  New cross-volume transfers do not automatically delete the original.
 - [x] Isolate test journals and GUI smoke XDG state from the developer's real
   state, including tests that intentionally leave unfinished transfers.
 - [ ] Complete restart recovery with verified resume/rollback choices, bounded
@@ -259,7 +266,8 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   possible; test hardlinks and complete metadata behavior.
 
 **Gate:** fault-injected copy/move/crash scenarios do not silently lose user
-data; transfers never block the UI.
+data; transfers never block the UI. **Still open** for stable 0.3: full
+recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
 
 ### 0.4 — Volumes and network files
 

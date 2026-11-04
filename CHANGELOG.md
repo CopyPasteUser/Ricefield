@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.3.0-alpha.4 — 2026-11-04
+
+- Make cross-filesystem Move **source-retaining by default**: verified staged
+  Copy with atomic no-overwrite publication, followed by **no automatic
+  deletion**. Show "Copied — source kept" per item, tell users to inspect the
+  destination and manually Trash the original, and consume the completed Cut
+  intent. Same-filesystem atomic renames are unchanged. No new destructive
+  Move journal is created; legacy v1–v3 unfinished records remain inspectable.
+  Regression-test source retention, concurrent source additions and clipboard
+  reconciliation. This removes the dangerous final unlink race from the new
+  cross-volume path, not all transfer/recovery risks.
 - Upgrade the durable cross-device Move journal to v3 while keeping v1/v2
   records readable. Save the verified staging payload's inode identity before
   publication and refuse the Published transition if the destination is not

@@ -590,11 +590,8 @@ pub struct Journal {
 }
 
 impl Journal {
-    /// Persist Prepared before creating or copying any staging payload.
-    pub fn begin(source: &Path, destination: &Path) -> io::Result<Self> {
-        Self::begin_in(&journal_directory()?, source, destination)
-    }
-
+    /// Historical move-journal writer, retained for isolated recovery tests.
+    #[cfg(test)]
     pub(crate) fn begin_in(
         directory: &Path,
         source: &Path,
@@ -603,6 +600,7 @@ impl Journal {
         Self::begin_in_with_limit(directory, source, destination, MAX_RECORDS)
     }
 
+    #[cfg(test)]
     fn begin_in_with_limit(
         directory: &Path,
         source: &Path,
@@ -743,7 +741,7 @@ impl Journal {
     }
 }
 
-#[cfg(unix)]
+#[cfg(all(test, unix))]
 fn lock_journal_directory(directory: &Path) -> io::Result<File> {
     use std::os::{fd::AsRawFd, unix::fs::OpenOptionsExt};
 
@@ -762,6 +760,7 @@ fn lock_journal_directory(directory: &Path) -> io::Result<File> {
 /// Reserve room for another move while holding the directory lock. Reclaim
 /// only fully validated Completed records if the capacity would otherwise be
 /// exhausted; malformed, changed and unfinished records are never purged.
+#[cfg(test)]
 fn ensure_capacity(directory: &Path, limit: usize) -> io::Result<()> {
     let mut paths = Vec::new();
     for entry in fs::read_dir(directory)? {
@@ -906,6 +905,7 @@ fn journal_directory() -> io::Result<PathBuf> {
     Ok(state_home.join("rice-explorer/operations"))
 }
 
+#[cfg(test)]
 fn ensure_private_directory(directory: &Path) -> io::Result<()> {
     let parent = directory
         .parent()
