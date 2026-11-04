@@ -1222,7 +1222,18 @@ mod tests {
     fn truncated_archive_cannot_publish_any_extracted_files() {
         let fixture = Fixture::new();
         let source = fixture.0.join("source.txt");
-        fs::write(&source, "content").unwrap();
+        // Use a substantially incompressible payload and cut through its
+        // actual data stream. Some libarchive versions can validly recover
+        // local ZIP members after a damaged central-directory trailer; a
+        // partial compressed member must fail on every supported backend.
+        let mut state = 0x1234_5678u32;
+        let payload = (0..IO_BLOCK * 4)
+            .map(|_| {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (state >> 24) as u8
+            })
+            .collect::<Vec<_>>();
+        fs::write(&source, &payload).unwrap();
         let cancel = AtomicBool::new(false);
         let archive = create(
             &[source],
@@ -1235,7 +1246,8 @@ mod tests {
         .unwrap();
         let file = OpenOptions::new().write(true).open(&archive).unwrap();
         let original = file.metadata().unwrap().len();
-        file.set_len(original - 16).unwrap();
+        assert!(original > payload.len() as u64 / 2);
+        file.set_len(payload.len() as u64 / 2).unwrap();
         assert!(verify(&archive, &cancel, |_| {}).is_err());
         assert!(extract(&archive, &fixture.0, "unpacked", &[], &cancel, |_| {}).is_err());
         assert!(!fixture.0.join("unpacked").exists());
