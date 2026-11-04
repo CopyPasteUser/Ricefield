@@ -13,6 +13,11 @@ not replace the outstanding real-device acceptance.
 
 RiceExplorer is designed as the file-management companion to [RiceBowl](https://github.com/CopyPasteUser/RiceBowl). Its renderer, filesystem operations and visual profiles are separate: switching from Windows 98 to Windows 7 or ChromeOS changes the chrome, geometry, controls and icons without replacing the file manager or disturbing an open folder.
 
+**0.4 groundwork (in development):** the CLI and address bar now share a
+typed parser for local paths, `file://` URIs and validated SMB/SFTP/WebDAV/MTP
+addresses. Remote addresses cannot yet be browsed: they fail clearly without
+being misinterpreted as local paths. GIO/GVfs connection handling comes next.
+
 **Built for structural customization.** RiceExplorer is not intended to be
 one file manager with seven recolors. Its TOML shells can move whole navigation,
 tab, menu and action components between regions; reorder sidebar modules and

@@ -77,6 +77,13 @@ internal clipboard; a timeout never silently replays an old cut list. Desktop
 clipboard payloads are limited to 4 MiB, and only one external read worker
 may be active at once.
 
+The address bar and CLI use the same local/remote location parser. A valid
+`file://` URI resolves to a native path; a recognized but unsupported
+SMB/SFTP/WebDAV/MTP address displays a non-secret error and does not navigate
+or mutate the current local tab. URI credentials are rejected rather than
+retained in status messages or tab history. The GIO browsing backend is a
+separate 0.4 milestone.
+
 Copy and Move failures identify the failing source's position in the batch and
 the number of earlier completed items. The error is not a transaction rollback:
 the failed item may have a published destination needing manual inspection,

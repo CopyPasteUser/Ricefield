@@ -3,6 +3,7 @@ mod clipboard;
 mod config;
 mod filesystem;
 mod journal;
+mod location;
 mod operation_queue;
 mod preview;
 mod theme;
@@ -10,75 +11,7 @@ mod theme;
 use std::{env, ffi::OsString, path::PathBuf};
 
 fn location_argument(argument: OsString) -> Result<PathBuf, &'static str> {
-    let Some(text) = argument.to_str() else {
-        // Ordinary Linux paths may contain non-UTF-8 bytes.
-        return Ok(PathBuf::from(argument));
-    };
-    if text
-        .get(..7)
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("file://"))
-    {
-        return local_file_uri(text);
-    }
-    if looks_like_uri(text) {
-        return Err("Remote URIs are not yet supported; open a locally mounted path instead");
-    }
-    Ok(PathBuf::from(argument))
-}
-
-fn looks_like_uri(text: &str) -> bool {
-    let Some((scheme, suffix)) = text.split_once(':') else {
-        return false;
-    };
-    let mut bytes = scheme.bytes();
-    bytes.next().is_some_and(|byte| byte.is_ascii_alphabetic())
-        && bytes.all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.'))
-        && (suffix.starts_with('/') || matches!(scheme, "trash" | "recent" | "network"))
-}
-
-fn local_file_uri(uri: &str) -> Result<PathBuf, &'static str> {
-    let rest = uri.get(7..).ok_or("Invalid file URI")?;
-    let absolute = if rest.starts_with('/') {
-        rest.to_owned()
-    } else {
-        let (host, path) = rest.split_once('/').ok_or("Invalid file URI")?;
-        if !host.eq_ignore_ascii_case("localhost") {
-            return Err("Only local file:// URIs are supported");
-        }
-        format!("/{path}")
-    };
-    if absolute.contains(&['?', '#'][..]) {
-        return Err("Invalid file URI: query and fragment are not supported");
-    }
-    let source = absolute.as_bytes();
-    let mut decoded = Vec::with_capacity(source.len());
-    let mut index = 0;
-    while index < source.len() {
-        if source[index] == b'%' {
-            let encoded = source
-                .get(index + 1..index + 3)
-                .ok_or("Invalid file URI escape")?;
-            let hex = std::str::from_utf8(encoded).map_err(|_| "Invalid file URI escape")?;
-            decoded.push(u8::from_str_radix(hex, 16).map_err(|_| "Invalid file URI escape")?);
-            index += 3;
-        } else {
-            decoded.push(source[index]);
-            index += 1;
-        }
-    }
-    if decoded.contains(&0) {
-        return Err("Invalid file URI: NUL byte");
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::OsStringExt;
-        Ok(PathBuf::from(OsString::from_vec(decoded)))
-    }
-    #[cfg(not(unix))]
-    {
-        let path = String::from_utf8(decoded).map_err(|_| "Invalid file URI encoding")?;
-        Ok(PathBuf::from(path))
-    }
+    location::Location::parse(argument)?.into_local_path()
 }
 
 fn invalid_argument(message: &str) -> ! {

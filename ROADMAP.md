@@ -271,7 +271,12 @@ recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
 
 ### 0.4 — Volumes and network files
 
-- [ ] Model local paths and remote URIs without discarding local operations.
+- [x] Introduce a typed Local/Remote URI parser shared by CLI and address bar;
+  retain native non-UTF-8 local paths and `file://` decoding. Validate
+  SMB/SFTP/DAV/DAVS/MTP URI syntax, reject embedded credentials, and return a
+  visible unsupported-backend error without accidentally scanning local paths.
+- [ ] Evolve navigation, tab history, entries and worker results to carry
+  typed remote locations end-to-end; preserve all local POSIX operations.
 - [ ] Integrate GIO/GVfs with a correctly driven GLib main context.
 - [ ] Discover drives/volumes/mounts and their capabilities dynamically.
 - [ ] Mount/unmount/eject/unlock through OS APIs and Polkit.

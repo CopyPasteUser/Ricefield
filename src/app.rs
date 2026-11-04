@@ -3,6 +3,7 @@ use crate::{
     config::{self, Config},
     filesystem::{self, Action, ConflictPolicy, Entry, Progress},
     journal::{self, Inspection as JournalInspection, State as JournalState},
+    location::Location,
     operation_queue::OperationQueue,
     preview,
     theme::{
@@ -784,6 +785,18 @@ impl Explorer {
         tab.last_selected = None;
         self.scan(self.active);
         self.remember_session();
+    }
+
+    fn navigate_address(&mut self, address: String) {
+        match Location::parse(address.into()).and_then(Location::into_local_path) {
+            Ok(path) => self.navigate(path),
+            Err(error) => {
+                // Preserve the actual local tab; never scan an unsupported URI
+                // as a relative filename or leak URI credentials into status.
+                self.current_mut().address = self.current().path.display().to_string();
+                self.status = Some((error.into(), true));
+            }
+        }
     }
 
     fn history(&mut self, backwards: bool) {
@@ -2426,7 +2439,7 @@ impl Explorer {
             }
             if address.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
                 let value = self.current().address.clone();
-                self.navigate(PathBuf::from(value));
+                self.navigate_address(value);
             }
             if ui
                 .button("Reload")
