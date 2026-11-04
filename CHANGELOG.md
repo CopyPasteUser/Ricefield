@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Serialize the recovery-journal capacity check and creation across cooperating
+  Unix RiceExplorer processes with an advisory directory lock. Open that
+  directory without following symlinks and validate its private permissions.
+  A concurrent-writer regression verifies that only one process can reserve
+  the final journal slot. Add restart fault injection for an already-published
+  destination whose journal stopped at StagedVerified; never infer permission
+  to delete or resume from the destination's presence.
 - Record the original source's Unix inode/metadata identity before staging and
   the published destination's identity after its durable publication barrier.
   Version 2 recovery records remain inspection-only: they can flag a replaced

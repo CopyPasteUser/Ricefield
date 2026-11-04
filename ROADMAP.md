@@ -189,6 +189,9 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   v1 records remain inspectable without pretending that evidence exists.
   v2 records with missing evidence are rejected. Refuse new move journals at
   the 4,096-record scan cap without deleting incomplete recovery evidence.
+  Serialize slot reservation across cooperating Unix processes with a
+  no-follow directory lock; test simultaneous last-slot claims and a crash
+  between publication and the durable Published journal transition.
   These snapshots are advisory and do not prove unchanged contents or permit
   automatic deletion; full provenance, crash replay and retention remain open.
 - [ ] Add durable provenance evidence, safe restart resume/rollback and
