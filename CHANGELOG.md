@@ -5,6 +5,21 @@
 - Final v0.3 safety gate, Mint hardware acceptance and recovery decisions are
   still in progress. Do not treat this alpha as a production release.
 
+## 0.3.0-alpha.2 — 2026-11-04
+
+- Verify regular-file source and published-destination identities through
+  `O_NOFOLLOW | O_NONBLOCK` descriptors, checking both the opened inode and
+  original path after reading. Reject swapped symlinks, replacement inodes
+  and FIFOs without following the substitute or waiting indefinitely.
+- Recheck source and destination directory/link identities after recursive
+  byte verification instead of assuming the earlier path remains stable.
+- Preserve Linux symbolic-link access/modified timestamps with `utimensat`
+  and `AT_SYMLINK_NOFOLLOW`, including broken links; reject a staged copy if
+  the destination filesystem cannot preserve link timestamps.
+- Add regression coverage for broken-link timestamps, symlink/inode swap
+  detection and nonblocking FIFO rejection. Cross-device source cleanup is
+  still not an atomic compare-and-unlink operation.
+
 ## 0.3.0-alpha.1 — 2026-11-04
 
 - Read the actual package version from Cargo in `--help` and `--version`

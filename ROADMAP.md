@@ -45,7 +45,7 @@ At baseline commit `214e585`, `main` and
 
 Each release requires implementation, meaningful tests and documentation.
 Untested hardware and GUI behavior is reported as **outstanding**, not done.
-`0.3.0-alpha.1` is a development preview for the completed 0.3 safety
+`0.3.0-alpha.2` is a development preview for the completed 0.3 safety
 increments, **not** a passed final v0.3 gate. Its remaining unchecked items
 must not be implied complete by the package version.
 
@@ -74,7 +74,14 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   sources without following
   a last-moment symlink replacement. Preserve regular-file and directory
   access/modification times in staged copies. Still require race-free source
-  cleanup, symlink timestamps, ACL/xattr/ownership/hardlink preservation.
+  cleanup, ACL/privileged-xattr/ownership/hardlink preservation.
+- [x] On Linux preserve symbolic-link access and modification times without
+  following links, including dangling links. Fail staged publication if link
+  metadata cannot be preserved. Verification now opens regular source and
+  destination files with no-follow/nonblocking flags and rechecks inode,
+  ctime, size and mode through their descriptors and paths. Also prevent
+  source files swapped for FIFOs from hanging a copy worker. This narrows
+  replacement races but does not make recursive cleanup atomic.
 - [x] Retain regular-file hardlink relationships when multiple names for the
   same inode occur inside a single directory tree being copied. Cross-item
   and out-of-tree links, extended metadata and ACL preservation remain open.

@@ -1857,6 +1857,8 @@ fn verify_tree(
         {
             return Err(mismatch());
         }
+        ensure_same_source(source, &source_meta)?;
+        ensure_same_source(destination, &target_meta)?;
     } else if source_meta.is_dir() {
         if !target_meta.is_dir() {
             return Err(mismatch());
@@ -1875,12 +1877,16 @@ fn verify_tree(
         if count != fs::read_dir(destination)?.count() {
             return Err(mismatch());
         }
+        ensure_same_source(source, &source_meta)?;
+        ensure_same_source(destination, &target_meta)?;
     } else if source_meta.is_file() {
         if !target_meta.is_file() || source_meta.len() != target_meta.len() {
             return Err(mismatch());
         }
-        let mut source_reader = File::open(source)?;
-        let mut target_reader = File::open(destination)?;
+        // Verify the descriptor as well as the path: a file exchanged for a
+        // symlink or FIFO after lstat must never be followed or block the UI.
+        let mut source_reader = open_verified_regular(source, &source_meta)?;
+        let mut target_reader = open_verified_regular(destination, &target_meta)?;
         let mut a = [0u8; 256 * 1024];
         let mut b = [0u8; 256 * 1024];
         loop {
@@ -1894,15 +1900,35 @@ fn verify_tree(
                 return Err(mismatch());
             }
         }
-        let after = fs::metadata(source)?;
-        if source_meta.len() != after.len() || source_meta.modified().ok() != after.modified().ok()
-        {
-            return Err(mismatch());
-        }
+        ensure_same_source_metadata(&source_meta, &source_reader.metadata()?)?;
+        ensure_same_source_metadata(&target_meta, &target_reader.metadata()?)?;
+        ensure_same_source(source, &source_meta)?;
+        ensure_same_source(destination, &target_meta)?;
     } else {
         return Err(mismatch());
     }
     Ok(())
+}
+
+/// Open only the regular inode observed at lstat time. O_NONBLOCK prevents a
+/// replaced FIFO/device from hanging a verification worker before fstat.
+fn open_verified_regular(path: &Path, snapshot: &fs::Metadata) -> io::Result<File> {
+    if !snapshot.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Verification expects a regular file",
+        ));
+    }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options.open(path)?;
+    ensure_same_source_metadata(snapshot, &file.metadata()?)?;
+    Ok(file)
 }
 
 /// Tracks links within one source tree. Separate top-level paste items are
@@ -1936,6 +1962,11 @@ fn copy_tree(
             std::os::unix::fs::symlink(target, destination)?;
             #[cfg(target_os = "linux")]
             if let Err(error) = copy_user_xattrs(source, destination, false) {
+                let _ = fs::remove_file(destination);
+                return Err(error);
+            }
+            #[cfg(target_os = "linux")]
+            if let Err(error) = preserve_symlink_times(destination, &metadata) {
                 let _ = fs::remove_file(destination);
                 return Err(error);
             }
@@ -1994,16 +2025,9 @@ fn copy_tree(
             transfer.advance(metadata.len(), source);
             return Ok(());
         }
-        let mut options = OpenOptions::new();
-        options.read(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            // Refuse a symlink swapped in between lstat and open.
-            options.custom_flags(libc::O_NOFOLLOW);
-        }
-        let mut input = options.open(source)?;
-        ensure_same_source_metadata(&metadata, &input.metadata()?)?;
+        // Also refuse a FIFO/device swapped in between lstat and open; a
+        // blocking open here would otherwise freeze a transfer worker.
+        let mut input = open_verified_regular(source, &metadata)?;
         let mut output = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -2044,6 +2068,38 @@ fn copy_tree(
             "Special device files cannot be copied",
         ))
     }
+}
+
+/// utimensat with AT_SYMLINK_NOFOLLOW applies the original timestamps to the
+/// link inode rather than accidentally mutating its target (which may be absent).
+#[cfg(target_os = "linux")]
+fn preserve_symlink_times(destination: &Path, metadata: &fs::Metadata) -> io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+
+    let destination = CString::new(destination.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "NUL in link path"))?;
+    let times = [
+        libc::timespec {
+            tv_sec: metadata.atime(),
+            tv_nsec: metadata.atime_nsec(),
+        },
+        libc::timespec {
+            tv_sec: metadata.mtime(),
+            tv_nsec: metadata.mtime_nsec(),
+        },
+    ];
+    let status = unsafe {
+        libc::utimensat(
+            libc::AT_FDCWD,
+            destination.as_ptr(),
+            times.as_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    };
+    if status == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 /// Copy the unprivileged Linux user namespace without silently stripping
@@ -2688,6 +2744,102 @@ mod tests {
                 .mode()
                 & 0o777,
             0o444
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn copying_broken_symlink_preserves_link_timestamps_without_touching_target() {
+        use std::os::unix::fs::{MetadataExt, symlink};
+
+        let root = test_root();
+        let source = root.join("broken-link");
+        let output = root.join("output");
+        let timestamp_fixture = root.join("timestamp-fixture");
+        fs::create_dir(&output).unwrap();
+        fs::write(&timestamp_fixture, b"fixture").unwrap();
+        let desired = UNIX_EPOCH + Duration::from_secs(1_600_000_000);
+        File::open(&timestamp_fixture)
+            .unwrap()
+            .set_times(
+                FileTimes::new()
+                    .set_accessed(desired)
+                    .set_modified(desired),
+            )
+            .unwrap();
+        symlink("missing-target", &source).unwrap();
+        preserve_symlink_times(&source, &fs::metadata(&timestamp_fixture).unwrap()).unwrap();
+        let before = fs::symlink_metadata(&source).unwrap();
+
+        perform(&Action::Copy {
+            sources: vec![source.clone()],
+            destination: output.clone(),
+            conflict: ConflictPolicy::KeepBoth,
+        })
+        .unwrap();
+
+        let copied = output.join("broken-link");
+        let after = fs::symlink_metadata(&copied).unwrap();
+        assert!(after.file_type().is_symlink());
+        assert_eq!(
+            fs::read_link(&copied).unwrap(),
+            PathBuf::from("missing-target")
+        );
+        assert_eq!(
+            (after.mtime(), after.mtime_nsec()),
+            (before.mtime(), before.mtime_nsec())
+        );
+        assert_eq!(
+            (after.atime(), after.atime_nsec()),
+            (before.atime(), before.atime_nsec())
+        );
+        assert!(!root.join("missing-target").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn verification_open_rejects_symlink_and_same_size_inode_replacements() {
+        use std::os::unix::fs::symlink;
+
+        let root = test_root();
+        let source = root.join("source.txt");
+        let saved = root.join("saved.txt");
+        fs::write(&source, b"original").unwrap();
+        let snapshot = fs::symlink_metadata(&source).unwrap();
+        fs::rename(&source, &saved).unwrap();
+        symlink(&saved, &source).unwrap();
+        assert!(open_verified_regular(&source, &snapshot).is_err());
+
+        fs::remove_file(&source).unwrap();
+        fs::write(&source, b"original").unwrap();
+        assert_eq!(
+            open_verified_regular(&source, &snapshot)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(fs::read(saved).unwrap(), b"original");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn verification_open_rejects_replacement_fifo_without_blocking() {
+        let root = test_root();
+        let source = root.join("source.txt");
+        fs::write(&source, b"content").unwrap();
+        let snapshot = fs::symlink_metadata(&source).unwrap();
+        fs::remove_file(&source).unwrap();
+        let name = CString::new(source.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+
+        assert_eq!(
+            open_verified_regular(&source, &snapshot)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
         );
         fs::remove_dir_all(root).unwrap();
     }

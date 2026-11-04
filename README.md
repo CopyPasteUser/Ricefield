@@ -4,7 +4,7 @@
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Development preview: v0.3.0-alpha.1** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not the completed v0.3 release gate or a safe replacement for Thunar with irreplaceable data. It adds hardened local operations and recovery inspection while ACLs, ownership, fully race-free cleanup and hardware acceptance remain outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+> **Development preview: v0.3.0-alpha.2** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not the completed v0.3 release gate or a safe replacement for Thunar with irreplaceable data. It adds hardened local operations and recovery inspection while ACLs, ownership, fully race-free cleanup and hardware acceptance remain outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
 RiceExplorer is designed as the file-management companion to [RiceBowl](https://github.com/CopyPasteUser/RiceBowl). Its renderer, filesystem operations and visual profiles are separate: switching from Windows 98 to Windows 7 or ChromeOS changes the chrome, geometry, controls and icons without replacing the file manager or disturbing an open folder.
 
@@ -18,7 +18,7 @@ renderers remain part of the roadmap.
 
 ![RiceExplorer icon](assets/rice-explorer.svg)
 
-## Implemented on `main` — v0.3.0-alpha.1
+## Implemented on `main` — v0.3.0-alpha.2
 
 - Native Rust GUI with GPU-accelerated drawing; no Electron, browser or persistent background daemon.
 - Seven bundled visual profiles: `win98`, `xp-luna`, `win7`, `win10`, `frutiger-aero`, `chromeos` and `macos`.
@@ -64,8 +64,9 @@ renderers remain part of the roadmap.
   read-only warning for unfinished transfers, even when a rice hides its
   status bar. The recovery window checks whether the recorded source,
   destination and staging paths currently exist (including broken symlinks)
-  and gives cautious guidance. These are metadata observations, **not**
-  content verification or permission to delete anything. No automatic
+  and gives cautious guidance. Optional bounded read-only content comparison
+  is available, but even matching bytes are **not** permission to delete
+  anything. No automatic
   destructive recovery. Repeated rescans are coalesced while a filesystem
   inspection is active, so slow or disconnected mounts cannot spawn a growing
   group of duplicate scanners.
@@ -218,7 +219,9 @@ Current safeguards:
   with atomic no-overwrite rename. Existing targets get ` (copy)` suffixes;
   copying a folder into itself is rejected.
 - Symlinks are copied as links, never traversed as directories; device files
-  are rejected. A regular file swapped for a symlink while opening is refused.
+  are rejected. A regular file swapped for a symlink or FIFO while opening is
+  refused without following it or blocking on the FIFO. Verification also
+  checks both opened file descriptors and their original paths for changes.
 - Multiple names for the same regular-file inode **inside one copied directory
   tree** remain hardlinked in the staged destination. Separate top-level paste
   items and hardlinks outside the selected tree are not linked together.
@@ -227,8 +230,8 @@ Current safeguards:
   aborts staged publication instead of silently discarding it. System ACLs,
   privileged metadata and file ownership are not yet migrated.
 - A source that changes identity, size, modification time or mode during copy
-  fails validation before publication. Regular-file and directory access and
-  modification timestamps are preserved where supported.
+  fails validation before publication. Regular-file, directory and (on Linux)
+  symbolic-link access and modification timestamps are preserved where supported.
 - Cross-filesystem moves verify each copied byte before publishing, then
   reverify published contents before deleting matching source entries. A
   bounded source-entry manifest also checks device/inode/mtime/ctime/mode
@@ -249,7 +252,7 @@ Current safeguards:
 **Important limitations:** Concurrent writers can still cause a partial move;
 the complete published destination is retained for manual recovery if source
 cleanup fails. ACLs, non-`user.*` extended attributes, ownership, hardlink relationships
-*between separately copied source trees*, some symlink timestamps and full
+*between separately copied source trees* and full
 race-free cleanup are not preserved or guaranteed. **Do not use development
 builds for irreplaceable data.**
 
