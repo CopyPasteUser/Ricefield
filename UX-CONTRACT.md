@@ -71,6 +71,11 @@ Concurrent writers can still cause a partial batch and earlier renames remain.
   of theme/status-bar settings. The review window is inspection-only: journal
   states do not authorize automatic deletion, resume or overwriting.
 - **Operations:** `filesystem::perform`; worker response includes actual completion result.
+- **Properties:** `Explorer::open_properties` schedules one background metadata
+  reader at a time; a later request replaces the pending one. The shared
+  Properties dialog exposes loading/error states, ignores stale results and
+  offers permission editing only after metadata has loaded for that entry.
+  Closing the dialog never waits for an offline filesystem.
 - **Transfer queue:** `operation_queue::OperationQueue` owns order, IDs and
   the 32-job bound; `Explorer::start_next_operation` alone dispatches workers.
   `Explorer::transfer_strip` and `transfer_dialog` are shared by all shells.

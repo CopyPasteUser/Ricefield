@@ -46,6 +46,13 @@
   or stalling a startup scan. Add deterministic replacement regressions.
 - Final v0.3 safety gate, Mint hardware acceptance and recovery decisions are
   still in progress. Do not treat this alpha as a production release.
+- Load the Properties dialog in a single background worker with a latest-only
+  pending request; reject stale-path responses and disable permission editing
+  until metadata is available. A dead mount no longer blocks drawing every
+  frame. Add regressions for correct/stale responses and source metadata.
+- Fault-inject a competing destination immediately before atomic publication,
+  plus a source change after verified staging. Both fail without losing the
+  source, overwriting the competitor or leaving temporary staging content.
 
 ## 0.3.0-alpha.2 — 2026-11-04
 

@@ -117,6 +117,36 @@ struct PreviewResult {
     result: std::io::Result<preview::Preview>,
 }
 
+struct PropertySnapshot {
+    lines: Vec<(String, String)>,
+    mode: String,
+    is_symlink: bool,
+}
+
+struct PropertyResult {
+    generation: u64,
+    path: PathBuf,
+    result: Result<PropertySnapshot, String>,
+}
+
+fn read_property_snapshot(path: &Path) -> std::io::Result<PropertySnapshot> {
+    // Both stat and property enumeration may touch an unavailable mount; they
+    // must be called from a worker, never from egui's render callback.
+    let metadata = std::fs::symlink_metadata(path)?;
+    #[cfg(unix)]
+    let mode = {
+        use std::os::unix::fs::PermissionsExt;
+        format!("{:03o}", metadata.permissions().mode() & 0o777)
+    };
+    #[cfg(not(unix))]
+    let mode = String::new();
+    Ok(PropertySnapshot {
+        lines: filesystem::property_lines(path)?,
+        mode,
+        is_symlink: metadata.file_type().is_symlink(),
+    })
+}
+
 #[derive(Clone, Copy)]
 enum PasteMode {
     Immediate,
@@ -377,7 +407,26 @@ enum Dialog {
     Properties {
         path: PathBuf,
         mode: String,
+        generation: u64,
+        details: Option<Result<PropertySnapshot, String>>,
     },
+}
+
+fn accept_property_result(dialog: &mut Option<Dialog>, message: PropertyResult) {
+    if let Some(Dialog::Properties {
+        path,
+        mode,
+        generation,
+        details,
+    }) = dialog
+        && *generation == message.generation
+        && *path == message.path
+    {
+        if let Ok(snapshot) = &message.result {
+            *mode = snapshot.mode.clone();
+        }
+        *details = Some(message.result);
+    }
 }
 
 pub struct Explorer {
@@ -392,6 +441,11 @@ pub struct Explorer {
     refresh_receiver: Receiver<RefreshResult>,
     preview_sender: Sender<PreviewResult>,
     preview_receiver: Receiver<PreviewResult>,
+    property_sender: Sender<PropertyResult>,
+    property_receiver: Receiver<PropertyResult>,
+    property_generation: u64,
+    property_worker_running: bool,
+    property_pending: Option<(u64, PathBuf)>,
     op_sender: Sender<OperationEvent>,
     op_receiver: Receiver<OperationEvent>,
     paste_preview_sender: Sender<PastePreviewResult>,
@@ -471,6 +525,7 @@ impl Explorer {
         let (scan_sender, scan_receiver) = mpsc::channel();
         let (refresh_sender, refresh_receiver) = mpsc::channel();
         let (preview_sender, preview_receiver) = mpsc::channel();
+        let (property_sender, property_receiver) = mpsc::channel();
         let (op_sender, op_receiver) = mpsc::channel();
         let (paste_preview_sender, paste_preview_receiver) = mpsc::channel();
         let (recovery_sender, recovery_receiver) = mpsc::channel();
@@ -496,6 +551,11 @@ impl Explorer {
             refresh_receiver,
             preview_sender,
             preview_receiver,
+            property_sender,
+            property_receiver,
+            property_generation: 0,
+            property_worker_running: false,
+            property_pending: None,
             op_sender,
             op_receiver,
             paste_preview_sender,
@@ -893,6 +953,24 @@ impl Explorer {
                     Ok(preview::Preview::Info(text)) => PreviewContent::Info(text),
                     Err(error) => PreviewContent::Info(format!("Preview unavailable: {error}")),
                 });
+            }
+        }
+        while let Ok(message) = self.property_receiver.try_recv() {
+            self.property_worker_running = false;
+            accept_property_result(&mut self.dialog, message);
+            // A blocked or slow mount cannot spawn an unbounded collection of
+            // property readers. Only the latest requested path is kept.
+            if let Some((generation, path)) = self.property_pending.take()
+                && matches!(
+                    &self.dialog,
+                    Some(Dialog::Properties {
+                        path: active_path,
+                        generation: active_generation,
+                        ..
+                    }) if *active_generation == generation && *active_path == path
+                )
+            {
+                self.start_property_worker(generation, path);
             }
         }
         while let Ok(result) = self.refresh_receiver.try_recv() {
@@ -1903,16 +1981,32 @@ impl Explorer {
     }
 
     fn open_properties(&mut self, path: PathBuf) {
-        #[cfg(unix)]
-        let mode = {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::symlink_metadata(&path)
-                .map(|metadata| format!("{:03o}", metadata.permissions().mode() & 0o777))
-                .unwrap_or_default()
-        };
-        #[cfg(not(unix))]
-        let mode = String::new();
-        self.dialog = Some(Dialog::Properties { path, mode });
+        self.property_generation = self.property_generation.wrapping_add(1);
+        let generation = self.property_generation;
+        self.dialog = Some(Dialog::Properties {
+            path: path.clone(),
+            mode: String::new(),
+            generation,
+            details: None,
+        });
+        if self.property_worker_running {
+            self.property_pending = Some((generation, path));
+        } else {
+            self.start_property_worker(generation, path);
+        }
+    }
+
+    fn start_property_worker(&mut self, generation: u64, path: PathBuf) {
+        self.property_worker_running = true;
+        let sender = self.property_sender.clone();
+        thread::spawn(move || {
+            let result = read_property_snapshot(&path).map_err(|error| error.to_string());
+            let _ = sender.send(PropertyResult {
+                generation,
+                path,
+                result,
+            });
+        });
     }
 
     fn open_preview(&mut self, path: PathBuf) {
@@ -3389,43 +3483,55 @@ impl Explorer {
                             });
                         });
                 }
-                Dialog::Properties { path, mode } => {
+                Dialog::Properties {
+                    path,
+                    mode,
+                    details,
+                    ..
+                } => {
                     egui::Window::new("Properties")
                         .collapsible(false)
                         .resizable(true)
                         .default_width(460.0)
                         .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
                         .show(context, |ui| {
-                            match filesystem::property_lines(path) {
-                                Ok(lines) => {
-                                    for (name, value) in lines {
+                            match details {
+                                Some(Ok(snapshot)) => {
+                                    for (name, value) in &snapshot.lines {
                                         ui.horizontal_wrapped(|ui| {
                                             ui.strong(format!("{name}:"));
                                             ui.label(value);
                                         });
                                     }
                                 }
-                                Err(error) => {
+                                Some(Err(error)) => {
                                     ui.colored_label(
                                         Color32::RED,
                                         format!("Cannot read properties: {error}"),
                                     );
                                 }
+                                None => {
+                                    ui.horizontal(|ui| {
+                                        ui.spinner();
+                                        ui.label("Reading file properties…");
+                                    });
+                                }
                             }
                             #[cfg(unix)]
-                            {
+                            if let Some(Ok(snapshot)) = details {
                                 ui.separator();
+                                if snapshot.is_symlink {
+                                    ui.label("Symlink permissions cannot be changed here.");
+                                }
                                 ui.horizontal(|ui| {
                                     ui.label("Mode (octal):");
                                     ui.add_sized([100.0, 25.0], egui::TextEdit::singleline(mode));
                                     let parsed = u32::from_str_radix(mode.trim(), 8)
                                         .ok()
                                         .filter(|number| *number <= 0o777);
-                                    let symlink = std::fs::symlink_metadata(&*path)
-                                        .is_ok_and(|metadata| metadata.file_type().is_symlink());
                                     if ui
                                         .add_enabled(
-                                            parsed.is_some() && !symlink,
+                                            parsed.is_some() && !snapshot.is_symlink,
                                             egui::Button::new("Apply"),
                                         )
                                         .clicked()
@@ -3552,12 +3658,17 @@ impl eframe::App for Explorer {
             &self.dialog,
             Some(Dialog::PasteOptions { preview: None, .. })
         );
-        let idle_delay =
-            if self.busy || waiting_for_preview || self.tabs.iter().any(|tab| tab.loading) {
-                Duration::from_millis(90)
-            } else {
-                Duration::from_secs(3)
-            };
+        let waiting_for_properties =
+            matches!(&self.dialog, Some(Dialog::Properties { details: None, .. }));
+        let idle_delay = if self.busy
+            || waiting_for_preview
+            || waiting_for_properties
+            || self.tabs.iter().any(|tab| tab.loading)
+        {
+            Duration::from_millis(90)
+        } else {
+            Duration::from_secs(3)
+        };
         let delay = next_search_repaint_delay(&self.tabs, Instant::now())
             .map_or(idle_delay, |search_delay| search_delay.min(idle_delay));
         context.request_repaint_after(delay);
@@ -3626,8 +3737,9 @@ fn paint_file_icon(painter: &egui::Painter, rect: Rect, file: &Entry, theme: &Th
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, CLIPBOARD_WAIT, Clipboard, NameMode, PasteMode, PendingPaste, Tab,
-        choose_paste_clipboard, elapsed_label, next_search_repaint_delay, remaining_cut_paths,
+        Action, CLIPBOARD_WAIT, Clipboard, Dialog, NameMode, PasteMode, PendingPaste,
+        PropertyResult, PropertySnapshot, Tab, accept_property_result, choose_paste_clipboard,
+        elapsed_label, next_search_repaint_delay, read_property_snapshot, remaining_cut_paths,
         transfer_progress_details,
     };
     use crate::clipboard;
@@ -3635,6 +3747,65 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn properties_snapshot_reports_file_metadata_without_ui_state() {
+        let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let snapshot = read_property_snapshot(&file).unwrap();
+        assert!(!snapshot.is_symlink);
+        assert!(snapshot.lines.iter().any(|(key, _)| key == "Type"));
+        assert!(snapshot.lines.iter().any(|(key, _)| key == "Size"));
+        #[cfg(unix)]
+        assert_eq!(snapshot.mode.len(), 3);
+    }
+
+    #[test]
+    fn property_dialog_ignores_superseded_and_other_path_results() {
+        let path = PathBuf::from("/selected/file");
+        let mut dialog = Some(Dialog::Properties {
+            path: path.clone(),
+            mode: String::new(),
+            generation: 8,
+            details: None,
+        });
+        let result = || PropertySnapshot {
+            lines: vec![("Type".into(), "File".into())],
+            mode: "644".into(),
+            is_symlink: false,
+        };
+        accept_property_result(
+            &mut dialog,
+            PropertyResult {
+                generation: 7,
+                path: path.clone(),
+                result: Ok(result()),
+            },
+        );
+        accept_property_result(
+            &mut dialog,
+            PropertyResult {
+                generation: 8,
+                path: PathBuf::from("/another/file"),
+                result: Ok(result()),
+            },
+        );
+        assert!(matches!(
+            &dialog,
+            Some(Dialog::Properties { details: None, mode, .. }) if mode.is_empty()
+        ));
+        accept_property_result(
+            &mut dialog,
+            PropertyResult {
+                generation: 8,
+                path,
+                result: Ok(result()),
+            },
+        );
+        assert!(matches!(
+            &dialog,
+            Some(Dialog::Properties { details: Some(Ok(_)), mode, .. }) if mode == "644"
+        ));
+    }
 
     #[test]
     fn name_dialog_actions_keep_the_original_paths() {
