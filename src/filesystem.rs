@@ -1382,7 +1382,12 @@ mod tests {
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read_dir(&output).unwrap().count(), 0);
         assert_eq!(fs::read(&unrelated).unwrap(), b"must remain private");
-        assert!(fs::symlink_metadata(&source).unwrap().file_type().is_symlink());
+        assert!(
+            fs::symlink_metadata(&source)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
         assert_eq!(fs::metadata(&original).unwrap().len(), 8 * 1024 * 1024);
         fs::remove_dir_all(root).unwrap();
     }
