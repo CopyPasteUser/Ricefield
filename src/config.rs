@@ -184,7 +184,10 @@ impl Config {
     /// legacy config contains invalid session locations between valid ones.
     pub fn restored_navigation(
         &self,
-    ) -> (Vec<(Vec<Location>, Vec<Location>)>, Vec<(Location, Vec<Location>, Vec<Location>)>) {
+    ) -> (
+        Vec<(Vec<Location>, Vec<Location>)>,
+        Vec<(Location, Vec<Location>, Vec<Location>)>,
+    ) {
         if !self.restore_session {
             return (Vec::new(), Vec::new());
         }
@@ -195,7 +198,11 @@ impl Config {
             .filter(|(_, text)| validated_session_location(text).is_some())
             .take(MAX_SAVED_TABS)
             .map(|(index, _)| {
-                let saved = self.session_histories.get(index).cloned().unwrap_or_default();
+                let saved = self
+                    .session_histories
+                    .get(index)
+                    .cloned()
+                    .unwrap_or_default();
                 (decode_history(&saved.back), decode_history(&saved.forward))
             })
             .collect();
@@ -382,12 +389,22 @@ mod tests {
     fn restores_bounded_navigation_and_closed_tabs_across_restart() {
         let mut config = Config::default();
         let tabs = vec![
-            (Location::Local("/one".into()), vec![Location::Local("/before".into())], vec![]),
-            (Location::Local("/two".into()), vec![], vec![Location::Local("/next".into())]),
+            (
+                Location::Local("/one".into()),
+                vec![Location::Local("/before".into())],
+                vec![],
+            ),
+            (
+                Location::Local("/two".into()),
+                vec![],
+                vec![Location::Local("/next".into())],
+            ),
         ];
         let closed = vec![(
             Location::Local("/closed".into()),
-            (0..50).map(|n| Location::Local(format!("/history/{n}").into())).collect(),
+            (0..50)
+                .map(|n| Location::Local(format!("/history/{n}").into()))
+                .collect(),
             vec![],
         )];
         config.remember_session(&tabs.iter().map(|tab| tab.0.clone()).collect::<Vec<_>>(), 1);
@@ -398,7 +415,10 @@ mod tests {
         assert_eq!(history[1].1, vec![Location::Local("/next".into())]);
         assert_eq!(restored_closed[0].0, Location::Local("/closed".into()));
         assert_eq!(restored_closed[0].1.len(), MAX_SAVED_HISTORY);
-        assert_eq!(restored_closed[0].1[0], Location::Local("/history/10".into()));
+        assert_eq!(
+            restored_closed[0].1[0],
+            Location::Local("/history/10".into())
+        );
     }
 
     #[test]
@@ -409,7 +429,9 @@ mod tests {
             &[(home.clone(), vec![home.clone()], vec![])],
             &[(home, vec![], vec![])],
         );
-        config.session_histories[0].back.push("sftp://user:pass@host/folder".into());
+        config.session_histories[0]
+            .back
+            .push("sftp://user:pass@host/folder".into());
         config.session_closed[0].location = "sftp://user:pass@host/folder".into();
         assert_eq!(config.restored_navigation().1.len(), 0);
         config.restore_session = false;

@@ -1208,13 +1208,18 @@ impl Explorer {
             return;
         }
         if self.current().remote_uri.is_some() {
-            self.status = Some(("Split view currently supports local folders only".into(), true));
+            self.status = Some((
+                "Split view currently supports local folders only".into(),
+                true,
+            ));
             return;
         }
         let left = self.current().id;
-        let other = self.tabs.iter().find(|tab| {
-            tab.id != left && tab.remote_uri.is_none()
-        }).map(|tab| tab.id);
+        let other = self
+            .tabs
+            .iter()
+            .find(|tab| tab.id != left && tab.remote_uri.is_none())
+            .map(|tab| tab.id);
         let right = match other {
             Some(id) => id,
             None => {
@@ -1231,8 +1236,14 @@ impl Explorer {
 
     fn split_indices(&self) -> Option<(usize, usize)> {
         let (left, right) = self.split_pair?;
-        let a = self.tabs.iter().position(|tab| tab.id == left && tab.remote_uri.is_none())?;
-        let b = self.tabs.iter().position(|tab| tab.id == right && tab.remote_uri.is_none())?;
+        let a = self
+            .tabs
+            .iter()
+            .position(|tab| tab.id == left && tab.remote_uri.is_none())?;
+        let b = self
+            .tabs
+            .iter()
+            .position(|tab| tab.id == right && tab.remote_uri.is_none())?;
         (a != b).then_some((a, b))
     }
 
@@ -1253,8 +1264,15 @@ impl Explorer {
         if source.source_tab == tab_id && !folder {
             return;
         }
-        if source.paths.iter().any(|path| destination.starts_with(path)) {
-            self.status = Some(("Cannot copy a folder into itself or a descendant".into(), true));
+        if source
+            .paths
+            .iter()
+            .any(|path| destination.starts_with(path))
+        {
+            self.status = Some((
+                "Cannot copy a folder into itself or a descendant".into(),
+                true,
+            ));
             return;
         }
         if let Some(index) = self.tabs.iter().position(|tab| tab.id == tab_id) {
@@ -1289,7 +1307,10 @@ impl Explorer {
             return;
         }
         if self.current().remote_uri.is_some() {
-            self.status = Some(("Remote browsing is read-only; drag-in is disabled".into(), true));
+            self.status = Some((
+                "Remote browsing is read-only; drag-in is disabled".into(),
+                true,
+            ));
             return;
         }
         let target = context
@@ -1299,7 +1320,10 @@ impl Explorer {
             .as_ref()
             .map_or_else(|| self.current().path.clone(), |(_, path, _)| path.clone());
         if files.iter().any(|path| destination.starts_with(path)) {
-            self.status = Some(("Cannot copy a folder into itself or a descendant".into(), true));
+            self.status = Some((
+                "Cannot copy a folder into itself or a descendant".into(),
+                true,
+            ));
             return;
         }
         if let Some((id, _, _)) = target
@@ -1316,7 +1340,10 @@ impl Explorer {
 
     fn spawn_window(&mut self) {
         if self.current().remote_uri.is_some() {
-            self.status = Some(("New windows currently support local folders only".into(), true));
+            self.status = Some((
+                "New windows currently support local folders only".into(),
+                true,
+            ));
             return;
         }
         let program = match std::env::current_exe() {
@@ -3849,13 +3876,20 @@ impl Explorer {
         } else if depth == 0 {
             "Home".to_owned()
         } else {
-            path.file_name().unwrap_or_default().to_string_lossy().into_owned()
+            path.file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned()
         };
         ui.horizontal(|ui| {
             ui.add_space(depth as f32 * 9.0);
             if ui
                 .small_button(if expanded { "▾" } else { "▸" })
-                .on_hover_text(if expanded { "Collapse folder" } else { "Expand folder" })
+                .on_hover_text(if expanded {
+                    "Collapse folder"
+                } else {
+                    "Expand folder"
+                })
                 .clicked()
             {
                 if expanded {
@@ -3865,7 +3899,8 @@ impl Explorer {
                     self.folder_tree.request(path.clone(), false);
                 }
             }
-            let label = ui.add(egui::Button::new(shorten(&title, 22)).selected(self.current().path == path));
+            let label = ui
+                .add(egui::Button::new(shorten(&title, 22)).selected(self.current().path == path));
             if label.on_hover_text(path.display().to_string()).clicked() {
                 self.navigate(path.clone());
             }
@@ -4361,48 +4396,49 @@ impl Explorer {
     }
 
     fn file_area(&mut self, ui: &mut egui::Ui, index: usize) {
-                let theme = self.theme.clone();
-                self.drop_areas.push(DropArea {
-                    tab_id: self.tabs[index].id,
-                    destination: self.tabs[index].path.clone(),
-                    rect: ui.available_rect_before_wrap(),
-                    folder: false,
-                });
-                if let Some(error) = self.tabs[index].error.as_ref() {
-                    ui.colored_label(
-                        Color32::from_rgb(177, 43, 37),
-                        format!("Cannot open folder: {error}"),
-                    );
-                    if ui.button("Retry").clicked() {
-                        self.scan(index);
+        let theme = self.theme.clone();
+        self.drop_areas.push(DropArea {
+            tab_id: self.tabs[index].id,
+            destination: self.tabs[index].path.clone(),
+            rect: ui.available_rect_before_wrap(),
+            folder: false,
+        });
+        if let Some(error) = self.tabs[index].error.as_ref() {
+            ui.colored_label(
+                Color32::from_rgb(177, 43, 37),
+                format!("Cannot open folder: {error}"),
+            );
+            if ui.button("Retry").clicked() {
+                self.scan(index);
+            }
+        } else if self.tabs[index].loading && self.tabs[index].entries.is_empty() {
+            ui.add(egui::Spinner::new());
+            ui.label("Loading folder…");
+        } else if self.tabs[index].visible.is_empty() {
+            ui.vertical_centered(|ui| {
+                ui.add_space(64.0);
+                let empty_text =
+                    if !self.tabs[index].query.is_empty() || self.config.filter_kind != "all" {
+                        "No matching files"
+                    } else {
+                        "This folder is empty"
+                    };
+                ui.label(egui::RichText::new(empty_text).size(18.0));
+                ui.label(
+                    egui::RichText::new("Try another folder or clear the search.")
+                        .color(theme.palette.muted()),
+                );
+                if self.config.filter_kind != "all" && ui.button("Clear type filter").clicked() {
+                    self.config.filter_kind = "all".into();
+                    self.dirty_config = true;
+                    for tab in 0..self.tabs.len() {
+                        self.rebuild_visible(tab);
                     }
-                } else if self.tabs[index].loading && self.tabs[index].entries.is_empty() {
-                    ui.add(egui::Spinner::new());
-                    ui.label("Loading folder…");
-                } else if self.tabs[index].visible.is_empty() {
-                    ui.vertical_centered(|ui| {
-                        ui.add_space(64.0);
-                        let empty_text = if !self.tabs[index].query.is_empty() || self.config.filter_kind != "all" {
-                            "No matching files"
-                        } else {
-                            "This folder is empty"
-                        };
-                        ui.label(egui::RichText::new(empty_text).size(18.0));
-                        ui.label(
-                            egui::RichText::new("Try another folder or clear the search.")
-                                .color(theme.palette.muted()),
-                        );
-                        if self.config.filter_kind != "all" && ui.button("Clear type filter").clicked() {
-                            self.config.filter_kind = "all".into();
-                            self.dirty_config = true;
-                            for tab in 0..self.tabs.len() {
-                                self.rebuild_visible(tab);
-                            }
-                        }
-                    });
-                } else {
-                    self.file_listing(ui, index);
                 }
+            });
+        } else {
+            self.file_listing(ui, index);
+        }
     }
 
     fn remote_panel(&mut self, ui: &mut egui::Ui) {
@@ -4555,7 +4591,11 @@ impl Explorer {
                     } else {
                         label.to_owned()
                     };
-                    if ui.small_button(caption).on_hover_text("Sort by this column").clicked() {
+                    if ui
+                        .small_button(caption)
+                        .on_hover_text("Sort by this column")
+                        .clicked()
+                    {
                         change_sort = Some(key);
                     }
                 }
@@ -4583,8 +4623,7 @@ impl Explorer {
                         ui.spacing_mut().item_spacing.x = 8.0;
                         for col in 0..columns {
                             let visible_index = row * columns + col;
-                            let entry = self
-                                .tabs[tab_index]
+                            let entry = self.tabs[tab_index]
                                 .visible
                                 .get(visible_index)
                                 .and_then(|index| self.tabs[tab_index].entries.get(*index))

@@ -68,7 +68,11 @@ impl FolderTree {
         let sender = self.sender.clone();
         thread::spawn(move || {
             let result = list_directories(&path).map_err(|error| error.to_string());
-            let _ = sender.send(TreeResult { path, revision, result });
+            let _ = sender.send(TreeResult {
+                path,
+                revision,
+                result,
+            });
         });
     }
 }
@@ -89,8 +93,16 @@ fn list_directories(path: &Path) -> std::io::Result<Vec<PathBuf>> {
         }
     }
     entries.sort_by(|a, b| {
-        let a_name = a.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
-        let b_name = b.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+        let a_name = a
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_lowercase();
+        let b_name = b
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_lowercase();
         natural_cmp(&a_name, &b_name)
     });
     Ok(entries)

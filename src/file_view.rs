@@ -21,11 +21,20 @@ pub fn natural_cmp(left: &str, right: &str) -> Ordering {
             }
             let digits_a = &a[start_a..i];
             let digits_b = &b[start_b..j];
-            let short_a = digits_a.iter().position(|ch| *ch != b'0').unwrap_or(digits_a.len());
-            let short_b = digits_b.iter().position(|ch| *ch != b'0').unwrap_or(digits_b.len());
+            let short_a = digits_a
+                .iter()
+                .position(|ch| *ch != b'0')
+                .unwrap_or(digits_a.len());
+            let short_b = digits_b
+                .iter()
+                .position(|ch| *ch != b'0')
+                .unwrap_or(digits_b.len());
             let number_a = &digits_a[short_a..];
             let number_b = &digits_b[short_b..];
-            let compared = number_a.len().cmp(&number_b.len()).then_with(|| number_a.cmp(number_b));
+            let compared = number_a
+                .len()
+                .cmp(&number_b.len())
+                .then_with(|| number_a.cmp(number_b));
             if !compared.is_eq() {
                 return compared;
             }
@@ -82,7 +91,10 @@ mod tests {
         assert_eq!(natural_cmp("file2", "file10"), Ordering::Less);
         assert_eq!(natural_cmp("x9", "x010"), Ordering::Less);
         assert_eq!(natural_cmp("file1", "file01"), Ordering::Less);
-        assert_eq!(natural_cmp("x999999999999999999999999", "x1000000000000000000000000"), Ordering::Less);
+        assert_eq!(
+            natural_cmp("x999999999999999999999999", "x1000000000000000000000000"),
+            Ordering::Less
+        );
         assert_eq!(natural_cmp("abc", "abcd"), Ordering::Less);
     }
 
