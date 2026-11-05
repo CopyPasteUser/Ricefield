@@ -57,7 +57,7 @@ jobs:
       - name: Native GUI smoke (Xvfb software GL)
         run: |
           sudo apt-get install -y xvfb xauth xdotool imagemagick libgl1-mesa-dri libxkbcommon-x11-0
-          xvfb-run -a -s '-screen 0 1280x800x24' bash scripts/gui_smoke.sh
+          timeout -k 10s 8m xvfb-run -a -s '-screen 0 1280x800x24' bash scripts/gui_smoke.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rice-explorer-gui-smoke

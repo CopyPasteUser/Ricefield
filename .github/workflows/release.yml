@@ -53,7 +53,7 @@ jobs:
           target/release/rice-explorer --help
           target/release/rice-explorer --version
           target/release/rice-explorer --list-themes
-          xvfb-run -a -s '-screen 0 1280x800x24' bash scripts/gui_smoke.sh
+          timeout -k 10s 8m xvfb-run -a -s '-screen 0 1280x800x24' bash scripts/gui_smoke.sh
       - name: Build and verify reproducible release bundle
         shell: bash
         run: |
