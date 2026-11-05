@@ -20,6 +20,7 @@ use crate::{
 use eframe::egui::{self, Align2, Color32, Key, Modifiers, Pos2, Rect, Vec2};
 use std::{
     collections::{BTreeSet, HashMap, HashSet, VecDeque},
+    fs,
     path::{Path, PathBuf},
     process::Command,
     sync::{
@@ -809,6 +810,8 @@ pub struct Explorer {
     config: Config,
     theme: Theme,
     theme_file: Option<PathBuf>,
+    theme_file_state: Option<(SystemTime, u64)>,
+    theme_last_check: Instant,
     session_owner: bool,
     tabs: Vec<Tab>,
     closed_tabs: VecDeque<TabSnapshot>,
@@ -950,6 +953,9 @@ impl Explorer {
             ),
         };
         theme.apply(context);
+        let theme_file_state = theme_file
+            .as_ref()
+            .and_then(|path| Self::theme_file_fingerprint(path));
 
         let (scan_sender, scan_receiver) = mpsc::channel();
         let (remote_scan_sender, remote_scan_receiver) = mpsc::channel();
@@ -986,6 +992,8 @@ impl Explorer {
             config,
             theme,
             theme_file,
+            theme_file_state,
+            theme_last_check: Instant::now(),
             session_owner: !separate_window,
             tabs: Vec::new(),
             closed_tabs: VecDeque::new(),
@@ -3503,9 +3511,40 @@ impl Explorer {
     fn set_theme(&mut self, context: &egui::Context, id: &str) {
         if let Some(theme) = Theme::builtin(id) {
             self.theme = theme;
+            self.theme_file = None;
+            self.theme_file_state = None;
             self.config.theme = id.to_owned();
             self.dirty_config = true;
             self.theme.apply(context);
+        }
+    }
+
+    fn theme_file_fingerprint(path: &Path) -> Option<(SystemTime, u64)> {
+        let meta = fs::metadata(path).ok()?;
+        Some((meta.modified().ok()?, meta.len()))
+    }
+
+    fn reload_theme_file(&mut self, context: &egui::Context, force: bool) {
+        let Some(path) = self.theme_file.as_ref().cloned() else {
+            return;
+        };
+        let fingerprint = Self::theme_file_fingerprint(&path);
+        if !force && self.theme_file_state == fingerprint {
+            return;
+        }
+        self.theme_file_state = fingerprint;
+        match Theme::from_file(&path) {
+            Ok(updated) => {
+                self.theme = updated;
+                self.theme.apply(context);
+                self.status = Some(("External TOML theme reloaded".into(), false));
+            }
+            Err(error) => {
+                self.status = Some((
+                    format!("Theme update rejected; previous theme preserved: {error}"),
+                    true,
+                ));
+            }
         }
     }
 
@@ -5134,6 +5173,13 @@ impl Explorer {
                                         self.set_theme(ui.ctx(), id);
                                     }
                                 }
+                                if self.theme_file.is_some() {
+                                    ui.separator();
+                                    if ui.button("Reload external TOML").clicked() {
+                                        self.reload_theme_file(ui.ctx(), true);
+                                        ui.close();
+                                    }
+                                }
                             });
                     });
                 });
@@ -6306,6 +6352,12 @@ impl eframe::App for Explorer {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let context = ui.ctx().clone();
         self.poll_background(&context);
+        if self.theme_file.is_some()
+            && self.theme_last_check.elapsed() >= Duration::from_secs(3)
+        {
+            self.theme_last_check = Instant::now();
+            self.reload_theme_file(&context, false);
+        }
         for index in 0..self.tabs.len() {
             if self.tabs[index]
                 .search_pending

@@ -177,6 +177,10 @@ not silently rolled back; cancelled/unstarted entries remain explicit.
   The dialog keeps 64 recent session outcomes (completed, cancelled, failed)
   without claiming that earlier successful items in a failed batch rolled back.
 - **Theme:** `Theme::apply` and runtime TOML files; no theme-specific copy/move behavior.
+  External theme files are observed at the shared idle cadence, reloaded only
+  after a metadata change, and limited to regular 256 KiB inputs. A broken
+  edit never replaces the last working theme or touches open tabs/transfers;
+  selecting a built-in profile stops watching the external file.
 - **Shell composition:** `Theme::shell_kind`, `top_components` and
   `bottom_components` place maintained controls in distinct regions. A chrome
   component may appear only once; path navigation must remain accessible.

@@ -1,6 +1,8 @@
 use eframe::egui::{self, Color32};
 use serde::Deserialize;
-use std::{fs, path::Path};
+use std::{fs, io::Read, path::Path};
+
+const MAX_THEME_BYTES: u64 = 256 * 1024;
 
 pub const BUILTIN_IDS: &[&str] = &[
     "win7",
@@ -287,7 +289,29 @@ impl Theme {
     }
 
     pub fn from_file(path: &Path) -> Result<Self, String> {
-        let contents = fs::read_to_string(path).map_err(|error| error.to_string())?;
+        let mut options = fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NONBLOCK);
+        }
+        let file = options.open(path).map_err(|error| error.to_string())?;
+        let metadata = file.metadata().map_err(|error| error.to_string())?;
+        if !metadata.is_file() {
+            return Err("Theme must be a regular file".into());
+        }
+        if metadata.len() > MAX_THEME_BYTES {
+            return Err("Theme file exceeds 256 KiB limit".into());
+        }
+        let mut bytes = Vec::new();
+        file.take(MAX_THEME_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|error| error.to_string())?;
+        if bytes.len() as u64 > MAX_THEME_BYTES {
+            return Err("Theme file exceeds 256 KiB limit".into());
+        }
+        let contents = String::from_utf8(bytes).map_err(|error| error.to_string())?;
         let theme: Self = toml::from_str(&contents).map_err(|error| error.to_string())?;
         theme.validate()?;
         Ok(theme)
@@ -408,6 +432,26 @@ impl Theme {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_theme_loader_rejects_over_limit_and_non_regular_files() {
+        let name = format!(
+            "rice-theme-size-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let path = std::env::temp_dir().join(name);
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(MAX_THEME_BYTES + 1).unwrap();
+        assert!(Theme::from_file(&path).err().unwrap().contains("256 KiB"));
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        assert!(Theme::from_file(&path).is_err());
+        fs::remove_dir(&path).unwrap();
+    }
 
     #[test]
     fn every_builtin_profile_is_valid() {
