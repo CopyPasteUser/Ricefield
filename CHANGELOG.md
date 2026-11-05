@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9 preview stress coverage — 100k virtual file entries
+
+- Add a deterministic 100,000-name natural-sort/glob regression test with no
+  fixture writes or extra dependencies. Real startup, idle RAM, HDD scans and
+  interactive frame-time measurements remain mandatory for 1.0 acceptance.
+
 ## 0.9 preview CI hardening — distinct shell regression gates
 
 - Assert distinct Win98/Win7/macOS toolbar structures and Navigation presence.
