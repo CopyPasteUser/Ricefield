@@ -1,7 +1,10 @@
 //! Shared, theme-independent file ordering and filtering policies.
 
 use crate::filesystem::Entry;
-use std::cmp::Ordering;
+use std::{
+    cmp::Ordering,
+    time::{Duration, SystemTime},
+};
 
 /// Natural comparison without integer parsing/overflow (file2 < file10).
 /// Inputs are already folded for case-insensitive comparisons by the scanner.
@@ -66,6 +69,45 @@ pub const FILTERS: &[(&str, &str)] = &[
     ("code", "Code"),
 ];
 
+pub const SIZE_FILTERS: &[(&str, &str)] = &[
+    ("any", "Any size"),
+    ("small", "Under 1 MiB"),
+    ("medium", "1–100 MiB"),
+    ("large", "100 MiB or more"),
+];
+
+pub const MODIFIED_FILTERS: &[(&str, &str)] = &[
+    ("any", "Any date"),
+    ("day", "Past 24 hours"),
+    ("week", "Past 7 days"),
+    ("month", "Past 30 days"),
+];
+
+pub fn matches_size(entry: &Entry, filter: &str) -> bool {
+    const MIB: u64 = 1024 * 1024;
+    match filter {
+        // Directory entry sizes are not recursive folder sizes. Don't
+        // silently classify them as small files.
+        "small" => !entry.is_dir && entry.size < MIB,
+        "medium" => !entry.is_dir && (MIB..100 * MIB).contains(&entry.size),
+        "large" => !entry.is_dir && entry.size >= 100 * MIB,
+        _ => true,
+    }
+}
+
+pub fn matches_modified(entry: &Entry, filter: &str, now: SystemTime) -> bool {
+    let max_age = match filter {
+        "day" => Duration::from_secs(24 * 3600),
+        "week" => Duration::from_secs(7 * 24 * 3600),
+        "month" => Duration::from_secs(30 * 24 * 3600),
+        _ => return true,
+    };
+    entry.modified.is_some_and(|modified| {
+        // Future timestamps can occur from clock skew; count as recent.
+        now.duration_since(modified).unwrap_or_default() <= max_age
+    })
+}
+
 pub fn matches_filter(entry: &Entry, filter: &str) -> bool {
     match filter {
         "folders" => entry.is_dir,
@@ -82,9 +124,37 @@ pub fn matches_filter(entry: &Entry, filter: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{matches_filter, natural_cmp};
+    use super::{matches_filter, matches_modified, matches_size, natural_cmp};
     use crate::filesystem::Entry;
-    use std::{cmp::Ordering, path::PathBuf};
+    use std::{
+        cmp::Ordering,
+        path::PathBuf,
+        time::{Duration, SystemTime},
+    };
+
+    #[test]
+    fn size_and_date_filters_are_bounded_and_ignore_unknown_presets() {
+        let now = SystemTime::now();
+        let mut entry = Entry {
+            path: PathBuf::from("movie.mkv"),
+            name: "movie.mkv".into(),
+            is_dir: false,
+            is_symlink: false,
+            size: 100 * 1024 * 1024,
+            modified: Some(now - Duration::from_secs(8 * 24 * 3600)),
+        };
+        assert!(matches_size(&entry, "large"));
+        assert!(!matches_size(&entry, "medium"));
+        assert!(matches_modified(&entry, "month", now));
+        assert!(!matches_modified(&entry, "week", now));
+        assert!(matches_size(&entry, "unknown"));
+        assert!(matches_modified(&entry, "unknown", now));
+        entry.modified = None;
+        assert!(!matches_modified(&entry, "day", now));
+        entry.is_dir = true;
+        assert!(!matches_size(&entry, "small"));
+        assert!(!matches_size(&entry, "large"));
+    }
 
     #[test]
     fn natural_sort_preserves_numeric_magnitude_without_overflow() {

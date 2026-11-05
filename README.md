@@ -4,7 +4,7 @@
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Development preview: v0.7.0-alpha.1** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+> **Development preview: v0.8.0-alpha.1** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
 **Distribution:** An [automated Linux x86_64 preview bundle](RELEASE.md) can
 be built without distributing Rust sources to every end user. The verified
@@ -135,7 +135,14 @@ renderers remain part of the roadmap.
 
 ![RiceExplorer icon](assets/rice-explorer.svg)
 
-## Implemented on `main` — 0.3 core through 0.7 preview alpha
+## Implemented on `main` — 0.3 core through 0.8 search alpha
+
+**0.8 search alpha:** The shared Filters menu now combines file type, size
+(under 1 MiB, 1–100 MiB, 100 MiB+) and modification date (past day, week or
+30 days), without scanning files again. Active filter count is visible, and
+Clear filters restores the full list. Items hidden by any filter are removed
+from the current selection so Copy/Move/Delete cannot unexpectedly affect
+invisible files. Content and regex search remain on the roadmap.
 
 **0.7 preview alpha:** The Grid view requests thumbnails only for visible
 images, with a 96-item in-memory cache and one decoder at a time (no persistent
@@ -159,7 +166,7 @@ Preview/backends and actual low-memory Mint behavior need physical acceptance.
   remembers up to 32 tab locations and the active tab across restarts. 0.6
   adds duplication/reordering, reopening closed tabs, split view and keyboard
   cycling; a bounded navigation/closed-tab snapshot survives restarts.
-- List and icon layouts, local and bounded recursive filename search, hidden-file toggle, natural/lexical sorting by name, type, size or modification time, clickable list headers and file-kind filters.
+- List and icon layouts, local and bounded recursive filename search, hidden-file toggle, natural/lexical sorting by name, type, size or modification time, clickable list headers and combined type/size/date filters.
 - Multiple selection (Ctrl/Shift/Ctrl+A), copy, cut, paste, duplicate, rename, new folder/file, symbolic links, desktop Trash and confirmed permanent deletion.
 - **Paste with options…** in the shared Actions menu: an asynchronous,
   read-only preflight lists each source and intended target, counting

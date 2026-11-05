@@ -19,7 +19,7 @@ use crate::{
 };
 use eframe::egui::{self, Align2, Color32, Key, Modifiers, Pos2, Rect, Vec2};
 use std::{
-    collections::{BTreeSet, HashMap, VecDeque},
+    collections::{BTreeSet, HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
     process::Command,
     sync::{
@@ -232,6 +232,17 @@ impl TabSnapshot {
         tab.recursive_search = self.recursive_search;
         tab
     }
+}
+
+/// An invisible selection must never be acted on by Copy, Move or Delete.
+fn retain_visible_selection(tab: &mut Tab) {
+    let visible_paths: HashSet<&Path> = tab
+        .visible
+        .iter()
+        .map(|&index| tab.entries[index].path.as_path())
+        .collect();
+    tab.selected
+        .retain(|path| visible_paths.contains(path.as_path()));
 }
 
 #[derive(Clone, Copy)]
@@ -1980,14 +1991,18 @@ impl Explorer {
         let config = &self.config;
         let tab = &mut self.tabs[index];
         let search = tab.query.to_lowercase();
+        let now = SystemTime::now();
         tab.visible = (0..tab.entries.len())
             .filter(|&index| {
                 let entry = &tab.entries[index];
                 (config.show_hidden || !entry.name.starts_with('.'))
                     && tab.folded_names[index].contains(&search)
                     && file_view::matches_filter(entry, &config.filter_kind)
+                    && file_view::matches_size(entry, &config.filter_size)
+                    && file_view::matches_modified(entry, &config.filter_modified, now)
             })
             .collect();
+        retain_visible_selection(tab);
         let sort = config.sort_by.as_str();
         tab.visible.sort_by(|left, right| {
             let a = &tab.entries[*left];
@@ -4764,26 +4779,90 @@ impl Explorer {
                             self.rebuild_visible(i);
                         }
                     }
-                    egui::ComboBox::from_id_salt("filter_kind")
-                        .selected_text(
-                            file_view::FILTERS
-                                .iter()
-                                .find(|(key, _)| *key == self.config.filter_kind)
-                                .map_or("All items", |(_, label)| *label),
-                        )
-                        .show_ui(ui, |ui| {
-                            for &(key, label) in file_view::FILTERS {
-                                if ui
-                                    .selectable_value(&mut self.config.filter_kind, key.into(), label)
-                                    .changed()
-                                {
-                                    self.dirty_config = true;
-                                    for index in 0..self.tabs.len() {
-                                        self.rebuild_visible(index);
+                    let active_filters = usize::from(self.config.filter_kind != "all")
+                        + usize::from(self.config.filter_size != "any")
+                        + usize::from(self.config.filter_modified != "any");
+                    ui.menu_button(
+                        if active_filters == 0 {
+                            "Filters".to_owned()
+                        } else {
+                            format!("Filters ({active_filters})")
+                        },
+                        |ui| {
+                            ui.set_min_width(200.0);
+                            let old_filters = (
+                                self.config.filter_kind.clone(),
+                                self.config.filter_size.clone(),
+                                self.config.filter_modified.clone(),
+                            );
+                            ui.label("Type");
+                            egui::ComboBox::from_id_salt("filter_kind")
+                                .selected_text(
+                                    file_view::FILTERS
+                                        .iter()
+                                        .find(|(key, _)| *key == self.config.filter_kind)
+                                        .map_or("All items", |(_, label)| *label),
+                                )
+                                .show_ui(ui, |ui| {
+                                    for &(key, label) in file_view::FILTERS {
+                                        ui.selectable_value(
+                                            &mut self.config.filter_kind,
+                                            key.into(),
+                                            label,
+                                        );
                                     }
+                                });
+                            ui.label("Size · files only");
+                            egui::ComboBox::from_id_salt("filter_size")
+                                .selected_text(
+                                    file_view::SIZE_FILTERS
+                                        .iter()
+                                        .find(|(key, _)| *key == self.config.filter_size)
+                                        .map_or("Any size", |(_, label)| *label),
+                                )
+                                .show_ui(ui, |ui| {
+                                    for &(key, label) in file_view::SIZE_FILTERS {
+                                        ui.selectable_value(
+                                            &mut self.config.filter_size,
+                                            key.into(),
+                                            label,
+                                        );
+                                    }
+                                });
+                            ui.label("Modified");
+                            egui::ComboBox::from_id_salt("filter_modified")
+                                .selected_text(
+                                    file_view::MODIFIED_FILTERS
+                                        .iter()
+                                        .find(|(key, _)| *key == self.config.filter_modified)
+                                        .map_or("Any date", |(_, label)| *label),
+                                )
+                                .show_ui(ui, |ui| {
+                                    for &(key, label) in file_view::MODIFIED_FILTERS {
+                                        ui.selectable_value(
+                                            &mut self.config.filter_modified,
+                                            key.into(),
+                                            label,
+                                        );
+                                    }
+                                });
+                            if active_filters > 0 && ui.button("Clear filters").clicked() {
+                                self.config.filter_kind = "all".into();
+                                self.config.filter_size = "any".into();
+                                self.config.filter_modified = "any".into();
+                            }
+                            if old_filters != (
+                                self.config.filter_kind.clone(),
+                                self.config.filter_size.clone(),
+                                self.config.filter_modified.clone(),
+                            ) {
+                                self.dirty_config = true;
+                                for index in 0..self.tabs.len() {
+                                    self.rebuild_visible(index);
                                 }
                             }
-                        });
+                        },
+                    );
                     if ui
                         .small_button(if self.config.descending {
                             "Desc"
@@ -4890,7 +4969,11 @@ impl Explorer {
             ui.vertical_centered(|ui| {
                 ui.add_space(64.0);
                 let empty_text =
-                    if !self.tabs[index].query.is_empty() || self.config.filter_kind != "all" {
+                    if !self.tabs[index].query.is_empty()
+                        || self.config.filter_kind != "all"
+                        || self.config.filter_size != "any"
+                        || self.config.filter_modified != "any"
+                    {
                         "No matching files"
                     } else {
                         "This folder is empty"
@@ -4900,8 +4983,14 @@ impl Explorer {
                     egui::RichText::new("Try another folder or clear the search.")
                         .color(theme.palette.muted()),
                 );
-                if self.config.filter_kind != "all" && ui.button("Clear type filter").clicked() {
+                if (self.config.filter_kind != "all"
+                    || self.config.filter_size != "any"
+                    || self.config.filter_modified != "any")
+                    && ui.button("Clear filters").clicked()
+                {
                     self.config.filter_kind = "all".into();
+                    self.config.filter_size = "any".into();
+                    self.config.filter_modified = "any".into();
                     self.dirty_config = true;
                     for tab in 0..self.tabs.len() {
                         self.rebuild_visible(tab);
@@ -6034,6 +6123,7 @@ mod tests {
         PropertyResult, PropertySnapshot, Tab, TabSnapshot, accept_property_result,
         active_after_swap, choose_paste_clipboard, elapsed_label, next_search_repaint_delay,
         read_property_snapshot, remaining_cut_paths, resolve_split_tabs, transfer_progress_details,
+        retain_visible_selection,
     };
     use crate::clipboard;
     use crate::filesystem::{ItemResult, ItemState, Progress};
@@ -6042,6 +6132,28 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn changing_filters_never_leaves_hidden_files_selected_for_mutation() {
+        let mut tab = Tab::new(1, PathBuf::from("/example"));
+        for name in ["hidden.txt", "visible.png"] {
+            let path = tab.path.join(name);
+            tab.selected.insert(path.clone());
+            tab.entries.push(crate::filesystem::Entry {
+                name: name.into(),
+                path,
+                is_dir: false,
+                is_symlink: false,
+                size: 5,
+                modified: None,
+            });
+        }
+        tab.visible = vec![1];
+        retain_visible_selection(&mut tab);
+        assert_eq!(tab.selected.len(), 1);
+        assert!(tab.selected.contains(&tab.entries[1].path));
+        assert!(!tab.selected.contains(&tab.entries[0].path));
+    }
 
     #[test]
     fn split_view_resolves_stable_ids_after_tab_reordering_and_closure() {

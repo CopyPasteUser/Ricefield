@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — 0.8.0-alpha.1 local search filters
+
+- Combine type, file-size and modification-date presets in one compact Filters
+  menu with a visible active count, persistent defaults and a Clear action.
+- Drop invisible paths from the active selection after filtering or search,
+  so destructive commands cannot accidentally target hidden selections.
+- Keep filters in-memory and theme-independent; content/regex and network
+  search remain open. Previous 0.6/0.7 Mint/NAS/hardware gates are not waived.
+
 ## Unreleased — 0.7.0-alpha.1 previews and metadata
 
 - Add a 96-entry LRU image thumbnail cache with a 48-item priority queue,
@@ -15,7 +24,8 @@
   plus on-demand bounded folder size or SHA-256 via the opened file descriptor.
   Deep metadata is cancellable, asynchronous, and never writes to files.
 - Add regressions for corrupt/control-character input, over-limit files,
-  thumbnail queue ordering, symlinks and bounded folder traversal.
+  thumbnail queue ordering, symlinks, special files, malformed images and
+  bounded folder traversal.
 - **Not a stable release:** malformed-file fuzzing, Mint image/PDF/media
   backends, hardware performance and unresolved 0.6 NAS acceptance remain open.
 
