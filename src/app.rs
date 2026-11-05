@@ -6296,6 +6296,7 @@ impl Explorer {
 impl Drop for Explorer {
     fn drop(&mut self) {
         self.analysis_cancel.store(true, Ordering::Relaxed);
+        self.duplicate_cancel.store(true, Ordering::Relaxed);
         volume::clear_password(&mut self.volume_connect_password);
         self.discovery_cancel.store(true, Ordering::Relaxed);
     }
@@ -6376,6 +6377,8 @@ impl eframe::App for Explorer {
         );
         let waiting_for_properties =
             matches!(&self.dialog, Some(Dialog::Properties { details: None, .. }));
+        let waiting_for_duplicates =
+            matches!(&self.dialog, Some(Dialog::Duplicates { result: None, .. }));
         let idle_delay = if self.busy
             || self
                 .archive_dialog
@@ -6384,6 +6387,7 @@ impl eframe::App for Explorer {
             || self.volume_busy
             || waiting_for_preview
             || waiting_for_properties
+            || waiting_for_duplicates
             || self.folder_tree.has_pending()
             || self.thumbnails.has_pending()
             || self.tabs.iter().any(|tab| tab.loading)
