@@ -4085,7 +4085,7 @@ impl Explorer {
                                     )
                                     .clicked()
                                 {
-                                    self.volume_connect_open = true;
+                                    self.open_network_login(String::new());
                                 }
                                 if self.volume_busy {
                                     ui.small("GIO device operation in progress…");
