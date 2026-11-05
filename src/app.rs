@@ -3757,7 +3757,8 @@ impl Explorer {
         self.preview_worker_running = true;
         let sender = self.preview_sender.clone();
         thread::spawn(move || {
-            let result = preview::load(&path);
+            let result = std::panic::catch_unwind(|| preview::load(&path))
+                .unwrap_or_else(|_| Err(std::io::Error::other("Preview decoder failed")));
             let _ = sender.send(PreviewResult {
                 generation,
                 path,
@@ -4486,7 +4487,7 @@ impl Explorer {
             "Quick Look · {}",
             path.file_name().unwrap_or_default().to_string_lossy()
         ))
-        .id(egui::Id::new("rice-quick-look"))
+        .id(egui::IdSalt::new("rice-quick-look"))
         .open(&mut open)
         .default_size([700.0, 500.0])
         .min_size([280.0, 170.0])
@@ -5849,7 +5850,7 @@ impl Explorer {
                                 if let Some(result) = analysis {
                                     match result {
                                         Ok(result) => {
-                                            ui.label(egui::RichText::new(result).monospace());
+                                            ui.label(egui::RichText::new(result.as_str()).monospace());
                                         }
                                         Err(error) => {
                                             ui.colored_label(Color32::RED, error.as_str());
