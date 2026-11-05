@@ -426,11 +426,17 @@ need the real Mint session. The stable 0.6 gate remains **not approved**.
 - [x] Bound image preview input to 32 MiB on the opened file descriptor,
   check the target of symlinks, reject special files and retain the 16 MP
   pixel limit; add preview safety regressions.
-- [ ] Bounded thumbnail cache and lazy priorities for visible entries.
-- [ ] Quick Look and safe image/PDF/text/code/audio/video/archive preview.
-- [ ] Metadata, on-demand folder size and hashes, ACL/xattr support.
+- [x] Bounded 96-entry thumbnail cache with a single background decoder,
+  48-slot newest-visible priority queue and 12 MiB / 16 MP input caps.
+- [x] Space-to-toggle Quick Look and bounded read-only image/PDF/text/code/
+  audio/video/archive preview; PDF and media metadata use optional system
+  tools with timeouts. Native video/audio playback is delegated to Open.
+- [x] Read-only metadata, on-demand bounded folder size and SHA-256, and
+  Linux extended-attribute names / POSIX ACL presence (not ACL editing).
 
-**Gate:** malformed or huge files cannot crash/freeze the GUI.
+**Gate — open:** malformed/huge-file fuzzing, performance on slow drives,
+optional PDF/media backends and visual Mint acceptance must pass before
+marking 0.7 stable. The 0.6 NAS/mount acceptance is still blocked separately.
 
 ### 0.8 — Search and organization
 

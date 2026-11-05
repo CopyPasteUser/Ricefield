@@ -8,6 +8,9 @@ on:
       - 'v0.4.*'
       - 'v0.5.*'
       - 'v0.6.*'
+      - 'v0.7.*'
+      - 'v0.8.*'
+      - 'v0.9.*'
 
 permissions:
   contents: read
@@ -68,7 +71,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/v0.3.') || startsWith(github.ref, 'refs/tags/v0.4.') || startsWith(github.ref, 'refs/tags/v0.5.') || startsWith(github.ref, 'refs/tags/v0.6.')
+    if: startsWith(github.ref, 'refs/tags/v0.')
     needs: bundle
     runs-on: ubuntu-24.04
     permissions:

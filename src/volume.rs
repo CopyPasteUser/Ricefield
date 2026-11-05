@@ -68,14 +68,39 @@ pub fn preview_remote_text(uri: &str, cancelled: &AtomicBool) -> Result<String, 
 }
 
 pub(crate) fn capture_gio(
-    mut command: Command,
+    command: Command,
     limit: u64,
     timeout: Duration,
     cancelled: &AtomicBool,
     operation: &str,
 ) -> Result<Vec<u8>, String> {
+    capture_command(command, limit, timeout, cancelled, operation, false)
+}
+
+/// A caller-supplied, already-open stdin is needed for hashing the exact file
+/// descriptor validated by the worker. Ordinary GIO commands get null stdin.
+pub(crate) fn capture_gio_with_stdin(
+    command: Command,
+    limit: u64,
+    timeout: Duration,
+    cancelled: &AtomicBool,
+    operation: &str,
+) -> Result<Vec<u8>, String> {
+    capture_command(command, limit, timeout, cancelled, operation, true)
+}
+
+fn capture_command(
+    mut command: Command,
+    limit: u64,
+    timeout: Duration,
+    cancelled: &AtomicBool,
+    operation: &str,
+    supplied_stdin: bool,
+) -> Result<Vec<u8>, String> {
+    if !supplied_stdin {
+        command.stdin(Stdio::null());
+    }
     let mut child = command
-        .stdin(Stdio::null())
         .stderr(Stdio::null())
         .stdout(Stdio::piped())
         .spawn()

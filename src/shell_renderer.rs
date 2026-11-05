@@ -19,6 +19,13 @@ pub struct FileCellLayout {
     pub grid: bool,
 }
 
+#[derive(Clone, Copy)]
+struct FileCellVisual {
+    selected: bool,
+    hovered: bool,
+    grid: bool,
+}
+
 /// Draw a file cell and return its response so the controller can decide
 /// selection, navigation, context menus and drag/drop without renderer access
 /// to any of those actions.
@@ -28,6 +35,7 @@ pub fn file_cell(
     theme: &Theme,
     selected: bool,
     layout: FileCellLayout,
+    thumbnail: Option<(egui::TextureId, Vec2)>,
 ) -> (Rect, Response) {
     let (rect, response) = ui.allocate_exact_size(
         Vec2::new(layout.width.max(80.0), layout.height),
@@ -38,9 +46,12 @@ pub fn file_cell(
         rect,
         file,
         theme,
-        selected,
-        response.hovered(),
-        layout.grid,
+        FileCellVisual {
+            selected,
+            hovered: response.hovered(),
+            grid: layout.grid,
+        },
+        thumbnail,
     );
     let response = response.on_hover_text(file.path.display().to_string());
     (rect, response)
@@ -81,21 +92,20 @@ pub fn shorten(name: &str, max: usize) -> String {
     format!("{}…", name.chars().take(keep).collect::<String>())
 }
 
-pub fn paint_file_cell(
+fn paint_file_cell(
     painter: &Painter,
     rect: Rect,
     file: &Entry,
     theme: &Theme,
-    selected: bool,
-    hovered: bool,
-    grid: bool,
+    visual: FileCellVisual,
+    thumbnail: Option<(egui::TextureId, Vec2)>,
 ) {
     let painter = painter.with_clip_rect(rect);
-    if selected || hovered {
+    if visual.selected || visual.hovered {
         painter.rect_filled(
             rect.shrink(2.0),
             theme.metrics.rounding,
-            if selected {
+            if visual.selected {
                 theme.palette.selection()
             } else {
                 theme.palette.background()
@@ -103,7 +113,7 @@ pub fn paint_file_cell(
         );
     }
     let icon_size = theme.metrics.icon_size;
-    let icon_area = if grid {
+    let icon_area = if visual.grid {
         Rect::from_center_size(
             Pos2::new(rect.center().x, rect.top() + 34.0),
             Vec2::splat(icon_size * 1.6),
@@ -114,15 +124,31 @@ pub fn paint_file_cell(
             Vec2::splat(icon_size),
         )
     };
-    paint_file_icon(&painter, icon_area, file, theme);
-    let name = if grid {
+    if let Some((texture, size)) = thumbnail {
+        let maximum = if visual.grid {
+            Vec2::new(74.0, 55.0)
+        } else {
+            Vec2::splat(icon_size)
+        };
+        let scale = (maximum.x / size.x).min(maximum.y / size.y).min(1.0);
+        let image_area = Rect::from_center_size(icon_area.center(), size * scale);
+        painter.image(
+            texture,
+            image_area,
+            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+            Color32::WHITE,
+        );
+    } else {
+        paint_file_icon(&painter, icon_area, file, theme);
+    }
+    let name = if visual.grid {
         shorten(&file.name, 22)
     } else {
         shorten(&file.name, ((rect.width() * 0.53) / 7.3) as usize)
     };
-    let font = FontId::proportional(if grid { 12.5 } else { 13.0 });
+    let font = FontId::proportional(if visual.grid { 12.5 } else { 13.0 });
     let foreground = theme.palette.text();
-    if grid {
+    if visual.grid {
         painter.text(
             Pos2::new(rect.center().x, rect.top() + 67.0),
             Align2::CENTER_CENTER,

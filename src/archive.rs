@@ -160,7 +160,7 @@ impl<'a> Reader<'a> {
     fn open(api: &'a Api, path: &Path, password: Option<&str>) -> io::Result<Self> {
         let file = OpenOptions::new()
             .read(true)
-            .custom_flags(libc::O_NOFOLLOW)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
             .open(path)?;
         if !file.metadata()?.is_file() {
             return Err(invalid("Archive must be a regular file"));

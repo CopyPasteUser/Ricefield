@@ -3,10 +3,22 @@ use std::{
     fs,
     io::{self, Cursor, Read},
     path::Path,
+    process::Command,
+    sync::atomic::AtomicBool,
+    time::Duration,
 };
 
 const MAX_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_IMAGE_PIXELS: u64 = 16_000_000;
+const MAX_THUMBNAIL_BYTES: u64 = 12 * 1024 * 1024;
+const MAX_PDF_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_MEDIA_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+
+pub struct Thumbnail {
+    pub rgba: Vec<u8>,
+    pub width: usize,
+    pub height: usize,
+}
 
 pub enum Preview {
     Image {
@@ -16,6 +28,166 @@ pub enum Preview {
     },
     Text(String),
     Info(String),
+}
+
+fn image_extension(extension: &str) -> bool {
+    matches!(extension, "png" | "jpg" | "jpeg" | "gif" | "webp")
+}
+
+fn decode_image(bytes: &[u8], max_width: u32, max_height: u32) -> io::Result<Thumbnail> {
+    let dimensions = image::ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()?
+        .into_dimensions()
+        .map_err(io::Error::other)?;
+    if u64::from(dimensions.0) * u64::from(dimensions.1) > MAX_IMAGE_PIXELS {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Image exceeds the 16 MP safety limit",
+        ));
+    }
+    let image = image::ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()?
+        .decode()
+        .map_err(io::Error::other)?
+        .thumbnail(dimensions.0.min(max_width), dimensions.1.min(max_height))
+        .to_rgba8();
+    let (width, height) = image.dimensions();
+    Ok(Thumbnail {
+        rgba: image.into_raw(),
+        width: width as usize,
+        height: height as usize,
+    })
+}
+
+/// Generate tiny in-memory thumbnails from an already-open regular file.
+/// The caller schedules only visible cells and bounds the resident cache.
+pub fn thumbnail(path: &Path) -> io::Result<Option<Thumbnail>> {
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !image_extension(&extension) {
+        return Ok(None);
+    }
+    // Reject sockets, devices and oversized symlink targets before opening.
+    // The post-open check below still protects against a path replacement.
+    let candidate = fs::metadata(path)?;
+    if !candidate.is_file() || candidate.len() > MAX_THUMBNAIL_BYTES {
+        return Ok(None);
+    }
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let mut file = options.open(path)?;
+    let opened = file.metadata()?;
+    if !opened.is_file() || opened.len() > MAX_THUMBNAIL_BYTES {
+        return Ok(None);
+    }
+    let mut bytes = Vec::new();
+    (&mut file)
+        .take(MAX_THUMBNAIL_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_THUMBNAIL_BYTES {
+        return Ok(None);
+    }
+    decode_image(&bytes, 108, 108).map(Some)
+}
+
+fn bounded_external(
+    command: Command,
+    bytes: u64,
+    seconds: u64,
+    label: &str,
+) -> io::Result<Vec<u8>> {
+    crate::volume::capture_gio(
+        command,
+        bytes,
+        Duration::from_secs(seconds),
+        &AtomicBool::new(false),
+        label,
+    )
+    .map_err(io::Error::other)
+}
+
+fn pdf_preview(path: &Path) -> io::Result<Preview> {
+    let mut command = Command::new("pdftoppm");
+    // Without an output prefix pdftoppm writes the first page to stdout;
+    // the worker never creates a temporary PDF or output image on disk.
+    command.args([
+        "-f",
+        "1",
+        "-l",
+        "1",
+        "-singlefile",
+        "-scale-to",
+        "900",
+        "-png",
+        "-q",
+    ]);
+    command.arg(path);
+    let png = bounded_external(command, 12 * 1024 * 1024, 8, "PDF preview")?;
+    let image = decode_image(&png, 900, 900)?;
+    Ok(Preview::Image {
+        rgba: image.rgba,
+        width: image.width,
+        height: image.height,
+    })
+}
+
+fn media_preview(path: &Path) -> io::Result<Preview> {
+    let mut command = Command::new("ffprobe");
+    command.args([
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration,format_name:stream=codec_type,codec_name,width,height,channels",
+        "-of",
+        "default=noprint_wrappers=1",
+    ]);
+    command.arg(path);
+    let output = bounded_external(command, 16 * 1024, 7, "Media metadata")?;
+    let details = std::str::from_utf8(&output).map_err(io::Error::other)?;
+    let safe = details
+        .lines()
+        .filter(|line| line.len() <= 180 && line.chars().all(|ch| !ch.is_control()))
+        .take(25)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if safe.is_empty() {
+        Ok(Preview::Info(
+            "No media metadata available; use Open to play in your default app".into(),
+        ))
+    } else {
+        Ok(Preview::Info(format!(
+            "Media details (read-only):\n{safe}\n\nUse Open for playback."
+        )))
+    }
+}
+
+fn archive_preview(path: &Path) -> io::Result<Preview> {
+    let entries = crate::archive::inspect_with_password(path, None, &AtomicBool::new(false))?;
+    let total = entries.len();
+    let sample = entries
+        .into_iter()
+        .take(35)
+        .map(|item| {
+            format!(
+                "{} {}",
+                if item.directory { "[Folder]" } else { "[File]" },
+                item.path.display()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(Preview::Info(format!(
+        "Archive · {total} entries\n{sample}{}\n\nUse Archive → Browse / extract for more.",
+        if total > 35 { "\n…" } else { "" }
+    )))
 }
 
 pub fn load(path: &Path) -> io::Result<Preview> {
@@ -50,7 +222,7 @@ pub fn load(path: &Path) -> io::Result<Preview> {
         .and_then(|ext| ext.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    if matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp") {
+    if image_extension(&extension) {
         if opened.len() > MAX_IMAGE_BYTES {
             return Ok(Preview::Info(
                 "Image too large for in-app preview (32 MiB limit)".into(),
@@ -68,33 +240,53 @@ pub fn load(path: &Path) -> io::Result<Preview> {
                 "Image too large for in-app preview (32 MiB limit)".into(),
             ));
         }
-        let dimensions = image::ImageReader::new(Cursor::new(bytes.as_slice()))
-            .with_guessed_format()?
-            .into_dimensions()
-            .map_err(io::Error::other)?;
-        if u64::from(dimensions.0) * u64::from(dimensions.1) > MAX_IMAGE_PIXELS {
-            return Ok(Preview::Info(
+        return match decode_image(&bytes, 900, 800) {
+            Ok(image) => Ok(Preview::Image {
+                rgba: image.rgba,
+                width: image.width,
+                height: image.height,
+            }),
+            Err(error) if error.to_string().contains("16 MP") => Ok(Preview::Info(
                 "Image dimensions exceed preview limit (16 MP)".into(),
+            )),
+            Err(error) => Err(error),
+        };
+    }
+    if extension == "pdf" {
+        if opened.len() > MAX_PDF_BYTES {
+            return Ok(Preview::Info(
+                "PDF too large for the 64 MiB preview limit".into(),
             ));
         }
-        let image = image::ImageReader::new(Cursor::new(bytes.as_slice()))
-            .with_guessed_format()?
-            .decode()
-            .map_err(io::Error::other)?
-            // Never upscale tiny images just to fit a larger preview pane.
-            .thumbnail(dimensions.0.min(900), dimensions.1.min(800))
-            .to_rgba8();
-        let (width, height) = image.dimensions();
-        return Ok(Preview::Image {
-            rgba: image.into_raw(),
-            width: width as usize,
-            height: height as usize,
-        });
+        return pdf_preview(path);
+    }
+    if matches!(
+        extension.as_str(),
+        "mp3" | "flac" | "wav" | "ogg" | "m4a" | "mkv" | "mp4" | "avi" | "webm" | "mov"
+    ) {
+        if opened.len() > MAX_MEDIA_BYTES {
+            return Ok(Preview::Info(
+                "Media exceeds the 4 GiB metadata probe limit".into(),
+            ));
+        }
+        return media_preview(path);
+    }
+    if crate::archive::Format::is_archive(path) {
+        if opened.len() > 64 * 1024 * 1024 {
+            return Ok(Preview::Info(
+                "Large archive — use the bounded Archive browser to inspect entries".into(),
+            ));
+        }
+        return archive_preview(path);
     }
     let mut bytes = vec![0u8; 32 * 1024];
     let count = file.read(&mut bytes)?;
     bytes.truncate(count);
-    if bytes.contains(&0) {
+    if bytes.contains(&0)
+        || bytes
+            .iter()
+            .any(|b| (*b < 0x20 && !matches!(*b, b'\n' | b'\r' | b'\t')) || *b == 0x7f)
+    {
         return Ok(Preview::Info(
             "Binary file — open it in its associated application".into(),
         ));
@@ -148,6 +340,84 @@ mod tests {
                 ..
             }
         ));
+        let thumb = thumbnail(&path).unwrap().unwrap();
+        assert!(thumb.width <= 108 && thumb.height <= 108);
+        assert_eq!(thumb.rgba.len(), thumb.width * thumb.height * 4);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn oversized_thumbnail_is_skipped_without_decoding() {
+        let root = test_root();
+        let path = root.join("oversized.jpg");
+        fs::File::create(&path)
+            .unwrap()
+            .set_len(MAX_THUMBNAIL_BYTES + 1)
+            .unwrap();
+        assert!(thumbnail(&path).unwrap().is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn malformed_images_never_panic_in_the_decoder() {
+        let valid = include_bytes!("../assets/rice-explorer.png");
+        for length in [0, 1, 8, 24, 32, 128, 1024] {
+            let _ = std::panic::catch_unwind(|| decode_image(&valid[..length], 108, 108))
+                .expect("a truncated image must not crash the preview worker");
+        }
+        for offset in [0, 1, 8, 16, 20, 24, 29, 64, 128] {
+            let mut corrupted = valid.to_vec();
+            corrupted[offset] ^= 0xff;
+            let _ = std::panic::catch_unwind(|| decode_image(&corrupted, 108, 108))
+                .expect("a corrupt image must not crash the preview worker");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn thumbnails_reject_special_files_and_oversized_symlink_targets() {
+        use std::{os::unix::fs::symlink, os::unix::net::UnixListener};
+
+        let root = test_root();
+        let socket = root.join("socket.png");
+        let _listener = UnixListener::bind(&socket).unwrap();
+        assert!(thumbnail(&socket).unwrap().is_none());
+
+        let huge = root.join("huge.dat");
+        fs::File::create(&huge)
+            .unwrap()
+            .set_len(MAX_THUMBNAIL_BYTES + 1)
+            .unwrap();
+        let link = root.join("linked.png");
+        symlink(&huge, &link).unwrap();
+        assert!(thumbnail(&link).unwrap().is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_control_characters_in_apparently_text_files() {
+        let root = test_root();
+        let path = root.join("escape.txt");
+        fs::write(&path, b"hi\x1b[31m").unwrap();
+        assert!(matches!(load(&path).unwrap(), Preview::Info(_)));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn oversized_pdf_and_media_do_not_invoke_external_decoders() {
+        let root = test_root();
+        let pdf = root.join("oversized.pdf");
+        fs::File::create(&pdf)
+            .unwrap()
+            .set_len(MAX_PDF_BYTES + 1)
+            .unwrap();
+        assert!(matches!(load(&pdf).unwrap(), Preview::Info(text) if text.contains("64 MiB")));
+        let video = root.join("oversized.mkv");
+        fs::File::create(&video)
+            .unwrap()
+            .set_len(MAX_MEDIA_BYTES + 1)
+            .unwrap();
+        assert!(matches!(load(&video).unwrap(), Preview::Info(text) if text.contains("4 GiB")));
         fs::remove_dir_all(root).unwrap();
     }
 
