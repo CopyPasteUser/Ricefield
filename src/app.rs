@@ -286,6 +286,17 @@ fn active_after_swap(active: usize, first: usize, second: usize) -> usize {
     }
 }
 
+fn resolve_split_tabs(tabs: &[Tab], pair: Option<(u64, u64)>) -> Option<(usize, usize)> {
+    let (left, right) = pair?;
+    let a = tabs
+        .iter()
+        .position(|tab| tab.id == left && tab.remote_uri.is_none())?;
+    let b = tabs
+        .iter()
+        .position(|tab| tab.id == right && tab.remote_uri.is_none())?;
+    (a != b).then_some((a, b))
+}
+
 fn next_search_repaint_delay(tabs: &[Tab], now: Instant) -> Option<Duration> {
     tabs.iter()
         .filter_map(|tab| tab.search_pending)
@@ -1097,9 +1108,13 @@ impl Explorer {
     }
 
     fn new_tab(&mut self, path: PathBuf) {
+        let previous = self.tabs.get(self.active).map(|tab| tab.id);
         let id = self.next_tab;
         self.next_tab += 1;
         self.tabs.push(Tab::new(id, path));
+        if let Some(previous) = previous {
+            self.assign_split_tab(previous, id);
+        }
         self.active = self.tabs.len() - 1;
         self.scan(self.active);
         self.remember_session();
@@ -1117,30 +1132,54 @@ impl Explorer {
         }
     }
 
+    fn assign_split_tab(&mut self, previous: u64, replacement: u64) {
+        if let Some((left, right)) = self.split_pair {
+            if previous == left {
+                self.split_pair = Some((replacement, right));
+            } else if previous == right {
+                self.split_pair = Some((left, replacement));
+            }
+        }
+    }
+
     /// Common tab dispatcher for keyboard, context menus and every rice shell.
     fn tab_command(&mut self, command: TabCommand) {
         match command {
             TabCommand::New => self.new_tab_like_current(),
             TabCommand::Activate(index) if index < self.tabs.len() => {
+                if let Some((left, right)) = self.split_pair {
+                    let target = self.tabs[index].id;
+                    if target != left && target != right && self.tabs[index].remote_uri.is_none() {
+                        self.split_pair = Some(if self.current().id == right {
+                            (left, target)
+                        } else {
+                            (target, right)
+                        });
+                    }
+                }
                 self.active = index;
                 self.remember_session();
             }
             TabCommand::Close(index) if index < self.tabs.len() => self.close_tab(index),
             TabCommand::Duplicate(index) if index < self.tabs.len() => {
                 let snapshot = TabSnapshot::capture(&self.tabs[index]);
+                let previous = self.tabs[index].id;
                 let id = self.next_tab;
                 self.next_tab += 1;
                 self.tabs.insert(index + 1, snapshot.restore(id));
+                self.assign_split_tab(previous, id);
                 self.active = index + 1;
                 self.scan(self.active);
                 self.remember_session();
             }
             TabCommand::ReopenClosed => {
                 if let Some(snapshot) = self.closed_tabs.pop_back() {
+                    let previous = self.current().id;
                     let id = self.next_tab;
                     self.next_tab += 1;
                     let index = self.active + 1;
                     self.tabs.insert(index, snapshot.restore(id));
+                    self.assign_split_tab(previous, id);
                     self.active = index;
                     self.scan(index);
                     self.remember_session();
@@ -1156,12 +1195,12 @@ impl Explorer {
             }
             TabCommand::Cycle(direction) if self.tabs.len() > 1 => {
                 let count = self.tabs.len();
-                self.active = if direction < 0 {
+                let index = if direction < 0 {
                     (self.active + count - 1) % count
                 } else {
                     (self.active + 1) % count
                 };
-                self.remember_session();
+                self.tab_command(TabCommand::Activate(index));
             }
             _ => {}
         }
@@ -1235,16 +1274,7 @@ impl Explorer {
     }
 
     fn split_indices(&self) -> Option<(usize, usize)> {
-        let (left, right) = self.split_pair?;
-        let a = self
-            .tabs
-            .iter()
-            .position(|tab| tab.id == left && tab.remote_uri.is_none())?;
-        let b = self
-            .tabs
-            .iter()
-            .position(|tab| tab.id == right && tab.remote_uri.is_none())?;
-        (a != b).then_some((a, b))
+        resolve_split_tabs(&self.tabs, self.split_pair)
     }
 
     fn finish_drag(&mut self, context: &egui::Context) {
@@ -1300,7 +1330,7 @@ impl Explorer {
                 .raw
                 .dropped_files
                 .iter()
-                .filter_map(|file| file.path.as_ref().cloned())
+                .map(|file| file.path().to_path_buf())
                 .collect()
         });
         if files.is_empty() {
@@ -5628,7 +5658,8 @@ mod tests {
         Action, CLIPBOARD_WAIT, Clipboard, Dialog, ItemCounts, NameMode, PasteMode, PendingPaste,
         PropertyResult, PropertySnapshot, Tab, TabSnapshot, accept_property_result,
         active_after_swap, choose_paste_clipboard, elapsed_label, next_search_repaint_delay,
-        read_property_snapshot, remaining_cut_paths, transfer_progress_details,
+        read_property_snapshot, remaining_cut_paths, resolve_split_tabs,
+        transfer_progress_details,
     };
     use crate::clipboard;
     use crate::filesystem::{ItemResult, ItemState, Progress};
@@ -5637,6 +5668,21 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn split_view_resolves_stable_ids_after_tab_reordering_and_closure() {
+        let mut tabs = vec![
+            Tab::new(11, "/first".into()),
+            Tab::new(22, "/second".into()),
+            Tab::new(33, "/third".into()),
+        ];
+        assert_eq!(resolve_split_tabs(&tabs, Some((11, 33))), Some((0, 2)));
+        tabs.swap(0, 2);
+        assert_eq!(resolve_split_tabs(&tabs, Some((11, 33))), Some((2, 0)));
+        assert_eq!(resolve_split_tabs(&tabs, Some((11, 11))), None);
+        tabs.retain(|tab| tab.id != 33);
+        assert_eq!(resolve_split_tabs(&tabs, Some((11, 33))), None);
+    }
 
     #[test]
     fn duplicated_tab_retains_navigation_but_isolates_background_work() {
