@@ -298,7 +298,10 @@ mod tests {
         assert!(!matches_glob("file.txt", "file?.txt"));
         assert!(!matches_glob("folder/file.txt", "*.pdf"));
         assert!(matches_glob("anything", ""));
-        assert!(matches_glob("abcdefghijklmnop.pdf", "*a*b*c*d*e*f*g*h*i*j*k*l*m*n*o*p.pdf"));
+        assert!(matches_glob(
+            "abcdefghijklmnop.pdf",
+            "*a*b*c*d*e*f*g*h*i*j*k*l*m*n*o*p.pdf"
+        ));
         assert!(matches_glob("acccb", "a**?b"));
         assert!(!matches_glob("ab", "a**??b"));
         assert!(matches_glob("", "***"));

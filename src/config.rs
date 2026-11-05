@@ -344,10 +344,8 @@ fn write_private_config(file: &Path, contents: &[u8]) -> io::Result<()> {
         .unwrap_or_default()
         .as_nanos();
     for attempt in 0..8 {
-        let temporary = file.with_extension(format!(
-            "toml.tmp-{}-{nonce}-{attempt}",
-            std::process::id()
-        ));
+        let temporary =
+            file.with_extension(format!("toml.tmp-{}-{nonce}-{attempt}", std::process::id()));
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -478,7 +476,14 @@ mod tests {
         assert_eq!(config.saved_searches().len(), MAX_SAVED_SEARCHES);
         let decoded: Config = toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
         assert_eq!(decoded.saved_searches(), config.saved_searches());
-        assert!(decoded.saved_searches().last().unwrap().query.starts_with("keyword"));
+        assert!(
+            decoded
+                .saved_searches()
+                .last()
+                .unwrap()
+                .query
+                .starts_with("keyword")
+        );
     }
 
     #[test]
@@ -503,7 +508,14 @@ mod tests {
         {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(fs::metadata(&file).unwrap().permissions().mode() & 0o077, 0);
-            assert_eq!(fs::metadata(file.parent().unwrap()).unwrap().permissions().mode() & 0o077, 0);
+            assert_eq!(
+                fs::metadata(file.parent().unwrap())
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o077,
+                0
+            );
         }
         fs::remove_dir_all(root).unwrap();
     }
