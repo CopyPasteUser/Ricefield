@@ -4,7 +4,7 @@
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Development preview: v0.9.0-alpha.5** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+> **Development preview: v0.9.0-alpha.6** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
 **Distribution:** An [automated Linux x86_64 preview bundle](RELEASE.md) can
 be built without distributing Rust sources to every end user. The verified
@@ -369,6 +369,10 @@ Updates replace the executable by atomic rename. If desktop registration
 fails, the installer restores the prior binary, launcher and icon; personal
 settings remain untouched. This protects ordinary installation errors, not
 power loss during a multi-file update.
+The desktop launcher accepts file/folder URIs, and the CLI accepts validated
+`smb://`, `sftp://`, `dav://`, `davs://` and `mtp://` locations as read-only
+tabs. Do not put passwords in a URI or command line. This does not register
+RiceExplorer as the default file manager or URI scheme handler.
 
 On ordinary launches, RiceExplorer restores the previously opened tabs and
 active location. **Explicit CLI folder arguments override the saved session.**

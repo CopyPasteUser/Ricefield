@@ -72,16 +72,6 @@ impl Location {
             uri: text.to_owned(),
         }))
     }
-
-    /// Only local locations can be passed to the current POSIX file engine.
-    pub fn into_local_path(self) -> Result<PathBuf, &'static str> {
-        match self {
-            Self::Local(path) => Ok(path),
-            Self::Remote(_) => Err(
-                "Remote locations require the upcoming GIO backend; open a mounted path for now",
-            ),
-        }
-    }
 }
 
 fn validate_remote_host(authority: &str) -> Result<(), &'static str> {
@@ -254,7 +244,6 @@ mod tests {
                     uri: uri.into()
                 })
             );
-            assert!(location.into_local_path().is_err());
         }
     }
 

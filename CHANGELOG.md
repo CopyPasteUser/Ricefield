@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — 0.9.0-alpha.6 Linux URI launch interoperability
+
+- Accept supported SMB/SFTP/WebDAV/MTP URIs as explicit CLI locations and
+  open them as read-only GIO tabs, alongside native paths and local file URIs.
+- Register the desktop launcher with `%U` so Linux desktop open requests can
+  pass a URI to the same validated location parser. Keep passwords out of
+  command lines; no system default file-manager association is claimed.
+
 ## 1.0 release preparation — atomic user install and rollback
 
 - Publish installed executables with an atomic same-directory rename to avoid

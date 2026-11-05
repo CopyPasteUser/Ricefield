@@ -465,6 +465,10 @@ touching disk; real HDD and UI responsiveness measurements remain outstanding.
 
 ### 0.9 — RiceBowl and Linux desktop integration
 
+- [x] Parse validated remote CLI arguments and desktop `%U` file/URI launch
+  requests through the existing typed Location/GIO backend; reject URI
+  credentials while keeping native non-UTF-8 local path handling. FileManager1,
+  portals and full clipboard interoperability remain open.
 - [x] Local MIME Open With through GIO's desktop association registry with
   bounded background discovery and argument-safe launching (0.9 alpha.2).
 - [ ] FileManager1, portals and complete URI/clipboard interoperability.
