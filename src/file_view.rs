@@ -85,12 +85,12 @@ pub const MODIFIED_FILTERS: &[(&str, &str)] = &[
 
 pub fn matches_size(entry: &Entry, filter: &str) -> bool {
     const MIB: u64 = 1024 * 1024;
+    let regular = !entry.is_dir && !entry.is_symlink;
     match filter {
-        // Directory entry sizes are not recursive folder sizes. Don't
-        // silently classify them as small files.
-        "small" => !entry.is_dir && entry.size < MIB,
-        "medium" => !entry.is_dir && (MIB..100 * MIB).contains(&entry.size),
-        "large" => !entry.is_dir && entry.size >= 100 * MIB,
+        // Directory entry sizes and symlink lengths are not file contents.
+        "small" => regular && entry.size < MIB,
+        "medium" => regular && (MIB..100 * MIB).contains(&entry.size),
+        "large" => regular && entry.size >= 100 * MIB,
         _ => true,
     }
 }
@@ -149,11 +149,17 @@ mod tests {
         assert!(!matches_modified(&entry, "week", now));
         assert!(matches_size(&entry, "unknown"));
         assert!(matches_modified(&entry, "unknown", now));
+        entry.size = 1024 * 1024;
+        assert!(!matches_size(&entry, "small"));
+        assert!(matches_size(&entry, "medium"));
         entry.modified = None;
         assert!(!matches_modified(&entry, "day", now));
         entry.is_dir = true;
         assert!(!matches_size(&entry, "small"));
         assert!(!matches_size(&entry, "large"));
+        entry.is_dir = false;
+        entry.is_symlink = true;
+        assert!(!matches_size(&entry, "medium"));
     }
 
     #[test]

@@ -236,6 +236,9 @@ impl TabSnapshot {
 
 /// An invisible selection must never be acted on by Copy, Move or Delete.
 fn retain_visible_selection(tab: &mut Tab) {
+    if tab.selected.is_empty() {
+        return;
+    }
     let visible_paths: HashSet<&Path> = tab
         .visible
         .iter()
@@ -4968,16 +4971,15 @@ impl Explorer {
         } else if self.tabs[index].visible.is_empty() {
             ui.vertical_centered(|ui| {
                 ui.add_space(64.0);
-                let empty_text =
-                    if !self.tabs[index].query.is_empty()
-                        || self.config.filter_kind != "all"
-                        || self.config.filter_size != "any"
-                        || self.config.filter_modified != "any"
-                    {
-                        "No matching files"
-                    } else {
-                        "This folder is empty"
-                    };
+                let empty_text = if !self.tabs[index].query.is_empty()
+                    || self.config.filter_kind != "all"
+                    || self.config.filter_size != "any"
+                    || self.config.filter_modified != "any"
+                {
+                    "No matching files"
+                } else {
+                    "This folder is empty"
+                };
                 ui.label(egui::RichText::new(empty_text).size(18.0));
                 ui.label(
                     egui::RichText::new("Try another folder or clear the search.")
@@ -6122,8 +6124,8 @@ mod tests {
         Action, CLIPBOARD_WAIT, Clipboard, Dialog, ItemCounts, NameMode, PasteMode, PendingPaste,
         PropertyResult, PropertySnapshot, Tab, TabSnapshot, accept_property_result,
         active_after_swap, choose_paste_clipboard, elapsed_label, next_search_repaint_delay,
-        read_property_snapshot, remaining_cut_paths, resolve_split_tabs, transfer_progress_details,
-        retain_visible_selection,
+        read_property_snapshot, remaining_cut_paths, resolve_split_tabs, retain_visible_selection,
+        transfer_progress_details,
     };
     use crate::clipboard;
     use crate::filesystem::{ItemResult, ItemState, Progress};
