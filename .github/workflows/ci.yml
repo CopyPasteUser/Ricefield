@@ -16,6 +16,8 @@ jobs:
           components: rustfmt, clippy
       - name: Linux graphics dependencies
         run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libgl1-mesa-dev libarchive13t64
+      - name: Desktop launcher installation smoke
+        run: bash scripts/test_desktop_entry.sh
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked --all-targets
@@ -25,6 +27,21 @@ jobs:
           target/release/rice-explorer --help
           target/release/rice-explorer --version
           target/release/rice-explorer --list-themes
+      - name: Release bundle and menu launcher smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$(mktemp -d)"
+          trap 'rm -r -- "$fixture"' EXIT
+          mkdir -p "$fixture/dist" "$fixture/unpacked" "$fixture/home"
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          bash scripts/package-release.sh target/release/rice-explorer "$fixture/dist"
+          tar xzf "$fixture/dist/"*.tar.gz -C "$fixture/unpacked"
+          bundle="$(find "$fixture/unpacked" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          HOME="$fixture/home" bash "$bundle/install.sh"
+          test -f "$fixture/home/.local/share/applications/rice-explorer.desktop"
+          HOME="$fixture/home" bash "$bundle/uninstall.sh"
+          test ! -e "$fixture/home/.local/share/applications/rice-explorer.desktop"
       - name: Native GUI smoke (Xvfb software GL)
         run: |
           sudo apt-get install -y xvfb xauth xdotool imagemagick libgl1-mesa-dri libxkbcommon-x11-0

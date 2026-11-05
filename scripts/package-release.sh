@@ -12,8 +12,8 @@ if [[ "$(uname -s)" != 'Linux' || "$release_arch" != 'x86_64' ]]; then
   echo 'Only Linux x86_64 release bundles are supported by this script' >&2
   exit 1
 fi
-if [[ ! "$release_version" =~ ^0\.[345]\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
-  echo 'Expected a single valid 0.3.x, 0.4.x or 0.5.x version in Cargo.toml' >&2
+if [[ ! "$release_version" =~ ^0\.[3456]\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
+  echo 'Expected a single valid 0.3.x through 0.6.x version in Cargo.toml' >&2
   exit 1
 fi
 if [[ ! "$source_epoch" =~ ^[0-9]+$ ]]; then
@@ -44,6 +44,8 @@ bundle_dir="$staging_root/$package_name"
 
 install -Dm755 -- "$binary_path" "$bundle_dir/rice-explorer"
 install -Dm755 -- "$repo_dir/scripts/install-binary.sh" "$bundle_dir/install.sh"
+install -Dm755 -- "$repo_dir/scripts/install_desktop_entry.sh" \
+  "$bundle_dir/scripts/install_desktop_entry.sh"
 install -Dm755 -- "$repo_dir/uninstall.sh" "$bundle_dir/uninstall.sh"
 install -Dm644 -- "$repo_dir/assets/rice-explorer.desktop" \
   "$bundle_dir/assets/rice-explorer.desktop"
