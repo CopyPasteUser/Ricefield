@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — 0.8.0-alpha.3 custom local filters
+
+- Add case-insensitive filename globs (`*`, `?`) and optional numeric size
+  (MiB) and modified-age (days) bounds, combined with basic type/size/date
+  presets in one collapsible Filters menu.
+- Persist only the explicitly configured filter policy, never search content;
+  count all active constraints and reset them in one action. Preserve selection
+  safety when custom filters hide files. No extra dependencies.
+- Add Unicode/pattern/boundary tests; 100k-folder latency and Mint acceptance
+  are still outstanding. This is not a stable release.
+
 ## Unreleased — 0.8.0-alpha.2 bounded local content search
 
 - Add opt-in **Contents** search for small UTF-8 local files, combined with

@@ -34,6 +34,11 @@ pub struct Config {
     pub filter_kind: String,
     pub filter_size: String,
     pub filter_modified: String,
+    pub filter_name_glob: String,
+    pub filter_min_size_mib: Option<u64>,
+    pub filter_max_size_mib: Option<u64>,
+    pub filter_newer_days: Option<u64>,
+    pub filter_older_days: Option<u64>,
     pub bookmarks: Vec<PathBuf>,
     pub remote_favorites: Vec<String>,
     pub restore_session: bool,
@@ -57,6 +62,11 @@ impl Default for Config {
             filter_kind: "all".to_owned(),
             filter_size: "any".to_owned(),
             filter_modified: "any".to_owned(),
+            filter_name_glob: String::new(),
+            filter_min_size_mib: None,
+            filter_max_size_mib: None,
+            filter_newer_days: None,
+            filter_older_days: None,
             bookmarks: Vec::new(),
             remote_favorites: Vec::new(),
             restore_session: true,
@@ -82,6 +92,28 @@ pub fn config_file() -> PathBuf {
 }
 
 impl Config {
+    pub fn active_filter_count(&self) -> usize {
+        usize::from(self.filter_kind != "all")
+            + usize::from(self.filter_size != "any")
+            + usize::from(self.filter_modified != "any")
+            + usize::from(!self.filter_name_glob.is_empty())
+            + usize::from(self.filter_min_size_mib.is_some())
+            + usize::from(self.filter_max_size_mib.is_some())
+            + usize::from(self.filter_newer_days.is_some())
+            + usize::from(self.filter_older_days.is_some())
+    }
+
+    pub fn clear_filters(&mut self) {
+        self.filter_kind = "all".into();
+        self.filter_size = "any".into();
+        self.filter_modified = "any".into();
+        self.filter_name_glob.clear();
+        self.filter_min_size_mib = None;
+        self.filter_max_size_mib = None;
+        self.filter_newer_days = None;
+        self.filter_older_days = None;
+    }
+
     /// Restore only validated local paths and network URIs. Never stat paths or
     /// contact remote servers here: unavailable mounts must not block startup.
     pub fn restored_session(&self) -> (Vec<Location>, usize) {
@@ -299,6 +331,26 @@ mod tests {
         assert!(config.session_tabs.is_empty());
         assert!(config.show_hidden);
         assert!(config.remote_favorites.is_empty());
+        assert_eq!(config.active_filter_count(), 0);
+    }
+
+    #[test]
+    fn custom_filters_roundtrip_and_clear_without_losing_other_preferences() {
+        let mut config = Config::default();
+        config.theme = "xp-luna".into();
+        config.filter_kind = "documents".into();
+        config.filter_name_glob = "draft-*.pdf".into();
+        config.filter_min_size_mib = Some(2);
+        config.filter_max_size_mib = Some(7);
+        config.filter_older_days = Some(14);
+        assert_eq!(config.active_filter_count(), 5);
+        let serialized = toml::to_string(&config).unwrap();
+        let mut loaded: Config = toml::from_str(&serialized).unwrap();
+        assert_eq!(loaded.filter_name_glob, "draft-*.pdf");
+        assert_eq!(loaded.filter_max_size_mib, Some(7));
+        loaded.clear_filters();
+        assert_eq!(loaded.active_filter_count(), 0);
+        assert_eq!(loaded.theme, "xp-luna");
     }
 
     #[test]

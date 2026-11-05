@@ -2006,6 +2006,7 @@ impl Explorer {
         let config = &self.config;
         let tab = &mut self.tabs[index];
         let search = tab.query.to_lowercase();
+        let name_glob: Vec<_> = config.filter_name_glob.to_lowercase().chars().take(120).collect();
         let now = SystemTime::now();
         tab.visible = (0..tab.entries.len())
             .filter(|&index| {
@@ -2016,6 +2017,15 @@ impl Explorer {
                     && file_view::matches_filter(entry, &config.filter_kind)
                     && file_view::matches_size(entry, &config.filter_size)
                     && file_view::matches_modified(entry, &config.filter_modified, now)
+                    && file_view::matches_compiled_glob(&entry.name, &name_glob)
+                    && file_view::matches_custom_ranges(
+                        entry,
+                        config.filter_min_size_mib,
+                        config.filter_max_size_mib,
+                        config.filter_newer_days,
+                        config.filter_older_days,
+                        now,
+                    )
             })
             .collect();
         retain_visible_selection(tab);
@@ -4819,9 +4829,7 @@ impl Explorer {
                             self.rebuild_visible(i);
                         }
                     }
-                    let active_filters = usize::from(self.config.filter_kind != "all")
-                        + usize::from(self.config.filter_size != "any")
-                        + usize::from(self.config.filter_modified != "any");
+                    let active_filters = self.config.active_filter_count();
                     ui.menu_button(
                         if active_filters == 0 {
                             "Filters".to_owned()
@@ -4834,6 +4842,11 @@ impl Explorer {
                                 self.config.filter_kind.clone(),
                                 self.config.filter_size.clone(),
                                 self.config.filter_modified.clone(),
+                                self.config.filter_name_glob.clone(),
+                                self.config.filter_min_size_mib,
+                                self.config.filter_max_size_mib,
+                                self.config.filter_newer_days,
+                                self.config.filter_older_days,
                             );
                             ui.label("Type");
                             egui::ComboBox::from_id_salt("filter_kind")
@@ -4886,15 +4899,70 @@ impl Explorer {
                                         );
                                     }
                                 });
+                            ui.collapsing("Custom pattern and ranges", |ui| {
+                                ui.label("Filename glob (* = any, ? = one character)");
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.config.filter_name_glob)
+                                        .char_limit(120)
+                                        .desired_width(230.0)
+                                        .hint_text("e.g. report-*.pdf"),
+                                );
+                                ui.horizontal(|ui| {
+                                    let mut active = self.config.filter_min_size_mib.is_some();
+                                    if ui.checkbox(&mut active, "Minimum MiB").changed() {
+                                        self.config.filter_min_size_mib = active.then_some(0);
+                                    }
+                                    if let Some(limit) = self.config.filter_min_size_mib.as_mut() {
+                                        ui.add(egui::DragValue::new(limit).range(0..=u64::MAX));
+                                    }
+                                });
+                                ui.horizontal(|ui| {
+                                    let mut active = self.config.filter_max_size_mib.is_some();
+                                    if ui.checkbox(&mut active, "Maximum MiB").changed() {
+                                        self.config.filter_max_size_mib = active.then_some(100);
+                                    }
+                                    if let Some(limit) = self.config.filter_max_size_mib.as_mut() {
+                                        ui.add(egui::DragValue::new(limit).range(0..=u64::MAX));
+                                    }
+                                });
+                                ui.horizontal(|ui| {
+                                    let mut active = self.config.filter_newer_days.is_some();
+                                    if ui.checkbox(&mut active, "Within past days").changed() {
+                                        self.config.filter_newer_days = active.then_some(30);
+                                    }
+                                    if let Some(limit) = self.config.filter_newer_days.as_mut() {
+                                        ui.add(egui::DragValue::new(limit).range(0..=365_000));
+                                    }
+                                });
+                                ui.horizontal(|ui| {
+                                    let mut active = self.config.filter_older_days.is_some();
+                                    if ui.checkbox(&mut active, "At least days old").changed() {
+                                        self.config.filter_older_days = active.then_some(7);
+                                    }
+                                    if let Some(limit) = self.config.filter_older_days.as_mut() {
+                                        ui.add(egui::DragValue::new(limit).range(0..=365_000));
+                                    }
+                                });
+                                if self.config.filter_min_size_mib.zip(self.config.filter_max_size_mib)
+                                    .is_some_and(|(min, max)| min > max)
+                                    || self.config.filter_older_days.zip(self.config.filter_newer_days)
+                                        .is_some_and(|(older, newer)| older > newer)
+                                {
+                                    ui.colored_label(egui::Color32::from_rgb(176, 72, 32), "Conflicting bounds: no files will match");
+                                }
+                            });
                             if active_filters > 0 && ui.button("Clear filters").clicked() {
-                                self.config.filter_kind = "all".into();
-                                self.config.filter_size = "any".into();
-                                self.config.filter_modified = "any".into();
+                                self.config.clear_filters();
                             }
                             if old_filters != (
                                 self.config.filter_kind.clone(),
                                 self.config.filter_size.clone(),
                                 self.config.filter_modified.clone(),
+                                self.config.filter_name_glob.clone(),
+                                self.config.filter_min_size_mib,
+                                self.config.filter_max_size_mib,
+                                self.config.filter_newer_days,
+                                self.config.filter_older_days,
                             ) {
                                 self.dirty_config = true;
                                 for index in 0..self.tabs.len() {
@@ -5009,9 +5077,7 @@ impl Explorer {
             ui.vertical_centered(|ui| {
                 ui.add_space(64.0);
                 let empty_text = if !self.tabs[index].query.is_empty()
-                    || self.config.filter_kind != "all"
-                    || self.config.filter_size != "any"
-                    || self.config.filter_modified != "any"
+                    || self.config.active_filter_count() > 0
                 {
                     "No matching files"
                 } else {
@@ -5022,14 +5088,10 @@ impl Explorer {
                     egui::RichText::new("Try another folder or clear the search.")
                         .color(theme.palette.muted()),
                 );
-                if (self.config.filter_kind != "all"
-                    || self.config.filter_size != "any"
-                    || self.config.filter_modified != "any")
+                if self.config.active_filter_count() > 0
                     && ui.button("Clear filters").clicked()
                 {
-                    self.config.filter_kind = "all".into();
-                    self.config.filter_size = "any".into();
-                    self.config.filter_modified = "any".into();
+                    self.config.clear_filters();
                     self.dirty_config = true;
                     for tab in 0..self.tabs.len() {
                         self.rebuild_visible(tab);

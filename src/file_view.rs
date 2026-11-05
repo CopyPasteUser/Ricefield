@@ -122,9 +122,88 @@ pub fn matches_filter(entry: &Entry, filter: &str) -> bool {
     }
 }
 
+/// Small, case-insensitive filename glob. `*` matches any run of characters,
+/// `?` matches one Unicode scalar. Deliberately no regex engine or filesystem IO.
+#[cfg(test)]
+pub fn matches_glob(name: &str, pattern: &str) -> bool {
+    let compiled: Vec<_> = pattern.to_lowercase().chars().take(120).collect();
+    matches_compiled_glob(name, &compiled)
+}
+
+/// Precompile once for a folder refresh instead of allocating the pattern
+/// again for every file in a potentially 100k-entry directory.
+pub fn matches_compiled_glob(name: &str, glob: &[char]) -> bool {
+    if glob.is_empty() {
+        return true;
+    }
+    let text: Vec<_> = name.to_lowercase().chars().collect();
+    let (mut ni, mut gi, mut backtrack) = (0usize, 0usize, None);
+    let mut after_star = 0usize;
+    while ni < text.len() {
+        if gi < glob.len() && (glob[gi] == '?' || glob[gi] == text[ni]) {
+            ni += 1;
+            gi += 1;
+        } else if gi < glob.len() && glob[gi] == '*' {
+            backtrack = Some(gi);
+            gi += 1;
+            after_star = ni;
+        } else if let Some(star) = backtrack {
+            after_star += 1;
+            ni = after_star;
+            gi = star + 1;
+        } else {
+            return false;
+        }
+    }
+    while gi < glob.len() && glob[gi] == '*' {
+        gi += 1;
+    }
+    gi == glob.len()
+}
+
+/// Additional, opt-in numeric bounds. Values are measured in MiB and whole
+/// days; folders/symlinks do not represent file content sizes.
+pub fn matches_custom_ranges(
+    entry: &Entry,
+    min_size_mib: Option<u64>,
+    max_size_mib: Option<u64>,
+    newer_days: Option<u64>,
+    older_days: Option<u64>,
+    now: SystemTime,
+) -> bool {
+    let mib = 1024 * 1024;
+    if min_size_mib.is_some() || max_size_mib.is_some() {
+        if entry.is_dir || entry.is_symlink {
+            return false;
+        }
+        if min_size_mib.is_some_and(|min| entry.size < min.saturating_mul(mib))
+            || max_size_mib.is_some_and(|max| entry.size > max.saturating_mul(mib))
+        {
+            return false;
+        }
+    }
+    if newer_days.is_some() || older_days.is_some() {
+        let Some(modified) = entry.modified else {
+            return false;
+        };
+        let age = now.duration_since(modified).unwrap_or_default();
+        if newer_days.is_some_and(|max| age > Duration::from_secs(max.saturating_mul(86_400)))
+            || older_days.is_some_and(|min| {
+                age < Duration::from_secs(min.saturating_mul(86_400))
+            })
+        {
+            return false;
+        }
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{matches_filter, matches_modified, matches_size, natural_cmp};
+    use super::{
+        matches_custom_ranges, matches_filter, matches_glob, matches_modified, matches_size,
+        natural_cmp,
+    };
     use crate::filesystem::Entry;
     use std::{
         cmp::Ordering,
@@ -187,5 +266,36 @@ mod tests {
         assert!(matches_filter(&entry, "folders"));
         assert!(!matches_filter(&entry, "images"));
         assert!(!matches_filter(&entry, "files"));
+    }
+
+    #[test]
+    fn filename_globs_match_unicode_without_path_traversal_or_regex() {
+        assert!(matches_glob("Résumé (2).pdf", "r?sum*PDF"));
+        assert!(matches_glob("file10.txt", "file*.txt"));
+        assert!(!matches_glob("file.txt", "file?.txt"));
+        assert!(!matches_glob("folder/file.txt", "*.pdf"));
+        assert!(matches_glob("anything", ""));
+    }
+
+    #[test]
+    fn custom_size_and_age_ranges_fail_closed_on_unknown_metadata() {
+        let now = SystemTime::now();
+        let mut entry = Entry {
+            path: PathBuf::from("paper.pdf"),
+            name: "paper.pdf".into(),
+            is_dir: false,
+            is_symlink: false,
+            size: 3 * 1024 * 1024,
+            modified: Some(now - Duration::from_secs(5 * 86_400)),
+        };
+        assert!(matches_custom_ranges(&entry, Some(2), Some(4), Some(6), Some(4), now));
+        assert!(!matches_custom_ranges(&entry, Some(4), None, None, None, now));
+        assert!(!matches_custom_ranges(&entry, None, Some(2), None, None, now));
+        assert!(!matches_custom_ranges(&entry, None, None, Some(3), None, now));
+        assert!(!matches_custom_ranges(&entry, None, None, None, Some(8), now));
+        entry.modified = None;
+        assert!(!matches_custom_ranges(&entry, None, None, Some(30), None, now));
+        entry.is_dir = true;
+        assert!(!matches_custom_ranges(&entry, Some(1), None, None, None, now));
     }
 }
