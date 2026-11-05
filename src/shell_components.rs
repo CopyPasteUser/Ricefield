@@ -20,11 +20,7 @@ pub enum ToolbarAction {
     Refresh,
 }
 
-pub fn command_bar(
-    ui: &mut egui::Ui,
-    theme: &Theme,
-    has_selection: bool,
-) -> Option<ToolbarAction> {
+pub fn command_bar(ui: &mut egui::Ui, theme: &Theme, has_selection: bool) -> Option<ToolbarAction> {
     let mut action = None;
     ui.horizontal_wrapped(|ui| match theme.shell_kind() {
         ShellKind::Ribbon | ShellKind::Finder => {

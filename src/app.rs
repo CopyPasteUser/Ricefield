@@ -10,9 +10,7 @@ use crate::{
     preview,
     shell_components::{self, ToolbarAction},
     shell_renderer::{self, FileCellLayout, shorten},
-    theme::{
-        BUILTIN_IDS, ChromeComponent, SidebarPosition, SidebarSection, Theme,
-    },
+    theme::{BUILTIN_IDS, ChromeComponent, SidebarPosition, SidebarSection, Theme},
     volume::{self, VolumeAction},
 };
 use eframe::egui::{self, Align2, Color32, Key, Modifiers, Pos2, Rect, Vec2};
@@ -3582,110 +3580,110 @@ impl Explorer {
     }
 
     fn navigation_buttons(&mut self, ui: &mut egui::Ui) {
-            if ui
-                .add_enabled(!self.current().back.is_empty(), egui::Button::new("<"))
-                .on_hover_text("Back (Alt+Left)")
-                .clicked()
-            {
-                self.history(true);
-            }
-            if ui
-                .add_enabled(!self.current().forward.is_empty(), egui::Button::new(">"))
-                .on_hover_text("Forward (Alt+Right)")
-                .clicked()
-            {
-                self.history(false);
-            }
-            if ui
-                .button("Up")
-                .on_hover_text("Parent folder (Alt+Up)")
-                .clicked()
-            {
-                self.parent();
-            }
-            if ui.button("Home").on_hover_text("Home").clicked() {
-                self.navigate(config::home());
-            }
+        if ui
+            .add_enabled(!self.current().back.is_empty(), egui::Button::new("<"))
+            .on_hover_text("Back (Alt+Left)")
+            .clicked()
+        {
+            self.history(true);
+        }
+        if ui
+            .add_enabled(!self.current().forward.is_empty(), egui::Button::new(">"))
+            .on_hover_text("Forward (Alt+Right)")
+            .clicked()
+        {
+            self.history(false);
+        }
+        if ui
+            .button("Up")
+            .on_hover_text("Parent folder (Alt+Up)")
+            .clicked()
+        {
+            self.parent();
+        }
+        if ui.button("Home").on_hover_text("Home").clicked() {
+            self.navigate(config::home());
+        }
     }
 
     fn navigation_address(&mut self, ui: &mut egui::Ui, compact: bool) {
-            let address_width = if compact {
-                (ui.available_width() - 92.0).max(90.0)
-            } else {
-                (ui.available_width() - 300.0).max(90.0)
-            };
-            let address = ui.add_sized(
-                [address_width, 28.0],
-                egui::TextEdit::singleline(&mut self.current_mut().address)
-                    .hint_text("Folder path (Ctrl+L)"),
-            );
-            if self.focus_address {
-                ui.memory_mut(|memory| memory.request_focus(address.id));
-                self.focus_address = false;
-            }
-            if address.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
-                let value = self.current().address.clone();
-                self.navigate_address(value);
-            }
-            if ui
-                .button("Reload")
-                .on_hover_text("Refresh (Ctrl+R)")
-                .clicked()
-            {
-                self.scan(self.active);
-            }
+        let address_width = if compact {
+            (ui.available_width() - 92.0).max(90.0)
+        } else {
+            (ui.available_width() - 300.0).max(90.0)
+        };
+        let address = ui.add_sized(
+            [address_width, 28.0],
+            egui::TextEdit::singleline(&mut self.current_mut().address)
+                .hint_text("Folder path (Ctrl+L)"),
+        );
+        if self.focus_address {
+            ui.memory_mut(|memory| memory.request_focus(address.id));
+            self.focus_address = false;
+        }
+        if address.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
+            let value = self.current().address.clone();
+            self.navigate_address(value);
+        }
+        if ui
+            .button("Reload")
+            .on_hover_text("Refresh (Ctrl+R)")
+            .clicked()
+        {
+            self.scan(self.active);
+        }
     }
 
     fn navigation_search(&mut self, ui: &mut egui::Ui, compact: bool) {
-            let search_width = if compact {
-                (ui.available_width() - 137.0).max(80.0)
-            } else if ui.available_width() < 220.0 {
-                100.0
+        let search_width = if compact {
+            (ui.available_width() - 137.0).max(80.0)
+        } else if ui.available_width() < 220.0 {
+            100.0
+        } else {
+            190.0
+        };
+        let search_enabled = self.current().remote_uri.is_none();
+        let search = ui.add_enabled(
+            search_enabled,
+            egui::TextEdit::singleline(&mut self.current_mut().query)
+                .desired_width(search_width)
+                .hint_text("Search here… (Ctrl+F)"),
+        );
+        if self.focus_search {
+            ui.memory_mut(|memory| memory.request_focus(search.id));
+            self.focus_search = false;
+        }
+        if search.changed() {
+            self.current_mut().selected.clear();
+            if self.current().recursive_search {
+                self.current().cancel_scan();
+                self.current_mut().search_pending = Some(Instant::now());
             } else {
-                190.0
-            };
-            let search_enabled = self.current().remote_uri.is_none();
-            let search = ui.add_enabled(
-                search_enabled,
-                egui::TextEdit::singleline(&mut self.current_mut().query)
-                    .desired_width(search_width)
-                    .hint_text("Search here… (Ctrl+F)"),
-            );
-            if self.focus_search {
-                ui.memory_mut(|memory| memory.request_focus(search.id));
-                self.focus_search = false;
+                self.rebuild_visible(self.active);
             }
-            if search.changed() {
-                self.current_mut().selected.clear();
-                if self.current().recursive_search {
-                    self.current().cancel_scan();
-                    self.current_mut().search_pending = Some(Instant::now());
-                } else {
-                    self.rebuild_visible(self.active);
-                }
-            }
-            if !self.current().query.is_empty()
-                && ui.small_button("×").on_hover_text("Clear search").clicked()
-            {
-                self.current_mut().query.clear();
-                self.current_mut().search_pending = None;
-                if self.current().recursive_search {
-                    self.scan(self.active);
-                } else {
-                    self.rebuild_visible(self.active);
-                }
-                ui.memory_mut(|memory| memory.request_focus(search.id));
-            }
-            if ui
-                .add(egui::Button::new("Subfolders").selected(self.current().recursive_search))
-                .on_hover_text("Search filenames recursively (maximum 20,000 matches)")
-                .clicked()
-            {
-                let next = !self.current().recursive_search;
-                self.current_mut().recursive_search = next;
-                self.current_mut().search_pending = None;
+        }
+        if !self.current().query.is_empty()
+            && ui.small_button("×").on_hover_text("Clear search").clicked()
+        {
+            self.current_mut().query.clear();
+            self.current_mut().search_pending = None;
+            if self.current().recursive_search {
                 self.scan(self.active);
+            } else {
+                self.rebuild_visible(self.active);
             }
+            ui.memory_mut(|memory| memory.request_focus(search.id));
+        }
+        if ui
+            .add(egui::Button::new("Subfolders").selected(self.current().recursive_search))
+            .on_hover_text("Search filenames recursively (maximum 20,000 matches)")
+            .clicked()
+        {
+            let next = !self.current().recursive_search;
+            self.current_mut().recursive_search = next;
+            self.current_mut().search_pending = None;
+            self.scan(self.active);
+        }
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
@@ -4583,7 +4581,8 @@ impl Explorer {
         };
         let rows = visible.div_ceil(columns);
         if !grid {
-            let change_sort = shell_renderer::sort_header(ui, &self.config.sort_by, self.config.descending);
+            let change_sort =
+                shell_renderer::sort_header(ui, &self.config.sort_by, self.config.descending);
             if let Some(sort) = change_sort {
                 if self.config.sort_by == sort {
                     self.config.descending = !self.config.descending;
@@ -4994,7 +4993,11 @@ impl Explorer {
                     ..
                 } => {
                     shell_components::show_dialog(
-                        context, "Paste with options", true, None, |ui| {
+                        context,
+                        "Paste with options",
+                        true,
+                        None,
+                        |ui| {
                             ui.label(format!(
                                 "{} {} item(s) into {}",
                                 if clipboard.cut { "Move" } else { "Copy" },
@@ -5008,11 +5011,13 @@ impl Explorer {
                                 );
                             }
                             ui.separator();
-                            let mut policy_changed = ui.radio_value(
-                                conflict,
-                                ConflictPolicy::KeepBoth,
-                                "Keep both — rename incoming items when names collide",
-                            ).changed();
+                            let mut policy_changed = ui
+                                .radio_value(
+                                    conflict,
+                                    ConflictPolicy::KeepBoth,
+                                    "Keep both — rename incoming items when names collide",
+                                )
+                                .changed();
                             policy_changed |= ui.radio_value(
                                 conflict,
                                 ConflictPolicy::SkipExisting,
@@ -5040,7 +5045,9 @@ impl Explorer {
                                     None => {
                                         ui.horizontal(|ui| {
                                             ui.spinner();
-                                            ui.small("Checking all selected paths in the background…");
+                                            ui.small(
+                                                "Checking all selected paths in the background…",
+                                            );
                                         });
                                         false
                                     }
@@ -5054,24 +5061,32 @@ impl Explorer {
                                             plan.items.len(), plan.collisions,
                                             plan.renamed, plan.skipped
                                         ));
-                                        egui::ScrollArea::vertical()
-                                            .max_height(190.0)
-                                            .show_rows(ui, 20.0, plan.items.len(), |ui, rows| {
+                                        egui::ScrollArea::vertical().max_height(190.0).show_rows(
+                                            ui,
+                                            20.0,
+                                            plan.items.len(),
+                                            |ui, rows| {
                                                 for planned in &plan.items[rows] {
-                                                    let decision = if planned.disposition == filesystem::PlannedDisposition::Skip {
+                                                    let decision = if planned.disposition
+                                                        == filesystem::PlannedDisposition::Skip
+                                                    {
                                                         "Skip"
                                                     } else if planned.renamed {
                                                         "Rename incoming"
                                                     } else {
                                                         "Transfer"
                                                     };
-                                                    let source = planned.source.display().to_string();
+                                                    let source =
+                                                        planned.source.display().to_string();
                                                     ui.horizontal(|ui| {
-                                                        ui.small(if planned.collision && !planned.renamed {
-                                                            format!("{decision} · collision")
-                                                        } else {
-                                                            decision.to_owned()
-                                                        });
+                                                        ui.small(
+                                                            if planned.collision && !planned.renamed
+                                                            {
+                                                                format!("{decision} · collision")
+                                                            } else {
+                                                                decision.to_owned()
+                                                            },
+                                                        );
                                                         ui.monospace(shorten(&source, 45))
                                                             .on_hover_text(format!(
                                                                 "Source: {}\nDestination: {}",
@@ -5080,7 +5095,8 @@ impl Explorer {
                                                             ));
                                                     });
                                                 }
-                                            });
+                                            },
+                                        );
                                         true
                                     }
                                 }
@@ -5090,7 +5106,10 @@ impl Explorer {
                                 if ui.button("Cancel").clicked() {
                                     dismiss = true;
                                 }
-                                if ui.add_enabled(can_start, egui::Button::new("Start transfer")).clicked() {
+                                if ui
+                                    .add_enabled(can_start, egui::Button::new("Start transfer"))
+                                    .clicked()
+                                {
                                     action = Some(Self::paste_action(
                                         clipboard.clone(),
                                         destination.clone(),
@@ -5099,7 +5118,8 @@ impl Explorer {
                                     dismiss = true;
                                 }
                             });
-                        });
+                        },
+                    );
                 }
                 Dialog::Name { mode, value } => {
                     let title = match mode {
@@ -5108,30 +5128,33 @@ impl Explorer {
                         NameMode::Rename(_) => "Rename item",
                     };
                     shell_components::show_dialog(context, title, false, None, |ui| {
-                            ui.label("Name");
-                            let input =
-                                ui.add_sized([ui.available_width().min(340.0), 28.0], egui::TextEdit::singleline(value));
-                            let valid = filesystem::valid_name(value);
-                            if !valid {
-                                shell_components::small_error(ui,
-                                    "Enter a name without slashes, or dots alone.",
-                                );
+                        ui.label("Name");
+                        let input = ui.add_sized(
+                            [ui.available_width().min(340.0), 28.0],
+                            egui::TextEdit::singleline(value),
+                        );
+                        let valid = filesystem::valid_name(value);
+                        if !valid {
+                            shell_components::small_error(
+                                ui,
+                                "Enter a name without slashes, or dots alone.",
+                            );
+                        }
+                        ui.horizontal(|ui| {
+                            if ui.button("Cancel").clicked() {
+                                dismiss = true;
                             }
-                            ui.horizontal(|ui| {
-                                if ui.button("Cancel").clicked() {
-                                    dismiss = true;
-                                }
-                                if ui.add_enabled(valid, egui::Button::new("Save")).clicked()
-                                    || (valid
-                                        && input.lost_focus()
-                                        && ui.input(|i| i.key_pressed(Key::Enter)))
-                                {
-                                    let name = value.clone();
-                                    action = Some(mode.action(name));
-                                    dismiss = true;
-                                }
-                            });
+                            if ui.add_enabled(valid, egui::Button::new("Save")).clicked()
+                                || (valid
+                                    && input.lost_focus()
+                                    && ui.input(|i| i.key_pressed(Key::Enter)))
+                            {
+                                let name = value.clone();
+                                action = Some(mode.action(name));
+                                dismiss = true;
+                            }
                         });
+                    });
                 }
                 Dialog::BatchRename {
                     paths,
@@ -5143,33 +5166,40 @@ impl Explorer {
                     number_start,
                     number_width,
                 } => {
-                    shell_components::show_dialog(context, format!("Batch rename ({} items)", paths.len()), true, Some(580.0), |ui| {
+                    shell_components::show_dialog(
+                        context,
+                        format!("Batch rename ({} items)", paths.len()),
+                        true,
+                        Some(580.0),
+                        |ui| {
                             ui.label("Preview every new name before applying the changes.");
                             ui.horizontal(|ui| {
                                 ui.label("Prefix:");
-                                ui.add_sized(
-                                    [220.0, 26.0],
-                                    egui::TextEdit::singleline(prefix),
-                                );
+                                ui.add_sized([220.0, 26.0], egui::TextEdit::singleline(prefix));
                             });
                             ui.horizontal(|ui| {
                                 ui.label("Suffix:");
-                                ui.add_sized(
-                                    [220.0, 26.0],
-                                    egui::TextEdit::singleline(suffix),
-                                );
+                                ui.add_sized([220.0, 26.0], egui::TextEdit::singleline(suffix));
                             });
                             ui.horizontal_wrapped(|ui| {
                                 ui.label("Find:");
-                                ui.add_sized([ui.available_width().min(170.0), 26.0], egui::TextEdit::singleline(find));
+                                ui.add_sized(
+                                    [ui.available_width().min(170.0), 26.0],
+                                    egui::TextEdit::singleline(find),
+                                );
                                 ui.label("Replace:");
-                                ui.add_sized([ui.available_width().min(170.0), 26.0], egui::TextEdit::singleline(replace));
+                                ui.add_sized(
+                                    [ui.available_width().min(170.0), 26.0],
+                                    egui::TextEdit::singleline(replace),
+                                );
                             });
                             ui.horizontal_wrapped(|ui| {
                                 ui.checkbox(numbering, "Add sequence numbers");
                                 if *numbering {
                                     ui.label("Start:");
-                                    ui.add(egui::DragValue::new(number_start).range(1..=99_999_999));
+                                    ui.add(
+                                        egui::DragValue::new(number_start).range(1..=99_999_999),
+                                    );
                                     ui.label("Digits:");
                                     ui.add(egui::DragValue::new(number_width).range(1..=8));
                                 }
@@ -5223,28 +5253,34 @@ impl Explorer {
                                     }
                                 }
                             }
-                        });
+                        },
+                    );
                 }
                 Dialog::Trash(paths) => {
                     shell_components::show_dialog(context, "Move to Trash?", false, None, |ui| {
-                            ui.label(format!("Move {} selected item(s) to Trash?", paths.len()));
-                            ui.label("The items can usually be restored from your desktop Trash.");
-                            removal_confirmation_paths(ui, paths);
-                            ui.horizontal(|ui| {
-                                if ui.button("Cancel").clicked() {
-                                    dismiss = true;
-                                }
-                                if ui.button("Move to Trash").clicked() {
-                                    action = Some(Action::Trash {
-                                        paths: paths.clone(),
-                                    });
-                                    dismiss = true;
-                                }
-                            });
+                        ui.label(format!("Move {} selected item(s) to Trash?", paths.len()));
+                        ui.label("The items can usually be restored from your desktop Trash.");
+                        removal_confirmation_paths(ui, paths);
+                        ui.horizontal(|ui| {
+                            if ui.button("Cancel").clicked() {
+                                dismiss = true;
+                            }
+                            if ui.button("Move to Trash").clicked() {
+                                action = Some(Action::Trash {
+                                    paths: paths.clone(),
+                                });
+                                dismiss = true;
+                            }
                         });
+                    });
                 }
                 Dialog::Delete(paths) => {
-                    shell_components::show_dialog(context, "Permanently delete items?", false, None, |ui| {
+                    shell_components::show_dialog(
+                        context,
+                        "Permanently delete items?",
+                        false,
+                        None,
+                        |ui| {
                             ui.colored_label(
                                 Color32::RED,
                                 format!("Delete {} item(s) permanently?", paths.len()),
@@ -5262,7 +5298,8 @@ impl Explorer {
                                     dismiss = true;
                                 }
                             });
-                        });
+                        },
+                    );
                 }
                 Dialog::Properties {
                     path,
@@ -5271,60 +5308,59 @@ impl Explorer {
                     ..
                 } => {
                     shell_components::show_dialog(context, "Properties", true, Some(460.0), |ui| {
-                            match details {
-                                Some(Ok(snapshot)) => {
-                                    for (name, value) in &snapshot.lines {
-                                        ui.horizontal_wrapped(|ui| {
-                                            ui.strong(format!("{name}:"));
-                                            ui.label(value);
-                                        });
-                                    }
-                                }
-                                Some(Err(error)) => {
-                                    ui.colored_label(
-                                        Color32::RED,
-                                        format!("Cannot read properties: {error}"),
-                                    );
-                                }
-                                None => {
-                                    ui.horizontal(|ui| {
-                                        ui.spinner();
-                                        ui.label("Reading file properties…");
+                        match details {
+                            Some(Ok(snapshot)) => {
+                                for (name, value) in &snapshot.lines {
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.strong(format!("{name}:"));
+                                        ui.label(value);
                                     });
                                 }
                             }
-                            #[cfg(unix)]
-                            if let Some(Ok(snapshot)) = details {
-                                ui.separator();
-                                if snapshot.is_symlink {
-                                    ui.label("Symlink permissions cannot be changed here.");
-                                }
+                            Some(Err(error)) => {
+                                ui.colored_label(
+                                    Color32::RED,
+                                    format!("Cannot read properties: {error}"),
+                                );
+                            }
+                            None => {
                                 ui.horizontal(|ui| {
-                                    ui.label("Mode (octal):");
-                                    ui.add_sized([100.0, 25.0], egui::TextEdit::singleline(mode));
-                                    let parsed = u32::from_str_radix(mode.trim(), 8)
-                                        .ok()
-                                        .filter(|number| *number <= 0o777);
-                                    if ui
-                                        .add_enabled(
-                                            parsed.is_some() && !snapshot.is_symlink,
-                                            egui::Button::new("Apply"),
-                                        )
-                                        .clicked()
-                                    {
-                                        action = Some(Action::SetMode {
-                                            path: path.clone(),
-                                            mode: parsed
-                                                .expect("button only enabled for valid mode"),
-                                        });
-                                        dismiss = true;
-                                    }
+                                    ui.spinner();
+                                    ui.label("Reading file properties…");
                                 });
                             }
-                            if ui.button("Close").clicked() {
-                                dismiss = true;
+                        }
+                        #[cfg(unix)]
+                        if let Some(Ok(snapshot)) = details {
+                            ui.separator();
+                            if snapshot.is_symlink {
+                                ui.label("Symlink permissions cannot be changed here.");
                             }
-                        });
+                            ui.horizontal(|ui| {
+                                ui.label("Mode (octal):");
+                                ui.add_sized([100.0, 25.0], egui::TextEdit::singleline(mode));
+                                let parsed = u32::from_str_radix(mode.trim(), 8)
+                                    .ok()
+                                    .filter(|number| *number <= 0o777);
+                                if ui
+                                    .add_enabled(
+                                        parsed.is_some() && !snapshot.is_symlink,
+                                        egui::Button::new("Apply"),
+                                    )
+                                    .clicked()
+                                {
+                                    action = Some(Action::SetMode {
+                                        path: path.clone(),
+                                        mode: parsed.expect("button only enabled for valid mode"),
+                                    });
+                                    dismiss = true;
+                                }
+                            });
+                        }
+                        if ui.button("Close").clicked() {
+                            dismiss = true;
+                        }
+                    });
                 }
             }
         }

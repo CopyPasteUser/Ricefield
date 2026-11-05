@@ -8,7 +8,9 @@ use crate::{
     filesystem::{self, Entry},
     theme::{Layout, Theme},
 };
-use eframe::egui::{self, Align2, Color32, FontId, Painter, Pos2, Rect, Response, Sense, Stroke, Vec2};
+use eframe::egui::{
+    self, Align2, Color32, FontId, Painter, Pos2, Rect, Response, Sense, Stroke, Vec2,
+};
 
 #[derive(Clone, Copy)]
 pub struct FileCellLayout {
@@ -31,7 +33,15 @@ pub fn file_cell(
         Vec2::new(layout.width.max(80.0), layout.height),
         Sense::click_and_drag(),
     );
-    paint_file_cell(ui.painter(), rect, file, theme, selected, response.hovered(), layout.grid);
+    paint_file_cell(
+        ui.painter(),
+        rect,
+        file,
+        theme,
+        selected,
+        response.hovered(),
+        layout.grid,
+    );
     let response = response.on_hover_text(file.path.display().to_string());
     (rect, response)
 }
@@ -50,7 +60,11 @@ pub fn sort_header(ui: &mut egui::Ui, sort_by: &str, descending: bool) -> Option
             } else {
                 label.to_owned()
             };
-            if ui.small_button(caption).on_hover_text("Sort by this column").clicked() {
+            if ui
+                .small_button(caption)
+                .on_hover_text("Sort by this column")
+                .clicked()
+            {
                 change_sort = Some(key);
             }
         }
