@@ -336,7 +336,9 @@ Asynchronous Paste conflict previews, full-batch worker preflight and
 *Require no conflicts* remain available. Detailed per-file results appear in
 the Transfers window. The CI workflow checks
 Rust formatting, Clippy, unit tests, a release
-build, CLI startup and Xvfb GUI startup/split toggle for all seven skins. These are
+build, CLI startup, Xvfb GUI startup/split toggle for all seven skins, and
+pairwise image-difference/structural regression gates for 98/7/macOS and one
+custom toolbar arrangement. These are
 development checks, **not** a production release or full Linux Mint acceptance.
 
 ### Install on Linux Mint / Xfce

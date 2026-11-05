@@ -24,6 +24,10 @@ printf 'RiceExplorer native GUI smoke test\n' > "$fixture_dir/Readme.txt"
 printf '# Markdown preview test\n' > "$fixture_dir/Documents/Example.md"
 cp assets/rice-explorer.png "$fixture_dir/Pictures/icon.png"
 cp themes/win7.toml "$fixture_dir/custom-theme.toml"
+# Exercise a *real structural* shell reordering rather than merely recoloring
+# the built-in Aero surface. Keep the custom file independent of bundled rice.
+sed -i 's/^top = \["tabs", "navigation", "command-bar"\]$/top = ["navigation"]\nbottom = ["tabs", "command-bar"]/' "$fixture_dir/custom-theme.toml"
+grep -Fqx 'bottom = ["tabs", "command-bar"]' "$fixture_dir/custom-theme.toml"
 printf '\n[shell.sidebar]\nposition = "right"\nwidth = 270\nsections = ["volumes", "favorites"]\n' >> "$fixture_dir/custom-theme.toml"
 
 export LIBGL_ALWAYS_SOFTWARE=1
@@ -179,4 +183,11 @@ for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sideba
   wait "$app_pid" 2>/dev/null || true
   app_pid=''
 done
-echo 'Native GUI smoke checks passed for seven themes and one custom sidebar (startup, F3, tab/keyboard actions, dialog dismissal, compact layouts, and secondary window; not physical acceptance).'
+# These pixel differences are a cheap regression alarm, not visual approval:
+# a renderer accidentally collapsing all rice profiles into one appearance
+# should fail CI even if each process still starts successfully.
+require_visible_change "screenshots/win98.png" "screenshots/win7.png" "Win98 vs Win7 rice identity" 12000
+require_visible_change "screenshots/win7.png" "screenshots/macos.png" "Win7 vs macOS rice identity" 12000
+require_visible_change "screenshots/win98.png" "screenshots/macos.png" "Win98 vs macOS rice identity" 12000
+require_visible_change "screenshots/win7.png" "screenshots/custom-sidebar.png" "Custom shell recomposition" 12000
+echo 'Native GUI smoke checks passed for seven themes and one structurally recomposed custom rice (including pairwise visual difference checks; not physical acceptance).'

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9 preview CI hardening — distinct shell regression gates
+
+- Assert distinct Win98/Win7/macOS toolbar structures and Navigation presence.
+- Exercise a structurally custom top/bottom shell in the Xvfb GUI matrix,
+  and fail CI if 98/7/macOS (or the custom shell) become pixel-identical.
+- Screenshots remain an automated regression signal, not owner visual sign-off.
+
 ## Unreleased — 0.9.0-alpha.5 shell component composer
 
 - Build actual top/bottom toolbar composition from the visual theme editor:
