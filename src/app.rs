@@ -5139,16 +5139,20 @@ mod tests {
     use crate::filesystem::{ItemResult, ItemState, Progress};
     use crate::location::Location;
     use std::path::PathBuf;
-    use std::sync::atomic::Ordering;
     use std::sync::Arc;
+    use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
 
     #[test]
     fn duplicated_tab_retains_navigation_but_isolates_background_work() {
         let mut original = Tab::new(3, PathBuf::from("/offline"));
         original.visit(Location::parse("smb://nas/secret".into()).unwrap());
-        original.back.push(Location::Local(PathBuf::from("/history")));
-        original.forward.push(Location::Local(PathBuf::from("/forward")));
+        original
+            .back
+            .push(Location::Local(PathBuf::from("/history")));
+        original
+            .forward
+            .push(Location::Local(PathBuf::from("/forward")));
         original.query = "draft".into();
         original.recursive_search = true;
         original.generation = 5;
