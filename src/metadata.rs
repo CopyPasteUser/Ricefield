@@ -152,6 +152,15 @@ fn folder_size(path: &Path, stop: &AtomicBool) -> io::Result<String> {
 }
 
 fn sha256(path: &Path, stop: &AtomicBool) -> io::Result<String> {
+    sha256_limited(path, MAX_HASH_BYTES, Duration::from_secs(30), stop)
+}
+
+pub(crate) fn sha256_limited(
+    path: &Path,
+    max_bytes: u64,
+    timeout: Duration,
+    stop: &AtomicBool,
+) -> io::Result<String> {
     if stop.load(Ordering::Relaxed) {
         return Err(cancelled());
     }
@@ -160,7 +169,7 @@ fn sha256(path: &Path, stop: &AtomicBool) -> io::Result<String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NONBLOCK);
+        options.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
     }
     let file = options.open(path)?;
     let meta = file.metadata()?;
@@ -170,10 +179,13 @@ fn sha256(path: &Path, stop: &AtomicBool) -> io::Result<String> {
             "Only regular files can be hashed",
         ));
     }
-    if meta.len() > MAX_HASH_BYTES {
+    if meta.len() > max_bytes.min(MAX_HASH_BYTES) {
         return Err(io::Error::new(
             ErrorKind::InvalidInput,
-            "Hash limited to 2 GiB to bound resource use",
+            format!(
+                "Hash limited to {} MiB to bound resource use",
+                max_bytes.min(MAX_HASH_BYTES) / (1024 * 1024)
+            ),
         ));
     }
     let mut command = Command::new("sha256sum");
@@ -183,7 +195,7 @@ fn sha256(path: &Path, stop: &AtomicBool) -> io::Result<String> {
     let result = crate::volume::capture_gio_with_stdin(
         command,
         128,
-        Duration::from_secs(30),
+        timeout,
         stop,
         "SHA-256",
     )

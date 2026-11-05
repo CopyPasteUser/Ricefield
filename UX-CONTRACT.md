@@ -145,6 +145,10 @@ not silently rolled back; cancelled/unstarted entries remain explicit.
   restore only query, folder and search scope when opened. No saved search
   triggers background disk or network IO during startup; preferences are
   written via private, atomically replaced files on Unix.
+  **Duplicate candidates:** the shared Actions menu starts a cancellable,
+  read-only local size/SHA-256 scan, showing groups and partial results in a
+  non-destructive viewer. No digest ever authorizes deletion or overwriting;
+  changed files must be independently reverified by the user.
 - **Dialog/confirmation:** `Explorer::dialogs`; no system-wide native dialog side effects.
 - **Feedback:** `Explorer::status_bar` when enabled, otherwise the shared
   `Explorer::transfer_strip` displays the latest status with a full-message

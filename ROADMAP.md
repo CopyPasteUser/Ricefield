@@ -452,8 +452,10 @@ marking 0.7 stable. The 0.6 NAS/mount acceptance is still blocked separately.
 - [ ] Bounded cancellable network search, optional index (not mandatory).
 - [x] Opt-in, capped saved local searches with private atomic preferences
   (0.8 alpha.4); no query persisted or automatically rerun without consent.
-- [ ] Duplicate finder and additional batch action previews (batch rename
-  already has a planning/preview step).
+- [x] Bounded read-only duplicate candidate finder for visible local files,
+  with same-size SHA-256 grouping and manual-review-only UI (0.8 alpha.5).
+- [ ] Additional batch action previews (batch rename and paste already have
+  planning/preview steps); performance acceptance for huge folders.
 
 **Gate:** 100k-entry folders and recursive searches remain responsive.
 
