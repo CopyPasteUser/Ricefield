@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — 0.8.0-alpha.2 bounded local content search
+
+- Add opt-in **Contents** search for small UTF-8 local files, combined with
+  filename matching and the independent **Subfolders** scope control.
+- Run scans on cancellable background workers with limits of 2 MiB per file,
+  4,096 inspected files, 64 MiB of total reads and 12 seconds per search;
+  report when results are incomplete. Skip symlinks, special files and
+  cross-filesystem recursion, with no indexer or stored search text.
+- Keep selected items in sync with content matches and share the same search
+  controls across all rice profiles. Physical and network acceptance is still
+  deferred; this is an alpha, not a stable 0.8 sign-off.
+
 ## Unreleased — 0.8.0-alpha.1 local search filters
 
 - Combine type, file-size and modification-date presets in one compact Filters

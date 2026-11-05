@@ -199,6 +199,7 @@ pub struct FolderScan {
     pub entries: Vec<Entry>,
     pub unreadable: usize,
     pub first_error: Option<String>,
+    pub notice: Option<String>,
 }
 
 /// Preserve readable siblings when an unplugged or stale mount refuses a
@@ -263,6 +264,7 @@ fn scan_with_metadata(
         entries,
         unreadable,
         first_error,
+        notice: None,
     })
 }
 
@@ -287,19 +289,79 @@ pub fn search(root: &Path, query: &str, show_hidden: bool) -> io::Result<Vec<Ent
 }
 
 /// A cancelled search returns Interrupted without exposing incomplete results.
+#[cfg(test)]
 pub fn search_cancellable(
     root: &Path,
     query: &str,
     show_hidden: bool,
     cancelled: &AtomicBool,
 ) -> io::Result<Vec<Entry>> {
+    search_with_options(root, query, show_hidden, true, false, cancelled).map(|scan| scan.entries)
+}
+
+const MAX_CONTENT_FILE_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_CONTENT_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_CONTENT_FILES: usize = 4_096;
+
+/// Inspect only an already-open regular file. Never follow symlinks or open
+/// potentially blocking pipes as part of content search.
+fn text_contains(path: &Path, needle: &str, cancelled: &AtomicBool) -> io::Result<(bool, u64)> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
+    }
+    let mut file = options.open(path)?;
+    let opened = file.metadata()?;
+    if !opened.is_file() || opened.len() > MAX_CONTENT_FILE_BYTES {
+        return Ok((false, 0));
+    }
+    let mut bytes = Vec::new();
+    (&mut file)
+        .take(MAX_CONTENT_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    check_scan_cancel(cancelled)?;
+    if bytes.len() as u64 > MAX_CONTENT_FILE_BYTES {
+        return Ok((false, bytes.len() as u64));
+    }
+    let found = !bytes.contains(&0)
+        && std::str::from_utf8(&bytes).is_ok_and(|text| text.to_lowercase().contains(needle));
+    Ok((found, bytes.len() as u64))
+}
+
+/// Bounded local name/content search. A notice marks incomplete results;
+/// no index, secret storage or file mutation is involved.
+pub fn search_with_options(
+    root: &Path,
+    query: &str,
+    show_hidden: bool,
+    recursive: bool,
+    contents: bool,
+    cancelled: &AtomicBool,
+) -> io::Result<FolderScan> {
     check_scan_cancel(cancelled)?;
     let mut results = Vec::new();
     let mut pending = std::collections::VecDeque::from([(root.to_path_buf(), 0usize)]);
     let needle = query.to_lowercase();
     let mut visited = 0usize;
-    while let Some((directory, depth)) = pending.pop_front() {
+    let mut inspected_files = 0usize;
+    let mut inspected_bytes = 0u64;
+    let mut skipped_large = 0usize;
+    let mut budget_hit = false;
+    let started = Instant::now();
+    #[cfg(unix)]
+    let root_device = {
+        use std::os::unix::fs::MetadataExt;
+        fs::metadata(root)?.dev()
+    };
+    'folders: while let Some((directory, depth)) = pending.pop_front() {
         check_scan_cancel(cancelled)?;
+        if contents && started.elapsed() >= Duration::from_secs(12) {
+            budget_hit = true;
+            break;
+        }
         let entries = match fs::read_dir(&directory) {
             Ok(entries) => entries,
             Err(_) if directory.as_path() != root => {
@@ -310,6 +372,10 @@ pub fn search_cancellable(
         };
         for entry in entries {
             check_scan_cancel(cancelled)?;
+            if contents && started.elapsed() >= Duration::from_secs(12) {
+                budget_hit = true;
+                break 'folders;
+            }
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(_) => continue,
@@ -322,15 +388,50 @@ pub fn search_cancellable(
                 Ok(metadata) => metadata,
                 Err(_) => continue,
             };
+            #[cfg(unix)]
+            let on_root_device = {
+                use std::os::unix::fs::MetadataExt;
+                metadata.dev() == root_device
+            };
             visited += 1;
             if visited >= 250_000 || results.len() >= 20_000 {
-                check_scan_cancel(cancelled)?;
-                return Ok(results);
+                budget_hit = true;
+                break 'folders;
             }
-            if metadata.is_dir() && depth < 48 {
+            let descend = recursive && metadata.is_dir() && depth < 48;
+            #[cfg(unix)]
+            let descend = descend && (!contents || on_root_device);
+            if descend {
                 pending.push_back((entry.path(), depth + 1));
             }
-            if name.to_lowercase().contains(&needle) {
+            let name_match = name.to_lowercase().contains(&needle);
+            let mut content_match = false;
+            #[cfg(unix)]
+            let inspect_contents = on_root_device;
+            #[cfg(not(unix))]
+            let inspect_contents = true;
+            if contents
+                && !name_match
+                && metadata.is_file()
+                && inspect_contents
+                && !needle.is_empty()
+            {
+                if metadata.len() > MAX_CONTENT_FILE_BYTES {
+                    skipped_large += 1;
+                } else if inspected_files >= MAX_CONTENT_FILES
+                    || inspected_bytes.saturating_add(metadata.len()) > MAX_CONTENT_TOTAL_BYTES
+                    || started.elapsed() >= Duration::from_secs(12)
+                {
+                    budget_hit = true;
+                } else {
+                    inspected_files += 1;
+                    if let Ok((found, bytes)) = text_contains(&entry.path(), &needle, cancelled) {
+                        inspected_bytes = inspected_bytes.saturating_add(bytes);
+                        content_match = found;
+                    }
+                }
+            }
+            if name_match || content_match {
                 results.push(Entry {
                     name,
                     path: entry.path(),
@@ -343,7 +444,27 @@ pub fn search_cancellable(
         }
     }
     check_scan_cancel(cancelled)?;
-    Ok(results)
+    let notice = if contents && (budget_hit || skipped_large > 0) {
+        Some(format!(
+            "Content search is partial: {} files over 2 MiB skipped{} (at most 4,096 files, 64 MiB and 12 seconds per search)",
+            skipped_large,
+            if budget_hit {
+                "; scan budget reached"
+            } else {
+                ""
+            }
+        ))
+    } else if budget_hit {
+        Some("Filename search reached its 250,000-entry / 20,000-match limit".into())
+    } else {
+        None
+    };
+    Ok(FolderScan {
+        entries: results,
+        unreadable: 0,
+        first_error: None,
+        notice,
+    })
 }
 
 /// A destination collision never permits overwriting existing data.
@@ -5332,6 +5453,59 @@ mod tests {
         assert!(shown[0].path.ends_with("needle.md"));
         assert_eq!(search(&root, "needle", true).unwrap().len(), 2);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn content_search_respects_scope_binary_input_and_scan_budgets() {
+        let root = test_root();
+        fs::create_dir(root.join("nested")).unwrap();
+        fs::write(root.join("notes.txt"), b"an unusual NeEdLe in a note").unwrap();
+        fs::write(root.join("binary.dat"), b"needle\0ignored").unwrap();
+        fs::write(
+            root.join("nested").join("deep.txt"),
+            b"needle in another folder",
+        )
+        .unwrap();
+        let cancel = AtomicBool::new(false);
+        let local = search_with_options(&root, "needle", false, false, true, &cancel).unwrap();
+        assert_eq!(local.entries.len(), 1);
+        assert!(local.entries[0].path.ends_with("notes.txt"));
+        assert!(local.notice.is_none());
+
+        let recursive = search_with_options(&root, "needle", false, true, true, &cancel).unwrap();
+        assert_eq!(recursive.entries.len(), 2);
+        assert!(
+            recursive
+                .entries
+                .iter()
+                .any(|entry| entry.path.ends_with("deep.txt"))
+        );
+
+        let large = root.join("large.txt");
+        fs::File::create(&large)
+            .unwrap()
+            .set_len(MAX_CONTENT_FILE_BYTES + 1)
+            .unwrap();
+        let partial = search_with_options(&root, "needle", false, false, true, &cancel).unwrap();
+        assert!(partial.notice.unwrap().contains("partial"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn content_search_does_not_follow_symlinks() {
+        use std::os::unix::fs::symlink;
+        let root = test_root();
+        let external = test_root();
+        fs::write(external.join("target.txt"), b"hidden needle").unwrap();
+        symlink(external.join("target.txt"), root.join("shortcut.txt")).unwrap();
+        symlink(&external, root.join("folder-link")).unwrap();
+        let results =
+            search_with_options(&root, "needle", false, true, true, &AtomicBool::new(false))
+                .unwrap();
+        assert!(results.entries.is_empty());
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(external).unwrap();
     }
 
     #[test]

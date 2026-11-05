@@ -444,7 +444,9 @@ marking 0.7 stable. The 0.6 NAS/mount acceptance is still blocked separately.
   new requests, tab closure and query changes; reject queued stale results.
 - [x] Add lightweight type/size/date presets to the same local filter policy;
   remove hidden selections before any further operation. No indexing daemon.
-- [ ] Content search, regex, and custom filename/size/date filter ranges.
+- [x] Bounded, cancellable, opt-in local UTF-8 content search; no index,
+  symlink traversal, special-file reads or unbounded scans (0.8 alpha.2).
+- [ ] Filename regex and custom filename/size/date filter ranges.
 - [ ] Bounded cancellable network search, optional index (not mandatory).
 - [ ] Saved searches, duplicate finder and batch action previews.
 
