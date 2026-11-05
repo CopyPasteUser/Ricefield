@@ -4,7 +4,7 @@
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Development preview: v0.6.0-alpha.7** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+> **Development preview: v0.6.0-alpha.8** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
 **Distribution:** An [automated Linux x86_64 preview bundle](RELEASE.md) can
 be built without distributing Rust sources to every end user. The verified
@@ -34,12 +34,25 @@ optional workgroup and masked password for a single GIO mount attempt. GIO's
 interactive prompts are answered through a bounded pipe, never through CLI
 arguments, URLs or saved settings. A broken GDBus/GVfs session can still
 prevent mounting with valid credentials; NAS acceptance on Mint is pending.
+**0.6 alpha.8:** Use **Discover NAS on network…** in the Volumes sidebar
+to find SMB hosts advertised by GVfs/SMB workgroups or Avahi/mDNS. Select
+**Browse shares** to list a server's available shares, or **Sign in** to open
+the login dialog without typing the address. A successful connection adds
+the share URI (never a password) to persistent favorites. Tick **Remember
+login in Linux keyring** to save credentials *after a successful mount* using
+the optional `secret-tool` / `libsecret-tools` and your desktop Secret Service.
+**Use saved login** retrieves them on demand; **Forget saved login** removes
+them. No plaintext fallback or automatic login is enabled. Install optional
+Mint support with `sudo apt install gvfs-backends avahi-utils libsecret-tools`
+if discovery or keyring features are missing. A NAS with discovery disabled
+can still be reached by a manual SMB URI once, then accessed from favorites.
 
 **Safety boundary:** remote file modification, copy/move, rename, delete and
 paste remain disabled; remote tabs never fall through to local POSIX file
 workers. Native GIO/UDisks2 operation and capability APIs and safe remote
-transfers are still outstanding. **Keyring integration is explicitly deferred**
-by the project owner; unattended credential persistence remains disabled.
+transfers are still outstanding. **Keyring saving is explicitly opt-in** and
+uses the desktop Secret Service; unattended automatic authentication remains
+disabled. Actual Synology/mDNS/keyring acceptance on Mint is still open.
 Physical Mint/USB and network-disconnect acceptance is also postponed. These
 are recorded limitations, not passed tests or a stable 0.4 sign-off.
 
@@ -82,7 +95,8 @@ Ctrl+Shift+PageUp/PageDown reorders them, Ctrl+Shift+T reopens recently
 closed tabs and a right-click on any tab exposes duplicate/move/close actions.
 With session restore enabled, **location-only** Back/Forward history (40
 entries each) and the 16 most recently closed tab locations now also survive
-an app restart. Search text and credentials are never persisted. The sidebar
+an app restart. Search text is never persisted; network credentials persist
+only when the user explicitly opts in to the system keyring. The sidebar
 includes an asynchronous expandable folder tree; list headings sort by
 name/type/size/date and natural sorting places `file2` before `file10`.
 The type filter shows images, documents, audio, video, code or archives.

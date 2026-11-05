@@ -298,7 +298,9 @@ recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
   URI credentials. Read-only remote listing works in normal tabs; native remote
   file operations are not yet available. Alpha.6 adds a limited interactive
   username/domain/password flow through the GIO console mount operation;
-  real-device verification and native mount APIs remain outstanding. A
+  real-device verification and native mount APIs remain outstanding. Alpha.8
+  adds passive SMB network discovery through existing GVfs/Avahi services;
+  missing advertisements still require typing an address once. A
   bounded metadata listing distinguishes traversable directories from files
   that cannot yet be opened or transferred. Small UTF-8 remote files can now
   be inspected through a bounded, cancellable, read-only text preview; binary
@@ -306,15 +308,20 @@ recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
 - [ ] Connect dialog, secure credential handling, favorites and reconnect.
   A basic URI dialog, 32 validated persistent URI favorites and manual
   reconnect are implemented. Alpha.6 supplies a masked one-attempt credential
-  prompt; system keyring integration and recovery from mid-operation
-  disconnects remain open.
+  prompt; alpha.8 adds an explicitly selected Secret Service keyring save,
+  lookup and forget flow and automatically favorites successfully connected
+  URIs. Actual Mint keyring/NAS tests, unattended reconnect and recovery from
+  mid-operation disconnects remain open.
 
 **Gate:** offline shares, disconnections, bad credentials and removed USB
 devices produce clear errors without frozen UI or silent data loss.
 
-**Owner decision (2026-11-04, updated 2026-11-05):** Keep keyring persistence
-and real-device, unplug and disconnection acceptance deferred, but implement
-an explicit session-only NAS sign-in dialog in alpha.6.
+**Owner decision (2026-11-04, updated 2026-11-05):** The owner now explicitly
+requests optional saved NAS logins and automatic *discovery* of advertised
+servers. Alpha.8 stores selected credentials only in the user's Linux Secret
+Service after successful connection; settings never store the password. No
+password persistence occurs by default, and no automatic login is attempted.
+Real-device, unplug, keyring, and disconnection acceptance are still open.
 Keep remote mutations disabled; do not present these untested integrations as
 stable or infer that skipping the tests satisfies the 0.4 release gate.
 
@@ -406,6 +413,13 @@ and isolated installation checks. Real Mint app-menu launch awaits owner
 verification. `/mnt/medien` still fails with Linux ENODEV in the owner's
 screenshot; we need `findmnt`/`ls` evidence before diagnosing or changing the
 live mount. The owner explicitly **did not approve stable 0.6 acceptance**.
+
+**Alpha.8 (2026-11-05):** Passive SMB/GVfs and Avahi NAS discovery, browsable
+server share entry points, explicit keyring save/load/forget and automatic
+URI-only favorites are implemented for preview. The broken `/mnt/medien`
+system mount is not silently remounted; use `smb://server/share` through GIO
+while diagnosing the mount separately. Discovery and keyring acceptance still
+need the real Mint session. The stable 0.6 gate remains **not approved**.
 
 ### 0.7 — Previews and metadata
 

@@ -1,10 +1,12 @@
 use crate::{
     archive, clipboard,
     config::{self, Config},
+    discovery,
     file_view::{self, natural_cmp},
     filesystem::{self, Action, ConflictPolicy, Entry, Progress},
     folder_tree::FolderTree,
     journal::{self, Inspection as JournalInspection, State as JournalState},
+    keyring,
     location::Location,
     operation_queue::OperationQueue,
     preview,
@@ -328,6 +330,17 @@ struct RemotePreviewResult {
 struct RefreshResult {
     folders: Vec<(u64, PathBuf, Option<SystemTime>)>,
     volumes: Vec<filesystem::MountedVolume>,
+}
+
+enum KeyringEvent {
+    Loaded {
+        uri: String,
+        result: Result<Option<MountCredentials>, String>,
+    },
+    Forgotten {
+        uri: String,
+        result: Result<(), String>,
+    },
 }
 
 struct PreviewResult {
@@ -781,6 +794,18 @@ pub struct Explorer {
     volume_connect_user: String,
     volume_connect_domain: String,
     volume_connect_password: String,
+    volume_connect_remember: bool,
+    keyring_loaded_uri: Option<String>,
+    keyring_sender: Sender<KeyringEvent>,
+    keyring_receiver: Receiver<KeyringEvent>,
+    keyring_busy: bool,
+    discovery_sender: Sender<Result<Vec<discovery::NetworkHost>, String>>,
+    discovery_receiver: Receiver<Result<Vec<discovery::NetworkHost>, String>>,
+    discovery_open: bool,
+    discovery_busy: bool,
+    discovery_hosts: Vec<discovery::NetworkHost>,
+    discovery_error: Option<String>,
+    discovery_cancel: Arc<AtomicBool>,
     volume_confirm: Option<VolumeAction>,
     volume_busy: bool,
     preview_sender: Sender<PreviewResult>,
@@ -878,6 +903,8 @@ impl Explorer {
         let (remote_preview_sender, remote_preview_receiver) = mpsc::channel();
         let (refresh_sender, refresh_receiver) = mpsc::channel();
         let (volume_sender, volume_receiver) = mpsc::channel();
+        let (keyring_sender, keyring_receiver) = mpsc::channel();
+        let (discovery_sender, discovery_receiver) = mpsc::channel();
         let (preview_sender, preview_receiver) = mpsc::channel();
         let (property_sender, property_receiver) = mpsc::channel();
         let (op_sender, op_receiver) = mpsc::channel();
@@ -929,6 +956,18 @@ impl Explorer {
             volume_connect_user: String::new(),
             volume_connect_domain: String::new(),
             volume_connect_password: String::new(),
+            volume_connect_remember: false,
+            keyring_loaded_uri: None,
+            keyring_sender,
+            keyring_receiver,
+            keyring_busy: false,
+            discovery_sender,
+            discovery_receiver,
+            discovery_open: false,
+            discovery_busy: false,
+            discovery_hosts: Vec::new(),
+            discovery_error: None,
+            discovery_cancel: Arc::new(AtomicBool::new(false)),
             volume_confirm: None,
             volume_busy: false,
             preview_sender,
@@ -1536,7 +1575,57 @@ impl Explorer {
         }
     }
 
-    fn start_volume_action(&mut self, action: VolumeAction) {
+    fn start_discovery(&mut self) {
+        if self.discovery_busy {
+            return;
+        }
+        self.discovery_open = true;
+        self.discovery_busy = true;
+        self.discovery_error = None;
+        self.discovery_hosts.clear();
+        self.discovery_cancel = Arc::new(AtomicBool::new(false));
+        let cancelled = Arc::clone(&self.discovery_cancel);
+        let sender = self.discovery_sender.clone();
+        thread::spawn(move || {
+            let result = discovery::discover(&cancelled);
+            let _ = sender.send(result);
+        });
+    }
+
+    fn request_keyring(&mut self, forget: bool) {
+        if self.keyring_busy || self.volume_connect_uri.is_empty() {
+            return;
+        }
+        self.keyring_busy = true;
+        let uri = self.volume_connect_uri.clone();
+        let sender = self.keyring_sender.clone();
+        thread::spawn(move || {
+            let event = if forget {
+                KeyringEvent::Forgotten {
+                    result: keyring::forget(&uri),
+                    uri,
+                }
+            } else {
+                KeyringEvent::Loaded {
+                    result: keyring::lookup(&uri),
+                    uri,
+                }
+            };
+            let _ = sender.send(event);
+        });
+    }
+
+    fn open_network_login(&mut self, uri: String) {
+        self.volume_connect_uri = uri;
+        self.volume_connect_user.clear();
+        self.volume_connect_domain.clear();
+        volume::clear_password(&mut self.volume_connect_password);
+        self.volume_connect_remember = false;
+        self.keyring_loaded_uri = None;
+        self.volume_connect_open = true;
+    }
+
+    fn start_volume_action(&mut self, action: VolumeAction, remember_login: bool) {
         if self.volume_busy {
             return;
         }
@@ -1551,13 +1640,90 @@ impl Explorer {
                 _ => None,
             };
             let result = volume::execute(&action).map(|()| {
-                (
-                    format!("{label} succeeded. Refreshing mounted volumes…"),
-                    connected_uri,
-                )
+                let mut message = format!("{label} succeeded. Refreshing mounted volumes…");
+                if remember_login
+                    && let VolumeAction::ConnectAuthenticated(uri, credentials) = &action
+                {
+                    match keyring::save(uri, credentials) {
+                        Ok(()) => message.push_str(" Login saved in the Linux keyring."),
+                        Err(error) => message.push_str(&format!(" Login was not saved: {error}")),
+                    }
+                }
+                (message, connected_uri)
             });
             let _ = sender.send(result);
         });
+    }
+
+    fn network_browser(&mut self, context: &egui::Context) {
+        if !self.discovery_open {
+            return;
+        }
+        let mut open = true;
+        let mut retry = false;
+        let mut connect = None;
+        let mut browse = None;
+        egui::Window::new("Discover network computers")
+            .open(&mut open)
+            .resizable(true)
+            .default_width(440.0)
+            .show(context, |ui| {
+                ui.label("Nearby advertised SMB/NAS servers (no automatic connections):");
+                ui.horizontal(|ui| {
+                    retry = ui
+                        .add_enabled(!self.discovery_busy, egui::Button::new("Scan again"))
+                        .clicked();
+                    if self.discovery_busy {
+                        ui.spinner();
+                        ui.label("Looking for network shares…");
+                    }
+                });
+                if let Some(error) = &self.discovery_error {
+                    ui.colored_label(Color32::LIGHT_RED, error);
+                } else if !self.discovery_busy && self.discovery_hosts.is_empty() {
+                    ui.label("No NAS was advertised. You can still connect using its address.");
+                }
+                egui::ScrollArea::vertical()
+                    .max_height(280.0)
+                    .show(ui, |ui| {
+                        for host in &self.discovery_hosts {
+                            ui.horizontal(|ui| {
+                                ui.vertical(|ui| {
+                                    ui.label(&host.label);
+                                    ui.small(format!("{} · {}", host.uri, host.source));
+                                });
+                                if ui
+                                    .button("Browse shares")
+                                    .on_hover_text(
+                                        "List shares using GVfs; sign in when a share requires it",
+                                    )
+                                    .clicked()
+                                {
+                                    browse = Some(host.uri.clone());
+                                }
+                                if ui.button("Sign in").clicked() {
+                                    connect = Some(host.uri.clone());
+                                }
+                            });
+                            ui.separator();
+                        }
+                    });
+            });
+        if retry {
+            self.start_discovery();
+        }
+        if let Some(uri) = browse {
+            self.discovery_cancel.store(true, Ordering::Relaxed);
+            self.discovery_open = false;
+            self.navigate_remote(uri);
+        } else if let Some(uri) = connect {
+            self.discovery_cancel.store(true, Ordering::Relaxed);
+            self.discovery_open = false;
+            self.open_network_login(uri);
+        } else if !open {
+            self.discovery_cancel.store(true, Ordering::Relaxed);
+            self.discovery_open = false;
+        }
     }
 
     fn volume_dialog(&mut self, context: &egui::Context) {
@@ -1576,6 +1742,19 @@ impl Explorer {
                         egui::TextEdit::singleline(&mut self.volume_connect_uri)
                             .hint_text("smb://server/share"),
                     );
+                    // A saved password belongs to one server; editing its
+                    // address must not send the secret to a different host.
+                    if self
+                        .keyring_loaded_uri
+                        .as_ref()
+                        .is_some_and(|loaded| loaded != &self.volume_connect_uri)
+                    {
+                        volume::clear_password(&mut self.volume_connect_password);
+                        self.volume_connect_user.clear();
+                        self.volume_connect_domain.clear();
+                        self.volume_connect_remember = false;
+                        self.keyring_loaded_uri = None;
+                    }
                     ui.separator();
                     ui.label("Username (leave empty for server default):");
                     ui.add_sized(
@@ -1596,7 +1775,18 @@ impl Explorer {
                             .password(true)
                             .hint_text("NAS password"),
                     );
-                    ui.small("Credentials stay in this connection attempt only. RiceExplorer does not save a password or put it in the URL.");
+                    ui.checkbox(&mut self.volume_connect_remember, "Remember login in Linux keyring")
+                        .on_hover_text("Only after a successful connection. Requires libsecret-tools and an unlocked Secret Service; never stored in RiceExplorer settings.");
+                    ui.horizontal(|ui| {
+                        if ui.add_enabled(!self.keyring_busy, egui::Button::new("Use saved login")).clicked() {
+                            self.request_keyring(false);
+                        }
+                        if ui.add_enabled(!self.keyring_busy, egui::Button::new("Forget saved login")).clicked() {
+                            self.request_keyring(true);
+                        }
+                        if self.keyring_busy { ui.spinner(); }
+                    });
+                    ui.small("Passwords are never included in the URL. Saving is opt-in and uses your desktop's encrypted Secret Service.");
                     connect = ui.add_enabled(!self.volume_busy, egui::Button::new("Connect")).clicked();
                 });
             self.volume_connect_open = open;
@@ -1616,9 +1806,19 @@ impl Explorer {
                         } else {
                             VolumeAction::ConnectAuthenticated(remote.uri, credentials)
                         };
-                        self.start_volume_action(action);
+                        if self.volume_connect_remember
+                            && !matches!(&action, VolumeAction::ConnectAuthenticated(_, _))
+                        {
+                            self.status =
+                                Some(("Enter a password before saving a login".into(), true));
+                            return;
+                        }
+                        let remember_login = self.volume_connect_remember;
+                        self.start_volume_action(action, remember_login);
                         self.volume_connect_open = false;
                         self.volume_connect_uri.clear();
+                        self.volume_connect_remember = false;
+                        self.keyring_loaded_uri = None;
                     }
                     Ok(Location::Local(_)) => {
                         self.status = Some(("Enter a supported network URI".into(), true))
@@ -1627,6 +1827,8 @@ impl Explorer {
                 }
             } else if !open {
                 volume::clear_password(&mut self.volume_connect_password);
+                self.volume_connect_remember = false;
+                self.keyring_loaded_uri = None;
                 self.volume_connect_open = false;
             }
         }
@@ -1649,7 +1851,7 @@ impl Explorer {
                     });
                 });
             if approve {
-                self.start_volume_action(action);
+                self.start_volume_action(action, false);
             }
             if approve || dismiss {
                 self.volume_confirm = None;
@@ -1988,6 +2190,12 @@ impl Explorer {
             self.status = Some(match result {
                 Ok((message, connected_uri)) => {
                     if let Some(uri) = connected_uri {
+                        if self.config.remote_favorites.len() < 32
+                            && !self.config.remote_favorites.contains(&uri)
+                        {
+                            self.config.remote_favorites.push(uri.clone());
+                            self.dirty_config = true;
+                        }
                         self.navigate_remote(uri);
                     }
                     (message, false)
@@ -1995,6 +2203,61 @@ impl Explorer {
                 Err(error) => (error, true),
             });
             self.last_refresh_check = Instant::now() - Duration::from_secs(3);
+        }
+        while let Ok(event) = self.keyring_receiver.try_recv() {
+            self.keyring_busy = false;
+            match event {
+                KeyringEvent::Loaded { uri, result }
+                    if self.volume_connect_open && self.volume_connect_uri == uri =>
+                {
+                    match result {
+                        Ok(Some(mut credentials)) => {
+                            self.volume_connect_user = std::mem::take(&mut credentials.username);
+                            self.volume_connect_domain = std::mem::take(&mut credentials.domain);
+                            volume::clear_password(&mut self.volume_connect_password);
+                            self.volume_connect_password =
+                                std::mem::take(&mut credentials.password);
+                            self.volume_connect_remember = true;
+                            self.keyring_loaded_uri = Some(uri);
+                            self.status =
+                                Some(("Saved NAS login loaded from Linux keyring".into(), false));
+                        }
+                        Ok(None) => {
+                            self.status =
+                                Some(("No login saved for this network location".into(), false))
+                        }
+                        Err(error) => self.status = Some((error, true)),
+                    }
+                }
+                KeyringEvent::Forgotten { uri, result }
+                    if self.volume_connect_open && self.volume_connect_uri == uri =>
+                {
+                    self.status = Some(match result {
+                        Ok(()) => {
+                            self.volume_connect_remember = false;
+                            self.keyring_loaded_uri = None;
+                            volume::clear_password(&mut self.volume_connect_password);
+                            (
+                                "Saved network login removed from Linux keyring".into(),
+                                false,
+                            )
+                        }
+                        Err(error) => (error, true),
+                    });
+                }
+                _ => {}
+            }
+        }
+        while let Ok(result) = self.discovery_receiver.try_recv() {
+            self.discovery_busy = false;
+            match result {
+                Ok(hosts) => {
+                    self.discovery_hosts = hosts;
+                    self.discovery_error = None;
+                }
+                Err(error) if error == "Discovery cancelled" => {}
+                Err(error) => self.discovery_error = Some(error),
+            }
         }
         while let Ok(message) = self.scan_receiver.try_recv() {
             if let Some(index) = self
@@ -3809,6 +4072,12 @@ impl Explorer {
                                 }
                             }
                             SidebarSection::Volumes => {
+                                if ui.button("Discover NAS on network…").clicked() {
+                                    self.discovery_open = true;
+                                    if self.discovery_hosts.is_empty() {
+                                        self.start_discovery();
+                                    }
+                                }
                                 if ui
                                     .add_enabled(
                                         !self.volume_busy,
@@ -3816,7 +4085,7 @@ impl Explorer {
                                     )
                                     .clicked()
                                 {
-                                    self.volume_connect_open = true;
+                                    self.open_network_login(String::new());
                                 }
                                 if self.volume_busy {
                                     ui.small("GIO device operation in progress…");
@@ -4513,10 +4782,9 @@ impl Explorer {
                         .add_enabled(!self.volume_busy, egui::Button::new("Connect / Sign in"))
                         .clicked()
                     {
-                        self.volume_connect_uri =
-                            self.current().remote_uri.clone().unwrap_or_default();
-                        volume::clear_password(&mut self.volume_connect_password);
-                        self.volume_connect_open = true;
+                        self.open_network_login(
+                            self.current().remote_uri.clone().unwrap_or_default(),
+                        );
                     }
                     let uri = self.current().remote_uri.clone().unwrap_or_default();
                     let saved = self.config.remote_favorites.contains(&uri);
@@ -5451,6 +5719,13 @@ impl Explorer {
     }
 }
 
+impl Drop for Explorer {
+    fn drop(&mut self) {
+        volume::clear_password(&mut self.volume_connect_password);
+        self.discovery_cancel.store(true, Ordering::Relaxed);
+    }
+}
+
 impl eframe::App for Explorer {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let context = ui.ctx().clone();
@@ -5509,6 +5784,7 @@ impl eframe::App for Explorer {
         self.dialogs(&context);
         self.archive_window(&context);
         self.volume_dialog(&context);
+        self.network_browser(&context);
         self.recovery_dialog(&context);
         self.transfer_dialog(&context);
         if self.dirty_config && self.session_owner {

@@ -1,6 +1,6 @@
 # Release process (Linux x86_64)
 
-RiceExplorer 0.6.0-alpha.7 is a **development preview candidate**, not signed off for use
+RiceExplorer 0.6.0-alpha.8 is a **development preview candidate**, not signed off for use
 with irreplaceable files or as a complete network/archive file manager.
 The code can produce a tested distribution bundle, but a green CI run alone
 does not satisfy the safety, recovery and Linux Mint hardware gates in
@@ -69,8 +69,9 @@ as prereleases. Do **not** create the final tag before these gates pass.
    GIO/GVfs implementation, including safe transfer semantics, cancellation,
    error recovery and non-overwrite behavior.
 2. Validate UDisks2/Polkit drive capabilities and protected mount/unmount/eject.
-   Keyring integration is deferred by owner decision; therefore leave app
-   credential persistence and unsafe/interactive remote writes disabled.
+   Keyring persistence is now opt-in by the updated owner decision for alpha.8,
+   restricted to the desktop Secret Service and not a plaintext fallback;
+   keep unsafe/interactive remote writes disabled pending native GIO tests.
 3. Real SMB/SFTP/WebDAV/NFS/MTP, offline/authentication failure and removable
    device tests are deferred by owner decision. They must eventually pass
    before declaring their corresponding capabilities safe for daily use.
@@ -116,5 +117,7 @@ as prereleases. Do **not** create the final tag before these gates pass.
 2. Verify duplication, reordering and reopen with mouse and keyboard in all
    seven skins, including offline remote tabs without blocking launch.
 3. Repeat the 0.3/0.4/0.5 safety and physical-device checks before sign-off.
-   Keyring and physical Mint/device/disconnection tests are deferred by owner
-   decision, not silently treated as passing.
+   Keyring and physical Mint/device/disconnection tests are outstanding, not
+   silently treated as passing. Alpha.8 adds passive NAS discovery and optional
+   Secret Service saving; verify both with a real Synology and an unlocked and
+   locked keyring before stable sign-off.
