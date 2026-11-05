@@ -4136,7 +4136,9 @@ impl Explorer {
                 search_enabled,
                 egui::Button::new("Subfolders").selected(self.current().recursive_search),
             )
-            .on_hover_text("Search the current folder and its subfolders (same filesystem for content search)")
+            .on_hover_text(
+                "Search the current folder and its subfolders (same filesystem for content search)",
+            )
             .clicked()
         {
             let next = !self.current().recursive_search;

@@ -326,8 +326,7 @@ fn text_contains(path: &Path, needle: &str, cancelled: &AtomicBool) -> io::Resul
         return Ok((false, bytes.len() as u64));
     }
     let found = !bytes.contains(&0)
-        && std::str::from_utf8(&bytes)
-            .is_ok_and(|text| text.to_lowercase().contains(needle));
+        && std::str::from_utf8(&bytes).is_ok_and(|text| text.to_lowercase().contains(needle));
     Ok((found, bytes.len() as u64))
 }
 
@@ -410,7 +409,12 @@ pub fn search_with_options(
             let inspect_contents = on_root_device;
             #[cfg(not(unix))]
             let inspect_contents = true;
-            if contents && !name_match && metadata.is_file() && inspect_contents && !needle.is_empty() {
+            if contents
+                && !name_match
+                && metadata.is_file()
+                && inspect_contents
+                && !needle.is_empty()
+            {
                 if metadata.len() > MAX_CONTENT_FILE_BYTES {
                     skipped_large += 1;
                 } else if inspected_files >= MAX_CONTENT_FILES
@@ -443,7 +447,11 @@ pub fn search_with_options(
         Some(format!(
             "Content search is partial: {} files over 2 MiB skipped{} (at most 4,096 files, 64 MiB and 12 seconds per search)",
             skipped_large,
-            if budget_hit { "; scan budget reached" } else { "" }
+            if budget_hit {
+                "; scan budget reached"
+            } else {
+                ""
+            }
         ))
     } else if budget_hit {
         Some("Filename search reached its 250,000-entry / 20,000-match limit".into())
@@ -5452,7 +5460,11 @@ mod tests {
         fs::create_dir(root.join("nested")).unwrap();
         fs::write(root.join("notes.txt"), b"an unusual NeEdLe in a note").unwrap();
         fs::write(root.join("binary.dat"), b"needle\0ignored").unwrap();
-        fs::write(root.join("nested").join("deep.txt"), b"needle in another folder").unwrap();
+        fs::write(
+            root.join("nested").join("deep.txt"),
+            b"needle in another folder",
+        )
+        .unwrap();
         let cancel = AtomicBool::new(false);
         let local = search_with_options(&root, "needle", false, false, true, &cancel).unwrap();
         assert_eq!(local.entries.len(), 1);
@@ -5461,7 +5473,12 @@ mod tests {
 
         let recursive = search_with_options(&root, "needle", false, true, true, &cancel).unwrap();
         assert_eq!(recursive.entries.len(), 2);
-        assert!(recursive.entries.iter().any(|entry| entry.path.ends_with("deep.txt")));
+        assert!(
+            recursive
+                .entries
+                .iter()
+                .any(|entry| entry.path.ends_with("deep.txt"))
+        );
 
         let large = root.join("large.txt");
         fs::File::create(&large)
@@ -5482,15 +5499,9 @@ mod tests {
         fs::write(external.join("target.txt"), b"hidden needle").unwrap();
         symlink(external.join("target.txt"), root.join("shortcut.txt")).unwrap();
         symlink(&external, root.join("folder-link")).unwrap();
-        let results = search_with_options(
-            &root,
-            "needle",
-            false,
-            true,
-            true,
-            &AtomicBool::new(false),
-        )
-        .unwrap();
+        let results =
+            search_with_options(&root, "needle", false, true, true, &AtomicBool::new(false))
+                .unwrap();
         assert!(results.entries.is_empty());
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(external).unwrap();
