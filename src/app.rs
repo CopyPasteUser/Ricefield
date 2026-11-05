@@ -3749,7 +3749,10 @@ impl Explorer {
 
     fn find_duplicates_in_view(&mut self) {
         if self.current().remote_uri.is_some() {
-            self.status = Some(("Duplicate scan is available for local folders only".into(), true));
+            self.status = Some((
+                "Duplicate scan is available for local folders only".into(),
+                true,
+            ));
             return;
         }
         let entries: Vec<_> = self
@@ -5811,7 +5814,11 @@ impl Explorer {
                                         "Hashed {} files · {} skipped{}",
                                         report.hashed,
                                         report.skipped,
-                                        if report.partial { " · partial results" } else { "" }
+                                        if report.partial {
+                                            " · partial results"
+                                        } else {
+                                            ""
+                                        }
                                     ));
                                     if report.groups.is_empty() {
                                         ui.label("No matching hashes among inspected files.");
@@ -5821,7 +5828,11 @@ impl Explorer {
                                         .show(ui, |ui| {
                                             for (index, group) in report.groups.iter().enumerate() {
                                                 ui.separator();
-                                                ui.strong(format!("Group {} · {} files", index + 1, group.len()));
+                                                ui.strong(format!(
+                                                    "Group {} · {} files",
+                                                    index + 1,
+                                                    group.len()
+                                                ));
                                                 for path in group {
                                                     ui.monospace(path.display().to_string());
                                                 }

@@ -192,14 +192,8 @@ pub(crate) fn sha256_limited(
     command.stdin(file);
     // `sha256sum` with no file arguments hashes the supplied file descriptor.
     // Its stdout is 68 bytes for a SHA-256 digest and it never sees a pathname.
-    let result = crate::volume::capture_gio_with_stdin(
-        command,
-        128,
-        timeout,
-        stop,
-        "SHA-256",
-    )
-    .map_err(io::Error::other)?;
+    let result = crate::volume::capture_gio_with_stdin(command, 128, timeout, stop, "SHA-256")
+        .map_err(io::Error::other)?;
     let digest = std::str::from_utf8(&result).map_err(io::Error::other)?;
     let hex = digest.split_whitespace().next().unwrap_or("");
     if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
