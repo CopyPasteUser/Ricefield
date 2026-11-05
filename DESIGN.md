@@ -91,7 +91,8 @@ All major corners use the selected `metrics.rounding` value. Built-in radii span
 Buttons have focus, hover, active and disabled states driven by the shared egui widget style; controls with no available action are disabled. Search includes a clear affordance. File rows show selected/hover feedback and tooltip paths. A confirmation window precedes trashing; failure details remain in the bottom status bar. Folder loading uses a spinner and empty/no-match/error messages. Keyboard and pointer act on the same operation methods. Filesystem logic never refers to visual themes.
 
 The folder-tree disclosure buttons use universal `+`/`-` glyphs and the
-existing Expand/Collapse tooltips, not font-dependent Unicode triangles;
+existing Expand/Collapse tooltips with a 24×24 logical-point target, not
+font-dependent Unicode triangles;
 Linux fallback fonts must never make a navigation control appear blank.
 
 ## Do's and Don'ts
