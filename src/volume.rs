@@ -67,7 +67,7 @@ pub fn preview_remote_text(uri: &str, cancelled: &AtomicBool) -> Result<String, 
     decode_remote_text(&bytes)
 }
 
-fn capture_gio(
+pub(crate) fn capture_gio(
     mut command: Command,
     limit: u64,
     timeout: Duration,

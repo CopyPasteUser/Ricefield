@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — 0.6.0-alpha.8 passive NAS discovery and opt-in keyring
+
+- Add a cancellable, read-only network browser that finds SMB servers from
+  GVfs workgroups/network aliases and Avahi's advertised `_smb._tcp` services;
+  browse server shares or open their sign-in dialog without typing an address.
+- Add opt-in credential saving through the desktop Secret Service via
+  `secret-tool` with password supplied on stdin, never argv/config/logs; load
+  and forget saved per-URI credentials in the native sign-in dialog.
+- Remember a network URI in favorites following successful GIO connect. This
+  persists only its location, not the password. Network mutation and automatic
+  authentication remain disabled. Real Mint/NAS/keyring acceptance is open.
+- Include parser/command safety regression tests; no stable release tag.
+
 ## Unreleased — 0.6.0-alpha.7 desktop integration and mount triage
 
 - Install a discoverable application-menu entry in both source and downloaded
