@@ -8,6 +8,9 @@ case "$data_dir" in
   /*) ;;
   *) echo 'XDG_DATA_HOME must be an absolute path' >&2; exit 1 ;;
 esac
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$script_dir/scripts/user_install_lock.sh"
+rice_explorer_lock_installation
 rm -f -- \
   "$user_home/.local/bin/rice-explorer" \
   "$data_dir/applications/rice-explorer.desktop" \

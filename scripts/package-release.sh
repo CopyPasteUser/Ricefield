@@ -48,6 +48,8 @@ install -Dm755 -- "$repo_dir/scripts/install_desktop_entry.sh" \
   "$bundle_dir/scripts/install_desktop_entry.sh"
 install -Dm755 -- "$repo_dir/scripts/install_transaction.sh" \
   "$bundle_dir/scripts/install_transaction.sh"
+install -Dm644 -- "$repo_dir/scripts/user_install_lock.sh" \
+  "$bundle_dir/scripts/user_install_lock.sh"
 install -Dm755 -- "$repo_dir/uninstall.sh" "$bundle_dir/uninstall.sh"
 install -Dm644 -- "$repo_dir/assets/rice-explorer.desktop" \
   "$bundle_dir/assets/rice-explorer.desktop"

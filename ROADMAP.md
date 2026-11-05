@@ -492,6 +492,9 @@ touching disk; real HDD and UI responsiveness measurements remain outstanding.
 
 ### 1.0 — Production release
 
+- [x] Serialize concurrent user-local installer, rollback and uninstall
+  operations with a shared advisory lock and automated overlapping-process
+  tests. Power-loss and physical Mint validation still required.
 - [x] Add automated isolated clean-install, upgrade, injected registration
   failure, atomic binary replacement and installer rollback tests; enable
   `v1.0.*` artifact workflows without publishing a tag. Real-device update,

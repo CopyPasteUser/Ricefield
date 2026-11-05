@@ -18,6 +18,11 @@ if [[ ! -f "$source_binary" || ! -x "$source_binary" ]]; then
   exit 1
 fi
 
+# Acquire before inspecting any destination: a failed upgrade must never
+# restore stale backups on top of a newer concurrently installed version.
+source "$project_dir/scripts/user_install_lock.sh"
+rice_explorer_lock_installation
+
 targets=(
   "$user_home/.local/bin/rice-explorer"
   "$data_dir/applications/rice-explorer.desktop"
