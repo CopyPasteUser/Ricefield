@@ -4691,7 +4691,11 @@ impl Explorer {
         tab_index: usize,
         item: FileItemLayout,
     ) {
-        let FileItemLayout { width, height, grid } = item;
+        let FileItemLayout {
+            width,
+            height,
+            grid,
+        } = item;
         let selected = self.tabs[tab_index].selected.contains(&entry.path);
         let (rect, response) =
             ui.allocate_exact_size(Vec2::new(width.max(80.0), height), Sense::click_and_drag());

@@ -13,7 +13,7 @@ not replace the outstanding real-device acceptance.
 
 RiceExplorer is designed as the file-management companion to [RiceBowl](https://github.com/CopyPasteUser/RiceBowl). Its renderer, filesystem operations and visual profiles are separate: switching from Windows 98 to Windows 7 or ChromeOS changes the chrome, geometry, controls and icons without replacing the file manager or disturbing an open folder.
 
-**0.4 progress on `main` (not yet released):** Local paths, `file://`
+**0.4 foundation (stable acceptance remains open):** Local paths, `file://`
 and validated SMB/SFTP/WebDAV/MTP addresses share a typed location parser.
 Network shares can be connected through a non-blocking GIO attempt. Once
 connected, a remote directory opens as a **read-only normal tab**, with
@@ -194,7 +194,10 @@ renderers remain part of the roadmap.
 - Copy files into a specific folder by dragging them from the desktop, another file manager, another RiceExplorer pane, or onto a folder row; external drag-out remains open.
 - External TOML themes with configurable top/bottom tool regions, reorderable sidebar modules and left/right preview; persistent user settings. A single executable works with all rices.
 
-**Most recent functional work:** synced staging and destination directories;
+**Most recent functional work:** two-pane browsing (F3), bounded session
+navigation and closed-tab recovery, separate local windows (Ctrl+Shift+N),
+lazy folder tree, natural sorting, file-kind filters and internal copy drag.
+Earlier safety work includes synced staging and destination directories;
 read-only crash-recovery triage showing source, destination and staging status;
 coalesced recovery rescans; whole-batch Trash/Delete preflight with per-item
 outcomes; and transfer elapsed time, average speed and approximate ETA.
@@ -211,7 +214,7 @@ Asynchronous Paste conflict previews, full-batch worker preflight and
 *Require no conflicts* remain available. Detailed per-file results appear in
 the Transfers window. The CI workflow checks
 Rust formatting, Clippy, unit tests, a release
-build, CLI startup and Xvfb GUI startup for all seven skins. These are
+build, CLI startup and Xvfb GUI startup/split toggle for all seven skins. These are
 development checks, **not** a production release or full Linux Mint acceptance.
 
 ### Install on Linux Mint / Xfce
@@ -238,8 +241,16 @@ out and erase stored tab paths; the switch applies across all seven skins.
 Sessions are limited to 32 absolute UTF-8 local paths or validated remote URIs.
 Non-UTF-8 paths remain usable but are not written to the TOML session; offline
 mounts and network locations are scanned in the background and may show an
-error rather than blocking launch. No passwords or URI userinfo are saved. Tab history,
-search queries and pending file operations are **not** replayed on restart.
+error rather than blocking launch. No passwords or URI userinfo are saved.
+Back/Forward location history (at most 40 entries each) and up to 16 closed
+tab locations are restored; search queries, selections and pending file
+operations are **not** replayed on restart.
+
+To update a source installation after the alpha.2 merge:
+
+```bash
+cd riceExplorer && git pull --ff-only && bash install.sh
+```
 
 To uninstall the application files, run `bash uninstall.sh` from the
 repository. This leaves personal settings and themes intact; it does not
