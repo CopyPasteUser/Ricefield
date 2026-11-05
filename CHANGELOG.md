@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.0-rc.4 — bounded remote folder downloads (verification pending)
+
+- Add a recursive read-only network-folder download with private local staging,
+  cumulative progress, cancellation and atomic no-overwrite publication.
+- Enforce 4,096 entries, 512 folders, 16 levels, 8 GiB and 20 minutes for an
+  entire download. Reject unsafe child URIs/names and remove ordinary failed
+  staging data. Do not expose partial trees as completed folders.
+- Add deterministic tree, failure and over-budget regression tests. Remote
+  metadata preservation and native network writes are still unsupported;
+  hardware/NAS tests remain separate release gates.
+
 ## 1.0.0-rc.3 — readable NAS names and destination selection (CI verified; device acceptance pending)
 
 - Show decoded Unicode and spaced filenames on remote shares while keeping
