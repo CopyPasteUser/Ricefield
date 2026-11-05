@@ -32,6 +32,10 @@ Linux desktop file management for RiceBowl users. v0.1 interface English; runtim
 - Sorting always groups directories before files. Filters operate only on the current folder; no unrequested recursive search/indexing.
 - Shift selects a contiguous visible range; Ctrl toggles one item. Navigation history is independent of filesystem mutation history.
 - Keyboard shortcuts do not copy/cut/paste files while a text field has focus.
+- Global navigation/file shortcuts are suspended while network login,
+  mount confirmation, network discovery or recovery review windows are open;
+  typing in those surfaces cannot create folders or switch file tabs behind
+  the dialog. Ordinary address/search focus still permits Ctrl+N.
 
 ## Mutations
 
