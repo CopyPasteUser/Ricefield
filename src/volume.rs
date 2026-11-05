@@ -191,8 +191,7 @@ fn remote_name_matches(encoded: &str, lower_needle: &str) -> bool {
             index += 1;
         }
     }
-    String::from_utf8(decoded)
-        .is_ok_and(|name| name.to_lowercase().contains(lower_needle))
+    String::from_utf8(decoded).is_ok_and(|name| name.to_lowercase().contains(lower_needle))
 }
 
 fn hex(byte: u8) -> Option<u8> {
@@ -721,7 +720,10 @@ mod tests {
 
     #[test]
     fn network_search_matches_human_readable_uri_names() {
-        assert!(remote_name_matches("Season%201%20Finale.mkv", "season 1 finale"));
+        assert!(remote_name_matches(
+            "Season%201%20Finale.mkv",
+            "season 1 finale"
+        ));
         assert!(remote_name_matches("%E6%97%A5%E6%9C%AC.mp3", "日本"));
         assert!(!remote_name_matches("%FF.dat", "test"));
     }
