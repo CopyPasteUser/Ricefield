@@ -204,7 +204,7 @@ pub struct FolderScan {
 /// Preserve readable siblings when an unplugged or stale mount refuses a
 /// metadata lookup. A failure to open the *folder itself* still returns Err.
 pub fn scan_cancellable(path: &Path, cancelled: &AtomicBool) -> io::Result<FolderScan> {
-    scan_with_metadata(path, cancelled, fs::symlink_metadata)
+    scan_with_metadata(path, cancelled, |entry| fs::symlink_metadata(entry))
 }
 
 fn scan_with_metadata(

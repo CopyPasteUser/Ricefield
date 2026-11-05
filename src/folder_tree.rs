@@ -82,7 +82,7 @@ impl FolderTree {
 }
 
 fn list_directories(path: &Path) -> std::io::Result<Vec<PathBuf>> {
-    list_directories_with(path, fs::DirEntry::file_type)
+    list_directories_with(path, |entry| entry.file_type())
 }
 
 fn list_directories_with(
