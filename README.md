@@ -4,7 +4,7 @@
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Development preview: v0.6.0-alpha.4** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+> **Development preview: v0.6.0-alpha.5** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
 **Distribution:** An [automated Linux x86_64 preview bundle](RELEASE.md) can
 be built without distributing Rust sources to every end user. The verified
@@ -87,13 +87,13 @@ a no-overwrite copy. **Dragging files out into other Linux applications is
 not supported yet**; real Mint/Wayland/X11 drag and multi-window acceptance
 remains outstanding. This is not a stable 0.6 release.
 
-**Shell renderer progress (alpha.4):** File-list cell painting now lives in a
-separate presentation-only Rust module; selecting files, drag/drop, dialogs
-and filesystem operations remain shared across themes. This is the first
-extractable file-list primitive, **not** a complete shell plugin interface.
-Automated Xvfb checks now exercise tab shortcuts, dialog dismissal, compact
-windows and one secondary window in addition to split view. Real keyboard,
-pointer and accessibility checks on Mint remain open.
+**Shell component progress (alpha.5):** File-cell widgets, sorting headers,
+toolbar events, sidebar group framing and common file-dialog windows now have
+separate presentation-only Rust functions. Selecting files, drag/drop and
+filesystem operations remain shared across themes. Compact windows stack
+navigation/search rows and constrain common dialogs. Automated Xvfb checks
+verify visible split/dialog changes and take 380px-wide screenshots. This is
+**not** a complete shell plugin interface or real Mint accessibility sign-off.
 
 **Mounted-folder resilience (alpha.3):** A disconnected child mount no longer
 causes the entire *parent* folder listing to fail when other entries remain

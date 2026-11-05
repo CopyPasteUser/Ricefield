@@ -368,11 +368,16 @@ wider hostile corpora and real Mint device acceptance are open for stable 0.5.
 - [ ] Extract remaining file-list, toolbar, sidebar and dialog primitives into
   replaceable shell modules. Alpha.2 adds a common navigation/file quick-action
   dispatcher alongside the existing shared tab dispatcher. Alpha.4 moves
-  file-cell painting into a presentation-only renderer; toolbar, sidebar,
-  dialogs and the full override contract are not yet independently replaceable.
+  file-cell painting into a presentation-only renderer. Alpha.5 also extracts
+  file-cell responses/sort headers, semantic toolbar actions, sidebar section
+  frames and shared dialog framing. Full skin-specific override contracts and
+  remaining complex UI bodies are still open.
 - [ ] Native external drag-out for X11/Wayland and a complete keyboard/mouse
   acceptance matrix. Existing file context menus, toolbar actions, external
   drag-in and alpha.2 internal copy-by-drag share no-overwrite operations.
+  Native outbound drag-source integration cannot be claimed with the current
+  eframe 0.37 / winit 0.30.13 inbound-only file-drop API; needs a tested
+  platform backend and actual compositor acceptance before enabling.
 - [x] Alpha.2 adds a lazy symlink-safe folder tree, clickable details headers,
   existing list/grid layouts, natural/lexical sorting and type filters.
 - [x] Alpha.3 handles per-entry ENODEV/ENOTCONN/ESTALE-style metadata failures
@@ -383,7 +388,10 @@ wider hostile corpora and real Mint device acceptance are open for stable 0.5.
   error/empty/loading workflows on all seven profiles (core states exist).
   Alpha.4 adds compact-window, dialog Escape and keyboard tab-action Xvfb
   smokes across eight profiles, plus separate-window startup in Windows 7;
-  the real-device pointer, focus and accessibility matrix is still open.
+  alpha.5 adds stacked navigation, constrained common dialogs, visible
+  split/dialog assertions and 380px Xvfb captures. The full real-device
+  pointer, focus and screen-reader matrix remains open; see
+  [Mint acceptance matrix](docs/0.6-MINT-ACCEPTANCE.md).
 
 **Gate:** important local workflows work by mouse and keyboard in all themes.
 

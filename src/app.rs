@@ -8,14 +8,14 @@ use crate::{
     location::Location,
     operation_queue::OperationQueue,
     preview,
-    shell_renderer::{self, shorten},
+    shell_components::{self, ToolbarAction},
+    shell_renderer::{self, FileCellLayout, shorten},
     theme::{
-        BUILTIN_IDS, ChromeComponent, ShellKind, SidebarPosition, SidebarSection,
-        SidebarSectionMode, Theme,
+        BUILTIN_IDS, ChromeComponent, SidebarPosition, SidebarSection, Theme,
     },
     volume::{self, VolumeAction},
 };
-use eframe::egui::{self, Align2, Color32, Key, Modifiers, Pos2, Rect, Sense, Vec2};
+use eframe::egui::{self, Align2, Color32, Key, Modifiers, Pos2, Rect, Vec2};
 use std::{
     collections::{BTreeSet, HashMap, VecDeque},
     path::{Path, PathBuf},
@@ -276,12 +276,6 @@ struct DropArea {
     destination: PathBuf,
     rect: Rect,
     folder: bool,
-}
-
-struct FileItemLayout {
-    width: f32,
-    height: f32,
-    grid: bool,
 }
 
 fn active_after_swap(active: usize, first: usize, second: usize) -> usize {
@@ -3463,81 +3457,18 @@ impl Explorer {
 
     fn command_bar(&mut self, ui: &mut egui::Ui, theme: &Theme) {
         let has_selection = !self.current().selected.is_empty();
-        ui.horizontal_wrapped(|ui| match theme.shell_kind() {
-            ShellKind::Ribbon | ShellKind::Finder => {
-                let finder = theme.shell_kind() == ShellKind::Finder;
-                ui.label(
-                    egui::RichText::new(if finder { "FINDER" } else { "HOME" })
-                        .small()
-                        .strong()
-                        .color(theme.palette.text()),
-                );
-                ui.separator();
-                if ui.small_button("New folder").clicked() {
-                    self.dialog = Some(Dialog::Name {
-                        mode: NameMode::Folder(self.current().path.clone()),
-                        value: String::new(),
-                    });
-                }
-                if ui
-                    .add_enabled(has_selection, egui::Button::new("Copy"))
-                    .clicked()
-                {
-                    self.copy_selection(false);
-                }
-                if !finder
-                    && ui
-                        .add_enabled(has_selection, egui::Button::new("Cut"))
-                        .clicked()
-                {
-                    self.copy_selection(true);
-                }
-                if ui.small_button("Paste").clicked() {
-                    self.paste();
-                }
-                if ui
-                    .add_enabled(has_selection, egui::Button::new("Rename"))
-                    .clicked()
-                {
-                    self.rename_selected();
-                }
-                if finder {
-                    if ui
-                        .add_enabled(has_selection, egui::Button::new("Info"))
-                        .clicked()
-                        && let Some(path) = self.selected_paths().first().cloned()
-                    {
-                        self.open_properties(path);
-                    }
-                } else if ui
-                    .add_enabled(has_selection, egui::Button::new("Trash"))
-                    .clicked()
-                {
-                    self.ask_trash();
-                }
-            }
-            _ => {
-                ui.label(
-                    egui::RichText::new("ORGANIZE")
-                        .small()
-                        .strong()
-                        .color(theme.palette.text()),
-                );
-                ui.separator();
-                if ui.small_button("New folder").clicked() {
-                    self.dialog = Some(Dialog::Name {
-                        mode: NameMode::Folder(self.current().path.clone()),
-                        value: String::new(),
-                    });
-                }
-                if ui.small_button("Add to favorites").clicked() {
-                    self.toggle_bookmark();
-                }
-                if ui.small_button("Refresh").clicked() {
-                    self.scan(self.active);
-                }
-            }
-        });
+        match shell_components::command_bar(ui, theme, has_selection) {
+            Some(ToolbarAction::NewFolder) => self.file_command(FileCommand::NewFolder),
+            Some(ToolbarAction::Copy) => self.file_command(FileCommand::Copy),
+            Some(ToolbarAction::Cut) => self.file_command(FileCommand::Cut),
+            Some(ToolbarAction::Paste) => self.file_command(FileCommand::Paste),
+            Some(ToolbarAction::Rename) => self.file_command(FileCommand::Rename),
+            Some(ToolbarAction::Trash) => self.file_command(FileCommand::Trash),
+            Some(ToolbarAction::Properties) => self.file_command(FileCommand::Properties),
+            Some(ToolbarAction::Bookmark) => self.toggle_bookmark(),
+            Some(ToolbarAction::Refresh) => self.navigation_command(NavigationCommand::Refresh),
+            None => {}
+        }
     }
 
     fn tabs_bar(&mut self, ui: &mut egui::Ui) {
@@ -3633,7 +3564,24 @@ impl Explorer {
     }
 
     fn navigation_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
+        if ui.available_width() < 800.0 {
+            // Give address/search their own row on narrow windows. Neither
+            // control may push the path field or Refresh off-screen.
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| self.navigation_buttons(ui));
+                ui.horizontal(|ui| self.navigation_address(ui, true));
+                ui.horizontal(|ui| self.navigation_search(ui, true));
+            });
+        } else {
+            ui.horizontal(|ui| {
+                self.navigation_buttons(ui);
+                self.navigation_address(ui, false);
+                self.navigation_search(ui, false);
+            });
+        }
+    }
+
+    fn navigation_buttons(&mut self, ui: &mut egui::Ui) {
             if ui
                 .add_enabled(!self.current().back.is_empty(), egui::Button::new("<"))
                 .on_hover_text("Back (Alt+Left)")
@@ -3658,13 +3606,14 @@ impl Explorer {
             if ui.button("Home").on_hover_text("Home").clicked() {
                 self.navigate(config::home());
             }
+    }
 
-            let search_width = if ui.available_width() < 620.0 {
-                100.0
+    fn navigation_address(&mut self, ui: &mut egui::Ui, compact: bool) {
+            let address_width = if compact {
+                (ui.available_width() - 92.0).max(90.0)
             } else {
-                190.0
+                (ui.available_width() - 300.0).max(90.0)
             };
-            let address_width = (ui.available_width() - search_width - 268.0).max(90.0);
             let address = ui.add_sized(
                 [address_width, 28.0],
                 egui::TextEdit::singleline(&mut self.current_mut().address)
@@ -3685,7 +3634,16 @@ impl Explorer {
             {
                 self.scan(self.active);
             }
+    }
 
+    fn navigation_search(&mut self, ui: &mut egui::Ui, compact: bool) {
+            let search_width = if compact {
+                (ui.available_width() - 137.0).max(80.0)
+            } else if ui.available_width() < 220.0 {
+                100.0
+            } else {
+                190.0
+            };
             let search_enabled = self.current().remote_uri.is_none();
             let search = ui.add_enabled(
                 search_enabled,
@@ -3728,7 +3686,6 @@ impl Explorer {
                 self.current_mut().search_pending = None;
                 self.scan(self.active);
             }
-        });
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
@@ -3758,12 +3715,6 @@ impl Explorer {
                             ui.add_space(14.0);
                             ui.separator();
                         }
-                        let title = match section {
-                            SidebarSection::Tasks => "FILE TASKS",
-                            SidebarSection::Places => "PLACES",
-                            SidebarSection::Favorites => "FAVORITES",
-                            SidebarSection::Volumes => "VOLUMES",
-                        };
                         let mut render_section = |ui: &mut egui::Ui| match section {
                             SidebarSection::Tasks => self.sidebar_tasks(ui),
                             SidebarSection::Places => {
@@ -3895,20 +3846,13 @@ impl Explorer {
                                 }
                             }
                         };
-                        if theme.sidebar_section_mode() == SidebarSectionMode::Collapsible {
-                            egui::CollapsingHeader::new(title)
-                                .id_salt((theme.id.as_str(), index))
-                                .default_open(true)
-                                .show(ui, |ui| render_section(ui));
-                        } else {
-                            ui.label(
-                                egui::RichText::new(title)
-                                    .small()
-                                    .strong()
-                                    .color(theme.palette.muted()),
-                            );
-                            render_section(ui);
-                        }
+                        shell_components::sidebar_section(
+                            ui,
+                            &theme,
+                            index,
+                            section,
+                            &mut render_section,
+                        );
                     }
                 });
             });
@@ -4639,29 +4583,7 @@ impl Explorer {
         };
         let rows = visible.div_ceil(columns);
         if !grid {
-            let mut change_sort = None;
-            ui.horizontal(|ui| {
-                for (key, label) in [
-                    ("name", "Name"),
-                    ("type", "Type"),
-                    ("size", "Size"),
-                    ("modified", "Modified"),
-                ] {
-                    let active = self.config.sort_by == key;
-                    let caption = if active {
-                        format!("{label} {}", if self.config.descending { "↓" } else { "↑" })
-                    } else {
-                        label.to_owned()
-                    };
-                    if ui
-                        .small_button(caption)
-                        .on_hover_text("Sort by this column")
-                        .clicked()
-                    {
-                        change_sort = Some(key);
-                    }
-                }
-            });
+            let change_sort = shell_renderer::sort_header(ui, &self.config.sort_by, self.config.descending);
             if let Some(sort) = change_sort {
                 if self.config.sort_by == sort {
                     self.config.descending = !self.config.descending;
@@ -4696,7 +4618,7 @@ impl Explorer {
                                     &entry,
                                     visible_index,
                                     tab_index,
-                                    FileItemLayout {
+                                    FileCellLayout {
                                         width: if grid { tile } else { width },
                                         height: row_height,
                                         grid,
@@ -4715,26 +4637,10 @@ impl Explorer {
         entry: &Entry,
         index: usize,
         tab_index: usize,
-        item: FileItemLayout,
+        item: FileCellLayout,
     ) {
-        let FileItemLayout {
-            width,
-            height,
-            grid,
-        } = item;
         let selected = self.tabs[tab_index].selected.contains(&entry.path);
-        let (rect, response) =
-            ui.allocate_exact_size(Vec2::new(width.max(80.0), height), Sense::click_and_drag());
-        shell_renderer::paint_file_cell(
-            ui.painter(),
-            rect,
-            entry,
-            &self.theme,
-            selected,
-            response.hovered(),
-            grid,
-        );
-        let response = response.on_hover_text(entry.path.display().to_string());
+        let (rect, response) = shell_renderer::file_cell(ui, entry, &self.theme, selected, item);
         if entry.is_dir {
             self.drop_areas.push(DropArea {
                 tab_id: self.tabs[tab_index].id,
@@ -5087,11 +4993,8 @@ impl Explorer {
                     preview,
                     ..
                 } => {
-                    egui::Window::new("Paste with options")
-                        .collapsible(false)
-                        .resizable(true)
-                        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-                        .show(context, |ui| {
+                    shell_components::show_dialog(
+                        context, "Paste with options", true, None, |ui| {
                             ui.label(format!(
                                 "{} {} item(s) into {}",
                                 if clipboard.cut { "Move" } else { "Copy" },
@@ -5204,18 +5107,13 @@ impl Explorer {
                         NameMode::File(_) => "New empty file",
                         NameMode::Rename(_) => "Rename item",
                     };
-                    egui::Window::new(title)
-                        .collapsible(false)
-                        .resizable(false)
-                        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-                        .show(context, |ui| {
+                    shell_components::show_dialog(context, title, false, None, |ui| {
                             ui.label("Name");
                             let input =
-                                ui.add_sized([340.0, 28.0], egui::TextEdit::singleline(value));
+                                ui.add_sized([ui.available_width().min(340.0), 28.0], egui::TextEdit::singleline(value));
                             let valid = filesystem::valid_name(value);
                             if !valid {
-                                ui.colored_label(
-                                    Color32::from_rgb(170, 48, 43),
+                                shell_components::small_error(ui,
                                     "Enter a name without slashes, or dots alone.",
                                 );
                             }
@@ -5245,12 +5143,7 @@ impl Explorer {
                     number_start,
                     number_width,
                 } => {
-                    egui::Window::new(format!("Batch rename ({} items)", paths.len()))
-                        .collapsible(false)
-                        .resizable(true)
-                        .default_width(580.0)
-                        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-                        .show(context, |ui| {
+                    shell_components::show_dialog(context, format!("Batch rename ({} items)", paths.len()), true, Some(580.0), |ui| {
                             ui.label("Preview every new name before applying the changes.");
                             ui.horizontal(|ui| {
                                 ui.label("Prefix:");
@@ -5266,13 +5159,13 @@ impl Explorer {
                                     egui::TextEdit::singleline(suffix),
                                 );
                             });
-                            ui.horizontal(|ui| {
+                            ui.horizontal_wrapped(|ui| {
                                 ui.label("Find:");
-                                ui.add_sized([170.0, 26.0], egui::TextEdit::singleline(find));
+                                ui.add_sized([ui.available_width().min(170.0), 26.0], egui::TextEdit::singleline(find));
                                 ui.label("Replace:");
-                                ui.add_sized([170.0, 26.0], egui::TextEdit::singleline(replace));
+                                ui.add_sized([ui.available_width().min(170.0), 26.0], egui::TextEdit::singleline(replace));
                             });
-                            ui.horizontal(|ui| {
+                            ui.horizontal_wrapped(|ui| {
                                 ui.checkbox(numbering, "Add sequence numbers");
                                 if *numbering {
                                     ui.label("Start:");
@@ -5324,10 +5217,7 @@ impl Explorer {
                                     });
                                 }
                                 Err(error) => {
-                                    ui.colored_label(
-                                        Color32::from_rgb(170, 48, 43),
-                                        error.to_string(),
-                                    );
+                                    shell_components::small_error(ui, error.to_string());
                                     if ui.button("Cancel").clicked() {
                                         dismiss = true;
                                     }
@@ -5336,11 +5226,7 @@ impl Explorer {
                         });
                 }
                 Dialog::Trash(paths) => {
-                    egui::Window::new("Move to Trash?")
-                        .collapsible(false)
-                        .resizable(false)
-                        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-                        .show(context, |ui| {
+                    shell_components::show_dialog(context, "Move to Trash?", false, None, |ui| {
                             ui.label(format!("Move {} selected item(s) to Trash?", paths.len()));
                             ui.label("The items can usually be restored from your desktop Trash.");
                             removal_confirmation_paths(ui, paths);
@@ -5358,11 +5244,7 @@ impl Explorer {
                         });
                 }
                 Dialog::Delete(paths) => {
-                    egui::Window::new("Permanently delete items?")
-                        .collapsible(false)
-                        .resizable(false)
-                        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-                        .show(context, |ui| {
+                    shell_components::show_dialog(context, "Permanently delete items?", false, None, |ui| {
                             ui.colored_label(
                                 Color32::RED,
                                 format!("Delete {} item(s) permanently?", paths.len()),
@@ -5388,12 +5270,7 @@ impl Explorer {
                     details,
                     ..
                 } => {
-                    egui::Window::new("Properties")
-                        .collapsible(false)
-                        .resizable(true)
-                        .default_width(460.0)
-                        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-                        .show(context, |ui| {
+                    shell_components::show_dialog(context, "Properties", true, Some(460.0), |ui| {
                             match details {
                                 Some(Ok(snapshot)) => {
                                     for (name, value) in &snapshot.lines {
