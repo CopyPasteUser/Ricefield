@@ -29,7 +29,7 @@ pub struct StoredClosedTab {
     pub history: StoredHistory,
 }
 
-#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SavedSearch {
     pub folder: String,
