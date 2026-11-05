@@ -1,10 +1,10 @@
 [package]
 name = "rice-explorer"
-version = "1.0.0-rc.1"
+version = "1.0.0-rc.2"
 edition = "2024"
 description = "A fast, themeable Linux file explorer built in Rust for RiceBowl"
 license = "MIT"
-repository = "https://github.com/CopyPasteUser/riceExplorer"
+repository = "https://github.com/CopyPasteUser/Ricefield"
 
 [dependencies]
 eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "x11", "wayland", "clipboard", "accesskit"] }

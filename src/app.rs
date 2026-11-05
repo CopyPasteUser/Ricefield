@@ -10,7 +10,7 @@ use crate::{
     location::Location,
     metadata, open_with,
     operation_queue::OperationQueue,
-    preview,
+    preview, remote_download,
     shell_components::{self, ToolbarAction},
     shell_renderer::{self, FileCellLayout, shorten},
     theme::{BUILTIN_IDS, ChromeComponent, SidebarPosition, SidebarSection, Theme},
@@ -26,7 +26,7 @@ use std::{
     process::Command,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver, Sender},
     },
     thread,
@@ -863,6 +863,11 @@ pub struct Explorer {
     remote_scan_receiver: Receiver<RemoteScanResult>,
     remote_preview_sender: Sender<RemotePreviewResult>,
     remote_preview_receiver: Receiver<RemotePreviewResult>,
+    remote_download_sender: Sender<Result<PathBuf, String>>,
+    remote_download_receiver: Receiver<Result<PathBuf, String>>,
+    remote_download_busy: bool,
+    remote_download_cancel: Arc<AtomicBool>,
+    remote_download_bytes: Arc<AtomicU64>,
     refresh_sender: Sender<RefreshResult>,
     refresh_receiver: Receiver<RefreshResult>,
     volume_sender: Sender<Result<(String, Option<String>), String>>,
@@ -1014,6 +1019,7 @@ impl Explorer {
         let (scan_sender, scan_receiver) = mpsc::channel();
         let (remote_scan_sender, remote_scan_receiver) = mpsc::channel();
         let (remote_preview_sender, remote_preview_receiver) = mpsc::channel();
+        let (remote_download_sender, remote_download_receiver) = mpsc::channel();
         let (refresh_sender, refresh_receiver) = mpsc::channel();
         let (volume_sender, volume_receiver) = mpsc::channel();
         let (keyring_sender, keyring_receiver) = mpsc::channel();
@@ -1067,6 +1073,11 @@ impl Explorer {
             remote_scan_receiver,
             remote_preview_sender,
             remote_preview_receiver,
+            remote_download_sender,
+            remote_download_receiver,
+            remote_download_busy: false,
+            remote_download_cancel: Arc::new(AtomicBool::new(false)),
+            remote_download_bytes: Arc::new(AtomicU64::new(0)),
             refresh_sender,
             refresh_receiver,
             volume_sender,
@@ -1792,6 +1803,35 @@ impl Explorer {
                     result,
                 });
             }
+        });
+    }
+
+    fn start_remote_download(&mut self, uri: String, name: String) {
+        if self.remote_download_busy {
+            return;
+        }
+        if self.current().remote_uri.is_none()
+            || !self
+                .current()
+                .remote_entries
+                .iter()
+                .any(|entry| !entry.is_directory && entry.uri == uri && entry.name == name)
+        {
+            self.status = Some(("Select a file from the current network folder".into(), true));
+            return;
+        }
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let bytes = Arc::new(AtomicU64::new(0));
+        self.remote_download_cancel = Arc::clone(&cancelled);
+        self.remote_download_bytes = Arc::clone(&bytes);
+        self.remote_download_busy = true;
+        let sender = self.remote_download_sender.clone();
+        // The target is intentionally predictable; atomic no-overwrite
+        // publication protects any previously downloaded name.
+        let destination = config::home().join("Downloads");
+        thread::spawn(move || {
+            let result = remote_download::download(&uri, &name, &destination, &cancelled, &bytes);
+            let _ = sender.send(result);
         });
     }
 
@@ -2651,6 +2691,13 @@ impl Explorer {
             }) {
                 tab.remote_preview_result = Some(message.result);
             }
+        }
+        while let Ok(result) = self.remote_download_receiver.try_recv() {
+            self.remote_download_busy = false;
+            self.status = Some(match result {
+                Ok(path) => (format!("Downloaded to {}", path.display()), false),
+                Err(error) => (error, true),
+            });
         }
         while let Ok(event) = self.op_receiver.try_recv() {
             match event {
@@ -5513,7 +5560,17 @@ impl Explorer {
             .show(ui, |ui| {
                 ui.heading("Network location");
                 ui.monospace(self.current().remote_uri.as_deref().unwrap_or_default());
-                ui.small("Read-only: open folders or preview small text files. Transfers and modifications are disabled.");
+                ui.small("Remote folders are read-only. You can preview text or download files locally; network uploads and changes are disabled.");
+                if self.remote_download_busy {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        let mib = self.remote_download_bytes.load(Ordering::Relaxed) as f64 / (1024.0 * 1024.0);
+                        ui.label(format!("Downloading to ~/Downloads · {mib:.1} MiB received (8 GiB maximum)"));
+                        if ui.button("Cancel download").clicked() {
+                            self.remote_download_cancel.store(true, Ordering::Relaxed);
+                        }
+                    });
+                }
                 ui.horizontal(|ui| {
                     if ui.button("Parent").clicked() {
                         self.parent();
@@ -5566,6 +5623,7 @@ impl Explorer {
                     } else {
                     let mut open = None;
                     let mut preview = None;
+                    let mut download = None;
                     let entries = &self.current().remote_entries;
                     let list_height = if self.current().remote_preview_uri.is_some() {
                         (ui.available_height() * 0.45).max(120.0)
@@ -5583,6 +5641,11 @@ impl Explorer {
                                     if ui.button(format!("Text preview  {}", entry.name)).on_hover_text(&entry.uri).clicked() {
                                         preview = Some(entry.uri.clone());
                                     }
+                                    if ui.add_enabled(!self.remote_download_busy, egui::Button::new("Download"))
+                                        .on_hover_text("Save to ~/Downloads without overwriting an existing file")
+                                        .clicked() {
+                                        download = Some((entry.uri.clone(), entry.name.clone()));
+                                    }
                                 }
                             });
                         }
@@ -5591,6 +5654,9 @@ impl Explorer {
                         self.navigate_remote(uri);
                     } else if let Some(uri) = preview {
                         self.start_remote_preview(uri);
+                    }
+                    if let Some((uri, name)) = download {
+                        self.start_remote_download(uri, name);
                     }
                     }
                 }
@@ -6782,6 +6848,7 @@ impl eframe::App for Explorer {
             || waiting_for_open_with
             || self.folder_tree.has_pending()
             || self.thumbnails.has_pending()
+            || self.remote_download_busy
             || self.tabs.iter().any(|tab| tab.loading)
         {
             Duration::from_millis(90)

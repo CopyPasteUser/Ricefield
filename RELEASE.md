@@ -1,6 +1,6 @@
 # Release process (Linux x86_64)
 
-RiceExplorer 1.0.0-rc.1 is a **release candidate**, not signed off for use
+RiceField 1.0.0-rc.2 is a **release candidate**, not signed off for use
 with irreplaceable files or as a complete network/archive file manager.
 The code can produce a tested distribution bundle, but a green CI run alone
 does not satisfy the safety, recovery and Linux Mint hardware gates in
@@ -51,7 +51,7 @@ paths against symlink/non-file targets and restores the previous executable,
 launcher and icon if registration fails. An interrupted power-loss update
 across those separate paths is not guaranteed transactional.
 
-The [Linux release bundle workflow](https://github.com/CopyPasteUser/riceExplorer/blob/main/.github/workflows/release.yml) is also
+The [Linux release bundle workflow](https://github.com/CopyPasteUser/Ricefield/blob/main/.github/workflows/release.yml) is also
 manually dispatchable: it builds, runs unit and GUI smoke tests, creates two
 bundles, compares them byte-for-byte, verifies checksums, smoke-tests an
 isolated installation and uploads the bundle as an Actions artifact. It does

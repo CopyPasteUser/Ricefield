@@ -14,7 +14,7 @@ A customizable Linux file manager built with **Rust + egui**, designed to work o
 
 ![RiceField with its Windows 7-inspired layout](docs/screenshots/win7.png)
 
-> **Status: 1.0.0-rc.1.** A release candidate, not a signed-off stable 1.0. Physical Linux Mint, NAS and recovery acceptance is still open. Keep your current file manager and use disposable data for testing risky operations.
+> **Status: 1.0.0-rc.2 candidate.** Not a signed-off stable 1.0. Physical Linux Mint, NAS and recovery acceptance is still open. Keep your current file manager and use disposable data for testing risky operations.
 
 ## Built for real file management
 
@@ -22,7 +22,7 @@ A customizable Linux file manager built with **Rust + egui**, designed to work o
 - **Organize:** create, copy, move, rename, batch rename, trash and link files, with progress and conflict previews.
 - **Find:** filename and content search, glob/regex filters, saved searches, thumbnails and Quick Look.
 - **Open archives:** create, browse and extract supported ZIP, TAR and 7z archives.
-- **Reach your NAS:** discover and browse SMB, SFTP, WebDAV and MTP via GIO/GVfs, with optional Secret Service credential storage.
+- **Reach your NAS:** discover and browse SMB, SFTP, WebDAV and MTP via GIO/GVfs, download files safely to `~/Downloads`, and optionally save credentials in Secret Service.
 - **Rice it:** seven distinctive shells (98, XP, 7, 10, Frutiger Aero, ChromeOS and macOS) plus editable layout, colors and density.
 
 File operations remain independent of the selected visual shell.
@@ -58,7 +58,7 @@ rice-explorer --theme-file /path/to/my-rice.toml
 ## Important limits
 
 - Cross-filesystem **Move** leaves the source intact after a verified copy; cleanup is a separate user decision.
-- Network tabs currently provide **read-only browsing**. Remote writes and downloads are not implemented.
+- Network tabs provide **read-only browsing and explicit downloads** to `~/Downloads` (8 GiB/file maximum, no overwrite). Remote uploads, rename, deletion and folder downloads are not implemented.
 - Recovery provides inspection and comparisons, **not automatic transaction rollback**.
 - Desktop integration does not silently take over the system's default file manager.
 

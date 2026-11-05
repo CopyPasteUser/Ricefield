@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.0-rc.2 — explicit safe remote downloads (verification pending)
+
+- Add an opt-in download action beside remote files, streaming via GIO/GVfs
+  to the local Downloads directory without blocking the graphical thread.
+- Bound each download to 8 GiB and 20 minutes. Show transferred bytes, allow
+  cancellation, and stage privately before an atomic Linux no-overwrite
+  rename. Existing files and symlinks are never replaced by a download.
+- Test encoded name/path traversal rejection, successful streaming, process
+  failure, duplicate destination and cancellation. Full NAS/offline and Mint
+  acceptance remains open; no remote uploads or folder downloads are claimed.
+- Correct the Cargo repository URL after the RiceField GitHub rename and
+  update the current user and release documentation.
+
 ## Documentation — a shorter entry point
 
 - Replace the accumulated release-by-release README with installation,

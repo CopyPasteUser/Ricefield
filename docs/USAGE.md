@@ -1,4 +1,4 @@
-# RiceExplorer user guide
+# RiceField user guide
 
 [README](../README.md) · [Troubleshooting](TROUBLESHOOTING.md) ·
 [Current support boundary](1.0-STATUS.md)
@@ -93,8 +93,17 @@ Service after a successful mount. **Use saved login** retrieves them on demand;
 login. An unavailable/locked keyring or desktop session can prevent the operation.
 
 Connected shares open as read-only tabs with history, refresh, bounded filename
-search and small UTF-8 text previews. Remote mutations, full file opening,
-downloads and binary previews are not implemented. Real NAS/offline/keyring
+search and small UTF-8 text previews. Click **Download** beside a remote file
+to save it to `~/Downloads`. The application creates that folder if needed,
+streams no more than 8 GiB per file (20-minute timeout), and supports progress
+and cancellation. It refuses an existing file or symlink with the same name,
+and only publishes the final filename after the download and file sync finish.
+Interrupted transfers do not appear as completed downloads. An abrupt process
+termination can leave a private `.ricefield-download-*` staging directory in
+Downloads containing unfinished data; check before removing it. This does not
+prove remote-source integrity if the server changes the file during reading.
+Remote uploads, rename, deletion, recursive folder downloads, full file opening
+and binary previews are not implemented. Real NAS/offline/keyring/download
 acceptance remains open.
 
 ## Archives and previews
