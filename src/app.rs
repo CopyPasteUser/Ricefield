@@ -4553,8 +4553,7 @@ impl Explorer {
                 // Classic +/- affordances are period-correct for Win98 and
                 // remain legible and keyboard-operable in every rice.
                 .add(
-                    egui::Button::new(if expanded { "-" } else { "+" })
-                        .min_size(Vec2::splat(24.0)),
+                    egui::Button::new(if expanded { "-" } else { "+" }).min_size(Vec2::splat(24.0)),
                 )
                 .on_hover_text(if expanded {
                     "Collapse folder"
