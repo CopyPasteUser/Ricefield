@@ -460,6 +460,8 @@ marking 0.7 stable. The 0.6 NAS/mount acceptance is still blocked separately.
   planning/preview steps); performance acceptance for huge folders.
 
 **Gate:** 100k-entry folders and recursive searches remain responsive.
+Automated synthetic sorting/glob stress covers 100,000 entries without
+touching disk; real HDD and UI responsiveness measurements remain outstanding.
 
 ### 0.9 — RiceBowl and Linux desktop integration
 

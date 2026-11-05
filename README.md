@@ -338,7 +338,8 @@ the Transfers window. The CI workflow checks
 Rust formatting, Clippy, unit tests, a release
 build, CLI startup, Xvfb GUI startup/split toggle for all seven skins, and
 pairwise image-difference/structural regression gates for 98/7/macOS and one
-custom toolbar arrangement. These are
+custom toolbar arrangement. A 100,000-name synthetic sort/glob regression
+checks for large-list correctness without writing files. These are
 development checks, **not** a production release or full Linux Mint acceptance.
 
 ### Install on Linux Mint / Xfce

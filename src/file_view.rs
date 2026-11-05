@@ -224,8 +224,8 @@ pub fn matches_custom_ranges(
 #[cfg(test)]
 mod tests {
     use super::{
-        matches_custom_ranges, matches_filter, matches_glob, matches_modified, matches_size,
-        natural_cmp,
+        CompiledGlob, matches_custom_ranges, matches_filter, matches_glob, matches_modified,
+        matches_size, natural_cmp,
     };
     use crate::filesystem::Entry;
     use std::{
@@ -274,6 +274,26 @@ mod tests {
             Ordering::Less
         );
         assert_eq!(natural_cmp("abc", "abcd"), Ordering::Less);
+    }
+
+    #[test]
+    fn hundred_thousand_virtual_entries_sort_and_glob_without_a_filesystem() {
+        // Deterministic permutation, not a presorted case that TimSort can
+        // optimize away. Exercises the same natural comparator and compiled
+        // glob used by all seven RiceExplorer profiles, without creating any
+        // files or pretending this establishes real HDD/GUI benchmarks.
+        const COUNT: usize = 100_000;
+        let mut names = (0..COUNT)
+            .map(|index| format!("file{:06}.txt", (index * 79_919) % COUNT))
+            .collect::<Vec<_>>();
+        let started = std::time::Instant::now();
+        names.sort_unstable_by(|left, right| natural_cmp(left, right));
+        assert_eq!(names.first().map(String::as_str), Some("file000000.txt"));
+        assert_eq!(names[COUNT / 2], "file050000.txt");
+        assert_eq!(names.last().map(String::as_str), Some("file099999.txt"));
+        let glob = CompiledGlob::new("file*9.txt");
+        assert_eq!(names.iter().filter(|name| glob.matches(name)).count(), 10_000);
+        eprintln!("100k synthetic natural sort + glob: {:?}", started.elapsed());
     }
 
     #[test]
