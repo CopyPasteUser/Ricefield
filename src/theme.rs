@@ -686,4 +686,26 @@ mod tests {
             vec![ChromeComponent::CommandBar]
         );
     }
+
+    #[test]
+    fn win98_win7_and_macos_use_distinct_structural_shells() {
+        let themes = ["win98", "win7", "macos"].map(|id| Theme::builtin(id).unwrap());
+        for theme in &themes {
+            theme.validate().unwrap();
+            let top = theme.top_components();
+            let bottom = theme.bottom_components();
+            let navigation = top
+                .iter()
+                .chain(bottom.iter())
+                .filter(|component| **component == ChromeComponent::Navigation)
+                .count();
+            assert_eq!(navigation, 1);
+        }
+        for left in 0..themes.len() {
+            for right in (left + 1)..themes.len() {
+                assert_ne!(themes[left].shell_kind(), themes[right].shell_kind());
+                assert_ne!(themes[left].top_components(), themes[right].top_components());
+            }
+        }
+    }
 }

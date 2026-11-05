@@ -475,9 +475,11 @@ marking 0.7 stable. The 0.6 NAS/mount acceptance is still blocked separately.
   altering filesystem operations (0.9 alpha.5).
 - [ ] Direct RiceBowl event/theme sync.
 - [ ] Seven distinct shells and matching icons, controls and layouts.
-- [ ] Confirm Windows 98, Windows 7 and macOS render three materially
-  different component structures; support custom Rust components via a
-  compile-time registry without an unsafe runtime plugin loader.
+- [x] Automated structural distinctness for Windows 98, Windows 7 and macOS,
+  plus Xvfb screenshot-difference gates and a custom top/bottom composition.
+- [ ] Confirm per-shell visual fidelity on real Mint displays and support
+  custom Rust components via a compile-time registry, without an unsafe
+  runtime plugin loader.
 - [ ] German/English localization, HiDPI, multi-monitor, accessibility review.
 
 **Gate:** complete Mint X11 and Wayland functional/visual matrix passes.
