@@ -57,6 +57,10 @@ impl FolderTree {
         self.pending.contains_key(path)
     }
 
+    pub fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
+    }
+
     pub fn request(&mut self, path: PathBuf, force: bool) {
         if !force && (self.pending.contains_key(&path) || self.nodes.contains_key(&path)) {
             return;

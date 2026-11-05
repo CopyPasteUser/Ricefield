@@ -5581,6 +5581,7 @@ impl eframe::App for Explorer {
             || self.volume_busy
             || waiting_for_preview
             || waiting_for_properties
+            || self.folder_tree.has_pending()
             || self.tabs.iter().any(|tab| tab.loading)
         {
             Duration::from_millis(90)
@@ -5658,8 +5659,7 @@ mod tests {
         Action, CLIPBOARD_WAIT, Clipboard, Dialog, ItemCounts, NameMode, PasteMode, PendingPaste,
         PropertyResult, PropertySnapshot, Tab, TabSnapshot, accept_property_result,
         active_after_swap, choose_paste_clipboard, elapsed_label, next_search_repaint_delay,
-        read_property_snapshot, remaining_cut_paths, resolve_split_tabs,
-        transfer_progress_details,
+        read_property_snapshot, remaining_cut_paths, resolve_split_tabs, transfer_progress_details,
     };
     use crate::clipboard;
     use crate::filesystem::{ItemResult, ItemState, Progress};
