@@ -699,6 +699,7 @@ enum Dialog {
         suffix: String,
         find: String,
         replace: String,
+        regex: bool,
         numbering: bool,
         number_start: u32,
         number_width: usize,
@@ -4009,6 +4010,7 @@ impl Explorer {
                     suffix: String::new(),
                     find: String::new(),
                     replace: String::new(),
+                    regex: false,
                     numbering: false,
                     number_start: 1,
                     number_width: 3,
@@ -6466,6 +6468,7 @@ impl Explorer {
                     suffix,
                     find,
                     replace,
+                    regex,
                     numbering,
                     number_start,
                     number_width,
@@ -6497,6 +6500,8 @@ impl Explorer {
                                     egui::TextEdit::singleline(replace),
                                 );
                             });
+                            ui.checkbox(regex, "Regular expression (supports $1 capture replacements)")
+                                .on_hover_text("Use Rust regular expressions. Names that are not valid UTF-8 cannot use search and replace.");
                             ui.horizontal_wrapped(|ui| {
                                 ui.checkbox(numbering, "Add sequence numbers");
                                 if *numbering {
@@ -6513,6 +6518,7 @@ impl Explorer {
                                 suffix,
                                 find,
                                 replace,
+                                regex: *regex,
                                 numbering: *numbering,
                                 number_start: *number_start,
                                 number_width: *number_width,
