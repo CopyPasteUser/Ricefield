@@ -4487,7 +4487,6 @@ impl Explorer {
             "Quick Look · {}",
             path.file_name().unwrap_or_default().to_string_lossy()
         ))
-        .id(egui::IdSalt::new("rice-quick-look"))
         .open(&mut open)
         .default_size([700.0, 500.0])
         .min_size([280.0, 170.0])
