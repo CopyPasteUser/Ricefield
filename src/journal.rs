@@ -727,7 +727,7 @@ impl Journal {
                 let cleanup =
                     fs::remove_file(&self.path).and_then(|()| File::open(parent)?.sync_all());
                 if let Err(error) = cleanup {
-                    eprintln!("RiceExplorer: completed journal cleanup failed: {error}");
+                    eprintln!("RiceField: completed journal cleanup failed: {error}");
                 }
             }
         }
@@ -994,7 +994,7 @@ fn publish_new_record(temporary: &Path, destination: &Path) -> io::Result<()> {
     // use atomic rename to replace only this journal's own record.
     fs::hard_link(temporary, destination)?;
     if let Err(error) = fs::remove_file(temporary) {
-        eprintln!("RiceExplorer: journal temp cleanup after publication failed: {error}");
+        eprintln!("RiceField: journal temp cleanup after publication failed: {error}");
     }
     Ok(())
 }

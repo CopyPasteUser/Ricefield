@@ -94,13 +94,15 @@ login. An unavailable/locked keyring or desktop session can prevent the operatio
 
 Connected shares open as read-only tabs with history, refresh, bounded filename
 search and small UTF-8 text previews. Click **Download** beside a remote file
-to save it to `~/Downloads`. The application creates that folder if needed,
+to save it to the configured local target directory (default `~/Downloads`).
+Edit the **Download to** field using an absolute local folder path; valid
+choices are saved for later sessions. The application creates it if needed,
 streams no more than 8 GiB per file (20-minute timeout), and supports progress
 and cancellation. It refuses an existing file or symlink with the same name,
 and only publishes the final filename after the download and file sync finish.
 Interrupted transfers do not appear as completed downloads. An abrupt process
 termination can leave a private `.ricefield-download-*` staging directory in
-Downloads containing unfinished data; check before removing it. This does not
+the chosen target folder containing unfinished data; check before removing it. This does not
 prove remote-source integrity if the server changes the file during reading.
 Remote uploads, rename, deletion, recursive folder downloads, full file opening
 and binary previews are not implemented. Real NAS/offline/keyring/download

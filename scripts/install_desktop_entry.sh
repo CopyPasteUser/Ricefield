@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-project_dir="${1:?Expected RiceExplorer source directory}"
+project_dir="${1:?Expected RiceField source directory}"
 user_home="${HOME:?HOME must be set}"
 data_dir="${XDG_DATA_HOME:-$user_home/.local/share}"
 
@@ -12,7 +12,7 @@ esac
 
 binary="$user_home/.local/bin/rice-explorer"
 if [[ ! -x "$binary" ]]; then
-  echo "RiceExplorer executable is missing: $binary" >&2
+  echo "RiceField executable is missing: $binary" >&2
   exit 1
 fi
 

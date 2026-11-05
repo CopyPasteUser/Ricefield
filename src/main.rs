@@ -47,13 +47,13 @@ fn main() -> eframe::Result {
         match arg.to_str() {
             Some("--help" | "-h") => {
                 println!(
-                    "RiceExplorer {}\nUsage: rice-explorer [--theme ID] [--theme-file FILE] [LOCATION ...]\n\n--version        Show the package version\n--list-themes    Show bundled profiles\n--theme ID       Select a RiceBowl visual profile\n--theme-file FILE  Load an external editable TOML theme\n--separate-window  Open a secondary window without saving its tab session\n--file-manager-service  Offer FileManager1 on the session bus (opt-in; existing owner wins)\n--benchmark      Measure disposable 100k-entry and verified-copy fixtures\n\nLocations accept local paths, file://, smb://, sftp://, dav(s):// and mtp:// URIs. Remote browsing is read-only. Credentials belong in RiceExplorer's secure connection prompt, never in command-line URIs.\n\nLocal Archive menu: browse, verify, extract selected, and create ZIP/tar.gz/tar.xz/tar.zst/7z (system libarchive required); masked password prompts and optional AES-256 ZIP creation. Encrypted 7z/RAR support depends on the system backend.\n\nKeyboard: F3 two-folder split view, Ctrl+Shift+N separate window, Ctrl+L path, Ctrl+F search, Ctrl+T/W open/close tab, Ctrl+Shift+T reopen, Ctrl+PageUp/PageDown cycle, Ctrl+Shift+PageUp/PageDown reorder; Ctrl+C/X/V copy/cut/paste, F2 rename, Delete trash, Shift+Delete permanent delete, Ctrl+A select all, Ctrl+D duplicate file, Alt+Enter properties, Space preview, Ctrl+H hidden, Ctrl+R refresh.",
+                    "RiceField {}\nUsage: rice-explorer [--theme ID] [--theme-file FILE] [LOCATION ...]\n\n--version        Show the package version\n--list-themes    Show bundled profiles\n--theme ID       Select a RiceBowl visual profile\n--theme-file FILE  Load an external editable TOML theme\n--separate-window  Open a secondary window without saving its tab session\n--file-manager-service  Offer FileManager1 on the session bus (opt-in; existing owner wins)\n--benchmark      Measure disposable 100k-entry and verified-copy fixtures\n\nLocations accept local paths, file://, smb://, sftp://, dav(s):// and mtp:// URIs. Network tabs offer read-only browsing, previews and explicit local downloads; uploads are disabled. Credentials belong in RiceField's secure connection prompt, never in command-line URIs.\n\nLocal Archive menu: browse, verify, extract selected, and create ZIP/tar.gz/tar.xz/tar.zst/7z (system libarchive required); masked password prompts and optional AES-256 ZIP creation. Encrypted 7z/RAR support depends on the system backend.\n\nKeyboard: F3 two-folder split view, Ctrl+Shift+N separate window, Ctrl+L path, Ctrl+F search, Ctrl+T/W open/close tab, Ctrl+Shift+T reopen, Ctrl+PageUp/PageDown cycle, Ctrl+Shift+PageUp/PageDown reorder; Ctrl+C/X/V copy/cut/paste, F2 rename, Delete trash, Shift+Delete permanent delete, Ctrl+A select all, Ctrl+D duplicate file, Alt+Enter properties, Space preview, Ctrl+H hidden, Ctrl+R refresh.",
                     env!("CARGO_PKG_VERSION")
                 );
                 return Ok(());
             }
             Some("--version" | "-V") => {
-                println!("RiceExplorer {}", env!("CARGO_PKG_VERSION"));
+                println!("RiceField {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
             Some("--list-themes") => {
@@ -118,7 +118,7 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "RiceExplorer",
+        "RiceField",
         options,
         Box::new(move |creation| {
             Ok(Box::new(app::Explorer::new(

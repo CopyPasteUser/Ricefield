@@ -10,7 +10,7 @@ use std::{
     fs::{self, DirBuilder, File, OpenOptions},
     io::{Read, Write},
     os::unix::{ffi::OsStringExt, fs::DirBuilderExt},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     process::{Command, ExitStatus, Stdio},
     sync::{
         Arc,
@@ -22,6 +22,24 @@ use std::{
 
 const MAX_DOWNLOAD_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(20 * 60);
+
+/// A user-selected target must never silently resolve against the app's
+/// working directory. The directory is created only after the user clicks
+/// Download, and only the selected basename will be published there.
+pub fn download_directory(input: &str) -> Result<PathBuf, &'static str> {
+    if input.is_empty() || input.len() > 4096 || input.chars().any(char::is_control) {
+        return Err("Choose a local folder path of at most 4096 characters");
+    }
+    let path = PathBuf::from(input);
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|part| matches!(part, Component::ParentDir))
+    {
+        return Err("Download folder must be an absolute path without '..'");
+    }
+    Ok(path)
+}
 
 fn file_name(encoded: &str) -> Result<OsString, String> {
     let input = encoded.as_bytes();
@@ -288,6 +306,17 @@ mod tests {
         assert!(checked_download_name("smb://nas/share/one", "two").is_err());
         assert!(checked_download_name("file:///etc/passwd", "passwd").is_err());
         assert!(checked_download_name("smb://nas/share/a%2Fb", "a%2Fb").is_err());
+    }
+
+    #[test]
+    fn download_directory_rejects_relative_or_parent_traversal() {
+        for invalid in ["", "Downloads", "~/Downloads", "/tmp/../etc", "/tmp/\nnew"] {
+            assert!(download_directory(invalid).is_err(), "accepted {invalid:?}");
+        }
+        assert_eq!(
+            download_directory("/home/user/My Downloads").unwrap(),
+            PathBuf::from("/home/user/My Downloads")
+        );
     }
 
     #[test]
