@@ -138,6 +138,9 @@ not silently rolled back; cancelled/unstarted entries remain explicit.
   never reads special files, follows symbolic links or crosses filesystem
   boundaries; each search is constrained by file-size, byte, count and time
   limits. A filtered-out selection never remains eligible for mutation.
+  The theme-independent Filters menu also supports an opt-in filename glob
+  and numeric size/age bounds; invalid combinations fail closed and show
+  a warning. A single Clear action removes both presets and custom bounds.
 - **Dialog/confirmation:** `Explorer::dialogs`; no system-wide native dialog side effects.
 - **Feedback:** `Explorer::status_bar` when enabled, otherwise the shared
   `Explorer::transfer_strip` displays the latest status with a full-message

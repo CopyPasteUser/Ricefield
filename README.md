@@ -4,7 +4,7 @@
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Development preview: v0.8.0-alpha.2** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+> **Development preview: v0.8.0-alpha.3** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
 **Distribution:** An [automated Linux x86_64 preview bundle](RELEASE.md) can
 be built without distributing Rust sources to every end user. The verified
@@ -148,6 +148,13 @@ never indexes or modifies data, skips symlinks, special files and files over
 2 MiB, and caps the work at 4,096 files / 64 MiB / 12 seconds. A visible
 warning marks partial results. Filename regex, custom ranges and network
 content search remain on the roadmap.
+
+**Advanced filters (0.8 alpha.3):** Expand **Filters → Custom pattern and
+ranges** to match a case-insensitive filename glob (`*`, `?`), minimum and
+maximum file size in MiB, and modification-age boundaries in whole days.
+These combine with the basic filters, are persisted locally, and never inspect
+file contents or start another background process. **Clear filters** resets
+all of them. A conflicting min/max bound shows a warning and no results.
 
 **0.7 preview alpha:** The Grid view requests thumbnails only for visible
 images, with a 96-item in-memory cache and one decoder at a time (no persistent
