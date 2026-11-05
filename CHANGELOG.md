@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — 0.9.0-alpha.3 private visual theme editor
+
+- Edit validated TOML in-app or visually modify palette colors, icon size,
+  row height and sidebar width. Import an absolute local TOML file without
+  mutating it, with validation and an informative error state.
+- Explicit Save & use writes a *new* private theme file with restricted name,
+  256 KiB size cap, no-overwrite creation and 0600 file permissions. Remember
+  editor-owned themes in configuration and restore them at startup, while CLI
+  theme overrides continue to work. Bundled themes remain immutable.
+- Full RiceBowl theme event synchronization and real Mint acceptance remain open.
+
 ## Unreleased — 0.9.0-alpha.2 native MIME Open With
 
 - Discover local file MIME type and registered application desktop IDs via

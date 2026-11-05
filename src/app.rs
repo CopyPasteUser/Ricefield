@@ -14,6 +14,7 @@ use crate::{
     shell_components::{self, ToolbarAction},
     shell_renderer::{self, FileCellLayout, shorten},
     theme::{BUILTIN_IDS, ChromeComponent, SidebarPosition, SidebarSection, Theme},
+    theme_editor::{self, ThemeEditor},
     thumbnail::ThumbnailManager,
     volume::{self, MountCredentials, VolumeAction},
 };
@@ -701,6 +702,7 @@ enum Dialog {
         generation: u64,
         apps: Option<Result<Vec<String>, String>>,
     },
+    ThemeEditor(ThemeEditor),
 }
 
 enum ArchiveMode {
@@ -946,9 +948,21 @@ impl Explorer {
         separate_window: bool,
     ) -> Self {
         let mut config = Config::load();
+        let explicit_builtin = selected_theme.is_some();
         if let Some(name) = selected_theme {
             config.theme = name;
         }
+        // CLI overrides saved themes; only editor-owned files inside the user
+        // config directory are restored automatically on next startup.
+        let theme_file = theme_file.or_else(|| {
+            if explicit_builtin {
+                return None;
+            }
+            let saved = config.custom_theme_file.as_ref()?;
+            let root = config::config_file().parent()?.join("themes");
+            (saved.starts_with(&root) && saved.extension().is_some_and(|ext| ext == "toml"))
+                .then(|| saved.clone())
+        });
         let theme_result = if let Some(path) = theme_file.as_ref() {
             Theme::from_file(path)
         } else {
@@ -3539,6 +3553,7 @@ impl Explorer {
             self.theme_file = None;
             self.theme_file_state = None;
             self.config.theme = id.to_owned();
+            self.config.custom_theme_file = None;
             self.dirty_config = true;
             self.theme.apply(context);
         }
@@ -5235,8 +5250,15 @@ impl Explorer {
                                         self.set_theme(ui.ctx(), id);
                                     }
                                 }
+                                ui.separator();
+                                if ui.button("Customize theme…").clicked() {
+                                    self.dialog = Some(Dialog::ThemeEditor(ThemeEditor::new(
+                                        &self.theme,
+                                        self.theme_file.as_deref(),
+                                    )));
+                                    ui.close();
+                                }
                                 if self.theme_file.is_some() {
-                                    ui.separator();
                                     if ui.button("Reload external TOML").clicked() {
                                         self.reload_theme_file(ui.ctx(), true);
                                         ui.close();
@@ -5898,9 +5920,17 @@ impl Explorer {
         let mut refresh_paste_preview = None;
         let mut requested_analysis = None;
         let mut open_with_launch = None;
+        let mut theme_editor_outcome = None;
         let analysis_busy = self.analysis_worker_running;
         if let Some(dialog) = self.dialog.as_mut() {
             match dialog {
+                Dialog::ThemeEditor(editor) => {
+                    shell_components::show_dialog(context, "Customize RiceExplorer", true, Some(680.0), |ui| {
+                        egui::ScrollArea::vertical()
+                            .max_height((context.content_rect().height() - 90.0).max(240.0))
+                            .show(ui, |ui| theme_editor_outcome = editor.ui(ui));
+                    });
+                }
                 Dialog::OpenWith { path, apps, .. } => {
                     shell_components::show_dialog(context, "Open With", true, Some(450.0), |ui| {
                         ui.label(format!("Choose an installed app for {}", path.display()));
@@ -6412,6 +6442,22 @@ impl Explorer {
             self.duplicate_cancel.store(true, Ordering::Relaxed);
             self.open_with_cancel.store(true, Ordering::Relaxed);
             self.dialog = None;
+        }
+        if let Some(outcome) = theme_editor_outcome {
+            match outcome {
+                theme_editor::Outcome::Close => self.dialog = None,
+                theme_editor::Outcome::Activate { path, theme } => {
+                    self.config.theme = theme.id.clone();
+                    self.config.custom_theme_file = Some(path.clone());
+                    self.theme = theme;
+                    self.theme_file = Some(path.clone());
+                    self.theme_file_state = Self::theme_file_fingerprint(&path);
+                    self.theme.apply(context);
+                    self.dirty_config = true;
+                    self.dialog = None;
+                    self.status = Some((format!("Saved and activated {}", path.display()), false));
+                }
+            }
         }
         if let Some((desktop_id, path)) = open_with_launch {
             self.status = Some(match open_with::launch(&desktop_id, &path) {

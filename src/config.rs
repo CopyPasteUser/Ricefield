@@ -51,6 +51,7 @@ impl SavedSearch {
 #[serde(default)]
 pub struct Config {
     pub theme: String,
+    pub custom_theme_file: Option<PathBuf>,
     pub show_hidden: bool,
     pub show_sidebar: bool,
     pub view: String,
@@ -80,6 +81,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             theme: "win7".to_owned(),
+            custom_theme_file: None,
             show_hidden: false,
             show_sidebar: true,
             view: "list".to_owned(),

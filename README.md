@@ -4,7 +4,7 @@
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Development preview: v0.9.0-alpha.2** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+> **Development preview: v0.9.0-alpha.3** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
 **Distribution:** An [automated Linux x86_64 preview bundle](RELEASE.md) can
 be built without distributing Rust sources to every end user. The verified
@@ -176,7 +176,16 @@ checked every three seconds and applied without restarting or replacing open
 tabs. Invalid, missing, non-regular or oversized (over 256 KiB) themes are
 rejected while the last working theme remains active. The theme picker also
 offers **Reload external TOML**, or select a bundled rice to stop watching
-the custom file. A native RiceBowl API and visual theme editor are still open.
+the custom file. A native RiceBowl API is still open.
+
+**Custom rice editor (0.9 alpha.3):** Open the theme picker → **Customize
+theme…** to import existing TOML, edit it directly, validate it, or adjust
+colors and layout metrics visually. **Save & use theme** creates a new private
+TOML under `~/.config/rice-explorer/themes/` (or `$XDG_CONFIG_HOME`), never
+overwrites a theme, and remembers your choice across restarts. Imported files
+are read-only until explicitly saved as a new theme. CLI `--theme` and
+`--theme-file` retain precedence for that process. Invalid TOML cannot be
+activated. Visual edits regenerate TOML formatting and may remove comments.
 
 **Open With (0.9 alpha.2):** Select one local file, open **Actions → Open
 With…**, and choose a registered Linux desktop application. Handler lookup

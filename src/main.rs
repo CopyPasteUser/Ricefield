@@ -18,6 +18,7 @@ mod preview;
 mod shell_components;
 mod shell_renderer;
 mod theme;
+mod theme_editor;
 mod thumbnail;
 mod volume;
 
