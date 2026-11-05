@@ -75,19 +75,18 @@ fn parse_gio(hosts: &mut Vec<NetworkHost>, bytes: &[u8], aliases: &mut Vec<Strin
             } else if let Some(rest) = uri.strip_prefix("smb://") {
                 let host = rest.split('/').next().unwrap_or("");
                 add_host(hosts, host, &format!("smb://{host}/"), "SMB / GVfs");
-            } else if let Some(name) = uri.strip_prefix("network:///") {
-                if aliases.len() < MAX_ALIASES
-                    && !name.is_empty()
-                    && name.len() <= 160
-                    && name.bytes().all(|byte| {
-                        byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'%')
-                    })
-                    && !matches!(name, "." | "..")
-                {
-                    let alias = format!("network:///{name}");
-                    if !aliases.contains(&alias) {
-                        aliases.push(alias);
-                    }
+            } else if let Some(name) = uri.strip_prefix("network:///")
+                && aliases.len() < MAX_ALIASES
+                && !name.is_empty()
+                && name.len() <= 160
+                && name.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'%')
+                })
+                && !matches!(name, "." | "..")
+            {
+                let alias = format!("network:///{name}");
+                if !aliases.contains(&alias) {
+                    aliases.push(alias);
                 }
             }
         }

@@ -795,6 +795,7 @@ pub struct Explorer {
     volume_connect_domain: String,
     volume_connect_password: String,
     volume_connect_remember: bool,
+    keyring_loaded_uri: Option<String>,
     keyring_sender: Sender<KeyringEvent>,
     keyring_receiver: Receiver<KeyringEvent>,
     keyring_busy: bool,
@@ -956,6 +957,7 @@ impl Explorer {
             volume_connect_domain: String::new(),
             volume_connect_password: String::new(),
             volume_connect_remember: false,
+            keyring_loaded_uri: None,
             keyring_sender,
             keyring_receiver,
             keyring_busy: false,
@@ -1619,6 +1621,7 @@ impl Explorer {
         self.volume_connect_domain.clear();
         volume::clear_password(&mut self.volume_connect_password);
         self.volume_connect_remember = false;
+        self.keyring_loaded_uri = None;
         self.volume_connect_open = true;
     }
 
@@ -1638,13 +1641,13 @@ impl Explorer {
             };
             let result = volume::execute(&action).map(|()| {
                 let mut message = format!("{label} succeeded. Refreshing mounted volumes…");
-                if remember_login {
-                    if let VolumeAction::ConnectAuthenticated(uri, credentials) = &action {
-                        match keyring::save(uri, credentials) {
-                            Ok(()) => message.push_str(" Login saved in the Linux keyring."),
-                            Err(error) => {
-                                message.push_str(&format!(" Login was not saved: {error}"))
-                            }
+                if remember_login
+                    && let VolumeAction::ConnectAuthenticated(uri, credentials) = &action
+                {
+                    match keyring::save(uri, credentials) {
+                        Ok(()) => message.push_str(" Login saved in the Linux keyring."),
+                        Err(error) => {
+                            message.push_str(&format!(" Login was not saved: {error}"))
                         }
                     }
                 }
@@ -1741,6 +1744,19 @@ impl Explorer {
                         egui::TextEdit::singleline(&mut self.volume_connect_uri)
                             .hint_text("smb://server/share"),
                     );
+                    // A saved password belongs to one server; editing its
+                    // address must not send the secret to a different host.
+                    if self
+                        .keyring_loaded_uri
+                        .as_ref()
+                        .is_some_and(|loaded| loaded != &self.volume_connect_uri)
+                    {
+                        volume::clear_password(&mut self.volume_connect_password);
+                        self.volume_connect_user.clear();
+                        self.volume_connect_domain.clear();
+                        self.volume_connect_remember = false;
+                        self.keyring_loaded_uri = None;
+                    }
                     ui.separator();
                     ui.label("Username (leave empty for server default):");
                     ui.add_sized(
@@ -1804,6 +1820,7 @@ impl Explorer {
                         self.volume_connect_open = false;
                         self.volume_connect_uri.clear();
                         self.volume_connect_remember = false;
+                        self.keyring_loaded_uri = None;
                     }
                     Ok(Location::Local(_)) => {
                         self.status = Some(("Enter a supported network URI".into(), true))
@@ -1813,6 +1830,7 @@ impl Explorer {
             } else if !open {
                 volume::clear_password(&mut self.volume_connect_password);
                 self.volume_connect_remember = false;
+                self.keyring_loaded_uri = None;
                 self.volume_connect_open = false;
             }
         }
@@ -2202,6 +2220,7 @@ impl Explorer {
                             self.volume_connect_password =
                                 std::mem::take(&mut credentials.password);
                             self.volume_connect_remember = true;
+                            self.keyring_loaded_uri = Some(uri);
                             self.status =
                                 Some(("Saved NAS login loaded from Linux keyring".into(), false));
                         }
@@ -2218,6 +2237,8 @@ impl Explorer {
                     self.status = Some(match result {
                         Ok(()) => {
                             self.volume_connect_remember = false;
+                            self.keyring_loaded_uri = None;
+                            volume::clear_password(&mut self.volume_connect_password);
                             (
                                 "Saved network login removed from Linux keyring".into(),
                                 false,
