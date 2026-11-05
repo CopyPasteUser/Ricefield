@@ -72,6 +72,16 @@ for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sideba
     report_startup_failure "$theme"
     exit 1
   fi
+  # xvfb-run has no window manager, so the X input focus can remain on the
+  # root/None window. Explicitly focus the app and use XTEST key injection;
+  # xdotool --window sends synthetic events that egui/winit may not accept.
+  xdotool windowfocus --sync "$window_id"
+  focused_window_id="$(xdotool getwindowfocus)"
+  if [[ "$focused_window_id" != "$window_id" ]]; then
+    echo "Cannot focus $theme: expected $window_id, got $focused_window_id" >&2
+    report_startup_failure "$theme"
+    exit 1
+  fi
   # Avoid capturing an incidental hover tooltip over the file list.
   xdotool mousemove --window "$window_id" 1050 650
   sleep 1
@@ -79,7 +89,7 @@ for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sideba
   identify -format '%wx%h\n' "screenshots/$theme.png"
   # Exercise the new two-pane command on every shell; a screenshot is a smoke
   # artifact, not proof of correct hit targets or system drag-and-drop.
-  xdotool key --window "$window_id" F3
+  xdotool key F3
   sleep 1
   if ! kill -0 "$app_pid" 2>/dev/null; then
     echo "Split view crashed in theme $theme" >&2
@@ -88,17 +98,17 @@ for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sideba
   fi
   import -window "$window_id" "screenshots/$theme-split.png"
   identify -format '%wx%h\n' "screenshots/$theme-split.png"
-  xdotool key --window "$window_id" F3
+  xdotool key F3
   # Exercise tab creation, cycling, reordering, closure and recovery in every
   # rice. These are crash/regression smokes, not accessibility certification.
   for combo in ctrl+t ctrl+Page_Down ctrl+shift+Page_Up ctrl+w ctrl+shift+t; do
-    xdotool key --window "$window_id" "$combo"
+    xdotool key "$combo"
   done
   # All skins must be able to open and dismiss a native settings/action dialog
   # without trapping keyboard input or creating a test directory.
-  xdotool key --window "$window_id" ctrl+n
+  xdotool key ctrl+n
   sleep 0.3
-  xdotool key --window "$window_id" Escape
+  xdotool key Escape
   # Check compact split-capable layout in the project's supported minimum
   # window range. Screenshots provide review evidence, not hit-target proof.
   xdotool windowsize "$window_id" 700 470
@@ -115,7 +125,7 @@ for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sideba
   # launch without replacing the existing window. Close it before the next
   # profile; no desktop session or personal settings are touched.
   if [[ "$theme" == win7 ]]; then
-    xdotool key --window "$window_id" ctrl+shift+n
+    xdotool key ctrl+shift+n
     for ((attempt = 0; attempt < 40; attempt++)); do
       extra_window_id="$(xdotool search --onlyvisible --name '^RiceExplorer$' 2>/dev/null | grep -vx "$window_id" | head -n 1 || true)"
       if [[ -n "$extra_window_id" ]]; then
