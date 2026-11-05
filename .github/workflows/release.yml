@@ -11,6 +11,7 @@ on:
       - 'v0.7.*'
       - 'v0.8.*'
       - 'v0.9.*'
+      - 'v1.0.*'
 
 permissions:
   contents: read
@@ -31,6 +32,8 @@ jobs:
           sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libgl1-mesa-dev xvfb xauth xdotool imagemagick libgl1-mesa-dri libxkbcommon-x11-0 libarchive13t64
       - name: Desktop launcher installation smoke
         run: bash scripts/test_desktop_entry.sh
+      - name: Transactional install and rollback smoke
+        run: bash scripts/test_install_transaction.sh
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked --all-targets
@@ -71,7 +74,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/v0.')
+    if: startsWith(github.ref, 'refs/tags/v0.') || startsWith(github.ref, 'refs/tags/v1.0.')
     needs: bundle
     runs-on: ubuntu-24.04
     permissions:

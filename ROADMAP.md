@@ -488,6 +488,10 @@ touching disk; real HDD and UI responsiveness measurements remain outstanding.
 
 ### 1.0 — Production release
 
+- [x] Add automated isolated clean-install, upgrade, injected registration
+  failure, atomic binary replacement and installer rollback tests; enable
+  `v1.0.*` artifact workflows without publishing a tag. Real-device update,
+  uninstall and power-loss verification remain open.
 - [ ] Format, Clippy, unit/integration/UI/security tests pass in CI.
 - [ ] Measure startup, idle RAM/CPU, 100k entries, HDD and large transfers.
 - [ ] Test 4 GB hardware, network disconnect and USB removal in a safe lab.

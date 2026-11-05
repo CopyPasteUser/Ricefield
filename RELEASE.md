@@ -37,6 +37,10 @@ To install a downloaded and SHA-256-verified archive, extract it and run
 path so it works from desktop menus without a modified session `PATH`. Running
 `bash uninstall.sh` there removes only those installed files, retaining
 configuration and custom themes. No system file-manager defaults are changed.
+The installer publishes a new binary by rename, validates existing install
+paths against symlink/non-file targets and restores the previous executable,
+launcher and icon if registration fails. An interrupted power-loss update
+across those separate paths is not guaranteed transactional.
 
 The [Linux release bundle workflow](.github/workflows/release.yml) is also
 manually dispatchable: it builds, runs unit and GUI smoke tests, creates two
@@ -58,7 +62,7 @@ isolated installation and uploads the bundle as an Actions artifact. It does
    then move Cargo/package version to `0.3.0`, commit on `main`, protect and
    push the matching `v0.3.0` tag.
 
-Pushing a `v0.3.*`, `v0.4.*`, `v0.5.*` or `v0.6.*` tag triggers a **separate** validation workflow, which
+Pushing an enabled `v0.3.*` through `v0.9.*` or `v1.0.*` tag triggers a **separate** validation workflow, which
 publishes a GitHub Release only after all tests, archive integrity, staging
 installation and tag/version match pass. Alpha/pre-release tags are marked
 as prereleases. Do **not** create the final tag before these gates pass.

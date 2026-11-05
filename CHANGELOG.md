@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0 release preparation — atomic user install and rollback
+
+- Publish installed executables with an atomic same-directory rename to avoid
+  overwriting a running binary in place. Restore the preceding binary, desktop
+  launcher and icon when registration fails during an ordinary update.
+- Reject symlink/non-file installation targets and preserve user data. Test
+  clean installs, upgrades, injected failures and rollback in isolated homes.
+- Teach bundle packaging and GitHub release automation to accept future
+  `1.0.x` tags. No stable 1.0 tag has been created or signed off.
+
 ## 0.9 preview stress coverage — 100k virtual file entries
 
 - Add a deterministic 100,000-name natural-sort/glob regression test with no

@@ -365,6 +365,10 @@ your application menu; if its menu cache is stale, log out and back in, or run
 `gtk-launch rice-explorer` as a diagnostic (when `gtk-launch` is installed).
 It does **not** change your default file manager or Xfce associations. It
 doesn't touch Thunar.
+Updates replace the executable by atomic rename. If desktop registration
+fails, the installer restores the prior binary, launcher and icon; personal
+settings remain untouched. This protects ordinary installation errors, not
+power loss during a multi-file update.
 
 On ordinary launches, RiceExplorer restores the previously opened tabs and
 active location. **Explicit CLI folder arguments override the saved session.**
