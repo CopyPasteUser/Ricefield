@@ -336,13 +336,15 @@ mod tests {
 
     #[test]
     fn custom_filters_roundtrip_and_clear_without_losing_other_preferences() {
-        let mut config = Config::default();
-        config.theme = "xp-luna".into();
-        config.filter_kind = "documents".into();
-        config.filter_name_glob = "draft-*.pdf".into();
-        config.filter_min_size_mib = Some(2);
-        config.filter_max_size_mib = Some(7);
-        config.filter_older_days = Some(14);
+        let config = Config {
+            theme: "xp-luna".into(),
+            filter_kind: "documents".into(),
+            filter_name_glob: "draft-*.pdf".into(),
+            filter_min_size_mib: Some(2),
+            filter_max_size_mib: Some(7),
+            filter_older_days: Some(14),
+            ..Config::default()
+        };
         assert_eq!(config.active_filter_count(), 5);
         let serialized = toml::to_string(&config).unwrap();
         let mut loaded: Config = toml::from_str(&serialized).unwrap();
