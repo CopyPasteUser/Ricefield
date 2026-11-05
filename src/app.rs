@@ -6352,9 +6352,7 @@ impl eframe::App for Explorer {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let context = ui.ctx().clone();
         self.poll_background(&context);
-        if self.theme_file.is_some()
-            && self.theme_last_check.elapsed() >= Duration::from_secs(3)
-        {
+        if self.theme_file.is_some() && self.theme_last_check.elapsed() >= Duration::from_secs(3) {
             self.theme_last_check = Instant::now();
             self.reload_theme_file(&context, false);
         }
