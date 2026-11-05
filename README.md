@@ -1,636 +1,141 @@
 # RiceExplorer
 
-**A Linux-first file explorer written in Rust, with a different personality for every desktop rice.**
+**A native Linux file manager that fits your desktop rice.**
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Release candidate: v1.0.0-rc.1** — stable 1.0 acceptance remains open.
-> Local file management is the candidate's write-capable scope; remote tabs
-> remain read-only. **Cross-filesystem Move publishes a verified copy and keeps
-> the original for manual cleanup; same-filesystem Move renames.** Keep Thunar
-> available until the real Mint/NAS/USB/recovery checks pass.
-> [Current scope and remaining gates](docs/1.0-STATUS.md) ·
-> [Roadmap](ROADMAP.md) · [Changes](CHANGELOG.md)
+Built with Rust and egui, RiceExplorer combines everyday file management with
+seven visual shells and a theme editor. It is the file-management companion to
+[RiceBowl](https://github.com/CopyPasteUser/RiceBowl).
 
-The candidate adds native, opt-in Linux **FileManager1** integration
-(`rice-explorer --file-manager-service`), a bounded Unicode filename regex
-filter under **Filters → Custom pattern and ranges**, background file-path
-resolution, and reproducible lab measurements. Run `rice-explorer --benchmark`
-to measure a private disposable 100k-file fixture and a verified 64 MiB copy;
-it never benchmarks against existing user files. Choose an HDD for the fixture
-with `TMPDIR=/path/to/lab rice-explorer --benchmark` (about 130 MiB plus inode
-space). Results describe that machine and filesystem, not universal limits.
+[Install](#installation) · [User guide](docs/USAGE.md) ·
+[Release status](docs/1.0-STATUS.md) · [Changelog](CHANGELOG.md)
 
-FileManager1 does not change your default file manager or install a competing
-activation service. With the opt-in process running and the bus name free,
-other desktop applications can show local files in their containing folders
-and request properties. Remote item selection/properties remain unsupported;
-remote folder opening uses the existing read-only backend.
+> **Current version: 1.0.0-rc.1.** This is a release candidate; stable 1.0
+> acceptance is still open. Keep Thunar available and use disposable data when
+> testing storage, network and recovery workflows.
 
-![RiceExplorer 1.0 candidate, Windows 7 shell](docs/screenshots/win7.png)
+![RiceExplorer with the Windows 7 shell](docs/screenshots/win7.png)
 
-**Distribution:** An [automated Linux x86_64 preview bundle](RELEASE.md) can
-be built without distributing Rust sources to every end user. The verified
-bundle includes a user-only installer, icon and launcher; its CI checks do
-not replace the outstanding real-device acceptance.
+## What you can do
 
-RiceExplorer is designed as the file-management companion to [RiceBowl](https://github.com/CopyPasteUser/RiceBowl). Its renderer, filesystem operations and visual profiles are separate: switching from Windows 98 to Windows 7 or ChromeOS changes the chrome, geometry, controls and icons without replacing the file manager or disturbing an open folder.
+- **Browse your files:** tabs, split view, folder tree, bookmarks, list/grid
+  layouts and optional session restore.
+- **Manage local files:** create, copy, move, rename, batch rename, link and
+  trash, with transfer progress, conflict previews and per-file results.
+- **Find and inspect:** filename/content search, glob and regex filters,
+  saved searches, duplicate candidates, thumbnails and Quick Look.
+- **Work with archives:** browse, verify, create and extract supported local
+  ZIP, TAR and 7z formats, including password-protected ZIP.
+- **Browse network shares:** read-only SMB, SFTP, WebDAV and MTP tabs through
+  GIO/GVfs, NAS discovery and optional login storage in the Linux keyring.
+- **Choose your shell:** Windows 98, XP Luna, Windows 7, Windows 10,
+  Frutiger Aero, ChromeOS or macOS-inspired layouts. Edit colors, density,
+  toolbars and panel placement without changing file-operation behavior.
 
-**0.4 foundation (stable acceptance remains open):** Local paths, `file://`
-and validated SMB/SFTP/WebDAV/MTP addresses share a typed location parser.
-Network shares can be connected through a non-blocking GIO attempt. Once
-connected, a remote directory opens as a **read-only normal tab**, with
-Back/Forward history that also works across local and remote folders,
-parent navigation, asynchronous refresh and stale
-scan cancellation. Show-hidden also works on remote listings. The listing
-distinguishes folders from files and provides a **read-only, bounded text
-preview** (32 KiB, UTF-8 only, 12-second timeout, cancellable) without writing
-to the remote location. Binary previews, full file opening and downloads still
-await a safe backend. The address bar accepts remote URIs; the sidebar exposes
-network mounts, confirmed GIO unmount/eject actions, up to 32 validated
-persistent network favorites and explicit reconnect. The system `gio`
-executable and suitable GVfs backends are required. Optional session restore
-now remembers remote tabs alongside local folders without storing credentials;
-offline shares report errors through background scans rather than delaying
-startup. **0.6 alpha.6:** the Connect / Sign in dialog takes a username,
-optional workgroup and masked password for a single GIO mount attempt. GIO's
-interactive prompts are answered through a bounded pipe, never through CLI
-arguments, URLs or saved settings. A broken GDBus/GVfs session can still
-prevent mounting with valid credentials; NAS acceptance on Mint is pending.
-**0.6 alpha.8:** Use **Discover NAS on network…** in the Volumes sidebar
-to find SMB hosts advertised by GVfs/SMB workgroups or Avahi/mDNS. Select
-**Browse shares** to list a server's available shares, or **Sign in** to open
-the login dialog without typing the address. A successful connection adds
-the share URI (never a password) to persistent favorites. Tick **Remember
-login in Linux keyring** to save credentials *after a successful mount* using
-the optional `secret-tool` / `libsecret-tools` and your desktop Secret Service.
-**Use saved login** retrieves them on demand; **Forget saved login** removes
-them. No plaintext fallback or automatic login is enabled. Install optional
-Mint support with `sudo apt install gvfs-backends avahi-utils libsecret-tools`
-if discovery or keyring features are missing. A NAS with discovery disabled
-can still be reached by a manual SMB URI once, then accessed from favorites.
+## Installation
 
-**Safety boundary:** remote file modification, copy/move, rename, delete and
-paste remain disabled; remote tabs never fall through to local POSIX file
-workers. Native GIO/UDisks2 operation and capability APIs and safe remote
-transfers are still outstanding. **Keyring saving is explicitly opt-in** and
-uses the desktop Secret Service; unattended automatic authentication remains
-disabled. Actual Synology/mDNS/keyring acceptance on Mint is still open.
-Physical Mint/USB and network-disconnect acceptance is also postponed. These
-are recorded limitations, not passed tests or a stable 0.4 sign-off.
+The distribution target is **Linux x86_64**, built on Ubuntu 24.04 for the
+Linux Mint 22 generation. Physical Mint X11/Wayland acceptance is still pending.
 
-**0.5 archive preview:** Select local files/folders and use **Archive → Compress
-selected…**, or select a ZIP, tar, tar.gz, tar.xz, tar.zst, 7z or optional RAR
-archive and choose **Archive → Browse / extract archive…**. The native Rust UI
-uses the system `libarchive.so.13` backend (install `libarchive13t64` on Mint
-22/Ubuntu 24.04). Browse entries, select files or directories, verify archive
-integrity, or extract into a **new folder**. Create ZIP, tar.gz, tar.xz,
-tar.zst and 7z archives. Work happens in background, with progress and Cancel.
-ZIP archives can optionally be created with **AES-256 encryption**. For an
-encrypted ZIP, or 7z/RAR supported by installed libarchive, enter the password
-in the archive browser and select **Reload list** if needed. ZIP filenames
-can be visible even if their contents are locked; **Verify** and **Extract**
-use the password and cannot publish files with a missing or wrong password.
-Passwords exist only in the open dialog and active worker; they are never
-saved in settings, logs or a keyring. Password recovery is out of scope.
-Archive paths cannot escape the selected destination; symlinks, hardlinks and
-special files are refused, extraction has explicit size/entry limits and uses
-private staging plus atomic no-overwrite publication. Existing targets are
-never replaced. Regression tests include hostile TAR types, duplicate members,
-forged inflated sizes, truncated ZIP, wrong passwords and extraction cancellation.
-Native Mint acceptance, broader fuzzing and low-memory testing remain open.
-Do not open unknown archives with other tools as a workaround.
+### Build from source
 
-**Encrypted archive interoperability:** On libarchive 3.7.4, traditional
-encrypted ZIP and WinZip AES-128/AES-256 test archives pass a full read with
-the correct password and reject wrong/absent passwords. Other encrypted ZIP
-extensions and encrypted 7z/RAR samples **do not decrypt on that backend**,
-even with the correct password. Support for *unencrypted* 7z/RAR does not
-imply encrypted support. See the [12-fixture compatibility results and
-reproducible test script](docs/ARCHIVE-INTEROPERABILITY.md).
-
-**0.6 navigation preview:** F3 opens a two-folder split view with independent
-selections, scroll positions and keyboard focus; click **Focus** in either
-pane to direct toolbar and shortcut actions there. Ctrl+Shift+N opens the
-current local folder in a separate process/window without overwriting the
-main window's saved session. Ctrl+PageUp/PageDown cycles tabs,
-Ctrl+Shift+PageUp/PageDown reorders them, Ctrl+Shift+T reopens recently
-closed tabs and a right-click on any tab exposes duplicate/move/close actions.
-With session restore enabled, **location-only** Back/Forward history (40
-entries each) and the 16 most recently closed tab locations now also survive
-an app restart. Search text is never persisted; network credentials persist
-only when the user explicitly opts in to the system keyring. The sidebar
-includes an asynchronous expandable folder tree; list headings sort by
-name/type/size/date and natural sorting places `file2` before `file10`.
-The type filter shows images, documents, audio, video, code or archives.
-Drag files into the Explorer, or between its local folders/panes, to enqueue
-a no-overwrite copy. **0.6 alpha.6:** right-click a local file or selection
-and choose **Drag to another app…** to open an installed `ripdrag` or `dragon`
-native drag-source helper. No persistent process or filesystem change is
-made. Directly dragging a file tile *out* of RiceExplorer is still unsupported;
-helper availability and actual Mint X11/Wayland acceptance remain open.
-This is not a stable 0.6 release.
-
-**Shell component progress (alpha.5):** File-cell widgets, sorting headers,
-toolbar events, sidebar group framing and common file-dialog windows now have
-separate presentation-only Rust functions. Selecting files, drag/drop and
-filesystem operations remain shared across themes. Compact windows stack
-navigation/search rows and constrain common dialogs. Automated Xvfb checks
-verify visible split/dialog changes and take 380px-wide screenshots. This is
-**not** a complete shell plugin interface or real Mint accessibility sign-off.
-
-**Mounted-folder resilience (alpha.3):** A disconnected child mount no longer
-causes the entire *parent* folder listing to fail when other entries remain
-readable. RiceExplorer shows a partial-list warning and Retry instead. The
-Volumes sidebar now discovers filesystems mounted directly at `/mnt`, and
-disconnected mounts remain visible even if metadata inspection fails. If
-Linux itself reports `No such device` when opening `/mnt`, RiceExplorer cannot
-repair that system mount; see the diagnosis below. Hardware verification is
-still required before a stable 0.6 release.
-
-**Built for structural customization.** RiceExplorer is not intended to be
-one file manager with seven recolors. Its TOML shells can move whole navigation,
-tab, menu and action components between regions; reorder sidebar modules and
-move the preview pane. Windows XP can have a task-oriented side pane, Windows
-10 a top command ribbon and a custom rice a bottom toolbar — all using the
-same tested file-operation engine. More component regions and custom Rust
-renderers remain part of the roadmap.
-
-![RiceExplorer icon](assets/rice-explorer.svg)
-
-## Implemented on `main` — 0.3 core through 0.8 search alpha
-
-**0.8 search alpha:** The shared Filters menu now combines file type, size
-(under 1 MiB, 1–100 MiB, 100 MiB+) and modification date (past day, week or
-30 days), without scanning files again. Active filter count is visible, and
-Clear filters restores the full list. Items hidden by any filter are removed
-from the current selection so Copy/Move/Delete cannot unexpectedly affect
-invisible files. **Contents** searches local UTF-8 file text alongside names;
-toggle **Subfolders** to include nested folders. It runs off the UI thread,
-never indexes or modifies data, skips symlinks, special files and files over
-2 MiB, and caps the work at 4,096 files / 64 MiB / 12 seconds. A visible
-warning marks partial results. Filename regex and network *content* search
-remain on the roadmap; custom ranges are already implemented.
-
-**Network filename search (0.9 alpha.4):** Type into the search box of a
-connected SMB/SFTP/WebDAV/MTP tab; **Subfolders** optionally searches nested
-folders, without reading or changing remote file contents. Query changes
-cancel obsolete background requests. Searches are bounded to 64 folders,
-16,384 entries, 2,048 matches, 8 levels and 12 seconds; partial or
-unavailable-folder results are visibly marked. There is no indexing daemon.
-
-**Advanced filters (0.8 alpha.3):** Expand **Filters → Custom pattern and
-ranges** to match a case-insensitive filename glob (`*`, `?`), minimum and
-maximum file size in MiB, and modification-age boundaries in whole days.
-These combine with the basic filters, are persisted locally, and never inspect
-file contents or start another background process. **Clear filters** resets
-all of them. A conflicting min/max bound shows a warning and no results.
-
-**Saved searches (0.8 alpha.4):** Use the **Saved searches** menu to explicitly
-keep up to 16 local folder/query/scope combinations and reopen them later.
-Ordinary search text is never saved; saving is opt-in. Preferences are now
-atomically replaced via a private (0600) file in a private (0700) directory;
-predictable `.tmp` paths are not followed. Filename globs use a compiled,
-linear-time matcher, including on folders with large entry counts.
-
-**Duplicate candidates (0.8 alpha.5):** Open **Actions → Find duplicate
-candidates in view…** to compare visible local regular files by size then
-SHA-256 in a cancellable worker. The scan is read-only (256 files, 128 MiB per
-file, 512 MiB total and a 45-second budget); incomplete results are marked.
-It never deletes or overwrites files. Review hashes and contents yourself
-before any removal. Requires the system `sha256sum` utility.
-
-**External rice live reload (0.9 alpha.1):** Launch with
-`rice-explorer --theme-file /path/to/rice.toml`. Changes to this file are
-checked every three seconds and applied without restarting or replacing open
-tabs. Invalid, missing, non-regular or oversized (over 256 KiB) themes are
-rejected while the last working theme remains active. The theme picker also
-offers **Reload external TOML**, or select a bundled rice to stop watching
-the custom file. A native RiceBowl API is still open.
-
-**Custom rice editor (0.9 alpha.3):** Open the theme picker → **Customize
-theme…** to import existing TOML, edit it directly, validate it, or adjust
-colors and layout metrics visually. **Save & use theme** creates a new private
-TOML under `~/.config/rice-explorer/themes/` (or `$XDG_CONFIG_HOME`), never
-overwrites a theme, and remembers your choice across restarts. Imported files
-are read-only until explicitly saved as a new theme. CLI `--theme` and
-`--theme-file` retain precedence for that process. Invalid TOML cannot be
-activated. Visual edits regenerate TOML formatting and may remove comments.
-**Shell composer (0.9 alpha.5):** Expand **Shell composer · component layout**
-inside the visual editor to put Menu bar, Tabs, Navigation and Command bar
-on the top or bottom edge, hide optional components, and reorder them with
-↑/↓. Also select the shell kind, sidebar/preview positions, sidebar sections,
-collapsible groups and status bar. Navigation is always retained. Each saved
-rice uses the same validated TOML schema without modifying other profiles.
-
-**Open With (0.9 alpha.2):** Select one local file, open **Actions → Open
-With…**, and choose a registered Linux desktop application. Handler lookup
-uses the system GIO MIME registry on a cancellable worker; launching uses
-`gio launch` with argument-separated paths, never shell commands or parsed
-desktop Exec strings. Requires `gio`/the local desktop application registry.
-Portals and real Mint interoperability remain to be accepted.
-
-**0.7 preview alpha:** The Grid view requests thumbnails only for visible
-images, with a 96-item in-memory cache and one decoder at a time (no persistent
-thumbnail files). Select a local file and press **Space** for a resizable
-**Quick Look** window; press Space or Esc to close. The Preview panel remains
-available separately. Local PDF first-page preview uses optional
-`poppler-utils` (`pdftoppm`); audio/video metadata uses optional `ffprobe`
-from `ffmpeg`. Both commands have timeouts and output caps. Archive preview
-shows an entry listing without extraction, and text/code previews read only
-the initial 32 KiB. Right-click a local file or folder and select **Properties**
-to inspect Linux extended attribute names / ACL presence. Use **Calculate
-folder size** or **Calculate SHA-256** explicitly for background-only
-analysis (100,000 entries / 12 s and 2 GiB / 30 s respective limits).
-Preview/backends and actual low-memory Mint behavior need physical acceptance.
-
-- Native Rust GUI with GPU-accelerated drawing; no Electron, browser or persistent background daemon.
-- Seven bundled visual profiles: `win98`, `xp-luna`, `win7`, `win10`, `frutiger-aero`, `chromeos` and `macos`.
-- Configurable structural shells: classic menu/toolbar, XP task sidebar, Aero command bar, Windows 10 ribbon-like toolbar and modern condensed navigation. A universal actions menu exposes core file operations on every profile.
-- Multiple tabs, history, path entry, home/parent navigation, bookmarks,
-  mount-point navigation and a collapsible sidebar. Optional session restore
-  remembers up to 32 tab locations and the active tab across restarts. 0.6
-  adds duplication/reordering, reopening closed tabs, split view and keyboard
-  cycling; a bounded navigation/closed-tab snapshot survives restarts.
-- List and icon layouts, local and bounded recursive filename search, hidden-file toggle, natural/lexical sorting by name, type, size or modification time, clickable list headers and combined type/size/date filters.
-- Multiple selection (Ctrl/Shift/Ctrl+A), copy, cut, paste, duplicate, rename, new folder/file, symbolic links, desktop Trash and confirmed permanent deletion.
-- **Paste with options…** in the shared Actions menu: an asynchronous,
-  read-only preflight lists each source and intended target, counting
-  collisions, automatic renames and skips before enabling Start. Choose
-  **Keep both** (` (copy)` names, also normal Ctrl+V), **Skip existing**
-  (skip without comparing), **Require no conflicts** (abort the entire batch
-  if a target already exists), or **Skip only matching contents** (read-only
-  comparison; fail the batch for different or unverifiable data). Content
-  comparison has a 512 MiB / 10,000-entry safety budget, covers directories
-  and symlink targets, and never deletes a skipped cut source. The worker
-  repeats validation before making changes, rejects
-  duplicate/overlapping sources and self-copy destinations, and never
-  overwrites existing files. A concurrent filesystem change may still stop
-  the operation safely. A successful comparison is only a momentary observation,
-  not an atomic guarantee against other writers or permission to clean up
-  a source. No replace/overwrite operation is currently offered.
-- Batch rename for 2–256 selected entries (F2 or Rename): add a prefix/suffix,
-  literal find/replace or configurable zero-padded sequence numbers. Preview
-  every candidate before confirming. Prefix/suffix and numbering preserve raw
-  non-UTF-8 filename bytes; find/replace requires UTF-8 names. Existing targets
-  are rejected before any rename, with atomic no-overwrite behavior on Linux.
-- Successful individual Rename operations provide a one-time **Undo rename**
-  action in the shared Transfers history while the session remains open.
-  Undo refuses to overwrite an occupied original name or rename an entry
-  whose inode/metadata changed since the completed rename; it is not a
-  persistent action log or a batch rollback.
-- Legacy v3 cross-device Move journals record the checked staging payload's
-  inode before publication and verifies that the published destination is
-  that same object. The restart review shows this relationship separately
-  from current source/destination metadata. Old v1/v2 records remain readable;
-  a matching inode alone does **not** authorize automatic recovery or deletion.
-- Native GTK file clipboard interoperability (when `xclip` or `wl-clipboard` is installed); otherwise use the internal file clipboard. Desktop copy/cut and paste run in background workers so a stuck helper cannot freeze the window. External payloads are capped at 4 MiB. Paste waits at most two seconds in the UI; on timeout **nothing is pasted** and a late result is ignored. Switching folders/tabs while a read is pending cancels that paste. Internal copies remain immediately available while desktop synchronization is pending.
-- Cross-device Move now uses a staged, byte-verified **Copy with source retained**. It never automatically removes the original, and Transfers identifies every retained source for manual review and cleanup. Same-filesystem Move remains an atomic rename. Symlinks, progress and cancellation are supported.
-- Staged file payloads and directories are synced before no-overwrite
-  publication; the destination parent is synced after publication. If a
-  filesystem cannot confirm the directory sync, the transfer reports an
-  error and keeps the original source. This improves power-loss
-  durability but does not guarantee all metadata preservation or automatic recovery.
-- Trash and permanent deletion require explicit confirmation with a scrollable
-  list of the actual selected paths. Multi-item requests
-  now validate every selected path, reject duplicates/nested selections, and
-  detect missing inputs **before removing anything**. Each attempted item has
-  its own success/failure status in Transfers. A source changed after preflight
-  is refused when its turn begins; Linux identity checks include modification
-  and inode-change times. This is still **not** transactional: a later
-  failure cannot restore an earlier deleted file, and concurrent directory
-  modifications remain a risk. Prefer Trash when possible.
-- Symbolic-link batches reserve distinct destination names before starting,
-  never overwrite existing entries, and show per-link targets, failures and
-  cancellations in Transfers. Earlier links remain after a partial failure.
-- Bounded transfer queue for up to 32 waiting copy requests with FIFO job IDs, a shared Transfers panel, active progress/cancel, removal of jobs before they run and 64 recent session results. Active transfers show elapsed time, average transferred-byte rate and an approximate remaining time (after the first second and only when measurable); completed jobs retain their duration. Estimates may fluctuate on slow drives and during verification. **Copy and Move results expand into per-file statuses** (completed, skipped, failed, cancelled or not started), with actual target paths and error details on hover. A failed batch keeps the earlier completed items; no automatic rollback is implied. After a partially successful cut-and-paste **including a failed batch**, only unfinished sources remain on the internal clipboard for a deliberate retry; unchanged stale desktop cut contents are ignored. The queue pauses after a failed/cancelled operation until explicitly resumed. It is in memory only and never replayed after a restart; moves and destructive requests do not wait automatically.
-- **Queue control:** open Transfers to manually pause or resume waiting Copy
-  jobs. A running copy continues normally; pausing only prevents the next
-  waiting job from starting. The pause is session-only and is not an Undo.
-- Development preview: durable cross-device move journals and an always-visible,
-  read-only warning for unfinished transfers, even when a rice hides its
-  status bar. The recovery window checks whether the recorded source,
-  destination and staging paths currently exist (including broken symlinks)
-  and gives cautious guidance. New records also retain Unix source/published
-  destination inode and metadata snapshots, so inspection can flag changed or
-  replaced objects. The review now displays source/destination evidence
-  separately and lets you browse their containing folders (or the staging
-  folder) without following the recorded entry. When the original source's
-  recorded identity still matches, an optional **separate Copy preview**
-  defaults to Keep both and requires another confirmation; it does not resume
-  the interrupted Move, delete a source or clear the record. Older records remain readable
-  without identity evidence.
-  Optional bounded read-only content comparison
-  is available, but even matching bytes are **not** permission to delete
-  anything. No automatic
-  destructive recovery. Repeated rescans are coalesced while a filesystem
-  inspection is active, so slow or disconnected mounts cannot spawn a growing
-  group of duplicate scanners. If the 4,096-record journal limit is reached,
-  validated **completed** records can be retired to free a slot; incomplete or
-  unreadable recovery evidence is always retained. Current source-retaining
-  cross-volume copies do not reserve new journal slots.
-- File properties and editable Unix permission bits, loaded asynchronously so
-  an unavailable mount cannot stall the entire UI. Slow requests are
-  coalesced, stale results are ignored and permission edits remain disabled
-  until the selected entry's metadata loads. External folder changes are
-  detected.
-- On-demand preview pane for bounded image and text previews, decoded off the UI thread.
-- Background folder scanning and file operations; superseded local scans and recursive searches are cooperatively cancelled and cannot overwrite current results. Virtualized file listing for large directories.
-- Copy files into a specific folder by dragging them from the desktop, another file manager, another RiceExplorer pane, or onto a folder row; external drag-out remains open.
-- External TOML themes with configurable top/bottom tool regions, reorderable sidebar modules and left/right preview; persistent user settings. A single executable works with all rices.
-
-**Most recent functional work:** two-pane browsing (F3), bounded session
-navigation and closed-tab recovery, separate local windows (Ctrl+Shift+N),
-lazy folder tree, natural sorting, file-kind filters and internal copy drag.
-Earlier safety work includes synced staging and destination directories;
-read-only crash-recovery triage showing source, destination and staging status;
-coalesced recovery rescans; whole-batch Trash/Delete preflight with per-item
-outcomes; and transfer elapsed time, average speed and approximate ETA.
-Safety hardening also rejects stale hardlink payloads
-when a source inode changes mid-copy, and refuses journal records replaced
-by symlinks, special files or different inodes while being scanned.
-The metadata safety guard requires cross-device Move copies to match
-source Unix owner/group, permissions and modification times, and (on Linux)
-all readable extended-attribute names and values. Unsupported ownership or
-ACL migration stops the Move instead of silently losing metadata.
-Linux staging additionally preserves POSIX access/default ACLs and tries to
-retain original uid/gid when permitted, without requiring extra dependencies.
-Asynchronous Paste conflict previews, full-batch worker preflight and
-*Require no conflicts* remain available. Detailed per-file results appear in
-the Transfers window. The CI workflow checks
-Rust formatting, Clippy, unit tests, a release
-build, CLI startup, Xvfb GUI startup/split toggle for all seven skins, and
-pairwise image-difference/structural regression gates for 98/7/macOS and one
-custom toolbar arrangement. A 100,000-name synthetic sort/glob regression
-checks for large-list correctness without writing files. These are
-development checks, **not** a production release or full Linux Mint acceptance.
-
-### Install on Linux Mint / Xfce
-
-You need a current Rust/Cargo toolchain, `xdg-open` and the usual X11/OpenGL development libraries. On Ubuntu/Mint:
+Install a current stable [Rust toolchain](https://rustup.rs/), then install the
+build and runtime dependencies on Ubuntu 24.04 / Mint 22:
 
 ```bash
-sudo apt install build-essential pkg-config libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-0 libssl-dev libgl1-mesa-dev xdg-utils
+sudo apt install build-essential pkg-config libxcb-render0-dev \
+  libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-0 \
+  libssl-dev libgl1-mesa-dev libarchive13t64 xdg-utils
+
 git clone https://github.com/CopyPasteUser/riceExplorer.git
 cd riceExplorer
 bash install.sh
 ```
 
-For file copy/paste interoperability with other file managers, install `xclip` on X11 or `wl-clipboard` on Wayland. Without them RiceExplorer still supports copy and paste between its own tabs.
+Launch **RiceExplorer** from your application menu, or run
+`~/.local/bin/rice-explorer`. Installation is user-local and leaves your default
+file manager unchanged. Re-running `bash install.sh` updates the checked-out
+version; `bash uninstall.sh` removes the application while keeping preferences.
 
-Or run directly from source: `cargo run --release -- --theme win7 "$HOME"`.
+### Install a binary bundle
 
-The installer places the executable at `~/.local/bin/rice-explorer`, a scalable
-icon and a `.desktop` launcher under `${XDG_DATA_HOME:-~/.local/share}`. The
-launcher uses the **absolute installed binary path**, even when a desktop
-session does not include `~/.local/bin` in `PATH`. Look for **RiceExplorer** in
-your application menu; if its menu cache is stale, log out and back in, or run
-`gtk-launch rice-explorer` as a diagnostic (when `gtk-launch` is installed).
-It does **not** change your default file manager or Xfce associations. It
-doesn't touch Thunar.
-Updates replace the executable by atomic rename. If desktop registration
-fails, the installer restores the prior binary, launcher and icon; personal
-settings remain untouched. This protects ordinary installation errors, not
-power loss during a multi-file update.
-Concurrent installs, upgrades and uninstalls share an advisory per-user lock
-(`flock` from util-linux); the empty lock file stays under the XDG state
-directory after uninstall to preserve correct interprocess coordination.
-The desktop launcher accepts file/folder URIs, and the CLI accepts validated
-`smb://`, `sftp://`, `dav://`, `davs://` and `mtp://` locations as read-only
-tabs. Do not put passwords in a URI or command line. This does not register
-RiceExplorer as the default file manager or URI scheme handler.
+Published bundles are listed under [Releases](https://github.com/CopyPasteUser/riceExplorer/releases).
+An unreleased candidate can be built from source above. For a downloaded bundle,
+verify its SHA-256 manifest, extract it and run `bash install.sh` inside the
+extracted folder. Rust is not required. See [release and bundle instructions](RELEASE.md).
 
-On ordinary launches, RiceExplorer restores the previously opened tabs and
-active location. **Explicit CLI folder arguments override the saved session.**
-Use **Session → Restore tabs on startup** in the shared actions toolbar to opt
-out and erase stored tab paths; the switch applies across all seven skins.
-Sessions are limited to 32 absolute UTF-8 local paths or validated remote URIs.
-Non-UTF-8 paths remain usable but are not written to the TOML session; offline
-mounts and network locations are scanned in the background and may show an
-error rather than blocking launch. No passwords or URI userinfo are saved.
-Back/Forward location history (at most 40 entries each) and up to 16 closed
-tab locations are restored; search queries, selections and pending file
-operations are **not** replayed on restart.
+<details>
+<summary>Optional desktop features</summary>
 
-To update an existing source installation:
-
-```bash
-cd riceExplorer && git pull --ff-only && bash install.sh
-```
-
-If Git refuses an update because an **untracked** `Cargo.lock` would be
-overwritten, back up that file outside the repository before retrying the
-pull. Do not discard other uncommitted changes.
-
-If `/mnt/medien` or another mounted directory displays **No such device (os
-error 19)**, Linux refused to enumerate the folder. First determine whether
-the system itself can read it (these checks do not change the mount):
-
-```bash
-findmnt -T /mnt/medien -o TARGET,SOURCE,FSTYPE,OPTIONS
-timeout 8s ls -la /mnt/medien 2>&1 | head -25
-stat -f /mnt/medien 2>&1
-```
-
-If `ls` also fails, investigate the mount/remote backend before retrying the
-Explorer. If `ls` succeeds but RiceExplorer fails after upgrading, attach
-the exact command output and the Explorer error for a targeted regression fix.
-Never force-unmount or automatically remount live volumes to hide an ENODEV
-error; pending I/O and filesystem state must be checked first.
-
-To uninstall the application files, run `bash uninstall.sh` from the
-repository. This leaves personal settings and themes intact; it does not
-uninstall Thunar or change file associations. Re-running `bash install.sh`
-updates the application from the checked-out source.
-
-## Select a rice
-
-```bash
-rice-explorer --theme win7 ~/Downloads
-rice-explorer --theme xp-luna ~/Documents
-rice-explorer --theme win98
-rice-explorer --theme frutiger-aero
-rice-explorer --theme-file ~/.config/rice-explorer/my-rice.toml ~/Pictures
-rice-explorer --version
-rice-explorer --list-themes
-```
-
-RiceBowl can launch the same binary with the active rice identifier. Suggested integration for its launcher: `rice-explorer --theme <profile> <folder>`. The optional file-manager override should be scoped to the active session; RiceBowl must restore its previous preference when leaving the rice. A system-wide `xdg-mime` override is *not* required.
-
-| RiceBowl visual identity | Profile | Layout |
-| --- | --- | --- |
-| Windows 98 | `win98` | square classic |
-| Windows XP Luna | `xp-luna` | blue classic |
-| Windows 7 | `win7` | Aero command bar |
-| Windows 10 | `win10` | flat modern |
-| Frutiger Aero | `frutiger-aero` | aqua Aero |
-| ChromeOS | `chromeos` | rounded modern |
-| macOS | `macos` | Finder-inspired modern |
-
-These profiles are *inspired by* their respective interface eras; they're not pixel-perfect OS clones, proprietary asset packs or system window decorations.
-
-### Customize
-
-Copy a file from [`themes/`](themes/) and edit its colors and metrics. Launch it with `--theme-file`. All colors use 6-digit `#RRGGBB`; layout is `classic`, `aero` or `modern`. The external profile controls window surfaces, selection, folder/file icons, radius, list density, tile width and sidebar width. Invalid custom themes produce an error and fall back to the bundled Windows 7 profile.
-
-Theme schema 1 also supports a composable shell. Change actual **layout
-structure**, not just colors, without recompiling. Put `schema_version = 1` with the top-level theme
-fields (before `[palette]`), then add the shell section at the end:
-
-```toml
-[shell]
-kind = "finder"
-top = ["tabs", "navigation"]
-bottom = ["command-bar"]
-status_bar = true
-
-[shell.sidebar]
-position = "left"
-width = 230
-mode = "collapsible"
-sections = ["tasks", "places", "favorites", "volumes"]
-
-[shell.preview]
-position = "right"
-width = 310
-```
-
-`kind` selects `classic`, `luna`, `aero`, `ribbon`, `aqua`,
-`chromeos`, `finder` or `modern`. `top` and `bottom` independently order the
-`menu-bar`, `tabs`, `navigation` and `command-bar` modules. A module may appear
-in **one region only**; navigation must remain present. If `top` is omitted,
-moving a default component to `bottom` automatically removes it from the
-default top region. Either region can be empty, but not both.
-
-The sidebar supports `left`/`right`, width (120–420), `mode = "flat"` or
-`mode = "collapsible"`, and ordered `tasks`, `places`, `favorites`, `volumes`
-modules. Collapsible modules can be expanded and collapsed independently; XP
-Luna enables this by default, while older themes remain flat. `tasks` provides real New Folder,
-Copy, Cut, Paste, Rename, Trash and Properties controls; it does not duplicate
-file-operation logic. `[shell.preview]` independently controls the preview
-pane's `left`/`right` placement and width (210–520) when a preview is open.
-`status_bar = false` hides only the optional status bar, never transfer or
-recovery warnings. The main file view always remains available.
-
-Older TOML themes without these fields retain their established layout.
-Unsupported regions, duplicate widgets and invalid dimensions fail theme
-validation. This is a **declarative built-in component system**, not arbitrary
-runtime Rust code execution: a visual composer and compile-time custom
-component registry still need to be built for version 1.0.
-
-Per-user settings are stored in `~/.config/rice-explorer/config.toml` (or `$XDG_CONFIG_HOME/rice-explorer/config.toml`). You can customize bookmarks, current profile, hidden files, sidebar, view and sorting. Settings are written with a temporary file and rename.
-
-### Shortcuts
-
-| Keys | Action |
+| Feature | Ubuntu / Mint package or tool |
 | --- | --- |
-| Ctrl+T / Ctrl+W | New / close tab |
-| Alt+Left / Alt+Right / Alt+Up | Back / forward / parent |
-| Ctrl+L / Ctrl+F | Path / folder search |
-| Ctrl+R / Ctrl+H | Refresh / hidden files |
-| Ctrl+C / Ctrl+X / Ctrl+V | Copy / cut / paste selected files |
-| Ctrl+Shift+C | Copy selected file paths as plain text |
-| Ctrl+N / F2 / Delete | New folder / rename / move to Trash |
-| Shift+Delete | Permanently delete (requires confirmation) |
-| Ctrl+A / Ctrl+D / Alt+Enter | Select all / duplicate / properties |
-| Space | Preview selected file |
-| Ctrl-click / Shift-click | Extend selection / select range |
+| Clipboard with other file managers | `xclip` on X11; `wl-clipboard` on Wayland |
+| Network browsing and NAS discovery | `libglib2.0-bin`, `gvfs-backends`, `avahi-utils` |
+| Saved logins in Linux Secret Service | `libsecret-tools` |
+| PDF first-page preview | `poppler-utils` |
+| Audio/video metadata | `ffmpeg` (`ffprobe`) |
+| Native drag-out helper | Installed `ripdrag` or `dragon` |
 
-## Safety and performance
+Without external clipboard tools, copying between RiceExplorer tabs still works.
 
-Current safeguards:
+</details>
 
-- Copies use private, hidden staging directories and publish complete entries
-  with atomic no-overwrite rename. Existing targets get ` (copy)` suffixes;
-  copying a folder into itself is rejected.
-- Symlinks are copied as links, never traversed as directories; device files
-  are rejected. A regular file swapped for a symlink or FIFO while opening is
-  refused without following it or blocking on the FIFO. Verification also
-  checks both opened file descriptors and their original paths for changes.
-- Multiple names for the same regular-file inode **inside one copied directory
-  tree** remain hardlinked in the staged destination. Separate top-level paste
-  items and hardlinks outside the selected tree are not linked together. Unlike
-  Copy, cross-device Move now refuses an inode with hardlink names outside the
-  selected tree, or a hardlinked symlink, before staging; deleting its source
-  would otherwise silently sever those relationships.
-- On Linux, accessible `user.*` extended attributes are copied for files,
-  directories and links. A destination that refuses one of these attributes
-  aborts staged publication instead of silently discarding it. POSIX access
-  and default ACLs are copied for regular files and directories; inherited
-  staging ACLs are removed when absent on the original. Source uid/gid is
-  also retained when permitted, including for symlinks. An ordinary Copy can
-  still create a user-owned copy if it lacks permission to retain the owner;
-  a cross-device Move refuses that mismatch instead of deleting the source.
-  Security labels and capabilities are never replayed automatically.
-- A source that changes identity, size, modification time or mode during copy
-  fails validation before publication. Regular-file, directory and (on Linux)
-  symbolic-link access and modification timestamps are preserved where supported.
-- Cross-filesystem Move verifies copied bytes and supported metadata before
-  atomic no-overwrite publication. A source-tree manifest and hardlink-scope
-  check can refuse unsafe layouts. **No source entry is unlinked afterward**:
-  concurrent writers make a recursive check-and-delete race-prone. Review
-  the destination, then separately remove the source using the normal Trash
-  action if appropriate. Transfers records this as "Copied — source kept",
-  not as a finished rename. Privileged metadata may still be unsupported.
-- Cancellation stops future work and cleans partial staging when possible,
-  but does **not** undo already committed items. Deletion uses the desktop
-  Trash unless permanent deletion is separately confirmed.
-- Multi-item Rename, Trash, Delete and Link failures identify the stopped item
-  and how many earlier items completed. Batch rename preflights all targets,
-  but a competing filesystem writer can still cause a partial batch; it does
-  not automatically undo earlier renames. Sequence numbers follow the stable
-  selection order and appear after the prefix (`image-001-name`). Prefix/suffix
-  applies to the entire original filename (including the extension). Permanent
-  deletion reports missing selected items as errors, rather than false success.
+## Get started
 
-**Important limitations:** Concurrent writers can still cause a partial batch;
-cross-volume sources remain available for manual cleanup even after a verified
-copy. Security labels, file capabilities and other privileged
-extended attributes are not automatically copied; owner/group changes may
-require privileges, and hardlink relationships *between separately copied
-source trees* are not guaranteed. Cross-device
-Moves refuse copies that cannot retain the checked metadata. Linux POSIX ACLs
-are migrated when supported, but not all filesystems implement them.
-**Do not use development
-builds for irreplaceable data.**
+```bash
+rice-explorer ~/Downloads
+rice-explorer --theme xp-luna ~/Documents
+rice-explorer --theme macos
+rice-explorer --theme-file /path/to/my-rice.toml
+```
 
-After a crash, a hidden `.rice-explorer-staging-*` directory may remain. **New
-source-retaining cross-volume copies create no destructive Move journal.**
-Older unfinished Move records still live in `$XDG_STATE_HOME/rice-explorer/operations/` (default
-`~/.local/state/rice-explorer/operations/`). RiceExplorer warns about unfinished
-records and displays source, destination and staging status. The recovery window
-uses recorded inode/metadata snapshots for additional read-only warnings about
-changed or replaced paths; identity matching is not proof of matching bytes,
-authentic ownership or safety after reboot. Legacy v1 journals have no such
-evidence. Their old 4,096-record capacity limit and journal creation lock
-remain relevant only to compatibility/tests; unfinished evidence is never
-pruned automatically.
-The recovery window
-also offers an **opt-in, read-only byte comparison** of source and destination,
-including nested folders and symlink targets. It runs on a worker, can be
-cancelled and stops after 512 MiB, 10,000 entries or 128 nesting levels; very
-large trees and missing/inaccessible files require manual verification. A
-matching snapshot **cannot prove that either path will stay unchanged**, and
-never authorizes source deletion. RiceExplorer will **never** automatically
-delete, resume or overwrite based on these records. The journal is not a full
-power-loss recovery engine. Its browse buttons open the *parent* folders for
-manual inspection; they do not treat any recorded path as a trusted symlink
-target. The optional fresh Copy shortcut can duplicate the source to a new
-collision-free name after a separate preflight and Start confirmation, but it
-does not attest to source contents or replace crash recovery. Filenames are
-never interpolated into shell commands.
+Use the theme picker to switch shells, or choose **Customize theme…** to edit
+one and save your own. Bundled profile IDs are `win98`, `xp-luna`, `win7`,
+`win10`, `frutiger-aero`, `chromeos` and `macos`.
 
-Scanning, searching, copying and Trash operations run on worker threads. Views render only visible rows. Recursive search is bounded to protect small machines; it is not a full-text or indexed search. Image thumbnail previews are implemented; drag-out, advanced mount management, undo and full interactive desktop integration tests remain outstanding. Until these are verified on your Mint laptop, keep Thunar available as a fallback.
+| Shortcut | Action |
+| --- | --- |
+| F3 | Toggle split view |
+| Ctrl+T / Ctrl+W / Ctrl+Shift+T | New / close / reopen tab |
+| Ctrl+L / Ctrl+F | Address bar / search |
+| Ctrl+C / Ctrl+X / Ctrl+V | Copy / cut / paste |
+| Ctrl+N / F2 / Delete | New folder / rename / trash |
+| Space / Alt+Enter | Quick Look / properties |
+
+The [user guide](docs/USAGE.md) covers network connections, archives, filters,
+transfer controls, theme composition and the complete shortcut list.
+
+## Know the current limits
+
+- **Cross-filesystem Move keeps the original.** RiceExplorer publishes a
+  verified copy; you review and clean up the source separately. Same-filesystem
+  Move uses a rename.
+- **Remote tabs are read-only.** Remote writes and downloads are not implemented.
+  Archive encryption support also depends on the installed libarchive backend.
+- **Recovery is a review workflow.** Journal inspection and content comparison
+  do not provide automatic resume, rollback or source deletion. Completed parts
+  of a failed batch may remain.
+
+See [candidate scope and remaining 1.0 gates](docs/1.0-STATUS.md) for the complete
+support boundary, lab results and device checklist. For mounting, clipboard or
+launcher problems, start with [troubleshooting](docs/TROUBLESHOOTING.md).
 
 ## Development
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --all-targets -- -D warnings
-cargo test --all-targets
-cargo run --release -- --theme win7
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked --all-targets
+cargo run --locked --release -- --theme win7
 ```
 
-The included GitHub Actions workflow is configured to perform these checks and produce a Linux x86-64 executable artifact. Its GUI startup smoke is not a substitute for mouse, keyboard, storage, or data-integrity testing on Linux Mint. See [DESIGN.md](DESIGN.md), [UX-CONTRACT.md](UX-CONTRACT.md), [ROADMAP.md](ROADMAP.md) and [CHANGELOG.md](CHANGELOG.md).
+CI also exercises native GUI flows, a private FileManager1 session bus,
+installation/rollback and disposable performance fixtures. Exact commands are
+in the [verification guide](docs/1.0-STATUS.md#repeatable-automated-checks).
 
-License: MIT. Not affiliated with Microsoft, Apple or Google.
+[Contributing](CONTRIBUTING.md) · [Roadmap](ROADMAP.md) ·
+[Release process](RELEASE.md) · [Security](SECURITY.md)
+
+Licensed under [MIT](LICENSE). The visual profiles are independently drawn,
+OS-inspired designs; the project is not affiliated with Microsoft, Apple or Google.

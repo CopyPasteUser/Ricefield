@@ -1,5 +1,16 @@
 # Changelog
 
+## Documentation — a shorter entry point
+
+- Replace the accumulated release-by-release README with installation,
+  everyday capabilities, first steps and the current support boundary.
+- Move detailed workflows, keyboard reference and theme composition into a
+  user guide; collect launcher, clipboard, NAS, mount and recovery diagnosis
+  in troubleshooting. Keep history in this changelog and remaining work in
+  the roadmap/status ledger.
+- Include the linked Markdown guides and theme examples in release bundles
+  so the documentation remains navigable after extraction.
+
 ## 1.0.0-rc.1 — local release candidate, hardware acceptance open
 
 - Preserve press-time keyboard modifiers when a complete Ctrl/Alt chord

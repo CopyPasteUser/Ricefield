@@ -51,7 +51,7 @@ paths against symlink/non-file targets and restores the previous executable,
 launcher and icon if registration fails. An interrupted power-loss update
 across those separate paths is not guaranteed transactional.
 
-The [Linux release bundle workflow](.github/workflows/release.yml) is also
+The [Linux release bundle workflow](https://github.com/CopyPasteUser/riceExplorer/blob/main/.github/workflows/release.yml) is also
 manually dispatchable: it builds, runs unit and GUI smoke tests, creates two
 bundles, compares them byte-for-byte, verifies checksums, smoke-tests an
 isolated installation and uploads the bundle as an Actions artifact. It does

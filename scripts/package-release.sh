@@ -56,11 +56,15 @@ install -Dm644 -- "$repo_dir/assets/rice-explorer.desktop" \
 install -Dm644 -- "$repo_dir/assets/rice-explorer.svg" \
   "$bundle_dir/assets/rice-explorer.svg"
 install -Dm644 -- "$repo_dir/LICENSE" "$bundle_dir/LICENSE"
-install -Dm644 -- "$repo_dir/README.md" "$bundle_dir/README.md"
-install -Dm644 -- "$repo_dir/CHANGELOG.md" "$bundle_dir/CHANGELOG.md"
-install -Dm644 -- "$repo_dir/RELEASE.md" "$bundle_dir/RELEASE.md"
-install -Dm644 -- "$repo_dir/ROADMAP.md" "$bundle_dir/ROADMAP.md"
-install -Dm644 -- "$repo_dir/docs/1.0-STATUS.md" "$bundle_dir/docs/1.0-STATUS.md"
+for document in "$repo_dir"/*.md; do
+  install -Dm644 -- "$document" "$bundle_dir/$(basename -- "$document")"
+done
+for document in "$repo_dir"/docs/*.md; do
+  install -Dm644 -- "$document" "$bundle_dir/docs/$(basename -- "$document")"
+done
+for theme in "$repo_dir"/themes/*.toml; do
+  install -Dm644 -- "$theme" "$bundle_dir/themes/$(basename -- "$theme")"
+done
 for screenshot in "$repo_dir"/docs/screenshots/*.png; do
   install -Dm644 -- "$screenshot" "$bundle_dir/docs/screenshots/$(basename -- "$screenshot")"
 done
