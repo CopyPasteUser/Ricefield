@@ -25,7 +25,7 @@ jobs:
           restore-keys: |
             rice-explorer-ubuntu-latest-${{ runner.arch }}-cargo-
       - name: Linux graphics dependencies
-        run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libgl1-mesa-dev libarchive13t64
+        run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libgl1-mesa-dev libarchive13t64 xvfb xauth xdotool imagemagick libgl1-mesa-dri libxkbcommon-x11-0
       - name: Desktop launcher installation smoke
         run: bash scripts/test_desktop_entry.sh
       - name: Transactional install and rollback smoke
@@ -56,7 +56,6 @@ jobs:
           test ! -e "$fixture/home/.local/share/applications/rice-explorer.desktop"
       - name: Native GUI smoke (Xvfb software GL)
         run: |
-          sudo apt-get install -y xvfb xauth xdotool imagemagick libgl1-mesa-dri libxkbcommon-x11-0
           timeout -k 10s 8m xvfb-run -a -s '-screen 0 1280x800x24' bash scripts/gui_smoke.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

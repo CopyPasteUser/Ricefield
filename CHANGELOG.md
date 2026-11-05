@@ -2,6 +2,10 @@
 
 ## 1.0 CI resilience — bounded graphical smoke runtime
 
+- Consolidate previously separate graphics and Xvfb `apt` installations into
+  one dependency step. Retrospective runner logs attributed the apparent GUI
+  stall to an eight-minute second package install; the actual GUI script
+  completed in about one minute.
 - Fail with application/window diagnostics when a headless X11 focus request
   cannot complete within eight seconds, rather than hanging indefinitely.
 - Bound the entire eight-profile Xvfb smoke in CI and the release workflow
