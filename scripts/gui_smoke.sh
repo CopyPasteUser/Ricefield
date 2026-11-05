@@ -31,6 +31,7 @@ grep -Fqx 'bottom = ["tabs", "command-bar"]' "$fixture_dir/custom-theme.toml"
 printf '\n[shell.sidebar]\nposition = "right"\nwidth = 270\nsections = ["volumes", "favorites"]\n' >> "$fixture_dir/custom-theme.toml"
 
 export LIBGL_ALWAYS_SOFTWARE=1
+export GSETTINGS_BACKEND=memory
 # Never read or modify a developer's real config/state/cache, and never let
 # intentionally unfinished journals from cargo tests contaminate screenshots.
 export XDG_STATE_HOME="$fixture_dir/.state"

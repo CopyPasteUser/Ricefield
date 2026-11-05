@@ -1,5 +1,9 @@
 # RiceExplorer roadmap to 1.0
 
+**Current candidate: `1.0.0-rc.1`.** See [the scope and evidence ledger](docs/1.0-STATUS.md).
+This roadmap retains incomplete capabilities explicitly: a candidate version
+does not turn unchecked safety, integration or physical-device work into a pass.
+
 **Goal:** a reliable, customizable Linux file manager that can replace
 Thunar for supported workflows. Keep Thunar installed until real Linux Mint
 acceptance passes. Prioritize data integrity, functionality, stability,
@@ -448,7 +452,8 @@ marking 0.7 stable. The 0.6 NAS/mount acceptance is still blocked separately.
   symlink traversal, special-file reads or unbounded scans (0.8 alpha.2).
 - [x] Custom filename glob plus size and modified-age ranges (0.8 alpha.3),
   combined with type/size/date presets and safe selection pruning.
-- [ ] Full filename regex (glob is supported, but not general regex expressions).
+- [x] Bounded Unicode filename regex alongside glob, with inline syntax errors,
+  persisted settings and adversarial-pattern regressions (1.0 rc.1).
 - [x] Bounded cancellable network filename search (0.9 alpha.4): explicitly
   opt-in, read-only recursive GIO listing, no index or remote file-content
   reads; optional indexing remains a post-1.0 enhancement.
@@ -471,7 +476,9 @@ touching disk; real HDD and UI responsiveness measurements remain outstanding.
   portals and full clipboard interoperability remain open.
 - [x] Local MIME Open With through GIO's desktop association registry with
   bounded background discovery and argument-safe launching (0.9 alpha.2).
-- [ ] FileManager1, portals and complete URI/clipboard interoperability.
+- [x] Opt-in native FileManager1: folder requests, local item selection and
+  sequential properties, private-bus protocol/ownership and GUI checks (1.0 rc.1).
+- [ ] Portals and complete URI/clipboard interoperability.
 - [x] Live reload for an explicitly supplied `--theme-file` TOML with
   256 KiB validation, previous-theme fallback and manual retry (0.9 alpha.1).
 - [x] Visual TOML theme editor, import, private no-overwrite export and

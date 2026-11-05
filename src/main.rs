@@ -1,7 +1,9 @@
 mod app;
 mod archive;
+mod benchmark;
 mod clipboard;
 mod config;
+mod desktop;
 mod discovery;
 mod duplicates;
 mod external_drag;
@@ -38,12 +40,13 @@ fn main() -> eframe::Result {
     let mut theme_file = None;
     let mut locations = Vec::<location::Location>::new();
     let mut separate_window = false;
+    let mut file_manager_service = false;
     let mut args = env::args_os().skip(1);
     while let Some(arg) = args.next() {
         match arg.to_str() {
             Some("--help" | "-h") => {
                 println!(
-                    "RiceExplorer {}\nUsage: rice-explorer [--theme ID] [--theme-file FILE] [LOCATION ...]\n\n--version        Show the package version\n--list-themes    Show bundled profiles\n--theme ID       Select a RiceBowl visual profile\n--theme-file FILE  Load an external editable TOML theme\n--separate-window  Open a secondary window without saving its tab session\n\nLocations accept local paths, file://, smb://, sftp://, dav(s):// and mtp:// URIs. Remote browsing is read-only. Credentials belong in RiceExplorer's secure connection prompt, never in command-line URIs.\n\nLocal Archive menu: browse, verify, extract selected, and create ZIP/tar.gz/tar.xz/tar.zst/7z (system libarchive required); masked password prompts and optional AES-256 ZIP creation. Encrypted 7z/RAR support depends on the system backend.\n\nKeyboard: F3 two-folder split view, Ctrl+Shift+N separate window, Ctrl+L path, Ctrl+F search, Ctrl+T/W open/close tab, Ctrl+Shift+T reopen, Ctrl+PageUp/PageDown cycle, Ctrl+Shift+PageUp/PageDown reorder; Ctrl+C/X/V copy/cut/paste, F2 rename, Delete trash, Shift+Delete permanent delete, Ctrl+A select all, Ctrl+D duplicate file, Alt+Enter properties, Space preview, Ctrl+H hidden, Ctrl+R refresh.",
+                    "RiceExplorer {}\nUsage: rice-explorer [--theme ID] [--theme-file FILE] [LOCATION ...]\n\n--version        Show the package version\n--list-themes    Show bundled profiles\n--theme ID       Select a RiceBowl visual profile\n--theme-file FILE  Load an external editable TOML theme\n--separate-window  Open a secondary window without saving its tab session\n--file-manager-service  Offer FileManager1 on the session bus (opt-in; existing owner wins)\n--benchmark      Measure disposable 100k-entry and verified-copy fixtures\n\nLocations accept local paths, file://, smb://, sftp://, dav(s):// and mtp:// URIs. Remote browsing is read-only. Credentials belong in RiceExplorer's secure connection prompt, never in command-line URIs.\n\nLocal Archive menu: browse, verify, extract selected, and create ZIP/tar.gz/tar.xz/tar.zst/7z (system libarchive required); masked password prompts and optional AES-256 ZIP creation. Encrypted 7z/RAR support depends on the system backend.\n\nKeyboard: F3 two-folder split view, Ctrl+Shift+N separate window, Ctrl+L path, Ctrl+F search, Ctrl+T/W open/close tab, Ctrl+Shift+T reopen, Ctrl+PageUp/PageDown cycle, Ctrl+Shift+PageUp/PageDown reorder; Ctrl+C/X/V copy/cut/paste, F2 rename, Delete trash, Shift+Delete permanent delete, Ctrl+A select all, Ctrl+D duplicate file, Alt+Enter properties, Space preview, Ctrl+H hidden, Ctrl+R refresh.",
                     env!("CARGO_PKG_VERSION")
                 );
                 return Ok(());
@@ -59,6 +62,14 @@ fn main() -> eframe::Result {
                 return Ok(());
             }
             Some("--separate-window") => separate_window = true,
+            Some("--file-manager-service") => file_manager_service = true,
+            Some("--benchmark") => {
+                if let Err(error) = benchmark::run() {
+                    eprintln!("rice-explorer benchmark: {error}");
+                    std::process::exit(1);
+                }
+                return Ok(());
+            }
             Some("--theme") => {
                 let theme = args
                     .next()
@@ -115,6 +126,7 @@ fn main() -> eframe::Result {
                 theme_file,
                 locations,
                 separate_window,
+                file_manager_service,
             )))
         }),
     )

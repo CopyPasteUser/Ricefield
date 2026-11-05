@@ -1,10 +1,14 @@
 # Release process (Linux x86_64)
 
-RiceExplorer 0.9.0-alpha.6 is a **development preview candidate**, not signed off for use
+RiceExplorer 1.0.0-rc.1 is a **release candidate**, not signed off for use
 with irreplaceable files or as a complete network/archive file manager.
 The code can produce a tested distribution bundle, but a green CI run alone
 does not satisfy the safety, recovery and Linux Mint hardware gates in
 [ROADMAP.md](ROADMAP.md).
+
+The current candidate scope, actual lab results, remaining code limitations and
+post-freeze device checklist are maintained in [docs/1.0-STATUS.md](docs/1.0-STATUS.md).
+The historical version gates below remain evidence, not claims of acceptance.
 
 **Owner's release sequence:** complete the 1.0 code candidate autonomously,
 then hand over a concrete Linux Mint/NAS/USB/performance test checklist for

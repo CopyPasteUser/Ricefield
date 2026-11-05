@@ -6,7 +6,7 @@ permissions:
   contents: read
 jobs:
   rust:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -21,9 +21,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rice-explorer-ubuntu-latest-${{ runner.arch }}-cargo-${{ hashFiles('Cargo.lock') }}
+          key: rice-explorer-ubuntu-24.04-${{ runner.arch }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            rice-explorer-ubuntu-latest-${{ runner.arch }}-cargo-
+            rice-explorer-ubuntu-24.04-${{ runner.arch }}-cargo-
       - name: Linux graphics dependencies
         run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libgl1-mesa-dev libarchive13t64 xvfb xauth xdotool imagemagick libgl1-mesa-dri libxkbcommon-x11-0
       - name: Desktop launcher installation smoke
@@ -33,7 +33,11 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked --all-targets
+      - name: Native FileManager1 protocol on a private session bus
+        run: dbus-run-session -- env RICE_EXPLORER_TEST_BUS=1 cargo test --locked desktop::tests::private_bus_roundtrip_and_existing_owner_are_respected -- --ignored --exact
       - run: cargo build --locked --release
+      - name: Disposable 100k-entry and verified-copy benchmark
+        run: target/release/rice-explorer --benchmark > performance-filesystem.toml
       - name: CLI smoke
         run: |
           target/release/rice-explorer --help
@@ -57,6 +61,16 @@ jobs:
       - name: Native GUI smoke (Xvfb software GL)
         run: |
           timeout -k 10s 8m xvfb-run -a -s '-screen 0 1280x800x24' bash scripts/gui_smoke.sh
+      - name: FileManager1 GUI and desktop measurements
+        run: |
+          timeout -k 5s 60s dbus-run-session -- env RICE_EXPLORER_TEST_BUS=1 xvfb-run -a bash scripts/test_file_manager_service.sh
+          timeout -k 5s 60s xvfb-run -a bash scripts/test_filters.sh
+          timeout -k 5s 60s xvfb-run -a bash scripts/measure-desktop.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rice-explorer-performance
+          path: performance-*.toml
+          if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rice-explorer-gui-smoke

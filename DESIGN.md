@@ -94,6 +94,8 @@ The folder-tree disclosure buttons use universal `+`/`-` glyphs and the
 existing Expand/Collapse tooltips with a 24×24 logical-point target, not
 font-dependent Unicode triangles;
 Linux fallback fonts must never make a navigation control appear blank.
+Sort headers name their active direction with ASCII `asc` / `desc` text;
+the bundled font must not turn an arrow into a missing-glyph box.
 
 ## Do's and Don'ts
 

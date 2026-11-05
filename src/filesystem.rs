@@ -202,6 +202,30 @@ pub struct FolderScan {
     pub notice: Option<String>,
 }
 
+/// Resolve address/desktop requests on a worker, including symlinked folders.
+/// A file opens its containing folder without launching the file itself.
+pub fn navigation_target(path: &Path) -> io::Result<(PathBuf, Option<PathBuf>)> {
+    let absolute;
+    let path = if path.is_absolute() {
+        path
+    } else {
+        absolute = std::env::current_dir()?.join(path);
+        absolute.as_path()
+    };
+    let metadata = fs::metadata(path).or_else(|error| match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => Ok(meta),
+        _ => Err(error),
+    })?;
+    if metadata.is_dir() {
+        Ok((path.to_path_buf(), None))
+    } else {
+        Ok((
+            path.parent().unwrap_or(Path::new("/")).to_path_buf(),
+            Some(path.to_path_buf()),
+        ))
+    }
+}
+
 /// Preserve readable siblings when an unplugged or stale mount refuses a
 /// metadata lookup. A failure to open the *folder itself* still returns Err.
 pub fn scan_cancellable(path: &Path, cancelled: &AtomicBool) -> io::Result<FolderScan> {
@@ -246,10 +270,15 @@ fn scan_with_metadata(
         } else {
             None
         };
+        let linked_directory = metadata
+            .as_ref()
+            .is_some_and(|meta| meta.file_type().is_symlink())
+            && fs::metadata(&entry_path).is_ok_and(|meta| meta.is_dir());
         entries.push(Entry {
             name: item.file_name().to_string_lossy().into_owned(),
             path: entry_path,
-            is_dir: metadata.as_ref().is_some_and(fs::Metadata::is_dir)
+            is_dir: linked_directory
+                || metadata.as_ref().is_some_and(fs::Metadata::is_dir)
                 || fallback_type.as_ref().is_some_and(fs::FileType::is_dir),
             is_symlink: metadata
                 .as_ref()
@@ -435,7 +464,9 @@ pub fn search_with_options(
                 results.push(Entry {
                     name,
                     path: entry.path(),
-                    is_dir: metadata.is_dir(),
+                    is_dir: metadata.is_dir()
+                        || (metadata.file_type().is_symlink()
+                            && fs::metadata(entry.path()).is_ok_and(|meta| meta.is_dir())),
                     is_symlink: metadata.file_type().is_symlink(),
                     size: metadata.len(),
                     modified: metadata.modified().ok(),
@@ -3031,6 +3062,48 @@ mod tests {
             }
         }
         panic!("Cannot allocate a unique isolated test root")
+    }
+
+    #[test]
+    fn navigation_resolves_files_without_opening_them_and_handles_links() {
+        let root = test_root();
+        let file = root.join("file.txt");
+        fs::write(&file, "content").unwrap();
+        assert_eq!(navigation_target(&root).unwrap(), (root.clone(), None));
+        assert_eq!(
+            navigation_target(&file).unwrap(),
+            (root.clone(), Some(file.clone()))
+        );
+        assert!(navigation_target(&root.join("missing")).is_err());
+        assert!(navigation_target(Path::new(".")).unwrap().0.is_absolute());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let link = root.join("directory-link");
+            symlink(&root, &link).unwrap();
+            assert_eq!(navigation_target(&link).unwrap(), (link.clone(), None));
+            symlink(&file, root.join("file-link")).unwrap();
+            let dangling = root.join("dangling");
+            symlink(root.join("missing"), &dangling).unwrap();
+            assert_eq!(
+                navigation_target(&dangling).unwrap(),
+                (root.clone(), Some(dangling))
+            );
+            let scan = scan_cancellable(&root, &AtomicBool::new(false)).unwrap();
+            let linked_folder = scan
+                .entries
+                .iter()
+                .find(|entry| entry.path == link)
+                .unwrap();
+            assert!(linked_folder.is_dir && linked_folder.is_symlink);
+            let linked_file = scan
+                .entries
+                .iter()
+                .find(|entry| entry.name == "file-link")
+                .unwrap();
+            assert!(!linked_file.is_dir && linked_file.is_symlink);
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -70,6 +70,24 @@ pub const FILTERS: &[(&str, &str)] = &[
     ("code", "Code"),
 ];
 
+/// A linear-time regex, compiled once per refresh, with explicit memory caps.
+/// Invalid input is an error, never an implicit match-all filter.
+pub fn filename_regex(pattern: &str) -> Result<Option<regex::Regex>, String> {
+    if pattern.is_empty() {
+        return Ok(None);
+    }
+    if pattern.len() > 512 {
+        return Err("Filename regex is limited to 512 bytes".into());
+    }
+    regex::RegexBuilder::new(pattern)
+        .case_insensitive(true)
+        .size_limit(1024 * 1024)
+        .dfa_size_limit(1024 * 1024)
+        .build()
+        .map(Some)
+        .map_err(|error| format!("Invalid filename regex: {error}"))
+}
+
 pub const SIZE_FILTERS: &[(&str, &str)] = &[
     ("any", "Any size"),
     ("small", "Under 1 MiB"),
@@ -233,6 +251,32 @@ mod tests {
         path::PathBuf,
         time::{Duration, SystemTime},
     };
+
+    #[test]
+    fn filename_regex_handles_unicode_errors_and_pathological_input() {
+        use super::filename_regex;
+        let regex = filename_regex(r"^bericht-(\d+|final)\.pdf$")
+            .unwrap()
+            .unwrap();
+        assert!(regex.is_match("BERICHT-42.PDF"));
+        assert!(!regex.is_match("report-42.pdf"));
+        assert!(
+            filename_regex(r"^\p{Greek}+$")
+                .unwrap()
+                .unwrap()
+                .is_match("αβγ")
+        );
+        assert!(filename_regex("").unwrap().is_none());
+        assert!(filename_regex("[").is_err());
+        assert!(filename_regex(&"x".repeat(513)).is_err());
+        assert!(filename_regex("a{999999999}").is_err());
+        assert!(
+            !filename_regex("^(a+)+b$")
+                .unwrap()
+                .unwrap()
+                .is_match(&"a".repeat(100_000))
+        );
+    }
 
     #[test]
     fn size_and_date_filters_are_bounded_and_ignore_unknown_presets() {

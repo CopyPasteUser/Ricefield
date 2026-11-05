@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.0.0-rc.1 — local release candidate, hardware acceptance open
+
+- Preserve press-time keyboard modifiers when a complete Ctrl/Alt chord
+  arrives between frames; dispatch ordered key events and stop when one opens
+  a dialog. Regression-test coalesced press/release rather than masking missed
+  shortcuts with slower GUI test input.
+- Use readable `asc` / `desc` sort-header text instead of missing arrow glyphs.
+- Keep the Filters popup open while expanding options and editing fields;
+  the framework's default close-on-every-click made custom inputs unusable.
+  Exercise invalid-regex correction and persisted edits through the native GUI.
+- Pin development CI to Ubuntu 24.04 as well as release CI so its desktop
+  artifacts target the Linux Mint 22 generation rather than a moving runner.
+- Resolve CLI/address file paths and symlinked folders in scan workers;
+  reuse cached entry types for activation and preview actions. Refresh sidebar
+  place availability with volume snapshots instead of probing on every frame.
+- Add opt-in native FileManager1 `ShowFolders`, local `ShowItems` and local
+  `ShowItemProperties`. Bound requests, reject unsafe URIs, preserve existing
+  bus ownership, and defer requests behind confirmations. Test real protocol
+  calls and owner contention on a private bus plus visible GUI properties.
+- Add bounded Unicode filename regex filtering, persisted with existing
+  filters and covered for invalid input and adversarial patterns.
+- Add an explicit disposable `--benchmark`: 100,000 real directory entries,
+  natural sorting, glob filtering, bounded search and a byte-verified 64 MiB
+  copy. Add Xvfb mapped-window startup and ten-second idle CPU/RSS measurements.
+  Both CI pipelines retain performance reports and desktop integration images.
+- Document the exact supported candidate scope, verification commands and
+  remaining release gates in `docs/1.0-STATUS.md`. This candidate does not claim
+  native remote mutations, automatic crash rollback, portals, RiceBowl IPC,
+  complete German localization or physical Linux Mint acceptance.
+
 ## 1.0 CI resilience — bounded graphical smoke runtime
 
 - Consolidate previously separate graphics and Xvfb `apt` installations into

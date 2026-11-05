@@ -67,7 +67,7 @@ pub fn sort_header(ui: &mut egui::Ui, sort_by: &str, descending: bool) -> Option
             ("modified", "Modified"),
         ] {
             let caption = if sort_by == key {
-                format!("{label} {}", if descending { "↓" } else { "↑" })
+                format!("{label} ({})", if descending { "desc" } else { "asc" })
             } else {
                 label.to_owned()
             };

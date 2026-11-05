@@ -4,7 +4,30 @@
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Development preview: v0.9.0-alpha.6** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+> **Release candidate: v1.0.0-rc.1** — stable 1.0 acceptance remains open.
+> Local file management is the candidate's write-capable scope; remote tabs
+> remain read-only. **Cross-filesystem Move publishes a verified copy and keeps
+> the original for manual cleanup; same-filesystem Move renames.** Keep Thunar
+> available until the real Mint/NAS/USB/recovery checks pass.
+> [Current scope and remaining gates](docs/1.0-STATUS.md) ·
+> [Roadmap](ROADMAP.md) · [Changes](CHANGELOG.md)
+
+The candidate adds native, opt-in Linux **FileManager1** integration
+(`rice-explorer --file-manager-service`), a bounded Unicode filename regex
+filter under **Filters → Custom pattern and ranges**, background file-path
+resolution, and reproducible lab measurements. Run `rice-explorer --benchmark`
+to measure a private disposable 100k-file fixture and a verified 64 MiB copy;
+it never benchmarks against existing user files. Choose an HDD for the fixture
+with `TMPDIR=/path/to/lab rice-explorer --benchmark` (about 130 MiB plus inode
+space). Results describe that machine and filesystem, not universal limits.
+
+FileManager1 does not change your default file manager or install a competing
+activation service. With the opt-in process running and the bus name free,
+other desktop applications can show local files in their containing folders
+and request properties. Remote item selection/properties remain unsupported;
+remote folder opening uses the existing read-only backend.
+
+![RiceExplorer 1.0 candidate, Windows 7 shell](docs/screenshots/win7.png)
 
 **Distribution:** An [automated Linux x86_64 preview bundle](RELEASE.md) can
 be built without distributing Rust sources to every end user. The verified

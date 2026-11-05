@@ -58,6 +58,12 @@ install -Dm644 -- "$repo_dir/assets/rice-explorer.svg" \
 install -Dm644 -- "$repo_dir/LICENSE" "$bundle_dir/LICENSE"
 install -Dm644 -- "$repo_dir/README.md" "$bundle_dir/README.md"
 install -Dm644 -- "$repo_dir/CHANGELOG.md" "$bundle_dir/CHANGELOG.md"
+install -Dm644 -- "$repo_dir/RELEASE.md" "$bundle_dir/RELEASE.md"
+install -Dm644 -- "$repo_dir/ROADMAP.md" "$bundle_dir/ROADMAP.md"
+install -Dm644 -- "$repo_dir/docs/1.0-STATUS.md" "$bundle_dir/docs/1.0-STATUS.md"
+for screenshot in "$repo_dir"/docs/screenshots/*.png; do
+  install -Dm644 -- "$screenshot" "$bundle_dir/docs/screenshots/$(basename -- "$screenshot")"
+done
 
 # Keep deterministic ordering, ownership, timestamps and gzip headers. The
 # release archive contains no user configuration or development credentials.

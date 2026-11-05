@@ -24,6 +24,22 @@ Linux desktop file management for RiceBowl users. v0.1 interface English; runtim
 - Each tab owns a cooperative scan cancellation token. Navigation, refresh,
   closure and changes to recursive search queries invalidate superseded
   workers; cancelled/queued stale results must never replace current entries.
+- Address/CLI file-to-parent resolution and symlink-directory classification
+  run on scan workers, never through synchronous path probes in widgets.
+  Sidebar place availability is refreshed with the background volume snapshot.
+- The optional `--file-manager-service` uses native FileManager1 D-Bus requests.
+  It never replaces or queues behind an existing owner. Requests are bounded,
+  credential-free and deferred while a confirmation or login is open.
+  Local ShowItems groups requested selections by parent folder, retaining only
+  visible selections; filters may hide an item. Properties are presented one
+  at a time. Remote ShowFolders is read-only; remote item selection/properties
+  fail explicitly rather than invoking the local filesystem engine.
+- Filename regex is an optional case-insensitive local filter alongside glob.
+  Compilation has a 512-byte pattern / 1 MiB automaton budget, matching has no
+  backtracking, and invalid syntax shows an inline error with zero matches.
+  Clearing filters restores results and removes the regex from preferences.
+- Filters is an editable popup: internal clicks keep it open; Escape or an
+  outside click closes it. Custom options and text inputs remain operable.
 - Entering a new location clears local search and selection, but not bookmarks or preferences.
 - Changing local type/size/date filters recomputes the visible entries in
   memory; any selected path no longer visible is deselected before file
@@ -32,6 +48,9 @@ Linux desktop file management for RiceBowl users. v0.1 interface English; runtim
 - Sorting always groups directories before files. Filters operate only on the current folder; no unrequested recursive search/indexing.
 - Shift selects a contiguous visible range; Ctrl toggles one item. Navigation history is independent of filesystem mutation history.
 - Keyboard shortcuts do not copy/cut/paste files while a text field has focus.
+- Shortcut modifiers come from the individual press event. A chord pressed
+  and released between frames must still work, and opening a dialog stops
+  dispatch of subsequent global shortcuts from that frame.
 - Global navigation/file shortcuts are suspended while network login,
   mount confirmation, network discovery or recovery review windows are open;
   typing in those surfaces cannot create folders or switch file tabs behind

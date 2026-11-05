@@ -1,3 +1,7 @@
 /target/
+/dist/
+/dist-repeat/
+/screenshots/
+/performance-*.toml
 *.swp
 .DS_Store

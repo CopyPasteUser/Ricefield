@@ -1,7 +1,7 @@
 use crate::{
     archive, clipboard,
     config::{self, Config},
-    discovery, duplicates,
+    desktop, discovery, duplicates,
     file_view::{self, natural_cmp},
     filesystem::{self, Action, ConflictPolicy, Entry, Progress},
     folder_tree::FolderTree,
@@ -38,6 +38,26 @@ const MAX_RECENT_OPERATIONS: usize = 64;
 const CLIPBOARD_WAIT: Duration = Duration::from_secs(2);
 const MAX_CLOSED_TABS: usize = 16;
 
+/// Key events retain the modifiers at press time even if the whole chord is
+/// pressed and released between frames. The frame's final modifiers do not.
+fn pressed_keys(context: &egui::Context) -> Vec<(Key, Modifiers)> {
+    context.input(|input| {
+        input
+            .events
+            .iter()
+            .filter_map(|event| match event {
+                egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } => Some((*key, *modifiers)),
+                _ => None,
+            })
+            .collect()
+    })
+}
+
 struct Tab {
     id: u64,
     path: PathBuf,
@@ -55,6 +75,7 @@ struct Tab {
     folded_names: Vec<String>,
     visible: Vec<usize>,
     selected: BTreeSet<PathBuf>,
+    pending_reveal: BTreeSet<PathBuf>,
     last_selected: Option<usize>,
     generation: u64,
     loading: bool,
@@ -86,6 +107,7 @@ impl Tab {
             folded_names: Vec::new(),
             visible: Vec::new(),
             selected: BTreeSet::new(),
+            pending_reveal: BTreeSet::new(),
             last_selected: None,
             generation: 0,
             loading: false,
@@ -163,6 +185,7 @@ impl Tab {
         self.folded_names.clear();
         self.visible.clear();
         self.selected.clear();
+        self.pending_reveal.clear();
         self.last_selected = None;
         self.query.clear();
         self.search_pending = None;
@@ -332,6 +355,8 @@ fn next_search_repaint_delay(tabs: &[Tab], now: Instant) -> Option<Duration> {
 struct ScanResult {
     tab: u64,
     generation: u64,
+    path: PathBuf,
+    reveal: Option<PathBuf>,
     result: std::io::Result<filesystem::FolderScan>,
     dir_mtime: Option<SystemTime>,
 }
@@ -353,6 +378,7 @@ struct RemotePreviewResult {
 struct RefreshResult {
     folders: Vec<(u64, PathBuf, Option<SystemTime>)>,
     volumes: Vec<filesystem::MountedVolume>,
+    places: Vec<(&'static str, PathBuf)>,
 }
 
 enum KeyringEvent {
@@ -814,6 +840,8 @@ fn accept_property_result(dialog: &mut Option<Dialog>, message: PropertyResult) 
 }
 
 pub struct Explorer {
+    desktop_service: Option<desktop::Service>,
+    desktop_properties: VecDeque<PathBuf>,
     config: Config,
     theme: Theme,
     theme_file: Option<PathBuf>,
@@ -928,6 +956,7 @@ pub struct Explorer {
     cancel: Arc<AtomicBool>,
     volumes: Vec<filesystem::MountedVolume>,
     last_refresh_check: Instant,
+    places: Vec<(&'static str, PathBuf)>,
     refresh_in_flight: bool,
     preview_path: Option<PathBuf>,
     preview_loading: bool,
@@ -946,6 +975,7 @@ impl Explorer {
         theme_file: Option<PathBuf>,
         locations: Vec<Location>,
         separate_window: bool,
+        file_manager_service: bool,
     ) -> Self {
         let mut config = Config::load();
         let explicit_builtin = selected_theme.is_some();
@@ -1014,6 +1044,8 @@ impl Explorer {
             (locations, 0)
         };
         let mut explorer = Self {
+            desktop_service: file_manager_service.then(|| desktop::Service::start(context)),
+            desktop_properties: VecDeque::new(),
             config,
             theme,
             theme_file,
@@ -1131,6 +1163,7 @@ impl Explorer {
                 network: false,
             }],
             last_refresh_check: Instant::now() - Duration::from_secs(3),
+            places: vec![("Home", config::home()), ("Filesystem", PathBuf::from("/"))],
             refresh_in_flight: false,
             preview_path: None,
             preview_loading: false,
@@ -1146,14 +1179,7 @@ impl Explorer {
         } else {
             for location in startup_locations {
                 match location {
-                    Location::Local(path) => {
-                        let path = if !from_session && path.is_file() {
-                            path.parent().unwrap_or(Path::new("/")).to_path_buf()
-                        } else {
-                            path
-                        };
-                        explorer.new_tab(path);
-                    }
+                    Location::Local(path) => explorer.new_tab(path),
                     Location::Remote(remote) => {
                         explorer.new_tab(config::home());
                         explorer.navigate_remote(remote.uri);
@@ -1186,6 +1212,76 @@ impl Explorer {
         }
         explorer.check_unfinished_moves();
         explorer
+    }
+
+    fn poll_desktop(&mut self, context: &egui::Context) {
+        if let Some(service) = self.desktop_service.as_mut()
+            && let Ok(result) = service.ready.try_recv()
+        {
+            match result {
+                Ok(connection) => service.connection = Some(connection),
+                Err(error) => {
+                    self.status = Some((format!("FileManager1 unavailable: {error}"), true))
+                }
+            }
+        }
+        // Desktop requests must not change the target behind a confirmation.
+        if self.dialog.is_some()
+            || self.archive_dialog.is_some()
+            || self.volume_connect_open
+            || self.volume_confirm.is_some()
+            || self.discovery_open
+            || self.recovery_open
+        {
+            return;
+        }
+        if let Some(path) = self.desktop_properties.pop_front() {
+            self.open_properties(path);
+            return;
+        }
+        let request = self
+            .desktop_service
+            .as_ref()
+            .and_then(|service| service.requests.try_recv().ok());
+        let Some(request) = request else { return };
+        if self.tabs.len() > 96 {
+            self.status = Some((
+                "Close some tabs before opening more desktop requests".into(),
+                true,
+            ));
+            return;
+        }
+        match request {
+            desktop::Request::Folders(locations) => {
+                for location in locations {
+                    match location {
+                        Location::Local(path) => self.new_tab(path),
+                        Location::Remote(remote) => {
+                            self.new_tab(config::home());
+                            self.navigate_remote(remote.uri);
+                        }
+                    }
+                }
+            }
+            desktop::Request::Items(paths) => {
+                let mut folders = std::collections::BTreeMap::<PathBuf, BTreeSet<PathBuf>>::new();
+                for path in paths {
+                    let parent = path.parent().unwrap_or(Path::new("/")).to_path_buf();
+                    folders.entry(parent).or_default().insert(path);
+                }
+                for (parent, paths) in folders {
+                    self.new_tab(parent);
+                    self.current_mut().pending_reveal = paths;
+                }
+            }
+            desktop::Request::Properties(paths) => {
+                self.desktop_properties.extend(paths);
+                if let Some(path) = self.desktop_properties.pop_front() {
+                    self.open_properties(path);
+                }
+            }
+        }
+        context.send_viewport_cmd(egui::ViewportCommand::Focus);
     }
 
     /// Journal inspection is read-only and never blocks the UI thread.
@@ -1618,9 +1714,23 @@ impl Explorer {
         let query = tab.query.clone();
         let sender = self.scan_sender.clone();
         thread::spawn(move || {
+            let (path, reveal) = match filesystem::navigation_target(&task.2) {
+                Ok(target) => target,
+                Err(error) => {
+                    let _ = sender.send(ScanResult {
+                        tab: task.0,
+                        generation: task.1,
+                        path: task.2,
+                        reveal: None,
+                        result: Err(error),
+                        dir_mtime: None,
+                    });
+                    return;
+                }
+            };
             let result = if searching {
                 filesystem::search_with_options(
-                    &task.2,
+                    &path,
                     &query,
                     show_hidden,
                     recursive,
@@ -1628,12 +1738,12 @@ impl Explorer {
                     &cancel,
                 )
             } else {
-                filesystem::scan_cancellable(&task.2, &cancel)
+                filesystem::scan_cancellable(&path, &cancel)
             };
             if cancel.load(Ordering::Relaxed) {
                 return;
             }
-            let dir_mtime = std::fs::metadata(&task.2)
+            let dir_mtime = std::fs::metadata(&path)
                 .and_then(|meta| meta.modified())
                 .ok();
             if cancel.load(Ordering::Relaxed) {
@@ -1642,6 +1752,8 @@ impl Explorer {
             let _ = sender.send(ScanResult {
                 tab: task.0,
                 generation: task.1,
+                path,
+                reveal,
                 result,
                 dir_mtime,
             });
@@ -1984,11 +2096,6 @@ impl Explorer {
 
     fn navigate(&mut self, path: PathBuf) {
         self.thumbnails.clear_pending();
-        let path = if path.is_file() {
-            path.parent().map(Path::to_path_buf).unwrap_or(path)
-        } else {
-            path
-        };
         if path == self.current().path && self.current().remote_uri.is_none() {
             self.scan(self.active);
             return;
@@ -2068,6 +2175,7 @@ impl Explorer {
         let tab = &mut self.tabs[index];
         let search = tab.query.to_lowercase();
         let name_glob = file_view::CompiledGlob::new(&config.filter_name_glob);
+        let name_regex = file_view::filename_regex(&config.filter_name_regex);
         let now = SystemTime::now();
         tab.visible = (0..tab.entries.len())
             .filter(|&index| {
@@ -2079,6 +2187,11 @@ impl Explorer {
                     && file_view::matches_size(entry, &config.filter_size)
                     && file_view::matches_modified(entry, &config.filter_modified, now)
                     && name_glob.matches(&entry.name)
+                    && name_regex.as_ref().is_ok_and(|regex| {
+                        regex
+                            .as_ref()
+                            .is_none_or(|regex| regex.is_match(&entry.name))
+                    })
                     && file_view::matches_custom_ranges(
                         entry,
                         config.filter_min_size_mib,
@@ -2361,6 +2474,7 @@ impl Explorer {
             }
         }
         while let Ok(result) = self.refresh_receiver.try_recv() {
+            self.places = result.places;
             self.refresh_in_flight = false;
             self.volumes = result.volumes;
             for (tab_id, path, modified) in result.folders {
@@ -2458,6 +2572,10 @@ impl Explorer {
                 tab.dir_mtime = message.dir_mtime;
                 match message.result {
                     Ok(scan) => {
+                        if tab.path != message.path {
+                            tab.path = message.path;
+                            tab.address = tab.path.display().to_string();
+                        }
                         tab.scan_warning = (scan.unreadable > 0).then(|| {
                             format!(
                                 "{} entry/entries could not be inspected; other items remain visible. First error: {}",
@@ -2481,6 +2599,21 @@ impl Explorer {
                         tab.selected
                             .retain(|path| tab.entries.iter().any(|entry| &entry.path == path));
                         self.rebuild_visible(index);
+                        let reveal = std::mem::take(&mut self.tabs[index].pending_reveal);
+                        let requested = reveal.len() + usize::from(message.reveal.is_some());
+                        self.tabs[index].selected.extend(reveal);
+                        if let Some(path) = message.reveal {
+                            self.tabs[index].selected.insert(path);
+                        }
+                        retain_visible_selection(&mut self.tabs[index]);
+                        if requested > 0 && self.tabs[index].selected.len() < requested {
+                            self.status = Some((
+                                "Some requested items are missing or hidden by the current filters"
+                                    .into(),
+                                true,
+                            ));
+                        }
+                        self.remember_session();
                     }
                     Err(error) => {
                         tab.entries.clear();
@@ -3498,7 +3631,7 @@ impl Explorer {
     }
 
     fn activate(&mut self, entry: &Entry) {
-        if entry.path.is_dir() {
+        if entry.is_dir {
             self.navigate(entry.path.clone());
         } else {
             #[cfg(target_os = "linux")]
@@ -3603,62 +3736,39 @@ impl Explorer {
     }
 
     fn keyboard(&mut self, context: &egui::Context) {
-        let keys = context.input(|input| {
-            (
-                input.modifiers.command,
-                input.modifiers.alt,
-                input.modifiers.shift,
-                input.key_pressed(Key::L),
-                input.key_pressed(Key::F),
-                input.key_pressed(Key::T),
-                input.key_pressed(Key::W),
-                input.key_pressed(Key::C),
-                input.key_pressed(Key::X),
-                input.key_pressed(Key::V),
-                input.key_pressed(Key::H),
-                input.key_pressed(Key::R),
-                input.key_pressed(Key::N),
-                input.key_pressed(Key::F2),
-                input.key_pressed(Key::Delete),
-                input.key_pressed(Key::ArrowLeft),
-                input.key_pressed(Key::ArrowRight),
-                input.key_pressed(Key::ArrowUp),
-                input.key_pressed(Key::A),
-                input.key_pressed(Key::D),
-                input.key_pressed(Key::Enter),
-                input.key_pressed(Key::Space),
-                input.key_pressed(Key::PageUp),
-                input.key_pressed(Key::PageDown),
-                input.key_pressed(Key::F3),
-            )
-        });
-        let (
-            ctrl,
-            alt,
-            shift,
-            l,
-            f,
-            t,
-            w,
-            c,
-            x,
-            v,
-            h,
-            r,
-            n,
-            f2,
-            delete,
-            left,
-            right,
-            up,
-            a,
-            d,
-            enter,
-            space,
-            page_up,
-            page_down,
-            f3,
-        ) = keys;
+        for (key, modifiers) in pressed_keys(context) {
+            self.keyboard_event(context, key, modifiers);
+            // A preceding event may open a confirmation in the same frame.
+            if self.dialog.is_some() || self.volume_connect_open || self.volume_confirm.is_some() {
+                break;
+            }
+        }
+    }
+
+    fn keyboard_event(&mut self, context: &egui::Context, key: Key, modifiers: Modifiers) {
+        let (ctrl, alt, shift) = (modifiers.command, modifiers.alt, modifiers.shift);
+        let l = key == Key::L;
+        let f = key == Key::F;
+        let t = key == Key::T;
+        let w = key == Key::W;
+        let c = key == Key::C;
+        let x = key == Key::X;
+        let v = key == Key::V;
+        let h = key == Key::H;
+        let r = key == Key::R;
+        let n = key == Key::N;
+        let f2 = key == Key::F2;
+        let delete = key == Key::Delete;
+        let left = key == Key::ArrowLeft;
+        let right = key == Key::ArrowRight;
+        let up = key == Key::ArrowUp;
+        let a = key == Key::A;
+        let d = key == Key::D;
+        let enter = key == Key::Enter;
+        let space = key == Key::Space;
+        let page_up = key == Key::PageUp;
+        let page_down = key == Key::PageDown;
+        let f3 = key == Key::F3;
         if ctrl && l {
             self.focus_address = true;
         }
@@ -3709,9 +3819,9 @@ impl Explorer {
             }
         }
         // Text inputs must keep their normal copy/cut/paste shortcuts.
-        let typing = context.egui_wants_keyboard_input();
+        let typing = context.egui_wants_keyboard_input() || self.focus_address || self.focus_search;
         if !typing {
-            if context.input(|input| input.key_pressed(Key::Escape)) {
+            if key == Key::Escape {
                 self.preview_quick_look = false;
                 self.preview_path = None;
                 self.preview_content = None;
@@ -3726,7 +3836,7 @@ impl Explorer {
                 self.current_mut().selected = paths.into_iter().collect();
             }
             if ctrl && c {
-                if context.input(|input| input.modifiers.shift) {
+                if shift {
                     self.copy_selected_paths(context);
                 } else {
                     self.file_command(FileCommand::Copy);
@@ -3771,7 +3881,7 @@ impl Explorer {
                 self.file_command(FileCommand::Rename);
             }
             if delete {
-                if context.input(|input| input.modifiers.shift) {
+                if shift {
                     self.file_command(FileCommand::Delete);
                 } else {
                     self.file_command(FileCommand::Trash);
@@ -4379,25 +4489,14 @@ impl Explorer {
                             SidebarSection::Tasks => self.sidebar_tasks(ui),
                             SidebarSection::Places => {
                                 ui.add_space(8.0);
-                                let home = config::home();
-                                for (label, path) in [
-                                    ("Home", home.clone()),
-                                    ("Desktop", home.join("Desktop")),
-                                    ("Documents", home.join("Documents")),
-                                    ("Downloads", home.join("Downloads")),
-                                    ("Music", home.join("Music")),
-                                    ("Pictures", home.join("Pictures")),
-                                    ("Videos", home.join("Videos")),
-                                    ("Filesystem", PathBuf::from("/")),
-                                ] {
-                                    if path.is_dir()
-                                        && ui
-                                            .add_sized(
-                                                [ui.available_width(), 29.0],
-                                                egui::Button::new(label)
-                                                    .selected(self.current().path == path),
-                                            )
-                                            .clicked()
+                                for (label, path) in self.places.clone() {
+                                    if ui
+                                        .add_sized(
+                                            [ui.available_width(), 29.0],
+                                            egui::Button::new(label)
+                                                .selected(self.current().path == path),
+                                        )
+                                        .clicked()
                                     {
                                         self.navigate(path);
                                     }
@@ -4689,7 +4788,12 @@ impl Explorer {
                     self.open_properties(path.clone());
                 }
                 if ui.button("Open").clicked() {
-                    if path.is_dir() {
+                    if self
+                        .current()
+                        .entries
+                        .iter()
+                        .any(|entry| entry.path == path && entry.is_dir)
+                    {
                         self.navigate(path.clone());
                         self.preview_path = None;
                     } else if let Err(error) = Command::new("xdg-open").arg(&path).spawn() {
@@ -5036,19 +5140,24 @@ impl Explorer {
                         }
                     }
                     let active_filters = self.config.active_filter_count();
-                    ui.menu_button(
+                    egui::containers::menu::MenuButton::new(
                         if active_filters == 0 {
                             "Filters".to_owned()
                         } else {
                             format!("Filters ({active_filters})")
                         },
-                        |ui| {
+                    )
+                    .config(egui::containers::menu::MenuConfig::new().close_behavior(
+                        egui::PopupCloseBehavior::CloseOnClickOutside,
+                    ))
+                    .ui(ui, |ui| {
                             ui.set_min_width(200.0);
                             let old_filters = (
                                 self.config.filter_kind.clone(),
                                 self.config.filter_size.clone(),
                                 self.config.filter_modified.clone(),
                                 self.config.filter_name_glob.clone(),
+                                self.config.filter_name_regex.clone(),
                                 self.config.filter_min_size_mib,
                                 self.config.filter_max_size_mib,
                                 self.config.filter_newer_days,
@@ -5113,6 +5222,16 @@ impl Explorer {
                                         .desired_width(230.0)
                                         .hint_text("e.g. report-*.pdf"),
                                 );
+                                ui.label("Filename regex (optional, case insensitive)");
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.config.filter_name_regex)
+                                        .char_limit(120)
+                                        .desired_width(230.0)
+                                        .hint_text(r"e.g. ^report-\d+\.pdf$"),
+                                );
+                                if let Err(error) = file_view::filename_regex(&self.config.filter_name_regex) {
+                                    ui.colored_label(ui.visuals().error_fg_color, error);
+                                }
                                 ui.horizontal(|ui| {
                                     let mut active = self.config.filter_min_size_mib.is_some();
                                     if ui.checkbox(&mut active, "Minimum MiB").changed() {
@@ -5165,6 +5284,7 @@ impl Explorer {
                                 self.config.filter_size.clone(),
                                 self.config.filter_modified.clone(),
                                 self.config.filter_name_glob.clone(),
+                                self.config.filter_name_regex.clone(),
                                 self.config.filter_min_size_mib,
                                 self.config.filter_max_size_mib,
                                 self.config.filter_newer_days,
@@ -5631,7 +5751,7 @@ impl Explorer {
                 ui.close();
             }
             if ui.button("Open in new tab").clicked() {
-                if entry.path.is_dir() {
+                if entry.is_dir {
                     self.new_tab(entry.path.clone());
                 }
                 ui.close();
@@ -6542,6 +6662,7 @@ impl eframe::App for Explorer {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let context = ui.ctx().clone();
         self.poll_background(&context);
+        self.poll_desktop(&context);
         if self.theme_file.is_some() && self.theme_last_check.elapsed() >= Duration::from_secs(3) {
             self.theme_last_check = Instant::now();
             self.reload_theme_file(&context, false);
@@ -6577,6 +6698,25 @@ impl eframe::App for Explorer {
                 let _ = sender.send(RefreshResult {
                     folders,
                     volumes: filesystem::mounted_volumes(),
+                    places: {
+                        let home = config::home();
+                        let mut places = vec![("Home", home.clone())];
+                        for name in [
+                            "Desktop",
+                            "Documents",
+                            "Downloads",
+                            "Music",
+                            "Pictures",
+                            "Videos",
+                        ] {
+                            let path = home.join(name);
+                            if path.is_dir() {
+                                places.push((name, path));
+                            }
+                        }
+                        places.push(("Filesystem", PathBuf::from("/")));
+                        places
+                    },
                 });
             });
             self.last_refresh_check = Instant::now();
@@ -6670,6 +6810,47 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn shortcuts_keep_press_time_modifiers_when_a_chord_is_released_in_one_frame() {
+        let context = eframe::egui::Context::default();
+        let command = eframe::egui::Modifiers {
+            ctrl: true,
+            command: true,
+            ..Default::default()
+        };
+        let input = eframe::egui::RawInput {
+            events: vec![
+                eframe::egui::Event::ModifiersChanged(command),
+                eframe::egui::Event::Key {
+                    key: eframe::egui::Key::N,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: command,
+                },
+                eframe::egui::Event::Key {
+                    key: eframe::egui::Key::N,
+                    physical_key: None,
+                    pressed: false,
+                    repeat: false,
+                    modifiers: command,
+                },
+                // The modifier has been released by the end of the frame.
+                eframe::egui::Event::ModifiersChanged(Default::default()),
+            ],
+            ..Default::default()
+        };
+        context
+            .run_pass(input, |context| {
+                assert!(!context.input(|input| input.modifiers.command));
+                assert_eq!(
+                    super::pressed_keys(context),
+                    vec![(eframe::egui::Key::N, command)]
+                );
+            })
+            .drop_without_applying_deltas();
+    }
 
     #[test]
     fn changing_filters_never_leaves_hidden_files_selected_for_mutation() {

@@ -61,6 +61,7 @@ pub struct Config {
     pub filter_size: String,
     pub filter_modified: String,
     pub filter_name_glob: String,
+    pub filter_name_regex: String,
     pub filter_min_size_mib: Option<u64>,
     pub filter_max_size_mib: Option<u64>,
     pub filter_newer_days: Option<u64>,
@@ -91,6 +92,7 @@ impl Default for Config {
             filter_size: "any".to_owned(),
             filter_modified: "any".to_owned(),
             filter_name_glob: String::new(),
+            filter_name_regex: String::new(),
             filter_min_size_mib: None,
             filter_max_size_mib: None,
             filter_newer_days: None,
@@ -149,6 +151,7 @@ impl Config {
             + usize::from(self.filter_size != "any")
             + usize::from(self.filter_modified != "any")
             + usize::from(!self.filter_name_glob.is_empty())
+            + usize::from(!self.filter_name_regex.is_empty())
             + usize::from(self.filter_min_size_mib.is_some())
             + usize::from(self.filter_max_size_mib.is_some())
             + usize::from(self.filter_newer_days.is_some())
@@ -160,6 +163,7 @@ impl Config {
         self.filter_size = "any".into();
         self.filter_modified = "any".into();
         self.filter_name_glob.clear();
+        self.filter_name_regex.clear();
         self.filter_min_size_mib = None;
         self.filter_max_size_mib = None;
         self.filter_newer_days = None;
@@ -438,15 +442,17 @@ mod tests {
             theme: "xp-luna".into(),
             filter_kind: "documents".into(),
             filter_name_glob: "draft-*.pdf".into(),
+            filter_name_regex: "^draft-[0-9]+".into(),
             filter_min_size_mib: Some(2),
             filter_max_size_mib: Some(7),
             filter_older_days: Some(14),
             ..Config::default()
         };
-        assert_eq!(config.active_filter_count(), 5);
+        assert_eq!(config.active_filter_count(), 6);
         let serialized = toml::to_string(&config).unwrap();
         let mut loaded: Config = toml::from_str(&serialized).unwrap();
         assert_eq!(loaded.filter_name_glob, "draft-*.pdf");
+        assert_eq!(loaded.filter_name_regex, "^draft-[0-9]+");
         assert_eq!(loaded.filter_max_size_mib, Some(7));
         loaded.clear_filters();
         assert_eq!(loaded.active_filter_count(), 0);
