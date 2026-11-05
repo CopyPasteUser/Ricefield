@@ -1,5 +1,5 @@
 use eframe::egui::{self, Color32};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{fs, io::Read, path::Path};
 
 const MAX_THEME_BYTES: u64 = 256 * 1024;
@@ -14,7 +14,7 @@ pub const BUILTIN_IDS: &[&str] = &[
     "macos",
 ];
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct Theme {
     pub id: String,
     pub name: String,
@@ -31,7 +31,7 @@ fn theme_schema_version() -> u32 {
     1
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Layout {
     Classic,
@@ -39,7 +39,7 @@ pub enum Layout {
     Modern,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ShellKind {
     Classic,
@@ -52,7 +52,7 @@ pub enum ShellKind {
     Modern,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ChromeComponent {
     MenuBar,
@@ -61,14 +61,14 @@ pub enum ChromeComponent {
     CommandBar,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SidebarPosition {
     Left,
     Right,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SidebarSection {
     Tasks,
@@ -77,14 +77,14 @@ pub enum SidebarSection {
     Volumes,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SidebarSectionMode {
     Flat,
     Collapsible,
 }
 
-#[derive(Clone, Default, Deserialize)]
+#[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SidebarConfig {
     pub position: Option<SidebarPosition>,
@@ -93,14 +93,14 @@ pub struct SidebarConfig {
     pub mode: Option<SidebarSectionMode>,
 }
 
-#[derive(Clone, Default, Deserialize)]
+#[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PreviewConfig {
     pub position: Option<SidebarPosition>,
     pub width: Option<f32>,
 }
 
-#[derive(Clone, Default, Deserialize)]
+#[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ShellConfig {
     pub kind: Option<ShellKind>,
@@ -113,7 +113,7 @@ pub struct ShellConfig {
     pub status_bar: Option<bool>,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct Palette {
     pub background: String,
     pub chrome: String,
@@ -128,7 +128,7 @@ pub struct Palette {
     pub file: String,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct Metrics {
     pub rounding: u8,
     pub row_height: f32,
@@ -274,7 +274,7 @@ impl Theme {
         self.shell.preview.width.unwrap_or(300.0)
     }
 
-    pub fn builtin(id: &str) -> Option<Self> {
+    pub fn builtin_source(id: &str) -> Option<&'static str> {
         let source = match id {
             "win7" => include_str!("../themes/win7.toml"),
             "xp-luna" => include_str!("../themes/xp-luna.toml"),
@@ -285,10 +285,23 @@ impl Theme {
             "macos" => include_str!("../themes/macos.toml"),
             _ => return None,
         };
-        toml::from_str(source).ok()
+        Some(source)
     }
 
-    pub fn from_file(path: &Path) -> Result<Self, String> {
+    pub fn builtin(id: &str) -> Option<Self> {
+        Self::from_text(Self::builtin_source(id)?).ok()
+    }
+
+    pub fn from_text(source: &str) -> Result<Self, String> {
+        if source.len() > MAX_THEME_BYTES as usize {
+            return Err("Theme source exceeds 256 KiB limit".into());
+        }
+        let theme: Self = toml::from_str(source).map_err(|error| error.to_string())?;
+        theme.validate()?;
+        Ok(theme)
+    }
+
+    pub fn read_source(path: &Path) -> Result<String, String> {
         let mut options = fs::OpenOptions::new();
         options.read(true);
         #[cfg(unix)]
@@ -311,10 +324,11 @@ impl Theme {
         if bytes.len() as u64 > MAX_THEME_BYTES {
             return Err("Theme file exceeds 256 KiB limit".into());
         }
-        let contents = String::from_utf8(bytes).map_err(|error| error.to_string())?;
-        let theme: Self = toml::from_str(&contents).map_err(|error| error.to_string())?;
-        theme.validate()?;
-        Ok(theme)
+        String::from_utf8(bytes).map_err(|error| error.to_string())
+    }
+
+    pub fn from_file(path: &Path) -> Result<Self, String> {
+        Self::from_text(&Self::read_source(path)?)
     }
 
     pub fn validate(&self) -> Result<(), String> {

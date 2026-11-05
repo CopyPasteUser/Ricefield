@@ -466,7 +466,9 @@ marking 0.7 stable. The 0.6 NAS/mount acceptance is still blocked separately.
 - [ ] FileManager1, portals and complete URI/clipboard interoperability.
 - [x] Live reload for an explicitly supplied `--theme-file` TOML with
   256 KiB validation, previous-theme fallback and manual retry (0.9 alpha.1).
-- [ ] Direct RiceBowl event/theme sync and visual TOML editor/import/export.
+- [x] Visual TOML theme editor, import, private no-overwrite export and
+  persisted activation (0.9 alpha.3).
+- [ ] Direct RiceBowl event/theme sync.
 - [ ] Seven distinct shells and matching icons, controls and layouts.
 - [ ] Confirm Windows 98, Windows 7 and macOS render three materially
   different component structures; support custom Rust components via a
