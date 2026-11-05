@@ -1978,7 +1978,8 @@ impl Explorer {
                                 scan.first_error.as_deref().unwrap_or("unknown")
                             )
                         });
-                        tab.folded_names = scan.entries
+                        tab.folded_names = scan
+                            .entries
                             .iter()
                             .map(|entry| entry.name.to_lowercase())
                             .collect();

@@ -134,7 +134,8 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("rice-tree-stale-{}-{nonce}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("rice-tree-stale-{}-{nonce}", std::process::id()));
         fs::create_dir(&root).unwrap();
         fs::create_dir(root.join("stale")).unwrap();
         fs::create_dir(root.join("good")).unwrap();

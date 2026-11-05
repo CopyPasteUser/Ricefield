@@ -233,9 +233,7 @@ fn scan_with_metadata(
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(error) => {
                 unreadable += 1;
-                first_error.get_or_insert_with(|| {
-                    format!("{}: {error}", entry_path.display())
-                });
+                first_error.get_or_insert_with(|| format!("{}: {error}", entry_path.display()));
                 None
             }
         };
@@ -252,18 +250,27 @@ fn scan_with_metadata(
             path: entry_path,
             is_dir: metadata.as_ref().is_some_and(fs::Metadata::is_dir)
                 || fallback_type.as_ref().is_some_and(fs::FileType::is_dir),
-            is_symlink: metadata.as_ref().is_some_and(|value| value.file_type().is_symlink())
+            is_symlink: metadata
+                .as_ref()
+                .is_some_and(|value| value.file_type().is_symlink())
                 || fallback_type.as_ref().is_some_and(fs::FileType::is_symlink),
             size: metadata.as_ref().map_or(0, fs::Metadata::len),
             modified: metadata.and_then(|value| value.modified().ok()),
         });
     }
     check_scan_cancel(cancelled)?;
-    Ok(FolderScan { entries, unreadable, first_error })
+    Ok(FolderScan {
+        entries,
+        unreadable,
+        first_error,
+    })
 }
 
 pub fn folder_error_message(path: &Path, error: &io::Error) -> String {
-    if matches!(error.raw_os_error(), Some(libc::ENODEV | libc::ENOTCONN | libc::ESTALE)) {
+    if matches!(
+        error.raw_os_error(),
+        Some(libc::ENODEV | libc::ENOTCONN | libc::ESTALE)
+    ) {
         format!(
             "Mount/device unavailable at {}: {error}. Check the mount in Linux and retry.",
             path.display()
@@ -5355,8 +5362,16 @@ mod tests {
         assert_eq!(scan.entries.len(), 2);
         assert_eq!(scan.unreadable, 1);
         assert!(scan.first_error.unwrap().contains("offline-mount"));
-        assert!(scan.entries.iter().any(|entry| entry.name == "readable.txt"));
-        assert!(scan.entries.iter().any(|entry| entry.name == "offline-mount" && entry.is_dir));
+        assert!(
+            scan.entries
+                .iter()
+                .any(|entry| entry.name == "readable.txt")
+        );
+        assert!(
+            scan.entries
+                .iter()
+                .any(|entry| entry.name == "offline-mount" && entry.is_dir)
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
