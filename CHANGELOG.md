@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — 0.9.0-alpha.5 shell component composer
+
+- Build actual top/bottom toolbar composition from the visual theme editor:
+  choose shell kind, show/hide/reorder components, move Navigation between
+  regions without ever removing it, and preserve the layout in TOML.
+- Configure sidebar and preview placement, sidebar sections and collapsing,
+  and status-bar visibility without touching file-operation code.
+- Synchronize visual sidebar-width changes with the active shell override;
+  validate and roundtrip composed structures. Real visual acceptance remains
+  scheduled for after the code-complete 1.0 candidate.
+
 ## Unreleased — 0.9.0-alpha.4 bounded remote filename search
 
 - Enable case-insensitive filename search in SMB/SFTP/WebDAV/MTP tabs using

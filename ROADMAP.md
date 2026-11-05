@@ -470,6 +470,9 @@ marking 0.7 stable. The 0.6 NAS/mount acceptance is still blocked separately.
   256 KiB validation, previous-theme fallback and manual retry (0.9 alpha.1).
 - [x] Visual TOML theme editor, import, private no-overwrite export and
   persisted activation (0.9 alpha.3).
+- [x] Visual shell composition controls: place, hide and reorder the shared
+  toolbars; select shell kind, sidebar groups and preview position without
+  altering filesystem operations (0.9 alpha.5).
 - [ ] Direct RiceBowl event/theme sync.
 - [ ] Seven distinct shells and matching icons, controls and layouts.
 - [ ] Confirm Windows 98, Windows 7 and macOS render three materially
