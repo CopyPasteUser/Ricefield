@@ -5850,7 +5850,9 @@ impl Explorer {
                                 if let Some(result) = analysis {
                                     match result {
                                         Ok(result) => {
-                                            ui.label(egui::RichText::new(result.as_str()).monospace());
+                                            ui.label(
+                                                egui::RichText::new(result.as_str()).monospace(),
+                                            );
                                         }
                                         Err(error) => {
                                             ui.colored_label(Color32::RED, error.as_str());
