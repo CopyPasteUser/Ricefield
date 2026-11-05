@@ -2,14 +2,7 @@
 //! Never parse Exec= lines or invoke a shell; `gio launch` resolves desktop IDs.
 
 use crate::volume;
-use std::{
-    io,
-    path::Path,
-    process::Command,
-    sync::atomic::AtomicBool,
-    thread,
-    time::Duration,
-};
+use std::{io, path::Path, process::Command, sync::atomic::AtomicBool, thread, time::Duration};
 
 fn valid_desktop_id(id: &str) -> bool {
     id.len() >= 9
@@ -24,8 +17,15 @@ fn valid_desktop_id(id: &str) -> bool {
 fn parse_mime(text: &str) -> Option<&str> {
     text.lines().find_map(|line| {
         let mime = line.trim().strip_prefix("standard::content-type:")?.trim();
+        let (kind, subtype) = mime.split_once('/')?;
         (mime.len() <= 128
-            && mime.contains('/')
+            && !kind.is_empty()
+            && !subtype.is_empty()
+            && !subtype.contains('/')
+            && kind != "."
+            && kind != ".."
+            && subtype != "."
+            && subtype != ".."
             && mime.bytes().all(|byte| {
                 byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'.' | b'+' | b'-' | b'_')
             }))
