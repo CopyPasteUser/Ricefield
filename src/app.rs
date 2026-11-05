@@ -2006,7 +2006,12 @@ impl Explorer {
         let config = &self.config;
         let tab = &mut self.tabs[index];
         let search = tab.query.to_lowercase();
-        let name_glob: Vec<_> = config.filter_name_glob.to_lowercase().chars().take(120).collect();
+        let name_glob: Vec<_> = config
+            .filter_name_glob
+            .to_lowercase()
+            .chars()
+            .take(120)
+            .collect();
         let now = SystemTime::now();
         tab.visible = (0..tab.entries.len())
             .filter(|&index| {
@@ -5088,9 +5093,7 @@ impl Explorer {
                     egui::RichText::new("Try another folder or clear the search.")
                         .color(theme.palette.muted()),
                 );
-                if self.config.active_filter_count() > 0
-                    && ui.button("Clear filters").clicked()
-                {
+                if self.config.active_filter_count() > 0 && ui.button("Clear filters").clicked() {
                     self.config.clear_filters();
                     self.dirty_config = true;
                     for tab in 0..self.tabs.len() {

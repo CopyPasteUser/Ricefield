@@ -188,9 +188,7 @@ pub fn matches_custom_ranges(
         };
         let age = now.duration_since(modified).unwrap_or_default();
         if newer_days.is_some_and(|max| age > Duration::from_secs(max.saturating_mul(86_400)))
-            || older_days.is_some_and(|min| {
-                age < Duration::from_secs(min.saturating_mul(86_400))
-            })
+            || older_days.is_some_and(|min| age < Duration::from_secs(min.saturating_mul(86_400)))
         {
             return false;
         }
@@ -288,14 +286,63 @@ mod tests {
             size: 3 * 1024 * 1024,
             modified: Some(now - Duration::from_secs(5 * 86_400)),
         };
-        assert!(matches_custom_ranges(&entry, Some(2), Some(4), Some(6), Some(4), now));
-        assert!(!matches_custom_ranges(&entry, Some(4), None, None, None, now));
-        assert!(!matches_custom_ranges(&entry, None, Some(2), None, None, now));
-        assert!(!matches_custom_ranges(&entry, None, None, Some(3), None, now));
-        assert!(!matches_custom_ranges(&entry, None, None, None, Some(8), now));
+        assert!(matches_custom_ranges(
+            &entry,
+            Some(2),
+            Some(4),
+            Some(6),
+            Some(4),
+            now
+        ));
+        assert!(!matches_custom_ranges(
+            &entry,
+            Some(4),
+            None,
+            None,
+            None,
+            now
+        ));
+        assert!(!matches_custom_ranges(
+            &entry,
+            None,
+            Some(2),
+            None,
+            None,
+            now
+        ));
+        assert!(!matches_custom_ranges(
+            &entry,
+            None,
+            None,
+            Some(3),
+            None,
+            now
+        ));
+        assert!(!matches_custom_ranges(
+            &entry,
+            None,
+            None,
+            None,
+            Some(8),
+            now
+        ));
         entry.modified = None;
-        assert!(!matches_custom_ranges(&entry, None, None, Some(30), None, now));
+        assert!(!matches_custom_ranges(
+            &entry,
+            None,
+            None,
+            Some(30),
+            None,
+            now
+        ));
         entry.is_dir = true;
-        assert!(!matches_custom_ranges(&entry, Some(1), None, None, None, now));
+        assert!(!matches_custom_ranges(
+            &entry,
+            Some(1),
+            None,
+            None,
+            None,
+            now
+        ));
     }
 }
