@@ -461,7 +461,9 @@ marking 0.7 stable. The 0.6 NAS/mount acceptance is still blocked separately.
 
 ### 0.9 — RiceBowl and Linux desktop integration
 
-- [ ] MIME/Open With, FileManager1, portals, URI and clipboard interoperability.
+- [x] Local MIME Open With through GIO's desktop association registry with
+  bounded background discovery and argument-safe launching (0.9 alpha.2).
+- [ ] FileManager1, portals and complete URI/clipboard interoperability.
 - [x] Live reload for an explicitly supplied `--theme-file` TOML with
   256 KiB validation, previous-theme fallback and manual retry (0.9 alpha.1).
 - [ ] Direct RiceBowl event/theme sync and visual TOML editor/import/export.

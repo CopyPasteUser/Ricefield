@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — 0.9.0-alpha.2 native MIME Open With
+
+- Discover local file MIME type and registered application desktop IDs via
+  bounded cancellable GIO workers, then offer them in a common native dialog.
+- Launch the chosen registered desktop entry with `gio launch` and a separate
+  path argument; never execute desktop Exec strings or pass input to a shell.
+- Reject malformed MIME/desktop IDs, report absence of desktop handlers,
+  avoid blocking UI while probing. Full portals/FileManager1/Mint acceptance
+  remains open; this is not a stable 0.9 release.
+
 ## Unreleased — 0.9.0-alpha.1 live external rice TOML
 
 - Watch an explicitly loaded `--theme-file` at the existing three-second UI

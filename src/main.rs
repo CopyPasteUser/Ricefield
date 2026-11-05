@@ -13,6 +13,7 @@ mod keyring;
 mod location;
 mod metadata;
 mod operation_queue;
+mod open_with;
 mod preview;
 mod shell_components;
 mod shell_renderer;

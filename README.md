@@ -4,7 +4,7 @@
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Development preview: v0.9.0-alpha.1** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+> **Development preview: v0.9.0-alpha.2** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
 **Distribution:** An [automated Linux x86_64 preview bundle](RELEASE.md) can
 be built without distributing Rust sources to every end user. The verified
@@ -177,6 +177,13 @@ tabs. Invalid, missing, non-regular or oversized (over 256 KiB) themes are
 rejected while the last working theme remains active. The theme picker also
 offers **Reload external TOML**, or select a bundled rice to stop watching
 the custom file. A native RiceBowl API and visual theme editor are still open.
+
+**Open With (0.9 alpha.2):** Select one local file, open **Actions → Open
+With…**, and choose a registered Linux desktop application. Handler lookup
+uses the system GIO MIME registry on a cancellable worker; launching uses
+`gio launch` with argument-separated paths, never shell commands or parsed
+desktop Exec strings. Requires `gio`/the local desktop application registry.
+Portals and real Mint interoperability remain to be accepted.
 
 **0.7 preview alpha:** The Grid view requests thumbnails only for visible
 images, with a 96-item in-memory cache and one decoder at a time (no persistent

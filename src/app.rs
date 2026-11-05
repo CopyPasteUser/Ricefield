@@ -10,6 +10,7 @@ use crate::{
     location::Location,
     metadata,
     operation_queue::OperationQueue,
+    open_with,
     preview,
     shell_components::{self, ToolbarAction},
     shell_renderer::{self, FileCellLayout, shorten},
@@ -696,6 +697,11 @@ enum Dialog {
         generation: u64,
         result: Option<Result<duplicates::Report, String>>,
     },
+    OpenWith {
+        path: PathBuf,
+        generation: u64,
+        apps: Option<Result<Vec<String>, String>>,
+    },
 }
 
 enum ArchiveMode {
@@ -864,6 +870,10 @@ pub struct Explorer {
     duplicate_receiver: Receiver<(u64, Result<duplicates::Report, String>)>,
     duplicate_generation: u64,
     duplicate_cancel: Arc<AtomicBool>,
+    open_with_sender: Sender<(u64, Result<Vec<String>, String>)>,
+    open_with_receiver: Receiver<(u64, Result<Vec<String>, String>)>,
+    open_with_generation: u64,
+    open_with_cancel: Arc<AtomicBool>,
     analysis_worker_running: bool,
     analysis_cancel: Arc<AtomicBool>,
     property_generation: u64,
@@ -968,6 +978,7 @@ impl Explorer {
         let (property_sender, property_receiver) = mpsc::channel();
         let (analysis_sender, analysis_receiver) = mpsc::channel();
         let (duplicate_sender, duplicate_receiver) = mpsc::channel();
+        let (open_with_sender, open_with_receiver) = mpsc::channel();
         let (op_sender, op_receiver) = mpsc::channel();
         let (paste_preview_sender, paste_preview_receiver) = mpsc::channel();
         let (recovery_sender, recovery_receiver) = mpsc::channel();
@@ -1046,6 +1057,10 @@ impl Explorer {
             duplicate_receiver,
             duplicate_generation: 0,
             duplicate_cancel: Arc::new(AtomicBool::new(false)),
+            open_with_sender,
+            open_with_receiver,
+            open_with_generation: 0,
+            open_with_cancel: Arc::new(AtomicBool::new(false)),
             analysis_worker_running: false,
             analysis_cancel: Arc::new(AtomicBool::new(false)),
             property_generation: 0,
@@ -2076,6 +2091,17 @@ impl Explorer {
     }
 
     fn poll_background(&mut self, context: &egui::Context) {
+        while let Ok((generation, result)) = self.open_with_receiver.try_recv() {
+            if let Some(Dialog::OpenWith {
+                generation: active,
+                apps,
+                ..
+            }) = self.dialog.as_mut()
+                && *active == generation
+            {
+                *apps = Some(result);
+            }
+        }
         while let Ok((generation, result)) = self.duplicate_receiver.try_recv() {
             if let Some(Dialog::Duplicates {
                 generation: active,
@@ -3816,6 +3842,32 @@ impl Explorer {
         });
     }
 
+    fn choose_open_with(&mut self) {
+        if self.current().remote_uri.is_some() {
+            return;
+        }
+        let selected = self.selected_paths();
+        let [path] = selected.as_slice() else {
+            return;
+        };
+        let path = path.clone();
+        self.open_with_cancel.store(true, Ordering::Relaxed);
+        self.open_with_cancel = Arc::new(AtomicBool::new(false));
+        self.open_with_generation = self.open_with_generation.wrapping_add(1);
+        let generation = self.open_with_generation;
+        self.dialog = Some(Dialog::OpenWith {
+            path: path.clone(),
+            generation,
+            apps: None,
+        });
+        let cancelled = Arc::clone(&self.open_with_cancel);
+        let sender = self.open_with_sender.clone();
+        thread::spawn(move || {
+            let result = open_with::applications(&path, &cancelled);
+            let _ = sender.send((generation, result));
+        });
+    }
+
     fn ask_trash(&mut self) {
         let selected = self.selected_paths();
         if !selected.is_empty() {
@@ -4848,6 +4900,17 @@ impl Explorer {
                         if ui
                             .add_enabled(
                                 self.current().remote_uri.is_none()
+                                    && self.current().selected.len() == 1,
+                                egui::Button::new("Open With…"),
+                            )
+                            .clicked()
+                        {
+                            self.choose_open_with();
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(
+                                self.current().remote_uri.is_none()
                                     && self.current().visible.len() >= 2,
                                 egui::Button::new("Find duplicate candidates in view…"),
                             )
@@ -5827,6 +5890,7 @@ impl Explorer {
         if self.dialog.is_some() && context.input(|input| input.key_pressed(Key::Escape)) {
             self.analysis_cancel.store(true, Ordering::Relaxed);
             self.duplicate_cancel.store(true, Ordering::Relaxed);
+            self.open_with_cancel.store(true, Ordering::Relaxed);
             self.dialog = None;
             return;
         }
@@ -5834,9 +5898,46 @@ impl Explorer {
         let mut dismiss = false;
         let mut refresh_paste_preview = None;
         let mut requested_analysis = None;
+        let mut open_with_launch = None;
         let analysis_busy = self.analysis_worker_running;
         if let Some(dialog) = self.dialog.as_mut() {
             match dialog {
+                Dialog::OpenWith { path, apps, .. } => {
+                    shell_components::show_dialog(context, "Open With", true, Some(450.0), |ui| {
+                        ui.label(format!("Choose an installed app for {}", path.display()));
+                        match apps {
+                            None => {
+                                ui.horizontal(|ui| {
+                                    ui.spinner();
+                                    ui.label("Looking up MIME handlers…");
+                                });
+                            }
+                            Some(Err(error)) => {
+                                ui.colored_label(Color32::RED, error.as_str());
+                            }
+                            Some(Ok(handlers)) => {
+                                egui::ScrollArea::vertical()
+                                    .max_height(260.0)
+                                    .show(ui, |ui| {
+                                        for desktop_id in handlers.iter() {
+                                            if ui
+                                                .button(desktop_id.trim_end_matches(".desktop"))
+                                                .on_hover_text(desktop_id)
+                                                .clicked()
+                                            {
+                                                open_with_launch =
+                                                    Some((desktop_id.clone(), path.clone()));
+                                                dismiss = true;
+                                            }
+                                        }
+                                    });
+                            }
+                        }
+                        if ui.button("Cancel").clicked() {
+                            dismiss = true;
+                        }
+                    });
+                }
                 Dialog::Duplicates { result, .. } => {
                     shell_components::show_dialog(
                         context,
@@ -6310,7 +6411,14 @@ impl Explorer {
         if dismiss {
             self.analysis_cancel.store(true, Ordering::Relaxed);
             self.duplicate_cancel.store(true, Ordering::Relaxed);
+            self.open_with_cancel.store(true, Ordering::Relaxed);
             self.dialog = None;
+        }
+        if let Some((desktop_id, path)) = open_with_launch {
+            self.status = Some(match open_with::launch(&desktop_id, &path) {
+                Ok(()) => (format!("Requested launch using {desktop_id}"), false),
+                Err(error) => (format!("Cannot launch {desktop_id}: {error}"), true),
+            });
         }
         if let Some((path, generation)) = requested_analysis {
             self.start_deep_analysis(path, generation);
@@ -6343,6 +6451,7 @@ impl Drop for Explorer {
     fn drop(&mut self) {
         self.analysis_cancel.store(true, Ordering::Relaxed);
         self.duplicate_cancel.store(true, Ordering::Relaxed);
+        self.open_with_cancel.store(true, Ordering::Relaxed);
         volume::clear_password(&mut self.volume_connect_password);
         self.discovery_cancel.store(true, Ordering::Relaxed);
     }
@@ -6429,6 +6538,8 @@ impl eframe::App for Explorer {
             matches!(&self.dialog, Some(Dialog::Properties { details: None, .. }));
         let waiting_for_duplicates =
             matches!(&self.dialog, Some(Dialog::Duplicates { result: None, .. }));
+        let waiting_for_open_with =
+            matches!(&self.dialog, Some(Dialog::OpenWith { apps: None, .. }));
         let idle_delay = if self.busy
             || self
                 .archive_dialog
@@ -6438,6 +6549,7 @@ impl eframe::App for Explorer {
             || waiting_for_preview
             || waiting_for_properties
             || waiting_for_duplicates
+            || waiting_for_open_with
             || self.folder_tree.has_pending()
             || self.thumbnails.has_pending()
             || self.tabs.iter().any(|tab| tab.loading)
