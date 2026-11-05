@@ -4,7 +4,7 @@
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Development preview: v0.6.0-alpha.6** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+> **Development preview: v0.6.0-alpha.7** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
 **Distribution:** An [automated Linux x86_64 preview bundle](RELEASE.md) can
 be built without distributing Rust sources to every end user. The verified
@@ -256,7 +256,14 @@ For file copy/paste interoperability with other file managers, install `xclip` o
 
 Or run directly from source: `cargo run --release -- --theme win7 "$HOME"`.
 
-The installer places the executable at `~/.local/bin/rice-explorer`, a scalable icon under `~/.local/share/icons/hicolor/` and a `.desktop` launcher under `~/.local/share/applications/`. It does **not** change your default file manager or Xfce associations. It doesn't touch Thunar.
+The installer places the executable at `~/.local/bin/rice-explorer`, a scalable
+icon and a `.desktop` launcher under `${XDG_DATA_HOME:-~/.local/share}`. The
+launcher uses the **absolute installed binary path**, even when a desktop
+session does not include `~/.local/bin` in `PATH`. Look for **RiceExplorer** in
+your application menu; if its menu cache is stale, log out and back in, or run
+`gtk-launch rice-explorer` as a diagnostic (when `gtk-launch` is installed).
+It does **not** change your default file manager or Xfce associations. It
+doesn't touch Thunar.
 
 On ordinary launches, RiceExplorer restores the previously opened tabs and
 active location. **Explicit CLI folder arguments override the saved session.**
@@ -280,18 +287,21 @@ If Git refuses an update because an **untracked** `Cargo.lock` would be
 overwritten, back up that file outside the repository before retrying the
 pull. Do not discard other uncommitted changes.
 
-If `/mnt` displays **No such device (os error 19)**, first determine whether
-Linux itself can read that mount (these checks do not change the mount):
+If `/mnt/medien` or another mounted directory displays **No such device (os
+error 19)**, Linux refused to enumerate the folder. First determine whether
+the system itself can read it (these checks do not change the mount):
 
 ```bash
-findmnt -T /mnt -o TARGET,SOURCE,FSTYPE,OPTIONS
-ls -ld /mnt
-ls -la /mnt 2>&1 | head -30
+findmnt -T /mnt/medien -o TARGET,SOURCE,FSTYPE,OPTIONS
+timeout 8s ls -la /mnt/medien 2>&1 | head -25
+stat -f /mnt/medien 2>&1
 ```
 
 If `ls` also fails, investigate the mount/remote backend before retrying the
 Explorer. If `ls` succeeds but RiceExplorer fails after upgrading, attach
 the exact command output and the Explorer error for a targeted regression fix.
+Never force-unmount or automatically remount live volumes to hide an ENODEV
+error; pending I/O and filesystem state must be checked first.
 
 To uninstall the application files, run `bash uninstall.sh` from the
 repository. This leaves personal settings and themes intact; it does not

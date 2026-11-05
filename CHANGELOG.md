@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — 0.6.0-alpha.7 desktop integration and mount triage
+
+- Install a discoverable application-menu entry in both source and downloaded
+  release installs, pointing to the executable's absolute path. Honor
+  `XDG_DATA_HOME`, refresh the user menu where supported, and uninstall the
+  matching per-user launcher and icon. Cover spaced home paths and packaged
+  installation in automated smoke checks.
+- Enable reproducible `0.6.x` release bundles, which were incorrectly refused
+  by the package version gate, without claiming stable release acceptance.
+- Keep `/mnt/medien` as a **failed** physical acceptance case: the Linux
+  `read_dir` call returned ENODEV. Do not mask a failed mount with zero items,
+  or remount live storage automatically; collect `findmnt`/`ls` evidence first.
+
 ## Unreleased — 0.6.0-alpha.6 NAS sign-in and external drag bridge
 
 - Add username, optional workgroup and masked password fields to network

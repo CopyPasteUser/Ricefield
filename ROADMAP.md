@@ -400,6 +400,13 @@ wider hostile corpora and real Mint device acceptance are open for stable 0.5.
 
 **Gate:** important local workflows work by mouse and keyboard in all themes.
 
+**Alpha.7 (2026-11-05):** Source and bundled installs now register a
+desktop-menu launcher with an absolute binary path, XDG data-directory support
+and isolated installation checks. Real Mint app-menu launch awaits owner
+verification. `/mnt/medien` still fails with Linux ENODEV in the owner's
+screenshot; we need `findmnt`/`ls` evidence before diagnosing or changing the
+live mount. The owner explicitly **did not approve stable 0.6 acceptance**.
+
 ### 0.7 — Previews and metadata
 
 - [x] Bound image preview input to 32 MiB on the opened file descriptor,

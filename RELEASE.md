@@ -1,6 +1,6 @@
 # Release process (Linux x86_64)
 
-RiceExplorer 0.6.0-alpha.6 is a **development preview candidate**, not signed off for use
+RiceExplorer 0.6.0-alpha.7 is a **development preview candidate**, not signed off for use
 with irreplaceable files or as a complete network/archive file manager.
 The code can produce a tested distribution bundle, but a green CI run alone
 does not satisfy the safety, recovery and Linux Mint hardware gates in
@@ -32,7 +32,9 @@ timestamp when making a reproducible build.
 
 To install a downloaded and SHA-256-verified archive, extract it and run
 `bash install.sh` **inside the extracted directory**. The executable goes to
-`~/.local/bin` and the launcher and SVG icon to `~/.local/share`. Running
+`~/.local/bin` and the launcher and SVG icon to
+`${XDG_DATA_HOME:-$HOME/.local/share}`. The launcher has an absolute executable
+path so it works from desktop menus without a modified session `PATH`. Running
 `bash uninstall.sh` there removes only those installed files, retaining
 configuration and custom themes. No system file-manager defaults are changed.
 
