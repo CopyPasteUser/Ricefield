@@ -31,6 +31,7 @@ use std::{
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(350);
 const MAX_RECENT_OPERATIONS: usize = 64;
 const CLIPBOARD_WAIT: Duration = Duration::from_secs(2);
+const MAX_CLOSED_TABS: usize = 16;
 
 struct Tab {
     id: u64,
@@ -189,6 +190,62 @@ impl Tab {
         }
         self.set_location(target);
         true
+    }
+}
+
+/// Session-local navigation state. Do not copy a tab's scan/preview tokens:
+/// background workers must never be able to write into a duplicated tab.
+#[derive(Clone)]
+struct TabSnapshot {
+    location: Location,
+    fallback_path: PathBuf,
+    query: String,
+    back: Vec<Location>,
+    forward: Vec<Location>,
+    recursive_search: bool,
+}
+
+impl TabSnapshot {
+    fn capture(tab: &Tab) -> Self {
+        Self {
+            location: tab.location(),
+            fallback_path: tab.path.clone(),
+            query: tab.query.clone(),
+            back: tab.back.clone(),
+            forward: tab.forward.clone(),
+            recursive_search: tab.recursive_search,
+        }
+    }
+
+    fn restore(self, id: u64) -> Tab {
+        let mut tab = Tab::new(id, self.fallback_path);
+        tab.set_location(self.location);
+        tab.query = self.query;
+        tab.back = self.back;
+        tab.forward = self.forward;
+        tab.recursive_search = self.recursive_search;
+        tab
+    }
+}
+
+#[derive(Clone, Copy)]
+enum TabCommand {
+    New,
+    Activate(usize),
+    Close(usize),
+    Duplicate(usize),
+    ReopenClosed,
+    Move { index: usize, direction: i8 },
+    Cycle(i8),
+}
+
+fn active_after_swap(active: usize, first: usize, second: usize) -> usize {
+    if active == first {
+        second
+    } else if active == second {
+        first
+    } else {
+        active
     }
 }
 
@@ -651,6 +708,7 @@ pub struct Explorer {
     config: Config,
     theme: Theme,
     tabs: Vec<Tab>,
+    closed_tabs: VecDeque<TabSnapshot>,
     active: usize,
     next_tab: u64,
     scan_sender: Sender<ScanResult>,
@@ -782,6 +840,7 @@ impl Explorer {
             config,
             theme,
             tabs: Vec::new(),
+            closed_tabs: VecDeque::new(),
             active: 0,
             next_tab: 1,
             scan_sender,
@@ -968,11 +1027,66 @@ impl Explorer {
         }
     }
 
+    /// Common tab dispatcher for keyboard, context menus and every rice shell.
+    fn tab_command(&mut self, command: TabCommand) {
+        match command {
+            TabCommand::New => self.new_tab_like_current(),
+            TabCommand::Activate(index) if index < self.tabs.len() => {
+                self.active = index;
+                self.remember_session();
+            }
+            TabCommand::Close(index) if index < self.tabs.len() => self.close_tab(index),
+            TabCommand::Duplicate(index) if index < self.tabs.len() => {
+                let snapshot = TabSnapshot::capture(&self.tabs[index]);
+                let id = self.next_tab;
+                self.next_tab += 1;
+                self.tabs.insert(index + 1, snapshot.restore(id));
+                self.active = index + 1;
+                self.scan(self.active);
+                self.remember_session();
+            }
+            TabCommand::ReopenClosed => {
+                if let Some(snapshot) = self.closed_tabs.pop_back() {
+                    let id = self.next_tab;
+                    self.next_tab += 1;
+                    let index = self.active + 1;
+                    self.tabs.insert(index, snapshot.restore(id));
+                    self.active = index;
+                    self.scan(index);
+                    self.remember_session();
+                }
+            }
+            TabCommand::Move { index, direction } if index < self.tabs.len() => {
+                let target = index.checked_add_signed(isize::from(direction));
+                if let Some(target) = target.filter(|&target| target < self.tabs.len()) {
+                    self.tabs.swap(index, target);
+                    self.active = active_after_swap(self.active, index, target);
+                    self.remember_session();
+                }
+            }
+            TabCommand::Cycle(direction) if self.tabs.len() > 1 => {
+                let count = self.tabs.len();
+                self.active = if direction < 0 {
+                    (self.active + count - 1) % count
+                } else {
+                    (self.active + 1) % count
+                };
+                self.remember_session();
+            }
+            _ => {}
+        }
+    }
+
     fn close_tab(&mut self, index: usize) {
         if self.tabs.len() == 1 {
             self.navigate(config::home());
             return;
         }
+        if self.closed_tabs.len() == MAX_CLOSED_TABS {
+            self.closed_tabs.pop_front();
+        }
+        self.closed_tabs
+            .push_back(TabSnapshot::capture(&self.tabs[index]));
         self.tabs[index].cancel_scan();
         self.tabs[index].clear_remote_preview();
         self.tabs.remove(index);
@@ -2611,6 +2725,7 @@ impl Explorer {
             (
                 input.modifiers.command,
                 input.modifiers.alt,
+                input.modifiers.shift,
                 input.key_pressed(Key::L),
                 input.key_pressed(Key::F),
                 input.key_pressed(Key::T),
@@ -2630,11 +2745,14 @@ impl Explorer {
                 input.key_pressed(Key::D),
                 input.key_pressed(Key::Enter),
                 input.key_pressed(Key::Space),
+                input.key_pressed(Key::PageUp),
+                input.key_pressed(Key::PageDown),
             )
         });
         let (
             ctrl,
             alt,
+            shift,
             l,
             f,
             t,
@@ -2654,6 +2772,8 @@ impl Explorer {
             d,
             enter,
             space,
+            page_up,
+            page_down,
         ) = keys;
         if ctrl && l {
             self.focus_address = true;
@@ -2662,10 +2782,34 @@ impl Explorer {
             self.focus_search = true;
         }
         if ctrl && t {
-            self.new_tab_like_current();
+            self.tab_command(if shift {
+                TabCommand::ReopenClosed
+            } else {
+                TabCommand::New
+            });
         }
         if ctrl && w {
-            self.close_tab(self.active);
+            self.tab_command(TabCommand::Close(self.active));
+        }
+        if ctrl && !alt && page_up {
+            self.tab_command(if shift {
+                TabCommand::Move {
+                    index: self.active,
+                    direction: -1,
+                }
+            } else {
+                TabCommand::Cycle(-1)
+            });
+        }
+        if ctrl && !alt && page_down {
+            self.tab_command(if shift {
+                TabCommand::Move {
+                    index: self.active,
+                    direction: 1,
+                }
+            } else {
+                TabCommand::Cycle(1)
+            });
         }
         // Text inputs must keep their normal copy/cut/paste shortcuts.
         let typing = context.egui_wants_keyboard_input();
@@ -3040,7 +3184,7 @@ impl Explorer {
 
     fn tabs_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
-            let mut action = None;
+            let mut action: Option<TabCommand> = None;
             for index in 0..self.tabs.len() {
                 let tab = &self.tabs[index];
                 let label = tab.remote_uri.as_ref().map_or_else(
@@ -3059,14 +3203,62 @@ impl Explorer {
                     },
                 );
                 let selected = self.active == index;
-                if ui
+                let path_hint = tab
+                    .remote_uri
+                    .clone()
+                    .unwrap_or_else(|| tab.path.display().to_string());
+                let response = ui
                     .add(egui::Button::new(label).selected(selected))
-                    .clicked()
-                {
-                    action = Some((false, index));
+                    .on_hover_text(format!("{path_hint}\nRight-click for tab actions"));
+                if response.clicked() {
+                    action = Some(TabCommand::Activate(index));
                 }
+                response.context_menu(|ui| {
+                    if ui.button("Duplicate tab").clicked() {
+                        action = Some(TabCommand::Duplicate(index));
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(index > 0, egui::Button::new("Move tab left"))
+                        .clicked()
+                    {
+                        action = Some(TabCommand::Move {
+                            index,
+                            direction: -1,
+                        });
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            index + 1 < self.tabs.len(),
+                            egui::Button::new("Move tab right"),
+                        )
+                        .clicked()
+                    {
+                        action = Some(TabCommand::Move {
+                            index,
+                            direction: 1,
+                        });
+                        ui.close();
+                    }
+                    if ui.button("Close tab").clicked() {
+                        action = Some(TabCommand::Close(index));
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui
+                        .add_enabled(
+                            !self.closed_tabs.is_empty(),
+                            egui::Button::new("Reopen closed tab (Ctrl+Shift+T)"),
+                        )
+                        .clicked()
+                    {
+                        action = Some(TabCommand::ReopenClosed);
+                        ui.close();
+                    }
+                });
                 if selected && ui.small_button("×").on_hover_text("Close tab").clicked() {
-                    action = Some((true, index));
+                    action = Some(TabCommand::Close(index));
                 }
             }
             if ui
@@ -3074,15 +3266,10 @@ impl Explorer {
                 .on_hover_text("New tab (Ctrl+T)")
                 .clicked()
             {
-                self.new_tab_like_current();
+                action = Some(TabCommand::New);
             }
-            if let Some((close, index)) = action {
-                if close {
-                    self.close_tab(index);
-                } else {
-                    self.active = index;
-                    self.remember_session();
-                }
+            if let Some(action) = action {
+                self.tab_command(action);
             }
         });
     }
@@ -4944,16 +5131,66 @@ fn paint_file_icon(painter: &egui::Painter, rect: Rect, file: &Entry, theme: &Th
 mod tests {
     use super::{
         Action, CLIPBOARD_WAIT, Clipboard, Dialog, ItemCounts, NameMode, PasteMode, PendingPaste,
-        PropertyResult, PropertySnapshot, Tab, accept_property_result, choose_paste_clipboard,
-        elapsed_label, next_search_repaint_delay, read_property_snapshot, remaining_cut_paths,
-        transfer_progress_details,
+        PropertyResult, PropertySnapshot, Tab, TabSnapshot, accept_property_result,
+        active_after_swap, choose_paste_clipboard, elapsed_label, next_search_repaint_delay,
+        read_property_snapshot, remaining_cut_paths, transfer_progress_details,
     };
     use crate::clipboard;
     use crate::filesystem::{ItemResult, ItemState, Progress};
     use crate::location::Location;
     use std::path::PathBuf;
     use std::sync::atomic::Ordering;
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn duplicated_tab_retains_navigation_but_isolates_background_work() {
+        let mut original = Tab::new(3, PathBuf::from("/offline"));
+        original.visit(Location::parse("smb://nas/secret".into()).unwrap());
+        original.back.push(Location::Local(PathBuf::from("/history")));
+        original.forward.push(Location::Local(PathBuf::from("/forward")));
+        original.query = "draft".into();
+        original.recursive_search = true;
+        original.generation = 5;
+        original.selected.insert(PathBuf::from("/old-selection"));
+
+        let duplicate = TabSnapshot::capture(&original).restore(19);
+        assert_eq!(duplicate.id, 19);
+        assert_eq!(duplicate.location(), original.location());
+        assert_eq!(duplicate.back, original.back);
+        assert_eq!(duplicate.forward, original.forward);
+        assert_eq!(duplicate.query, "draft");
+        assert!(duplicate.recursive_search);
+        assert!(duplicate.entries.is_empty());
+        assert!(duplicate.selected.is_empty());
+        assert_eq!(duplicate.generation, 0);
+        assert!(!Arc::ptr_eq(&duplicate.scan_cancel, &original.scan_cancel));
+        assert!(!Arc::ptr_eq(
+            &duplicate.remote_preview_cancel,
+            &original.remote_preview_cancel
+        ));
+        original.cancel_scan();
+        assert!(!duplicate.scan_cancel.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn tab_snapshot_preserves_non_utf8_local_paths_without_serializing_them() {
+        use std::os::unix::ffi::OsStringExt;
+        let path = PathBuf::from(std::ffi::OsString::from_vec(b"/tmp/\xff".to_vec()));
+        let original = Tab::new(1, path.clone());
+        let restored = TabSnapshot::capture(&original).restore(2);
+        assert_eq!(restored.path, path);
+        assert_eq!(restored.location(), original.location());
+    }
+
+    #[test]
+    fn swapping_tabs_keeps_active_identity_including_inactive_moves() {
+        assert_eq!(active_after_swap(0, 0, 1), 1);
+        assert_eq!(active_after_swap(1, 0, 1), 0);
+        assert_eq!(active_after_swap(2, 0, 1), 2);
+        assert_eq!(active_after_swap(2, 1, 3), 2);
+        assert_eq!(active_after_swap(3, 1, 3), 1);
+    }
 
     #[test]
     fn remote_tab_scan_tokens_reject_superseded_results() {

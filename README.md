@@ -4,7 +4,7 @@
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Development preview: v0.5.0-alpha.2 candidate** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+> **Development preview: v0.6.0-alpha.1** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
 **Distribution:** An [automated Linux x86_64 preview bundle](RELEASE.md) can
 be built without distributing Rust sources to every end user. The verified
@@ -61,6 +61,23 @@ forged inflated sizes, truncated ZIP, wrong passwords and extraction cancellatio
 Native Mint acceptance, broader fuzzing and low-memory testing remain open.
 Do not open unknown archives with other tools as a workaround.
 
+**Encrypted archive interoperability:** On libarchive 3.7.4, traditional
+encrypted ZIP and WinZip AES-128/AES-256 test archives pass a full read with
+the correct password and reject wrong/absent passwords. Other encrypted ZIP
+extensions and encrypted 7z/RAR samples **do not decrypt on that backend**,
+even with the correct password. Support for *unencrypted* 7z/RAR does not
+imply encrypted support. See the [12-fixture compatibility results and
+reproducible test script](docs/ARCHIVE-INTEROPERABILITY.md).
+
+**0.6 navigation preview:** Right-click a tab to duplicate, move or close it,
+or reopen the last closed tab. Ctrl+PageUp/PageDown switches tabs,
+Ctrl+Shift+PageUp/PageDown reorders them and Ctrl+Shift+T restores up to
+16 recently closed tabs during this app session. Duplicate/reopen retains
+local/remote address and Back/Forward/search context with fresh background
+scan tokens. Tab order survives restart with session restore enabled;
+history and closed-tab recovery do **not** survive restart. Split view,
+file context menus, folder tree and other 0.6 items remain open.
+
 **Built for structural customization.** RiceExplorer is not intended to be
 one file manager with seven recolors. Its TOML shells can move whole navigation,
 tab, menu and action components between regions; reorder sidebar modules and
@@ -71,14 +88,15 @@ renderers remain part of the roadmap.
 
 ![RiceExplorer icon](assets/rice-explorer.svg)
 
-## Implemented on `main` — v0.3 core, 0.4 groundwork and 0.5 archive alpha
+## Implemented on `main` — v0.3 core, 0.4 groundwork, 0.5 archives and 0.6 navigation alpha
 
 - Native Rust GUI with GPU-accelerated drawing; no Electron, browser or persistent background daemon.
 - Seven bundled visual profiles: `win98`, `xp-luna`, `win7`, `win10`, `frutiger-aero`, `chromeos` and `macos`.
 - Configurable structural shells: classic menu/toolbar, XP task sidebar, Aero command bar, Windows 10 ribbon-like toolbar and modern condensed navigation. A universal actions menu exposes core file operations on every profile.
 - Multiple tabs, history, path entry, home/parent navigation, bookmarks,
   mount-point navigation and a collapsible sidebar. Optional session restore
-  remembers up to 32 tab locations and the active tab across restarts.
+  remembers up to 32 tab locations and the active tab across restarts. 0.6
+  adds duplication/reordering, reopening closed tabs and keyboard cycling.
 - List and icon layouts, local and bounded recursive filename search, hidden-file toggle and sorting by name, kind, size or modification time.
 - Multiple selection (Ctrl/Shift/Ctrl+A), copy, cut, paste, duplicate, rename, new folder/file, symbolic links, desktop Trash and confirmed permanent deletion.
 - **Paste with options…** in the shared Actions menu: an asynchronous,

@@ -1,6 +1,6 @@
 # Release process (Linux x86_64)
 
-RiceExplorer 0.5.0-alpha.2 is a **preview candidate**, not signed off for use
+RiceExplorer 0.6.0-alpha.1 is a **development preview candidate**, not signed off for use
 with irreplaceable files or as a complete network/archive file manager.
 The code can produce a tested distribution bundle, but a green CI run alone
 does not satisfy the safety, recovery and Linux Mint hardware gates in
@@ -56,7 +56,7 @@ isolated installation and uploads the bundle as an Actions artifact. It does
    then move Cargo/package version to `0.3.0`, commit on `main`, protect and
    push the matching `v0.3.0` tag.
 
-Pushing a `v0.3.*`, `v0.4.*` or `v0.5.*` tag triggers a **separate** validation workflow, which
+Pushing a `v0.3.*`, `v0.4.*`, `v0.5.*` or `v0.6.*` tag triggers a **separate** validation workflow, which
 publishes a GitHub Release only after all tests, archive integrity, staging
 installation and tag/version match pass. Alpha/pre-release tags are marked
 as prereleases. Do **not** create the final tag before these gates pass.
@@ -85,9 +85,23 @@ as prereleases. Do **not** create the final tag before these gates pass.
 2. **Implemented in alpha.2:** archive passwords stay in memory for the open
    dialog/worker, and encrypted ZIP creation uses AES-256. Before a stable
    release, verify compatibility with external ZIP/7z/RAR samples on Mint.
+   Independent backend tests on libarchive 3.7.4 pass traditional ZIP and
+   WinZip AES-128/256, but encrypted 7z/RAR and some ZIP encryption variants
+   fail closed; see [interoperability results](docs/ARCHIVE-INTEROPERABILITY.md).
    Keyring integration remains deferred.
 3. Exercise UI interaction, cancellation/cleanup, non-overwrite publication and
    low-memory operation. A successful Xvfb window screenshot is only a smoke
    test, not a substitute for those workflows.
 4. Carry forward the deferred 0.4 reliability limitations transparently and
    avoid a stable tag until the actually supported scopes are verified.
+
+## Before publishing stable v0.6.0
+
+1. Complete split view, shared command dispatch, file context menus,
+   drag-out, folder tree, natural sorting and accessible error states.
+   Alpha.1 includes the common **tab** dispatcher only.
+2. Verify duplication, reordering and reopen with mouse and keyboard in all
+   seven skins, including offline remote tabs without blocking launch.
+3. Repeat the 0.3/0.4/0.5 safety and physical-device checks before sign-off.
+   Keyring and physical Mint/device/disconnection tests are deferred by owner
+   decision, not silently treated as passing.

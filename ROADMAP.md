@@ -356,11 +356,17 @@ wider hostile corpora and real Mint device acceptance are open for stable 0.5.
 - [x] Remember up to 32 absolute UTF-8 tab locations and the active tab across
   app restarts, with CLI path override and an opt-out that clears stored paths.
   Restore without statting possibly offline mounts on the render thread.
-- [ ] Split view, tab duplicate/reorder, deeper history/session restore and
-  multiple windows.
+- [x] Duplicate, move and reopen closed tabs via one skin-independent tab
+  command dispatcher, including Ctrl+PageUp/PageDown switching,
+  Ctrl+Shift+PageUp/PageDown reordering, Ctrl+Shift+T reopening and right-click
+  tab actions. Copy local/remote history and search into new tabs without
+  reusing in-flight workers; bound closed-tab history to 16 session entries.
+- [ ] Split view, persisted deeper history, multi-window management and
+  cross-restart recovery of closed tabs.
 - [ ] Extract shared navigation, file list, toolbar, sidebar and dialog
   primitives so new shell renderers consume a common command dispatcher.
-- [ ] Real drag in/out, context menus, toolbar actions and keyboard shortcuts.
+- [ ] Real drag in/out, file context menus, toolbar actions and complete
+  keyboard shortcuts (tab context menus and shortcuts are implemented).
 - [ ] Folder tree, enhanced details/grid views, natural sorting and filters.
 - [ ] Responsive accessible dialogs, robust error/empty/loading states.
 
