@@ -51,14 +51,20 @@ impl ThemeEditor {
         ui.small("Customize independently of file operations. Saved themes stay private to your user account.");
         ui.horizontal(|ui| {
             ui.label("Import TOML path:");
-            ui.add_sized([275.0, 23.0], egui::TextEdit::singleline(&mut self.import_path));
+            ui.add_sized(
+                [275.0, 23.0],
+                egui::TextEdit::singleline(&mut self.import_path),
+            );
             if ui.button("Import").clicked() {
                 let path = Path::new(self.import_path.trim());
                 match import(path) {
                     Ok((source, theme)) => {
                         self.source = source;
                         self.preview = Some(theme);
-                        self.message = Some(("Theme imported into editor; original file unchanged".into(), false));
+                        self.message = Some((
+                            "Theme imported into editor; original file unchanged".into(),
+                            false,
+                        ));
                     }
                     Err(error) => self.message = Some((error, true)),
                 }
@@ -87,7 +93,10 @@ impl ThemeEditor {
             .desired_width(f32::INFINITY);
         if ui.add(editor).changed() {
             self.preview = None;
-            self.message = Some(("TOML changed · validate before saving or visual editing".into(), false));
+            self.message = Some((
+                "TOML changed · validate before saving or visual editing".into(),
+                false,
+            ));
         }
 
         if let Some(theme) = &mut self.preview {
@@ -113,7 +122,8 @@ impl ThemeEditor {
                         ui.label(label);
                         let mut color = crate::theme::parse_color(value).unwrap_or(Color32::BLACK);
                         if ui.color_edit_button_srgba(&mut color).changed() {
-                            *value = format!("#{:02X}{:02X}{:02X}", color.r(), color.g(), color.b());
+                            *value =
+                                format!("#{:02X}{:02X}{:02X}", color.r(), color.g(), color.b());
                             changed = true;
                         }
                         if index % 2 == 1 {
@@ -125,37 +135,59 @@ impl ThemeEditor {
                 .add(egui::Slider::new(&mut theme.metrics.icon_size, 12.0..=64.0).text("Icon size"))
                 .changed();
             changed |= ui
-                .add(egui::Slider::new(&mut theme.metrics.row_height, 24.0..=80.0).text("Row height"))
+                .add(
+                    egui::Slider::new(&mut theme.metrics.row_height, 24.0..=80.0)
+                        .text("Row height"),
+                )
                 .changed();
             changed |= ui
-                .add(egui::Slider::new(&mut theme.metrics.sidebar_width, 120.0..=420.0).text("Sidebar width"))
+                .add(
+                    egui::Slider::new(&mut theme.metrics.sidebar_width, 120.0..=420.0)
+                        .text("Sidebar width"),
+                )
                 .changed();
             if changed {
                 self.update_source();
-                self.message = Some(("Visual changes written to TOML (comments may be reformatted)".into(), false));
+                self.message = Some((
+                    "Visual changes written to TOML (comments may be reformatted)".into(),
+                    false,
+                ));
             }
         } else {
             ui.small("Validate the TOML to unlock color and layout controls.");
         }
 
         if let Some((message, error)) = &self.message {
-            ui.colored_label(if *error { Color32::RED } else { Color32::DARK_GREEN }, message);
+            ui.colored_label(
+                if *error {
+                    Color32::RED
+                } else {
+                    Color32::DARK_GREEN
+                },
+                message,
+            );
         }
         ui.separator();
         ui.horizontal(|ui| {
             ui.label("Save as:");
-            ui.add_sized([180.0, 23.0], egui::TextEdit::singleline(&mut self.save_name));
+            ui.add_sized(
+                [180.0, 23.0],
+                egui::TextEdit::singleline(&mut self.save_name),
+            );
             ui.label(".toml (a new private file; no overwrites)");
         });
         let mut outcome = None;
         ui.horizontal(|ui| {
             if ui
-                .add_enabled(self.preview.is_some(), egui::Button::new("Save & use theme"))
+                .add_enabled(
+                    self.preview.is_some(),
+                    egui::Button::new("Save & use theme"),
+                )
                 .clicked()
             {
-                match Theme::from_text(&self.source)
-                    .and_then(|theme| save_private(&self.save_name, &self.source).map(|path| (path, theme)))
-                {
+                match Theme::from_text(&self.source).and_then(|theme| {
+                    save_private(&self.save_name, &self.source).map(|path| (path, theme))
+                }) {
                     Ok((path, theme)) => outcome = Some(Outcome::Activate { path, theme }),
                     Err(error) => self.message = Some((error, true)),
                 }
@@ -188,7 +220,9 @@ fn save_private(name: &str, source: &str) -> Result<PathBuf, String> {
     }
     Theme::from_text(source)?;
     let config_file = config::config_file();
-    let parent = config_file.parent().ok_or("Cannot locate user config folder")?;
+    let parent = config_file
+        .parent()
+        .ok_or("Cannot locate user config folder")?;
     private_directory(parent)?;
     let directory = parent.join("themes");
     private_directory(&directory)?;
@@ -200,8 +234,13 @@ fn save_private(name: &str, source: &str) -> Result<PathBuf, String> {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let mut file = options.open(&path).map_err(|error| format!("Could not create {}: {error}", path.display()))?;
-    if let Err(error) = file.write_all(source.as_bytes()).and_then(|()| file.sync_all()) {
+    let mut file = options
+        .open(&path)
+        .map_err(|error| format!("Could not create {}: {error}", path.display()))?;
+    if let Err(error) = file
+        .write_all(source.as_bytes())
+        .and_then(|()| file.sync_all())
+    {
         drop(file);
         let _ = fs::remove_file(&path);
         return Err(format!("Cannot save theme: {error}"));
@@ -243,5 +282,16 @@ mod tests {
     fn imported_toml_must_be_absolute_and_validated() {
         assert!(import(Path::new("relative/theme.toml")).is_err());
         assert!(Theme::from_text("[palette]\naccent = '#fff'").is_err());
+    }
+
+    #[test]
+    fn visual_edits_serialize_as_valid_theme_source() {
+        let mut theme = Theme::builtin("win7").unwrap();
+        theme.palette.accent = "#1234AB".into();
+        theme.metrics.icon_size = 38.0;
+        let source = toml::to_string_pretty(&theme).unwrap();
+        let parsed = Theme::from_text(&source).unwrap();
+        assert_eq!(parsed.palette.accent, "#1234AB");
+        assert_eq!(parsed.metrics.icon_size, 38.0);
     }
 }

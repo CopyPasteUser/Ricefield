@@ -960,7 +960,8 @@ impl Explorer {
             }
             let saved = config.custom_theme_file.as_ref()?;
             let root = config::config_file().parent()?.join("themes");
-            (saved.starts_with(&root) && saved.extension().is_some_and(|ext| ext == "toml"))
+            (saved.parent() == Some(root.as_path())
+                && saved.extension().is_some_and(|ext| ext == "toml"))
                 .then(|| saved.clone())
         });
         let theme_result = if let Some(path) = theme_file.as_ref() {
@@ -5925,11 +5926,17 @@ impl Explorer {
         if let Some(dialog) = self.dialog.as_mut() {
             match dialog {
                 Dialog::ThemeEditor(editor) => {
-                    shell_components::show_dialog(context, "Customize RiceExplorer", true, Some(680.0), |ui| {
-                        egui::ScrollArea::vertical()
-                            .max_height((context.content_rect().height() - 90.0).max(240.0))
-                            .show(ui, |ui| theme_editor_outcome = editor.ui(ui));
-                    });
+                    shell_components::show_dialog(
+                        context,
+                        "Customize RiceExplorer",
+                        true,
+                        Some(680.0),
+                        |ui| {
+                            egui::ScrollArea::vertical()
+                                .max_height((context.content_rect().height() - 90.0).max(240.0))
+                                .show(ui, |ui| theme_editor_outcome = editor.ui(ui));
+                        },
+                    );
                 }
                 Dialog::OpenWith { path, apps, .. } => {
                     shell_components::show_dialog(context, "Open With", true, Some(450.0), |ui| {
