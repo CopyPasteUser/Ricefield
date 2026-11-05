@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9 interaction safety — shortcut focus isolation
+
+- Suspend global file and tab keyboard shortcuts behind open network login,
+  mount-confirmation, discovery and recovery windows, while preserving normal
+  Ctrl+N behavior after focusing the address/search fields.
+
 ## 0.9 navigation accessibility — reliable folder tree controls
 
 - Replace missing-glyph Unicode disclosure triangles with visible native

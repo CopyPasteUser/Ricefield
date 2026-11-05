@@ -6581,7 +6581,16 @@ impl eframe::App for Explorer {
             });
             self.last_refresh_check = Instant::now();
         }
-        if self.dialog.is_none() && self.archive_dialog.is_none() {
+        // Desktop shortcuts must not mutate the directory or switch tabs
+        // behind a network login, mount confirmation, discovery or recovery
+        // window. These windows own keyboard focus until dismissed.
+        if self.dialog.is_none()
+            && self.archive_dialog.is_none()
+            && !self.volume_connect_open
+            && self.volume_confirm.is_none()
+            && !self.discovery_open
+            && !self.recovery_open
+        {
             self.keyboard(&context);
         }
         self.chrome_region(ui, true);
