@@ -369,6 +369,9 @@ Updates replace the executable by atomic rename. If desktop registration
 fails, the installer restores the prior binary, launcher and icon; personal
 settings remain untouched. This protects ordinary installation errors, not
 power loss during a multi-file update.
+Concurrent installs, upgrades and uninstalls share an advisory per-user lock
+(`flock` from util-linux); the empty lock file stays under the XDG state
+directory after uninstall to preserve correct interprocess coordination.
 The desktop launcher accepts file/folder URIs, and the CLI accepts validated
 `smb://`, `sftp://`, `dav://`, `davs://` and `mtp://` locations as read-only
 tabs. Do not put passwords in a URI or command line. This does not register

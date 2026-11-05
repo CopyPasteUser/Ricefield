@@ -6,6 +6,7 @@ fixture="$(mktemp -d)"
 trap 'rm -r -- "$fixture"' EXIT
 
 export HOME="$fixture/user with spaces"
+export XDG_STATE_HOME="$fixture/state"
 mkdir -p -- "$HOME/.local/bin"
 install -m755 /bin/true "$HOME/.local/bin/rice-explorer"
 

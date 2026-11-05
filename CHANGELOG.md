@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0 release safety — serialize user install and uninstall
+
+- Protect install, upgrade, rollback and uninstall with a common per-user
+  `flock` lock in private XDG state, preventing a failed upgrade from restoring
+  stale backups over a concurrently updated executable.
+- Test the held-lock behavior for both installers and uninstallers, reject a
+  substituted symlinked lock or relative state root, and bundle the lock
+  helper with binary releases. The lock file intentionally survives uninstall.
+
 ## Unreleased — 0.9.0-alpha.6 Linux URI launch interoperability
 
 - Accept supported SMB/SFTP/WebDAV/MTP URIs as explicit CLI locations and
