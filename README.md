@@ -4,7 +4,7 @@
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Development preview: v0.9.0-alpha.3** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+> **Development preview: v0.9.0-alpha.4** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
 **Distribution:** An [automated Linux x86_64 preview bundle](RELEASE.md) can
 be built without distributing Rust sources to every end user. The verified
@@ -146,8 +146,15 @@ invisible files. **Contents** searches local UTF-8 file text alongside names;
 toggle **Subfolders** to include nested folders. It runs off the UI thread,
 never indexes or modifies data, skips symlinks, special files and files over
 2 MiB, and caps the work at 4,096 files / 64 MiB / 12 seconds. A visible
-warning marks partial results. Filename regex, custom ranges and network
-content search remain on the roadmap.
+warning marks partial results. Filename regex and network *content* search
+remain on the roadmap; custom ranges are already implemented.
+
+**Network filename search (0.9 alpha.4):** Type into the search box of a
+connected SMB/SFTP/WebDAV/MTP tab; **Subfolders** optionally searches nested
+folders, without reading or changing remote file contents. Query changes
+cancel obsolete background requests. Searches are bounded to 64 folders,
+16,384 entries, 2,048 matches, 8 levels and 12 seconds; partial or
+unavailable-folder results are visibly marked. There is no indexing daemon.
 
 **Advanced filters (0.8 alpha.3):** Expand **Filters → Custom pattern and
 ranges** to match a case-insensitive filename glob (`*`, `?`), minimum and

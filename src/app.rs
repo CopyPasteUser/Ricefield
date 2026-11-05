@@ -340,7 +340,7 @@ struct RemoteScanResult {
     tab: u64,
     generation: u64,
     uri: String,
-    result: Result<Vec<volume::RemoteEntry>, String>,
+    result: Result<volume::RemoteSearch, String>,
 }
 
 struct RemotePreviewResult {
@@ -1587,8 +1587,17 @@ impl Explorer {
             let sender = self.remote_scan_sender.clone();
             let id = tab.id;
             let generation = tab.generation;
+            let query = tab.query.clone();
+            let recursive = tab.recursive_search;
             thread::spawn(move || {
-                let result = volume::list_remote(&uri, show_hidden, &cancel);
+                let result = if query.is_empty() {
+                    volume::list_remote(&uri, show_hidden, &cancel).map(|entries| volume::RemoteSearch {
+                        entries,
+                        notice: None,
+                    })
+                } else {
+                    volume::search_remote(&uri, &query, recursive, show_hidden, &cancel)
+                };
                 if !cancel.load(Ordering::Relaxed) {
                     let _ = sender.send(RemoteScanResult {
                         tab: id,
@@ -2488,12 +2497,14 @@ impl Explorer {
             }) {
                 tab.loading = false;
                 match message.result {
-                    Ok(entries) => {
-                        tab.remote_entries = entries;
+                    Ok(report) => {
+                        tab.remote_entries = report.entries;
+                        tab.scan_warning = report.notice;
                         tab.error = None;
                     }
                     Err(error) => {
                         tab.remote_entries.clear();
+                        tab.scan_warning = None;
                         tab.error = Some(error);
                     }
                 }
@@ -4268,9 +4279,9 @@ impl Explorer {
         } else {
             170.0
         };
-        let search_enabled = self.current().remote_uri.is_none();
+        let remote = self.current().remote_uri.is_some();
         let search = ui.add_enabled(
-            search_enabled,
+            true,
             egui::TextEdit::singleline(&mut self.current_mut().query)
                 .desired_width(search_width)
                 .hint_text("Search here… (Ctrl+F)"),
@@ -4281,7 +4292,7 @@ impl Explorer {
         }
         if search.changed() {
             self.current_mut().selected.clear();
-            if self.current().recursive_search || self.current().content_search {
+            if remote || self.current().recursive_search || self.current().content_search {
                 self.current().cancel_scan();
                 self.current_mut().search_pending = Some(Instant::now());
             } else {
@@ -4293,7 +4304,7 @@ impl Explorer {
         {
             self.current_mut().query.clear();
             self.current_mut().search_pending = None;
-            if self.current().recursive_search || self.current().content_search {
+            if remote || self.current().recursive_search || self.current().content_search {
                 self.scan(self.active);
             } else {
                 self.rebuild_visible(self.active);
@@ -4302,7 +4313,7 @@ impl Explorer {
         }
         if ui
             .add_enabled(
-                search_enabled,
+                true,
                 egui::Button::new("Subfolders").selected(self.current().recursive_search),
             )
             .on_hover_text(
@@ -4317,10 +4328,10 @@ impl Explorer {
         }
         if ui
             .add_enabled(
-                search_enabled,
+                !remote,
                 egui::Button::new("Contents").selected(self.current().content_search),
             )
-            .on_hover_text("Also search local UTF-8 file contents (up to 2 MiB/file, 4,096 files, 64 MiB/12 s total); no background index")
+            .on_hover_text(if remote { "Network content search is disabled; filenames are read-only" } else { "Also search local UTF-8 file contents (up to 2 MiB/file, 4,096 files, 64 MiB/12 s total); no background index" })
             .clicked()
         {
             let next = !self.current().content_search;
@@ -5413,9 +5424,13 @@ impl Explorer {
                     ui.label("Loading network directory…");
                 } else if let Some(error) = &self.current().error {
                     ui.colored_label(Color32::LIGHT_RED, error);
-                } else if self.current().remote_entries.is_empty() {
-                    ui.label("No entries.");
                 } else {
+                    if let Some(warning) = &self.current().scan_warning {
+                        ui.colored_label(Color32::YELLOW, warning);
+                    }
+                    if self.current().remote_entries.is_empty() {
+                        ui.label(if self.current().query.is_empty() { "No entries." } else { "No matching network filenames." });
+                    } else {
                     let mut open = None;
                     let mut preview = None;
                     let entries = &self.current().remote_entries;
@@ -5443,6 +5458,7 @@ impl Explorer {
                         self.navigate_remote(uri);
                     } else if let Some(uri) = preview {
                         self.start_remote_preview(uri);
+                    }
                     }
                 }
                 if let Some(uri) = self.current().remote_preview_uri.clone() {
