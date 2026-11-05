@@ -3698,6 +3698,16 @@ impl Explorer {
         if f3 && !ctrl && !alt {
             self.navigation_command(NavigationCommand::Split);
         }
+        // New-folder/new-window are application shortcuts, even after a tab
+        // switch leaves an address/search widget holding keyboard focus.
+        // Never dispatch them through an active modal dialog, however.
+        if ctrl && n && !alt && self.dialog.is_none() {
+            if shift {
+                self.navigation_command(NavigationCommand::NewWindow);
+            } else {
+                self.file_command(FileCommand::NewFolder);
+            }
+        }
         // Text inputs must keep their normal copy/cut/paste shortcuts.
         let typing = context.egui_wants_keyboard_input();
         if !typing {
@@ -3756,11 +3766,6 @@ impl Explorer {
                 && let Some(path) = self.selected_paths().first()
             {
                 self.open_properties(path.clone());
-            }
-            if ctrl && shift && n {
-                self.navigation_command(NavigationCommand::NewWindow);
-            } else if ctrl && n {
-                self.file_command(FileCommand::NewFolder);
             }
             if f2 {
                 self.file_command(FileCommand::Rename);
