@@ -82,5 +82,10 @@ install -m755 -- "$source_binary" "$binary_tmp"
 mv -f -- "$binary_tmp" "${targets[0]}"
 binary_tmp=''
 published=1
-bash "$project_dir/scripts/install_desktop_entry.sh" "$project_dir"
+# The parent keeps the advisory lock. Do not leak its descriptor into desktop
+# cache helpers that might spawn longer-lived background processes.
+(
+  exec {RICE_EXPLORER_INSTALL_LOCK_FD}>&-
+  bash "$project_dir/scripts/install_desktop_entry.sh" "$project_dir"
+)
 echo 'Installed RiceExplorer and its application-menu launcher.'
