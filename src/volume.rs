@@ -44,7 +44,7 @@ pub fn list_remote(
     list_remote_with_timeout(uri, show_hidden, cancelled, Duration::from_secs(20))
 }
 
-fn list_remote_with_timeout(
+pub(crate) fn list_remote_with_timeout(
     uri: &str,
     show_hidden: bool,
     cancelled: &AtomicBool,

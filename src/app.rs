@@ -1795,7 +1795,10 @@ impl Explorer {
                 .iter()
                 .any(|entry| !entry.is_directory && entry.uri == uri)
         {
-            self.status = Some(("Select a file from the current network folder".into(), true));
+            self.status = Some((
+                "Select an entry from the current network folder".into(),
+                true,
+            ));
             return;
         }
         let tab = self.current_mut();
@@ -1816,16 +1819,14 @@ impl Explorer {
         });
     }
 
-    fn start_remote_download(&mut self, uri: String, name: String) {
+    fn start_remote_download(&mut self, uri: String, name: String, is_directory: bool) {
         if self.remote_download_busy {
             return;
         }
         if self.current().remote_uri.is_none()
-            || !self
-                .current()
-                .remote_entries
-                .iter()
-                .any(|entry| !entry.is_directory && entry.uri == uri && entry.name == name)
+            || !self.current().remote_entries.iter().any(|entry| {
+                entry.is_directory == is_directory && entry.uri == uri && entry.name == name
+            })
         {
             self.status = Some(("Select a file from the current network folder".into(), true));
             return;
@@ -1852,7 +1853,11 @@ impl Explorer {
             self.dirty_config = true;
         }
         thread::spawn(move || {
-            let result = remote_download::download(&uri, &name, &destination, &cancelled, &bytes);
+            let result = if is_directory {
+                remote_download::download_folder(&uri, &name, &destination, &cancelled, &bytes)
+            } else {
+                remote_download::download(&uri, &name, &destination, &cancelled, &bytes)
+            };
             let _ = sender.send(result);
         });
     }
@@ -5672,6 +5677,11 @@ impl Explorer {
                                     if ui.button(format!("Folder  {}", volume::display_remote_name(&entry.name))).on_hover_text(&entry.uri).clicked() {
                                         open = Some(entry.uri.clone());
                                     }
+                                    if ui.add_enabled(!self.remote_download_busy, egui::Button::new("Download folder"))
+                                        .on_hover_text("Download all files and subfolders to the selected local folder (bounded and no-overwrite)")
+                                        .clicked() {
+                                        download = Some((entry.uri.clone(), entry.name.clone(), true));
+                                    }
                                 } else {
                                     if ui.button(format!("Text preview  {}", volume::display_remote_name(&entry.name))).on_hover_text(&entry.uri).clicked() {
                                         preview = Some(entry.uri.clone());
@@ -5679,7 +5689,7 @@ impl Explorer {
                                     if ui.add_enabled(!self.remote_download_busy, egui::Button::new("Download"))
                                         .on_hover_text("Save to the selected local folder without overwriting an existing file")
                                         .clicked() {
-                                        download = Some((entry.uri.clone(), entry.name.clone()));
+                                        download = Some((entry.uri.clone(), entry.name.clone(), false));
                                     }
                                 }
                             });
@@ -5690,8 +5700,8 @@ impl Explorer {
                     } else if let Some(uri) = preview {
                         self.start_remote_preview(uri);
                     }
-                    if let Some((uri, name)) = download {
-                        self.start_remote_download(uri, name);
+                    if let Some((uri, name, is_directory)) = download {
+                        self.start_remote_download(uri, name, is_directory);
                     }
                     }
                 }

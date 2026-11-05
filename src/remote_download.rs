@@ -4,8 +4,9 @@
 //! A crash may leave a hidden staging directory but never a partial file
 //! under its final download name.
 
-use crate::{filesystem, location::Location};
+use crate::{filesystem, location::Location, volume};
 use std::{
+    collections::{HashSet, VecDeque},
     ffi::OsString,
     fs::{self, DirBuilder, File, OpenOptions},
     io::{Read, Write},
@@ -22,6 +23,9 @@ use std::{
 
 const MAX_DOWNLOAD_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(20 * 60);
+const MAX_FOLDER_ENTRIES: usize = 4096;
+const MAX_FOLDER_DEPTH: usize = 16;
+const MAX_FOLDER_DIRECTORIES: usize = 512;
 
 /// A user-selected target must never silently resolve against the app's
 /// working directory. The directory is created only after the user clicks
@@ -127,6 +131,8 @@ fn stream_to_staging(
     cancelled: &AtomicBool,
     bytes: &Arc<AtomicU64>,
     timeout: Duration,
+    starting_bytes: u64,
+    remaining_bytes: u64,
 ) -> Result<(), String> {
     let destination = OpenOptions::new()
         .write(true)
@@ -156,13 +162,13 @@ fn stream_to_staging(
                 break;
             }
             transferred += count as u64;
-            if transferred > MAX_DOWNLOAD_BYTES {
-                return Err("Download exceeds the 8 GiB safety limit".into());
+            if transferred > remaining_bytes {
+                return Err("Download exceeds the 8 GiB operation safety limit".into());
             }
             output
                 .write_all(&buffer[..count])
                 .map_err(|error| format!("Cannot write download: {error}"))?;
-            bytes.store(transferred, Ordering::Relaxed);
+            bytes.store(starting_bytes + transferred, Ordering::Relaxed);
         }
         output
             .sync_all()
@@ -247,6 +253,26 @@ fn download_with_command(
     bytes: &Arc<AtomicU64>,
     command: Command,
 ) -> Result<PathBuf, String> {
+    let (final_path, stage) = prepare_target(name, directory, cancelled)?;
+    let staged_file = stage.0.join("partial");
+    stream_to_staging(
+        command,
+        &staged_file,
+        cancelled,
+        bytes,
+        DOWNLOAD_TIMEOUT,
+        0,
+        MAX_DOWNLOAD_BYTES,
+    )?;
+    publish(&staged_file, &final_path, directory, cancelled)?;
+    Ok(final_path)
+}
+
+fn prepare_target(
+    name: OsString,
+    directory: &Path,
+    cancelled: &AtomicBool,
+) -> Result<(PathBuf, StagingDirectory), String> {
     if cancelled.load(Ordering::Relaxed) {
         return Err("Network download cancelled".into());
     }
@@ -266,8 +292,15 @@ fn download_with_command(
         Err(_) => {}
     }
     let stage = StagingDirectory::create(directory)?;
-    let staged_file = stage.0.join("partial");
-    stream_to_staging(command, &staged_file, cancelled, bytes, DOWNLOAD_TIMEOUT)?;
+    Ok((final_path, stage))
+}
+
+fn publish(
+    staged_file: &Path,
+    final_path: &Path,
+    directory: &Path,
+    cancelled: &AtomicBool,
+) -> Result<(), String> {
     if cancelled.load(Ordering::Relaxed) {
         return Err("Network download cancelled; no final file was published".into());
     }
@@ -285,12 +318,149 @@ fn download_with_command(
                 final_path.display()
             )
         })?;
+    Ok(())
+}
+
+/// Copy an entire read-only remote directory into a private local tree.
+/// The tree becomes visible only after every entry finishes and its file data
+/// and directory entries have been synced. Network metadata is not recreated:
+/// this is a content download, not a lossless backup of server permissions.
+pub fn download_folder(
+    uri: &str,
+    encoded_name: &str,
+    directory: &Path,
+    cancelled: &AtomicBool,
+    bytes: &Arc<AtomicU64>,
+) -> Result<PathBuf, String> {
+    download_folder_with(
+        uri,
+        encoded_name,
+        directory,
+        cancelled,
+        bytes,
+        |folder, timeout| volume::list_remote_with_timeout(folder, true, cancelled, timeout),
+        |source, target, base, remaining, timeout| {
+            let mut command = Command::new("gio");
+            command.args(["cat", source]);
+            stream_to_staging(command, target, cancelled, bytes, timeout, base, remaining)?;
+            Ok(bytes.load(Ordering::Relaxed) - base)
+        },
+    )
+}
+
+fn download_folder_with<L, F>(
+    uri: &str,
+    encoded_name: &str,
+    directory: &Path,
+    cancelled: &AtomicBool,
+    bytes: &Arc<AtomicU64>,
+    mut list: L,
+    mut fetch: F,
+) -> Result<PathBuf, String>
+where
+    L: FnMut(&str, Duration) -> Result<Vec<volume::RemoteEntry>, String>,
+    F: FnMut(&str, &Path, u64, u64, Duration) -> Result<u64, String>,
+{
+    let name = checked_download_name(uri, encoded_name)?;
+    let (final_path, stage) = prepare_target(name, directory, cancelled)?;
+    let staged_root = stage.0.join("folder");
+    fs::create_dir(&staged_root)
+        .map_err(|error| format!("Cannot stage network directory: {error}"))?;
+    let started = Instant::now();
+    let deadline = started + DOWNLOAD_TIMEOUT;
+    let mut visited = HashSet::new();
+    let mut queue = VecDeque::from([(uri.to_owned(), staged_root.clone(), 0usize)]);
+    let mut directories = vec![staged_root.clone()];
+    let mut count = 0usize;
+    let mut copied = 0u64;
+    while let Some((remote, local, depth)) = queue.pop_front() {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err("Network folder download cancelled; no final folder was published".into());
+        }
+        let remaining_time = deadline.saturating_duration_since(Instant::now());
+        if remaining_time.is_zero() {
+            return Err("Network folder download exceeded the 20-minute limit".into());
+        }
+        if !visited.insert(remote.clone()) {
+            return Err("Remote folder traversal repeats a network URI".into());
+        }
+        let prefix = format!("{}/", remote.trim_end_matches('/'));
+        for entry in list(&remote, remaining_time)? {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err("Network folder download cancelled".into());
+            }
+            count += 1;
+            if count > MAX_FOLDER_ENTRIES {
+                return Err("Network folder download exceeds 4,096 entries".into());
+            }
+            if entry.uri.strip_prefix(&prefix) != Some(entry.name.as_str()) {
+                return Err("Network listing contained an unrelated or nested URI".into());
+            }
+            let basename = checked_download_name(&entry.uri, &entry.name)?;
+            let destination = local.join(basename);
+            if entry.is_directory {
+                if depth >= MAX_FOLDER_DEPTH || directories.len() >= MAX_FOLDER_DIRECTORIES {
+                    return Err("Network folder depth/directory safety limit exceeded".into());
+                }
+                fs::create_dir(&destination)
+                    .map_err(|error| format!("Cannot create staged folder: {error}"))?;
+                directories.push(destination.clone());
+                queue.push_back((entry.uri, destination, depth + 1));
+            } else {
+                let remaining_bytes = MAX_DOWNLOAD_BYTES - copied;
+                let remaining_time = deadline.saturating_duration_since(Instant::now());
+                if remaining_bytes == 0 || remaining_time.is_zero() {
+                    return Err("Network folder download reached its size or time limit".into());
+                }
+                let size = fetch(
+                    &entry.uri,
+                    &destination,
+                    copied,
+                    remaining_bytes,
+                    remaining_time,
+                )?;
+                if size > remaining_bytes {
+                    return Err("Network download exceeded the cumulative 8 GiB limit".into());
+                }
+                copied += size;
+                bytes.store(copied, Ordering::Relaxed);
+            }
+        }
+    }
+    if cancelled.load(Ordering::Relaxed) {
+        return Err("Network folder download cancelled".into());
+    }
+    for folder in directories.iter().rev() {
+        File::open(folder)
+            .and_then(|opened| opened.sync_all())
+            .map_err(|error| format!("Cannot sync staged network folder: {error}"))?;
+    }
+    publish(&staged_root, &final_path, directory, cancelled)?;
     Ok(final_path)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn private_fixture(label: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory =
+            std::env::temp_dir().join(format!("ricefield-{label}-{}-{unique}", std::process::id()));
+        fs::create_dir(&directory).unwrap();
+        directory
+    }
+
+    fn remote_entry(uri: &str, name: &str, is_directory: bool) -> volume::RemoteEntry {
+        volume::RemoteEntry {
+            uri: uri.into(),
+            name: name.into(),
+            is_directory,
+        }
+    }
 
     #[test]
     fn rejects_traversal_and_encoded_separators() {
@@ -408,5 +578,125 @@ mod tests {
         );
         assert!(!folder.join("file").exists());
         fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn remote_folder_download_preserves_tree_and_publishes_once() {
+        let target = private_fixture("folder-success");
+        let root = "smb://nas/share/My%20Album";
+        let sub = format!("{root}/Disc%201");
+        let progress = Arc::new(AtomicU64::new(0));
+        let cancelled = AtomicBool::new(false);
+        let result = download_folder_with(
+            root,
+            "My%20Album",
+            &target,
+            &cancelled,
+            &progress,
+            |uri, _| match uri {
+                value if value == root => Ok(vec![
+                    remote_entry(&sub, "Disc%201", true),
+                    remote_entry(&format!("{root}/cover.txt"), "cover.txt", false),
+                ]),
+                value if value == sub => Ok(vec![remote_entry(
+                    &format!("{sub}/Track%20One.txt"),
+                    "Track%20One.txt",
+                    false,
+                )]),
+                _ => Err("Unexpected remote folder".into()),
+            },
+            |uri, path, base, remaining, _| {
+                let contents: &[u8] = if uri.ends_with("cover.txt") {
+                    b"cover"
+                } else {
+                    b"track one"
+                };
+                assert!(contents.len() as u64 <= remaining);
+                fs::write(path, contents).unwrap();
+                progress.store(base + contents.len() as u64, Ordering::Relaxed);
+                Ok(contents.len() as u64)
+            },
+        )
+        .unwrap();
+        assert_eq!(result, target.join("My Album"));
+        assert_eq!(fs::read(result.join("cover.txt")).unwrap(), b"cover");
+        assert_eq!(
+            fs::read(result.join("Disc 1/Track One.txt")).unwrap(),
+            b"track one"
+        );
+        assert_eq!(progress.load(Ordering::Relaxed), 14);
+        assert_eq!(fs::read_dir(&target).unwrap().count(), 1);
+        fs::remove_dir_all(target).unwrap();
+    }
+
+    #[test]
+    fn remote_folder_failure_does_not_publish_partial_tree() {
+        let target = private_fixture("folder-failure");
+        let root = "sftp://host/shared/Album";
+        let cancelled = AtomicBool::new(false);
+        let bytes = Arc::new(AtomicU64::new(0));
+        let result = download_folder_with(
+            root,
+            "Album",
+            &target,
+            &cancelled,
+            &bytes,
+            |_, _| {
+                Ok(vec![
+                    remote_entry(&format!("{root}/first"), "first", false),
+                    remote_entry(&format!("{root}/second"), "second", false),
+                ])
+            },
+            |uri, path, base, _, _| {
+                fs::write(path, b"partial").unwrap();
+                if uri.ends_with("second") {
+                    return Err("Network disconnected".into());
+                }
+                bytes.store(base + 7, Ordering::Relaxed);
+                Ok(7)
+            },
+        );
+        assert!(result.unwrap_err().contains("Network disconnected"));
+        assert!(fs::read_dir(&target).unwrap().next().is_none());
+
+        let traversal = download_folder_with(
+            root,
+            "Album",
+            &target,
+            &cancelled,
+            &bytes,
+            |_, _| {
+                Ok(vec![remote_entry(
+                    &format!("{root}/..%2Fescape"),
+                    "..%2Fescape",
+                    false,
+                )])
+            },
+            |_, _, _, _, _| panic!("Unsafe filename must fail before download"),
+        );
+        assert!(traversal.is_err());
+        assert!(fs::read_dir(&target).unwrap().next().is_none());
+        fs::remove_dir_all(target).unwrap();
+    }
+
+    #[test]
+    fn streaming_rejects_per_operation_byte_overflow() {
+        let target = private_fixture("byte-overflow");
+        let bytes = Arc::new(AtomicU64::new(0));
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "printf 'more than four'"]);
+        assert!(
+            stream_to_staging(
+                cmd,
+                &target.join("partial"),
+                &AtomicBool::new(false),
+                &bytes,
+                Duration::from_secs(5),
+                2,
+                4,
+            )
+            .is_err()
+        );
+        fs::remove_dir_all(target).unwrap();
     }
 }
