@@ -27,21 +27,22 @@ fn add_host(hosts: &mut Vec<NetworkHost>, label: &str, uri: &str, source: &'stat
     if hosts.len() >= MAX_RESULTS || uri.len() > 2048 {
         return;
     }
-    if !matches!(Location::parse(uri.into()), Ok(Location::Remote(remote)) if remote.scheme == RemoteScheme::Smb) {
+    if !matches!(Location::parse(uri.into()), Ok(Location::Remote(remote)) if remote.scheme == RemoteScheme::Smb)
+    {
         return;
     }
     let label = label.trim();
     if label.is_empty() || label.len() > 128 || label.chars().any(char::is_control) {
         return;
     }
-    hosts.push(NetworkHost { label: label.to_owned(), uri: uri.to_owned(), source });
+    hosts.push(NetworkHost {
+        label: label.to_owned(),
+        uri: uri.to_owned(),
+        source,
+    });
 }
 
-fn parse_gio(
-    hosts: &mut Vec<NetworkHost>,
-    bytes: &[u8],
-    aliases: &mut Vec<String>,
-) -> Vec<String> {
+fn parse_gio(hosts: &mut Vec<NetworkHost>, bytes: &[u8], aliases: &mut Vec<String>) -> Vec<String> {
     let mut groups = Vec::new();
     let text = String::from_utf8_lossy(bytes);
     for line in text.lines().take(1024) {
@@ -109,7 +110,11 @@ fn parse_avahi(hosts: &mut Vec<NetworkHost>, bytes: &[u8]) {
             Ok(1..) => fields[8],
             _ => continue,
         };
-        let suffix = if port == "445" { "".to_owned() } else { format!(":{port}") };
+        let suffix = if port == "445" {
+            "".to_owned()
+        } else {
+            format!(":{port}")
+        };
         let uri = format!("smb://{host}{suffix}/");
         add_host(hosts, fields[3], &uri, "mDNS / Avahi");
     }
@@ -179,7 +184,13 @@ pub fn discover(cancelled: &AtomicBool) -> Result<Vec<NetworkHost>, String> {
     if !cancelled.load(Ordering::Relaxed) {
         let mut command = Command::new("avahi-browse");
         command.args(["-r", "-t", "-p", "-k", "_smb._tcp"]);
-        if let Ok(bytes) = volume::capture_gio(command, MAX_DISCOVERY_BYTES, Duration::from_secs(5), cancelled, "mDNS service discovery") {
+        if let Ok(bytes) = volume::capture_gio(
+            command,
+            MAX_DISCOVERY_BYTES,
+            Duration::from_secs(5),
+            cancelled,
+            "mDNS service discovery",
+        ) {
             any_backend = true;
             parse_avahi(&mut hosts, &bytes);
         }
@@ -204,14 +215,25 @@ mod tests {
     fn avahi_only_offers_valid_smb_records() {
         let mut hosts = Vec::new();
         parse_avahi(&mut hosts, b"=;eth0;IPv4;My NAS;_smb._tcp;local;nas.local;192.168.1.42;445;\n=;eth0;IPv4;Bad NAS;_smb._tcp;local;user@invalid;192.168.1.3;445;\n=;eth0;IPv4;Printer;_printer._tcp;local;printer.local;192.168.1.5;445;\n");
-        assert_eq!(hosts, vec![NetworkHost { label: "My NAS".into(), uri: "smb://nas.local/".into(), source: "mDNS / Avahi" }]);
+        assert_eq!(
+            hosts,
+            vec![NetworkHost {
+                label: "My NAS".into(),
+                uri: "smb://nas.local/".into(),
+                source: "mDNS / Avahi"
+            }]
+        );
     }
 
     #[test]
     fn gio_workgroup_and_server_entries_are_separate() {
         let mut hosts = Vec::new();
         let mut aliases = Vec::new();
-        let groups = parse_gio(&mut hosts, b"smb:///WORKGROUP\nsmb://storage.local/Share\nnetwork:///smb-server-nas\n", &mut aliases);
+        let groups = parse_gio(
+            &mut hosts,
+            b"smb:///WORKGROUP\nsmb://storage.local/Share\nnetwork:///smb-server-nas\n",
+            &mut aliases,
+        );
         assert_eq!(groups, vec!["smb:///WORKGROUP"]);
         assert_eq!(aliases, vec!["network:///smb-server-nas"]);
         assert_eq!(hosts[0].uri, "smb://storage.local/");

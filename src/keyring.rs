@@ -2,7 +2,10 @@
 //! No credentials are written to RiceExplorer config, argv or log messages.
 //! `secret-tool` is an optional libsecret helper; there is no plaintext fallback.
 
-use crate::{location::Location, volume::{MountCredentials, clear_password}};
+use crate::{
+    location::Location,
+    volume::{MountCredentials, clear_password},
+};
 use serde::{Deserialize, Serialize};
 use std::{
     io::{self, Read, Write},
@@ -66,15 +69,28 @@ fn run(
     read_output: bool,
 ) -> Result<(bool, Vec<u8>), String> {
     let mut child = command
-        .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
-        .stdout(if read_output { Stdio::piped() } else { Stdio::null() })
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(if read_output {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|_| "Linux keyring unavailable (install libsecret-tools and unlock the user keyring)".to_owned())?;
+        .map_err(|_| {
+            "Linux keyring unavailable (install libsecret-tools and unlock the user keyring)"
+                .to_owned()
+        })?;
     let reader = child.stdout.take().map(|stdout| {
         thread::spawn(move || {
             let mut bytes = Vec::new();
-            stdout.take((SECRET_LIMIT + 1) as u64).read_to_end(&mut bytes)?;
+            stdout
+                .take((SECRET_LIMIT + 1) as u64)
+                .read_to_end(&mut bytes)?;
             Ok::<_, io::Error>(bytes)
         })
     });
@@ -87,7 +103,9 @@ fn run(
         if write_result.is_err() {
             let _ = child.kill();
             let _ = child.wait();
-            if let Some(reader) = reader { let _ = reader.join(); }
+            if let Some(reader) = reader {
+                let _ = reader.join();
+            }
             return Err("Could not send login to the Linux keyring".into());
         }
     }
@@ -129,13 +147,16 @@ pub fn save(uri: &str, credentials: &MountCredentials) -> Result<(), String> {
         domain: credentials.domain.clone(),
         password: credentials.password.clone(),
     };
-    let mut serialized = toml::to_string(&login)
-        .map_err(|_| "Cannot encode network login")?;
+    let mut serialized = toml::to_string(&login).map_err(|_| "Cannot encode network login")?;
     if serialized.len() > SECRET_LIMIT {
         clear_password(&mut serialized);
         return Err("Network login is too long for the Linux keyring".into());
     }
-    let result = run(command(Action::Store, uri), Some(serialized.as_bytes()), false);
+    let result = run(
+        command(Action::Store, uri),
+        Some(serialized.as_bytes()),
+        false,
+    );
     clear_password(&mut serialized);
     match result {
         Ok((true, _)) => Ok(()),
@@ -150,8 +171,8 @@ pub fn lookup(uri: &str) -> Result<Option<MountCredentials>, String> {
     if !success || bytes.is_empty() {
         return Ok(None);
     }
-    let mut plaintext = String::from_utf8(bytes)
-        .map_err(|_| "Linux keyring returned an invalid network login")?;
+    let mut plaintext =
+        String::from_utf8(bytes).map_err(|_| "Linux keyring returned an invalid network login")?;
     let decoded = toml::from_str::<StoredLogin>(&plaintext);
     clear_password(&mut plaintext);
     let login = decoded.map_err(|_| "Linux keyring contains an unsupported network login")?;
@@ -179,7 +200,12 @@ mod tests {
 
     #[test]
     fn encoding_is_not_plaintext_config_and_supports_special_passwords() {
-        let input = StoredLogin { version: 1, username: "simon".into(), domain: "HOME".into(), password: "quote=\"\npass".into() };
+        let input = StoredLogin {
+            version: 1,
+            username: "simon".into(),
+            domain: "HOME".into(),
+            password: "quote=\"\npass".into(),
+        };
         let encoded = toml::to_string(&input).unwrap();
         let decoded: StoredLogin = toml::from_str(&encoded).unwrap();
         assert_eq!(decoded.password, input.password);
@@ -189,9 +215,17 @@ mod tests {
 
     #[test]
     fn keyring_arguments_never_contain_login_secrets() {
-        let creds = MountCredentials { username: "alice".into(), domain: "workgroup".into(), password: "pass-private".into() };
+        let creds = MountCredentials {
+            username: "alice".into(),
+            domain: "workgroup".into(),
+            password: "pass-private".into(),
+        };
         let cmd = command(Action::Store, "smb://nas.local/Share");
-        let args = cmd.get_args().map(|value| value.to_string_lossy()).collect::<Vec<_>>().join(" ");
+        let args = cmd
+            .get_args()
+            .map(|value| value.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ");
         assert!(!args.contains(&creds.password));
         assert!(!args.contains(&creds.username));
         assert_eq!(cmd.get_program(), "secret-tool");
@@ -200,7 +234,9 @@ mod tests {
     #[test]
     fn subprocess_io_is_bounded_and_shell_free() {
         let mut command = Command::new("sh");
-        command.arg("-c").arg("read line; test \"$line\" = payload; printf saved");
+        command
+            .arg("-c")
+            .arg("read line; test \"$line\" = payload; printf saved");
         let (status, bytes) = run(command, Some(b"payload\n"), true).unwrap();
         assert!(status);
         assert_eq!(bytes, b"saved");

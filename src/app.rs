@@ -1,10 +1,12 @@
 use crate::{
-    archive, clipboard, discovery, keyring,
+    archive, clipboard,
     config::{self, Config},
+    discovery,
     file_view::{self, natural_cmp},
     filesystem::{self, Action, ConflictPolicy, Entry, Progress},
     folder_tree::FolderTree,
     journal::{self, Inspection as JournalInspection, State as JournalState},
+    keyring,
     location::Location,
     operation_queue::OperationQueue,
     preview,
@@ -331,8 +333,14 @@ struct RefreshResult {
 }
 
 enum KeyringEvent {
-    Loaded { uri: String, result: Result<Option<MountCredentials>, String> },
-    Forgotten { uri: String, result: Result<(), String> },
+    Loaded {
+        uri: String,
+        result: Result<Option<MountCredentials>, String>,
+    },
+    Forgotten {
+        uri: String,
+        result: Result<(), String>,
+    },
 }
 
 struct PreviewResult {
@@ -1591,9 +1599,15 @@ impl Explorer {
         let sender = self.keyring_sender.clone();
         thread::spawn(move || {
             let event = if forget {
-                KeyringEvent::Forgotten { result: keyring::forget(&uri), uri }
+                KeyringEvent::Forgotten {
+                    result: keyring::forget(&uri),
+                    uri,
+                }
             } else {
-                KeyringEvent::Loaded { result: keyring::lookup(&uri), uri }
+                KeyringEvent::Loaded {
+                    result: keyring::lookup(&uri),
+                    uri,
+                }
             };
             let _ = sender.send(event);
         });
@@ -1628,7 +1642,9 @@ impl Explorer {
                     if let VolumeAction::ConnectAuthenticated(uri, credentials) = &action {
                         match keyring::save(uri, credentials) {
                             Ok(()) => message.push_str(" Login saved in the Linux keyring."),
-                            Err(error) => message.push_str(&format!(" Login was not saved: {error}")),
+                            Err(error) => {
+                                message.push_str(&format!(" Login was not saved: {error}"))
+                            }
                         }
                     }
                 }
@@ -1653,7 +1669,9 @@ impl Explorer {
             .show(context, |ui| {
                 ui.label("Nearby advertised SMB/NAS servers (no automatic connections):");
                 ui.horizontal(|ui| {
-                    retry = ui.add_enabled(!self.discovery_busy, egui::Button::new("Scan again")).clicked();
+                    retry = ui
+                        .add_enabled(!self.discovery_busy, egui::Button::new("Scan again"))
+                        .clicked();
                     if self.discovery_busy {
                         ui.spinner();
                         ui.label("Looking for network shares…");
@@ -1664,23 +1682,31 @@ impl Explorer {
                 } else if !self.discovery_busy && self.discovery_hosts.is_empty() {
                     ui.label("No NAS was advertised. You can still connect using its address.");
                 }
-                egui::ScrollArea::vertical().max_height(280.0).show(ui, |ui| {
-                    for host in &self.discovery_hosts {
-                        ui.horizontal(|ui| {
-                            ui.vertical(|ui| {
-                                ui.label(&host.label);
-                                ui.small(format!("{} · {}", host.uri, host.source));
+                egui::ScrollArea::vertical()
+                    .max_height(280.0)
+                    .show(ui, |ui| {
+                        for host in &self.discovery_hosts {
+                            ui.horizontal(|ui| {
+                                ui.vertical(|ui| {
+                                    ui.label(&host.label);
+                                    ui.small(format!("{} · {}", host.uri, host.source));
+                                });
+                                if ui
+                                    .button("Browse shares")
+                                    .on_hover_text(
+                                        "List shares using GVfs; sign in when a share requires it",
+                                    )
+                                    .clicked()
+                                {
+                                    browse = Some(host.uri.clone());
+                                }
+                                if ui.button("Sign in").clicked() {
+                                    connect = Some(host.uri.clone());
+                                }
                             });
-                            if ui.button("Browse shares").on_hover_text("List shares using GVfs; sign in when a share requires it").clicked() {
-                                browse = Some(host.uri.clone());
-                            }
-                            if ui.button("Sign in").clicked() {
-                                connect = Some(host.uri.clone());
-                            }
-                        });
-                        ui.separator();
-                    }
-                });
+                            ui.separator();
+                        }
+                    });
             });
         if retry {
             self.start_discovery();
@@ -1766,8 +1792,11 @@ impl Explorer {
                         } else {
                             VolumeAction::ConnectAuthenticated(remote.uri, credentials)
                         };
-                        if self.volume_connect_remember && !matches!(&action, VolumeAction::ConnectAuthenticated(_, _)) {
-                            self.status = Some(("Enter a password before saving a login".into(), true));
+                        if self.volume_connect_remember
+                            && !matches!(&action, VolumeAction::ConnectAuthenticated(_, _))
+                        {
+                            self.status =
+                                Some(("Enter a password before saving a login".into(), true));
                             return;
                         }
                         let remember_login = self.volume_connect_remember;
@@ -2170,11 +2199,16 @@ impl Explorer {
                             self.volume_connect_user = std::mem::take(&mut credentials.username);
                             self.volume_connect_domain = std::mem::take(&mut credentials.domain);
                             volume::clear_password(&mut self.volume_connect_password);
-                            self.volume_connect_password = std::mem::take(&mut credentials.password);
+                            self.volume_connect_password =
+                                std::mem::take(&mut credentials.password);
                             self.volume_connect_remember = true;
-                            self.status = Some(("Saved NAS login loaded from Linux keyring".into(), false));
+                            self.status =
+                                Some(("Saved NAS login loaded from Linux keyring".into(), false));
                         }
-                        Ok(None) => self.status = Some(("No login saved for this network location".into(), false)),
+                        Ok(None) => {
+                            self.status =
+                                Some(("No login saved for this network location".into(), false))
+                        }
                         Err(error) => self.status = Some((error, true)),
                     }
                 }
@@ -2184,7 +2218,10 @@ impl Explorer {
                     self.status = Some(match result {
                         Ok(()) => {
                             self.volume_connect_remember = false;
-                            ("Saved network login removed from Linux keyring".into(), false)
+                            (
+                                "Saved network login removed from Linux keyring".into(),
+                                false,
+                            )
                         }
                         Err(error) => (error, true),
                     });
