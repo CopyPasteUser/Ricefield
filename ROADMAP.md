@@ -361,14 +361,20 @@ wider hostile corpora and real Mint device acceptance are open for stable 0.5.
   Ctrl+Shift+PageUp/PageDown reordering, Ctrl+Shift+T reopening and right-click
   tab actions. Copy local/remote history and search into new tabs without
   reusing in-flight workers; bound closed-tab history to 16 session entries.
-- [ ] Split view, persisted deeper history, multi-window management and
-  cross-restart recovery of closed tabs.
-- [ ] Extract shared navigation, file list, toolbar, sidebar and dialog
-  primitives so new shell renderers consume a common command dispatcher.
-- [ ] Real drag in/out, file context menus, toolbar actions and complete
-  keyboard shortcuts (tab context menus and shortcuts are implemented).
-- [ ] Folder tree, enhanced details/grid views, natural sorting and filters.
-- [ ] Responsive accessible dialogs, robust error/empty/loading states.
+- [x] Alpha.2 implements two local folder panes (F3), bounded persisted
+  Back/Forward navigation and closed-tab recovery, and separate windows
+  (Ctrl+Shift+N) that cannot overwrite the primary session. Desktop acceptance
+  remains open.
+- [ ] Extract remaining file-list, toolbar, sidebar and dialog primitives into
+  replaceable shell modules. Alpha.2 adds a common navigation/file quick-action
+  dispatcher alongside the existing shared tab dispatcher.
+- [ ] Native external drag-out for X11/Wayland and a complete keyboard/mouse
+  acceptance matrix. Existing file context menus, toolbar actions, external
+  drag-in and alpha.2 internal copy-by-drag share no-overwrite operations.
+- [x] Alpha.2 adds a lazy symlink-safe folder tree, clickable details headers,
+  existing list/grid layouts, natural/lexical sorting and type filters.
+- [ ] Complete responsive/accessibility checks for every dialog and real
+  error/empty/loading workflows on all seven profiles (core states exist).
 
 **Gate:** important local workflows work by mouse and keyboard in all themes.
 

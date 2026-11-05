@@ -3,6 +3,8 @@ mod archive;
 mod clipboard;
 mod config;
 mod filesystem;
+mod file_view;
+mod folder_tree;
 mod journal;
 mod location;
 mod operation_queue;
@@ -25,12 +27,13 @@ fn main() -> eframe::Result {
     let mut selected_theme = None;
     let mut theme_file = None;
     let mut locations = Vec::<PathBuf>::new();
+    let mut separate_window = false;
     let mut args = env::args_os().skip(1);
     while let Some(arg) = args.next() {
         match arg.to_str() {
             Some("--help" | "-h") => {
                 println!(
-                    "RiceExplorer {}\nUsage: rice-explorer [--theme ID] [--theme-file FILE] [FOLDER ...]\n\n--version        Show the package version\n--list-themes    Show bundled profiles\n--theme ID       Select a RiceBowl visual profile\n--theme-file FILE  Load an external editable TOML theme\n\nCLI accepts local paths and file:// URIs; supported remote addresses can be entered in the application. Remote browsing is read-only.\n\nLocal Archive menu: browse, verify, extract selected, and create ZIP/tar.gz/tar.xz/tar.zst/7z (system libarchive required); masked password prompts and optional AES-256 ZIP creation. Encrypted 7z/RAR support depends on the system backend.\n\nKeyboard: Ctrl+L path, Ctrl+F search, Ctrl+T/W open/close tab, Ctrl+Shift+T reopen, Ctrl+PageUp/PageDown cycle, Ctrl+Shift+PageUp/PageDown reorder; Ctrl+C/X/V copy/cut/paste, F2 rename, Delete trash, Shift+Delete permanent delete, Ctrl+A select all, Ctrl+D duplicate file, Alt+Enter properties, Space preview, Ctrl+H hidden, Ctrl+R refresh.",
+                    "RiceExplorer {}\nUsage: rice-explorer [--theme ID] [--theme-file FILE] [FOLDER ...]\n\n--version        Show the package version\n--list-themes    Show bundled profiles\n--theme ID       Select a RiceBowl visual profile\n--theme-file FILE  Load an external editable TOML theme\n--separate-window  Open a secondary window without saving its tab session\n\nCLI accepts local paths and file:// URIs; supported remote addresses can be entered in the application. Remote browsing is read-only.\n\nLocal Archive menu: browse, verify, extract selected, and create ZIP/tar.gz/tar.xz/tar.zst/7z (system libarchive required); masked password prompts and optional AES-256 ZIP creation. Encrypted 7z/RAR support depends on the system backend.\n\nKeyboard: F3 two-folder split view, Ctrl+Shift+N separate window, Ctrl+L path, Ctrl+F search, Ctrl+T/W open/close tab, Ctrl+Shift+T reopen, Ctrl+PageUp/PageDown cycle, Ctrl+Shift+PageUp/PageDown reorder; Ctrl+C/X/V copy/cut/paste, F2 rename, Delete trash, Shift+Delete permanent delete, Ctrl+A select all, Ctrl+D duplicate file, Alt+Enter properties, Space preview, Ctrl+H hidden, Ctrl+R refresh.",
                     env!("CARGO_PKG_VERSION")
                 );
                 return Ok(());
@@ -45,6 +48,7 @@ fn main() -> eframe::Result {
                 }
                 return Ok(());
             }
+            Some("--separate-window") => separate_window = true,
             Some("--theme") => {
                 let theme = args
                     .next()
@@ -100,6 +104,7 @@ fn main() -> eframe::Result {
                 selected_theme,
                 theme_file,
                 locations,
+                separate_window,
             )))
         }),
     )

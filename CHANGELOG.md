@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased — 0.6.0-alpha.2 navigation expansion
+
+- Add a two-pane local split view (F3), with independently focused tab contents,
+  selection, scrolling, folder navigation, and one shared action dispatcher.
+  Split panes reference stable tab IDs so reordering cannot silently redirect
+  operations; closing either pane leaves the remaining tab intact.
+- Persist bounded per-tab Back/Forward history (40 entries per direction) and
+  the 16 most recently closed tab locations across restart. Validate every
+  saved location; never persist search text, credentials or pending operations.
+- Support launching a second, standalone local Explorer window with
+  Ctrl+Shift+N; secondary windows cannot overwrite the primary tab session.
+- Add an asynchronously loaded, symlink-safe folder tree, natural numeric
+  filename ordering (plus legacy lexical order), file-kind filtering, and
+  clickable list sort headers across all seven skins.
+- Add internal copy-by-drag between folders/panes and make OS file drops
+  target the folder below the pointer. Copies use the existing no-overwrite
+  operation queue and block self/descendant targets. Refuse drops on read-only
+  remote views; external drag-out is not yet available in egui's native backend.
+- Centralize keyboard and sidebar quick actions, preserve responsive
+  loading/empty/retry states, and keep real Linux desktop drag/drop and
+  multi-window acceptance outstanding before stable 0.6.
+
 ## Unreleased — 0.6.0-alpha.1 development preview
 
 - Begin 0.6 everyday navigation: duplicate and reorder tabs through a shared
