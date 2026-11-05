@@ -3,6 +3,7 @@
 use crate::filesystem::Entry;
 use std::{
     cmp::Ordering,
+    collections::HashMap,
     time::{Duration, SystemTime},
 };
 
@@ -126,39 +127,63 @@ pub fn matches_filter(entry: &Entry, filter: &str) -> bool {
 /// `?` matches one Unicode scalar. Deliberately no regex engine or filesystem IO.
 #[cfg(test)]
 pub fn matches_glob(name: &str, pattern: &str) -> bool {
-    let compiled: Vec<_> = pattern.to_lowercase().chars().take(120).collect();
-    matches_compiled_glob(name, &compiled)
+    CompiledGlob::new(pattern).matches(name)
 }
 
-/// Precompile once for a folder refresh instead of allocating the pattern
-/// again for every file in a potentially 100k-entry directory.
-pub fn matches_compiled_glob(name: &str, glob: &[char]) -> bool {
-    if glob.is_empty() {
-        return true;
-    }
-    let text: Vec<_> = name.to_lowercase().chars().collect();
-    let (mut ni, mut gi, mut backtrack) = (0usize, 0usize, None);
-    let mut after_star = 0usize;
-    while ni < text.len() {
-        if gi < glob.len() && (glob[gi] == '?' || glob[gi] == text[ni]) {
-            ni += 1;
-            gi += 1;
-        } else if gi < glob.len() && glob[gi] == '*' {
-            backtrack = Some(gi);
-            gi += 1;
-            after_star = ni;
-        } else if let Some(star) = backtrack {
-            after_star += 1;
-            ni = after_star;
-            gi = star + 1;
-        } else {
-            return false;
+/// Bit-parallel, bounded glob matcher: each input character takes constant
+/// time, even for pathological patterns. Compile once per folder refresh.
+pub struct CompiledGlob {
+    len: usize,
+    single: u128,
+    stars: u128,
+    literals: HashMap<char, u128>,
+}
+
+impl CompiledGlob {
+    pub fn new(pattern: &str) -> Self {
+        let mut result = Self {
+            len: 0,
+            single: 0,
+            stars: 0,
+            literals: HashMap::new(),
+        };
+        let mut previous_star = false;
+        for ch in pattern.to_lowercase().chars().take(120) {
+            if ch == '*' && previous_star {
+                continue;
+            }
+            let bit = 1u128 << result.len;
+            match ch {
+                '*' => result.stars |= bit,
+                '?' => result.single |= bit,
+                literal => *result.literals.entry(literal).or_default() |= bit,
+            }
+            result.len += 1;
+            previous_star = ch == '*';
         }
+        result
     }
-    while gi < glob.len() && glob[gi] == '*' {
-        gi += 1;
+
+    fn closure(&self, states: u128) -> u128 {
+        // Consecutive '*' are collapsed during compilation, so one epsilon
+        // transition per state is sufficient.
+        states | ((states & self.stars) << 1)
     }
-    gi == glob.len()
+
+    pub fn matches(&self, name: &str) -> bool {
+        if self.len == 0 {
+            return true;
+        }
+        let mut states = self.closure(1);
+        for ch in name.to_lowercase().chars() {
+            let matching = self.single | self.literals.get(&ch).copied().unwrap_or_default();
+            states = self.closure(((states & matching) << 1) | (states & self.stars));
+            if states == 0 {
+                return false;
+            }
+        }
+        states & (1u128 << self.len) != 0
+    }
 }
 
 /// Additional, opt-in numeric bounds. Values are measured in MiB and whole
@@ -273,6 +298,11 @@ mod tests {
         assert!(!matches_glob("file.txt", "file?.txt"));
         assert!(!matches_glob("folder/file.txt", "*.pdf"));
         assert!(matches_glob("anything", ""));
+        assert!(matches_glob("abcdefghijklmnop.pdf", "*a*b*c*d*e*f*g*h*i*j*k*l*m*n*o*p.pdf"));
+        assert!(matches_glob("acccb", "a**?b"));
+        assert!(!matches_glob("ab", "a**??b"));
+        assert!(matches_glob("", "***"));
+        assert!(!matches_glob("", "?"));
     }
 
     #[test]

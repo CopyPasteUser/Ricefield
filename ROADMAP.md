@@ -450,7 +450,10 @@ marking 0.7 stable. The 0.6 NAS/mount acceptance is still blocked separately.
   combined with type/size/date presets and safe selection pruning.
 - [ ] Full filename regex (glob is supported, but not general regex expressions).
 - [ ] Bounded cancellable network search, optional index (not mandatory).
-- [ ] Saved searches, duplicate finder and batch action previews.
+- [x] Opt-in, capped saved local searches with private atomic preferences
+  (0.8 alpha.4); no query persisted or automatically rerun without consent.
+- [ ] Duplicate finder and additional batch action previews (batch rename
+  already has a planning/preview step).
 
 **Gate:** 100k-entry folders and recursive searches remain responsive.
 

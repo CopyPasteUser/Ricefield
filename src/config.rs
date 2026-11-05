@@ -1,10 +1,17 @@
 use crate::location::Location;
 use serde::{Deserialize, Serialize};
-use std::{env, fs, io, path::PathBuf};
+use std::{
+    env, fs,
+    fs::OpenOptions,
+    io::{self, Write},
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 pub const MAX_SAVED_TABS: usize = 32;
 pub const MAX_SAVED_HISTORY: usize = 40;
 pub const MAX_SAVED_CLOSED_TABS: usize = 16;
+pub const MAX_SAVED_SEARCHES: usize = 16;
 pub type SessionHistory = (Vec<Location>, Vec<Location>);
 pub type SessionNavigation = (Location, Vec<Location>, Vec<Location>);
 
@@ -20,6 +27,24 @@ pub struct StoredHistory {
 pub struct StoredClosedTab {
     pub location: String,
     pub history: StoredHistory,
+}
+
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SavedSearch {
+    pub folder: String,
+    pub query: String,
+    pub subfolders: bool,
+    pub contents: bool,
+}
+
+impl SavedSearch {
+    fn valid(&self) -> bool {
+        !self.query.trim().is_empty()
+            && self.query.len() <= 120
+            && self.folder.len() <= 4096
+            && Path::new(&self.folder).is_absolute()
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -39,6 +64,7 @@ pub struct Config {
     pub filter_max_size_mib: Option<u64>,
     pub filter_newer_days: Option<u64>,
     pub filter_older_days: Option<u64>,
+    pub saved_searches: Vec<SavedSearch>,
     pub bookmarks: Vec<PathBuf>,
     pub remote_favorites: Vec<String>,
     pub restore_session: bool,
@@ -67,6 +93,7 @@ impl Default for Config {
             filter_max_size_mib: None,
             filter_newer_days: None,
             filter_older_days: None,
+            saved_searches: Vec::new(),
             bookmarks: Vec::new(),
             remote_favorites: Vec::new(),
             restore_session: true,
@@ -92,6 +119,29 @@ pub fn config_file() -> PathBuf {
 }
 
 impl Config {
+    /// Only deliberately saved local searches survive restart. Never check
+    /// mount availability while restoring config or save transient queries.
+    pub fn saved_searches(&self) -> Vec<SavedSearch> {
+        self.saved_searches
+            .iter()
+            .filter(|search| search.valid())
+            .take(MAX_SAVED_SEARCHES)
+            .cloned()
+            .collect()
+    }
+
+    pub fn save_search(&mut self, search: SavedSearch) -> bool {
+        if !search.valid() || self.saved_searches.contains(&search) {
+            return false;
+        }
+        self.saved_searches.retain(SavedSearch::valid);
+        if self.saved_searches.len() >= MAX_SAVED_SEARCHES {
+            self.saved_searches.remove(0);
+        }
+        self.saved_searches.push(search);
+        true
+    }
+
     pub fn active_filter_count(&self) -> usize {
         usize::from(self.filter_kind != "all")
             + usize::from(self.filter_size != "any")
@@ -267,14 +317,62 @@ impl Config {
 
     pub fn save(&self) -> io::Result<()> {
         let file = config_file();
-        if let Some(parent) = file.parent() {
-            fs::create_dir_all(parent)?;
-        }
         let encoded = toml::to_string_pretty(self).map_err(io::Error::other)?;
-        let temporary = file.with_extension("toml.tmp");
-        fs::write(&temporary, encoded)?;
-        fs::rename(temporary, file)
+        write_private_config(&file, encoded.as_bytes())
     }
+}
+
+/// Keep the saved UI configuration (including deliberately saved search terms)
+/// private and prevent a predictable `.tmp` symlink from replacing another file.
+fn write_private_config(file: &Path, contents: &[u8]) -> io::Result<()> {
+    if let Some(parent) = file.parent() {
+        fs::create_dir_all(parent)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if fs::symlink_metadata(parent)?.file_type().is_symlink() {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "RiceExplorer config directory must not be a symlink",
+                ));
+            }
+            fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+        }
+    }
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    for attempt in 0..8 {
+        let temporary = file.with_extension(format!(
+            "toml.tmp-{}-{nonce}-{attempt}",
+            std::process::id()
+        ));
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut handle = match options.open(&temporary) {
+            Ok(handle) => handle,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        };
+        let result = handle
+            .write_all(contents)
+            .and_then(|()| handle.flush())
+            .and_then(|()| fs::rename(&temporary, file));
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        return result;
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "Could not reserve a private config staging file",
+    ))
 }
 
 fn validated_session_location(text: &str) -> Option<Location> {
@@ -353,6 +451,61 @@ mod tests {
         loaded.clear_filters();
         assert_eq!(loaded.active_filter_count(), 0);
         assert_eq!(loaded.theme, "xp-luna");
+    }
+
+    #[test]
+    fn saved_searches_are_opt_in_local_bounded_and_roundtrip() {
+        let mut config = Config::default();
+        assert!(config.saved_searches().is_empty());
+        let search = SavedSearch {
+            folder: "/home/test/Documents".into(),
+            query: "invoices".into(),
+            subfolders: true,
+            contents: false,
+        };
+        assert!(config.save_search(search.clone()));
+        assert!(!config.save_search(search.clone()));
+        assert!(!config.save_search(SavedSearch {
+            folder: "smb://private/documents".into(),
+            ..search.clone()
+        }));
+        for index in 0..(MAX_SAVED_SEARCHES + 4) {
+            assert!(config.save_search(SavedSearch {
+                query: format!("keyword{index}"),
+                ..search.clone()
+            }));
+        }
+        assert_eq!(config.saved_searches().len(), MAX_SAVED_SEARCHES);
+        let decoded: Config = toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
+        assert_eq!(decoded.saved_searches(), config.saved_searches());
+        assert!(decoded.saved_searches().last().unwrap().query.starts_with("keyword"));
+    }
+
+    #[test]
+    fn config_save_is_atomic_private_and_ignores_legacy_predictable_tmp() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = env::temp_dir().join(format!(
+            "rice-explorer-config-test-{}-{unique}",
+            std::process::id()
+        ));
+        let file = root.join("rice-explorer").join("config.toml");
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        let decoy = file.with_extension("toml.tmp");
+        fs::write(&decoy, b"unrelated").unwrap();
+        write_private_config(&file, b"old").unwrap();
+        write_private_config(&file, b"new").unwrap();
+        assert_eq!(fs::read(&file).unwrap(), b"new");
+        assert_eq!(fs::read(&decoy).unwrap(), b"unrelated");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&file).unwrap().permissions().mode() & 0o077, 0);
+            assert_eq!(fs::metadata(file.parent().unwrap()).unwrap().permissions().mode() & 0o077, 0);
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
