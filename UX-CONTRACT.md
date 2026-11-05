@@ -177,6 +177,11 @@ not silently rolled back; cancelled/unstarted entries remain explicit.
   The dialog keeps 64 recent session outcomes (completed, cancelled, failed)
   without claiming that earlier successful items in a failed batch rolled back.
 - **Theme:** `Theme::apply` and runtime TOML files; no theme-specific copy/move behavior.
+  The shared **Open With** dialog uses the desktop MIME registry only for a
+  single local file; desktop IDs and MIME types are validated before a
+  shell-free GIO launch. Slow/unavailable backends show a cancellable loading
+  or error state, and no file content is copied to an external process by the
+  lookup itself.
   External theme files are observed at the shared idle cadence, reloaded only
   after a metadata change, and limited to regular 256 KiB inputs. A broken
   edit never replaces the last working theme or touches open tabs/transfers;

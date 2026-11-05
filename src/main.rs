@@ -12,6 +12,7 @@ mod journal;
 mod keyring;
 mod location;
 mod metadata;
+mod open_with;
 mod operation_queue;
 mod preview;
 mod shell_components;
