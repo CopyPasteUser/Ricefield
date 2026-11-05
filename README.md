@@ -4,7 +4,7 @@
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Development preview: v0.6.0-alpha.1** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+> **Development preview: v0.6.0-alpha.2** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
 **Distribution:** An [automated Linux x86_64 preview bundle](RELEASE.md) can
 be built without distributing Rust sources to every end user. The verified
@@ -13,7 +13,7 @@ not replace the outstanding real-device acceptance.
 
 RiceExplorer is designed as the file-management companion to [RiceBowl](https://github.com/CopyPasteUser/RiceBowl). Its renderer, filesystem operations and visual profiles are separate: switching from Windows 98 to Windows 7 or ChromeOS changes the chrome, geometry, controls and icons without replacing the file manager or disturbing an open folder.
 
-**0.4 progress on `main` (not yet released):** Local paths, `file://`
+**0.4 foundation (stable acceptance remains open):** Local paths, `file://`
 and validated SMB/SFTP/WebDAV/MTP addresses share a typed location parser.
 Network shares can be connected through a non-blocking GIO attempt. Once
 connected, a remote directory opens as a **read-only normal tab**, with
@@ -69,14 +69,23 @@ even with the correct password. Support for *unencrypted* 7z/RAR does not
 imply encrypted support. See the [12-fixture compatibility results and
 reproducible test script](docs/ARCHIVE-INTEROPERABILITY.md).
 
-**0.6 navigation preview:** Right-click a tab to duplicate, move or close it,
-or reopen the last closed tab. Ctrl+PageUp/PageDown switches tabs,
-Ctrl+Shift+PageUp/PageDown reorders them and Ctrl+Shift+T restores up to
-16 recently closed tabs during this app session. Duplicate/reopen retains
-local/remote address and Back/Forward/search context with fresh background
-scan tokens. Tab order survives restart with session restore enabled;
-history and closed-tab recovery do **not** survive restart. Split view,
-file context menus, folder tree and other 0.6 items remain open.
+**0.6 navigation preview:** F3 opens a two-folder split view with independent
+selections, scroll positions and keyboard focus; click **Focus** in either
+pane to direct toolbar and shortcut actions there. Ctrl+Shift+N opens the
+current local folder in a separate process/window without overwriting the
+main window's saved session. Ctrl+PageUp/PageDown cycles tabs,
+Ctrl+Shift+PageUp/PageDown reorders them, Ctrl+Shift+T reopens recently
+closed tabs and a right-click on any tab exposes duplicate/move/close actions.
+With session restore enabled, **location-only** Back/Forward history (40
+entries each) and the 16 most recently closed tab locations now also survive
+an app restart. Search text and credentials are never persisted. The sidebar
+includes an asynchronous expandable folder tree; list headings sort by
+name/type/size/date and natural sorting places `file2` before `file10`.
+The type filter shows images, documents, audio, video, code or archives.
+Drag files into the Explorer, or between its local folders/panes, to enqueue
+a no-overwrite copy. **Dragging files out into other Linux applications is
+not supported yet**; real Mint/Wayland/X11 drag and multi-window testing
+remains outstanding. This is not a stable 0.6 release.
 
 **Built for structural customization.** RiceExplorer is not intended to be
 one file manager with seven recolors. Its TOML shells can move whole navigation,
@@ -96,8 +105,9 @@ renderers remain part of the roadmap.
 - Multiple tabs, history, path entry, home/parent navigation, bookmarks,
   mount-point navigation and a collapsible sidebar. Optional session restore
   remembers up to 32 tab locations and the active tab across restarts. 0.6
-  adds duplication/reordering, reopening closed tabs and keyboard cycling.
-- List and icon layouts, local and bounded recursive filename search, hidden-file toggle and sorting by name, kind, size or modification time.
+  adds duplication/reordering, reopening closed tabs, split view and keyboard
+  cycling; a bounded navigation/closed-tab snapshot survives restarts.
+- List and icon layouts, local and bounded recursive filename search, hidden-file toggle, natural/lexical sorting by name, type, size or modification time, clickable list headers and file-kind filters.
 - Multiple selection (Ctrl/Shift/Ctrl+A), copy, cut, paste, duplicate, rename, new folder/file, symbolic links, desktop Trash and confirmed permanent deletion.
 - **Paste with options…** in the shared Actions menu: an asynchronous,
   read-only preflight lists each source and intended target, counting
@@ -181,10 +191,13 @@ renderers remain part of the roadmap.
   detected.
 - On-demand preview pane for bounded image and text previews, decoded off the UI thread.
 - Background folder scanning and file operations; superseded local scans and recursive searches are cooperatively cancelled and cannot overwrite current results. Virtualized file listing for large directories.
-- Copy files into the open folder by dragging them from the desktop or another file manager.
+- Copy files into a specific folder by dragging them from the desktop, another file manager, another RiceExplorer pane, or onto a folder row; external drag-out remains open.
 - External TOML themes with configurable top/bottom tool regions, reorderable sidebar modules and left/right preview; persistent user settings. A single executable works with all rices.
 
-**Most recent functional work:** synced staging and destination directories;
+**Most recent functional work:** two-pane browsing (F3), bounded session
+navigation and closed-tab recovery, separate local windows (Ctrl+Shift+N),
+lazy folder tree, natural sorting, file-kind filters and internal copy drag.
+Earlier safety work includes synced staging and destination directories;
 read-only crash-recovery triage showing source, destination and staging status;
 coalesced recovery rescans; whole-batch Trash/Delete preflight with per-item
 outcomes; and transfer elapsed time, average speed and approximate ETA.
@@ -201,7 +214,7 @@ Asynchronous Paste conflict previews, full-batch worker preflight and
 *Require no conflicts* remain available. Detailed per-file results appear in
 the Transfers window. The CI workflow checks
 Rust formatting, Clippy, unit tests, a release
-build, CLI startup and Xvfb GUI startup for all seven skins. These are
+build, CLI startup and Xvfb GUI startup/split toggle for all seven skins. These are
 development checks, **not** a production release or full Linux Mint acceptance.
 
 ### Install on Linux Mint / Xfce
@@ -228,8 +241,16 @@ out and erase stored tab paths; the switch applies across all seven skins.
 Sessions are limited to 32 absolute UTF-8 local paths or validated remote URIs.
 Non-UTF-8 paths remain usable but are not written to the TOML session; offline
 mounts and network locations are scanned in the background and may show an
-error rather than blocking launch. No passwords or URI userinfo are saved. Tab history,
-search queries and pending file operations are **not** replayed on restart.
+error rather than blocking launch. No passwords or URI userinfo are saved.
+Back/Forward location history (at most 40 entries each) and up to 16 closed
+tab locations are restored; search queries, selections and pending file
+operations are **not** replayed on restart.
+
+To update a source installation after the alpha.2 merge:
+
+```bash
+cd riceExplorer && git pull --ff-only && bash install.sh
+```
 
 To uninstall the application files, run `bash uninstall.sh` from the
 repository. This leaves personal settings and themes intact; it does not

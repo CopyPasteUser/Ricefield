@@ -1,6 +1,6 @@
 # Release process (Linux x86_64)
 
-RiceExplorer 0.6.0-alpha.1 is a **development preview candidate**, not signed off for use
+RiceExplorer 0.6.0-alpha.2 is a **development preview candidate**, not signed off for use
 with irreplaceable files or as a complete network/archive file manager.
 The code can produce a tested distribution bundle, but a green CI run alone
 does not satisfy the safety, recovery and Linux Mint hardware gates in
@@ -97,9 +97,11 @@ as prereleases. Do **not** create the final tag before these gates pass.
 
 ## Before publishing stable v0.6.0
 
-1. Complete split view, shared command dispatch, file context menus,
-   drag-out, folder tree, natural sorting and accessible error states.
-   Alpha.1 includes the common **tab** dispatcher only.
+1. Validate the alpha.2 split view, common tab/navigation/file quick-action
+   dispatchers, per-folder drag-in and internal copy-drag, folder tree,
+   natural sorting, type filters and cross-restart tab/history recovery.
+   External native file drag-out (X11/Wayland) and extraction of the remaining
+   shell-specific UI primitives are still open before stable 0.6.
 2. Verify duplication, reordering and reopen with mouse and keyboard in all
    seven skins, including offline remote tabs without blocking launch.
 3. Repeat the 0.3/0.4/0.5 safety and physical-device checks before sign-off.

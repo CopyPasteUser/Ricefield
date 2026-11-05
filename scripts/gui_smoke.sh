@@ -73,8 +73,20 @@ for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sideba
   sleep 1
   import -window "$window_id" "screenshots/$theme.png"
   identify -format '%wx%h\n' "screenshots/$theme.png"
+  # Exercise the new two-pane command on every shell; a screenshot is a smoke
+  # artifact, not proof of correct hit targets or system drag-and-drop.
+  xdotool key --window "$window_id" F3
+  sleep 1
+  if ! kill -0 "$app_pid" 2>/dev/null; then
+    echo "Split view crashed in theme $theme" >&2
+    report_startup_failure "$theme"
+    exit 1
+  fi
+  import -window "$window_id" "screenshots/$theme-split.png"
+  identify -format '%wx%h\n' "screenshots/$theme-split.png"
+  xdotool key --window "$window_id" F3
   kill "$app_pid" 2>/dev/null || true
   wait "$app_pid" 2>/dev/null || true
   app_pid=''
 done
-echo 'Native GUI smoke checks passed for seven bundled themes and one custom sidebar (window startup and screenshots only).'
+echo 'Native GUI smoke checks passed for seven themes and one custom sidebar (startup, F3 toggle and screenshots; not physical acceptance).'

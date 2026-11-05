@@ -1,7 +1,9 @@
 use crate::{
     archive, clipboard,
     config::{self, Config},
+    file_view::{self, natural_cmp},
     filesystem::{self, Action, ConflictPolicy, Entry, Progress},
+    folder_tree::FolderTree,
     journal::{self, Inspection as JournalInspection, State as JournalState},
     location::Location,
     operation_queue::OperationQueue,
@@ -239,6 +241,47 @@ enum TabCommand {
     Cycle(i8),
 }
 
+#[derive(Clone, Copy)]
+enum NavigationCommand {
+    Back,
+    Forward,
+    Parent,
+    Refresh,
+    Hidden,
+    Split,
+    NewWindow,
+}
+
+#[derive(Clone, Copy)]
+enum FileCommand {
+    NewFolder,
+    Copy,
+    Cut,
+    Paste,
+    Rename,
+    Trash,
+    Delete,
+    Properties,
+}
+
+struct DragFiles {
+    source_tab: u64,
+    paths: Vec<PathBuf>,
+}
+
+struct DropArea {
+    tab_id: u64,
+    destination: PathBuf,
+    rect: Rect,
+    folder: bool,
+}
+
+struct FileItemLayout {
+    width: f32,
+    height: f32,
+    grid: bool,
+}
+
 fn active_after_swap(active: usize, first: usize, second: usize) -> usize {
     if active == first {
         second
@@ -247,6 +290,17 @@ fn active_after_swap(active: usize, first: usize, second: usize) -> usize {
     } else {
         active
     }
+}
+
+fn resolve_split_tabs(tabs: &[Tab], pair: Option<(u64, u64)>) -> Option<(usize, usize)> {
+    let (left, right) = pair?;
+    let a = tabs
+        .iter()
+        .position(|tab| tab.id == left && tab.remote_uri.is_none())?;
+    let b = tabs
+        .iter()
+        .position(|tab| tab.id == right && tab.remote_uri.is_none())?;
+    (a != b).then_some((a, b))
 }
 
 fn next_search_repaint_delay(tabs: &[Tab], now: Instant) -> Option<Duration> {
@@ -707,10 +761,17 @@ fn accept_property_result(dialog: &mut Option<Dialog>, message: PropertyResult) 
 pub struct Explorer {
     config: Config,
     theme: Theme,
+    theme_file: Option<PathBuf>,
+    session_owner: bool,
     tabs: Vec<Tab>,
     closed_tabs: VecDeque<TabSnapshot>,
+    split_pair: Option<(u64, u64)>,
     active: usize,
     next_tab: u64,
+    folder_tree: FolderTree,
+    tree_expanded: BTreeSet<PathBuf>,
+    drag_files: Option<DragFiles>,
+    drop_areas: Vec<DropArea>,
     scan_sender: Sender<ScanResult>,
     scan_receiver: Receiver<ScanResult>,
     remote_scan_sender: Sender<RemoteScanResult>,
@@ -795,13 +856,14 @@ impl Explorer {
         selected_theme: Option<String>,
         theme_file: Option<PathBuf>,
         locations: Vec<PathBuf>,
+        separate_window: bool,
     ) -> Self {
         let mut config = Config::load();
         if let Some(name) = selected_theme {
             config.theme = name;
         }
-        let theme_result = if let Some(path) = theme_file {
-            Theme::from_file(&path)
+        let theme_result = if let Some(path) = theme_file.as_ref() {
+            Theme::from_file(path)
         } else {
             Theme::builtin(&config.theme).ok_or_else(|| format!("Unknown theme: {}", config.theme))
         };
@@ -830,7 +892,12 @@ impl Explorer {
         // Explicit CLI paths take precedence over the saved session. Restored
         // local and network locations are scanned asynchronously, never stat'ed
         // or contacted while reading preferences.
-        let from_session = locations.is_empty();
+        let from_session = locations.is_empty() && !separate_window;
+        let (saved_histories, saved_closed) = if from_session {
+            config.restored_navigation()
+        } else {
+            (Vec::new(), Vec::new())
+        };
         let (startup_locations, startup_active) = if from_session {
             config.restored_session()
         } else {
@@ -839,10 +906,17 @@ impl Explorer {
         let mut explorer = Self {
             config,
             theme,
+            theme_file,
+            session_owner: !separate_window,
             tabs: Vec::new(),
             closed_tabs: VecDeque::new(),
+            split_pair: None,
             active: 0,
             next_tab: 1,
+            folder_tree: FolderTree::new(),
+            tree_expanded: BTreeSet::new(),
+            drag_files: None,
+            drop_areas: Vec::new(),
             scan_sender,
             scan_receiver,
             remote_scan_sender,
@@ -948,6 +1022,23 @@ impl Explorer {
             explorer.active = startup_active.min(explorer.tabs.len() - 1);
             explorer.remember_session();
         }
+        if from_session {
+            for (tab, (back, forward)) in explorer.tabs.iter_mut().zip(saved_histories) {
+                tab.back = back;
+                tab.forward = forward;
+            }
+            for (location, back, forward) in saved_closed {
+                explorer.closed_tabs.push_back(TabSnapshot {
+                    fallback_path: config::home(),
+                    location,
+                    query: String::new(),
+                    back,
+                    forward,
+                    recursive_search: false,
+                });
+            }
+            explorer.remember_session();
+        }
         explorer.check_unfinished_moves();
         explorer
     }
@@ -1000,16 +1091,36 @@ impl Explorer {
     }
 
     fn remember_session(&mut self) {
+        if !self.session_owner {
+            return;
+        }
         let locations: Vec<_> = self.tabs.iter().map(Tab::location).collect();
         if self.config.remember_session(&locations, self.active) {
+            self.dirty_config = true;
+        }
+        let tabs: Vec<_> = self
+            .tabs
+            .iter()
+            .map(|tab| (tab.location(), tab.back.clone(), tab.forward.clone()))
+            .collect();
+        let closed: Vec<_> = self
+            .closed_tabs
+            .iter()
+            .map(|tab| (tab.location.clone(), tab.back.clone(), tab.forward.clone()))
+            .collect();
+        if self.config.remember_navigation(&tabs, &closed) {
             self.dirty_config = true;
         }
     }
 
     fn new_tab(&mut self, path: PathBuf) {
+        let previous = self.tabs.get(self.active).map(|tab| tab.id);
         let id = self.next_tab;
         self.next_tab += 1;
         self.tabs.push(Tab::new(id, path));
+        if let Some(previous) = previous {
+            self.assign_split_tab(previous, id);
+        }
         self.active = self.tabs.len() - 1;
         self.scan(self.active);
         self.remember_session();
@@ -1027,30 +1138,54 @@ impl Explorer {
         }
     }
 
+    fn assign_split_tab(&mut self, previous: u64, replacement: u64) {
+        if let Some((left, right)) = self.split_pair {
+            if previous == left {
+                self.split_pair = Some((replacement, right));
+            } else if previous == right {
+                self.split_pair = Some((left, replacement));
+            }
+        }
+    }
+
     /// Common tab dispatcher for keyboard, context menus and every rice shell.
     fn tab_command(&mut self, command: TabCommand) {
         match command {
             TabCommand::New => self.new_tab_like_current(),
             TabCommand::Activate(index) if index < self.tabs.len() => {
+                if let Some((left, right)) = self.split_pair {
+                    let target = self.tabs[index].id;
+                    if target != left && target != right && self.tabs[index].remote_uri.is_none() {
+                        self.split_pair = Some(if self.current().id == right {
+                            (left, target)
+                        } else {
+                            (target, right)
+                        });
+                    }
+                }
                 self.active = index;
                 self.remember_session();
             }
             TabCommand::Close(index) if index < self.tabs.len() => self.close_tab(index),
             TabCommand::Duplicate(index) if index < self.tabs.len() => {
                 let snapshot = TabSnapshot::capture(&self.tabs[index]);
+                let previous = self.tabs[index].id;
                 let id = self.next_tab;
                 self.next_tab += 1;
                 self.tabs.insert(index + 1, snapshot.restore(id));
+                self.assign_split_tab(previous, id);
                 self.active = index + 1;
                 self.scan(self.active);
                 self.remember_session();
             }
             TabCommand::ReopenClosed => {
                 if let Some(snapshot) = self.closed_tabs.pop_back() {
+                    let previous = self.current().id;
                     let id = self.next_tab;
                     self.next_tab += 1;
                     let index = self.active + 1;
                     self.tabs.insert(index, snapshot.restore(id));
+                    self.assign_split_tab(previous, id);
                     self.active = index;
                     self.scan(index);
                     self.remember_session();
@@ -1066,14 +1201,205 @@ impl Explorer {
             }
             TabCommand::Cycle(direction) if self.tabs.len() > 1 => {
                 let count = self.tabs.len();
-                self.active = if direction < 0 {
+                let index = if direction < 0 {
                     (self.active + count - 1) % count
                 } else {
                     (self.active + 1) % count
                 };
-                self.remember_session();
+                self.tab_command(TabCommand::Activate(index));
             }
             _ => {}
+        }
+    }
+
+    /// Unified commands keep file behavior independent of the active rice skin.
+    fn navigation_command(&mut self, command: NavigationCommand) {
+        match command {
+            NavigationCommand::Back => self.history(true),
+            NavigationCommand::Forward => self.history(false),
+            NavigationCommand::Parent => self.parent(),
+            NavigationCommand::Refresh => self.scan(self.active),
+            NavigationCommand::Hidden => self.toggle_hidden(),
+            NavigationCommand::Split => self.toggle_split_view(),
+            NavigationCommand::NewWindow => self.spawn_window(),
+        }
+    }
+
+    fn file_command(&mut self, command: FileCommand) {
+        match command {
+            FileCommand::NewFolder => {
+                self.dialog = Some(Dialog::Name {
+                    mode: NameMode::Folder(self.current().path.clone()),
+                    value: String::new(),
+                });
+            }
+            FileCommand::Copy => self.copy_selection(false),
+            FileCommand::Cut => self.copy_selection(true),
+            FileCommand::Paste => self.paste(),
+            FileCommand::Rename => self.rename_selected(),
+            FileCommand::Trash => self.ask_trash(),
+            FileCommand::Delete => self.ask_delete(),
+            FileCommand::Properties => {
+                if let Some(path) = self.selected_paths().first().cloned() {
+                    self.open_properties(path);
+                }
+            }
+        }
+    }
+
+    fn toggle_split_view(&mut self) {
+        if self.split_pair.is_some() {
+            self.split_pair = None;
+            return;
+        }
+        if self.current().remote_uri.is_some() {
+            self.status = Some((
+                "Split view currently supports local folders only".into(),
+                true,
+            ));
+            return;
+        }
+        let left = self.current().id;
+        let other = self
+            .tabs
+            .iter()
+            .find(|tab| tab.id != left && tab.remote_uri.is_none())
+            .map(|tab| tab.id);
+        let right = match other {
+            Some(id) => id,
+            None => {
+                self.new_tab_like_current();
+                self.current().id
+            }
+        };
+        self.split_pair = Some((left, right));
+        if let Some(index) = self.tabs.iter().position(|tab| tab.id == left) {
+            self.active = index;
+        }
+        self.remember_session();
+    }
+
+    fn split_indices(&self) -> Option<(usize, usize)> {
+        resolve_split_tabs(&self.tabs, self.split_pair)
+    }
+
+    fn finish_drag(&mut self, context: &egui::Context) {
+        if !context.input(|input| input.pointer.any_released()) {
+            return;
+        }
+        let Some(source) = self.drag_files.take() else {
+            return;
+        };
+        let Some(position) = context.input(|input| input.pointer.latest_pos()) else {
+            return;
+        };
+        let target = self.drop_destination(position);
+        let Some((tab_id, destination, folder)) = target else {
+            return;
+        };
+        if source.source_tab == tab_id && !folder {
+            return;
+        }
+        if source
+            .paths
+            .iter()
+            .any(|path| destination.starts_with(path))
+        {
+            self.status = Some((
+                "Cannot copy a folder into itself or a descendant".into(),
+                true,
+            ));
+            return;
+        }
+        if let Some(index) = self.tabs.iter().position(|tab| tab.id == tab_id) {
+            self.tab_command(TabCommand::Activate(index));
+        }
+        self.run_action(Action::Copy {
+            sources: source.paths,
+            destination,
+            conflict: ConflictPolicy::KeepBoth,
+        });
+    }
+
+    fn drop_destination(&self, position: Pos2) -> Option<(u64, PathBuf, bool)> {
+        self.drop_areas
+            .iter()
+            .rev()
+            .filter(|area| area.rect.contains(position))
+            .max_by_key(|area| area.folder)
+            .map(|area| (area.tab_id, area.destination.clone(), area.folder))
+    }
+
+    fn accept_external_drop(&mut self, context: &egui::Context) {
+        let files: Vec<_> = context.input(|input| {
+            input
+                .raw
+                .dropped_files
+                .iter()
+                .map(|file| file.path().to_path_buf())
+                .collect()
+        });
+        if files.is_empty() {
+            return;
+        }
+        if self.current().remote_uri.is_some() {
+            self.status = Some((
+                "Remote browsing is read-only; drag-in is disabled".into(),
+                true,
+            ));
+            return;
+        }
+        let target = context
+            .input(|input| input.pointer.latest_pos())
+            .and_then(|position| self.drop_destination(position));
+        let destination = target
+            .as_ref()
+            .map_or_else(|| self.current().path.clone(), |(_, path, _)| path.clone());
+        if files.iter().any(|path| destination.starts_with(path)) {
+            self.status = Some((
+                "Cannot copy a folder into itself or a descendant".into(),
+                true,
+            ));
+            return;
+        }
+        if let Some((id, _, _)) = target
+            && let Some(index) = self.tabs.iter().position(|tab| tab.id == id)
+        {
+            self.tab_command(TabCommand::Activate(index));
+        }
+        self.run_action(Action::Copy {
+            sources: files,
+            destination,
+            conflict: ConflictPolicy::KeepBoth,
+        });
+    }
+
+    fn spawn_window(&mut self) {
+        if self.current().remote_uri.is_some() {
+            self.status = Some((
+                "New windows currently support local folders only".into(),
+                true,
+            ));
+            return;
+        }
+        let program = match std::env::current_exe() {
+            Ok(path) => path,
+            Err(error) => {
+                self.status = Some((format!("Cannot locate executable: {error}"), true));
+                return;
+            }
+        };
+        let mut command = Command::new(program);
+        command.arg("--separate-window");
+        if let Some(path) = self.theme_file.as_ref() {
+            command.arg("--theme-file").arg(path);
+        } else {
+            command.arg("--theme").arg(&self.theme.id);
+        }
+        command.arg("--").arg(&self.current().path);
+        match command.spawn() {
+            Ok(_) => self.status = Some(("Opened a separate Explorer window".into(), false)),
+            Err(error) => self.status = Some((format!("Cannot open window: {error}"), true)),
         }
     }
 
@@ -1089,6 +1415,11 @@ impl Explorer {
             .push_back(TabSnapshot::capture(&self.tabs[index]));
         self.tabs[index].cancel_scan();
         self.tabs[index].clear_remote_preview();
+        if self.split_pair.is_some_and(|(left, right)| {
+            left == self.tabs[index].id || right == self.tabs[index].id
+        }) {
+            self.split_pair = None;
+        }
         self.tabs.remove(index);
         if self.active >= self.tabs.len() {
             self.active = self.tabs.len() - 1;
@@ -1365,6 +1696,7 @@ impl Explorer {
                 let entry = &tab.entries[index];
                 (config.show_hidden || !entry.name.starts_with('.'))
                     && tab.folded_names[index].contains(&search)
+                    && file_view::matches_filter(entry, &config.filter_kind)
             })
             .collect();
         let sort = config.sort_by.as_str();
@@ -1379,19 +1711,23 @@ impl Explorer {
                 "size" => a.size.cmp(&b.size),
                 "type" => a.kind().cmp(b.kind()),
                 "modified" => a.modified.cmp(&b.modified),
-                _ => tab.folded_names[*left].cmp(&tab.folded_names[*right]),
+                "lexical" => tab.folded_names[*left].cmp(&tab.folded_names[*right]),
+                _ => natural_cmp(&tab.folded_names[*left], &tab.folded_names[*right]),
             };
             let ordered = if config.descending {
                 comparison.reverse()
             } else {
                 comparison
             };
-            ordered.then_with(|| tab.folded_names[*left].cmp(&tab.folded_names[*right]))
+            ordered.then_with(|| natural_cmp(&tab.folded_names[*left], &tab.folded_names[*right]))
         });
         tab.last_selected = None;
     }
 
     fn poll_background(&mut self, context: &egui::Context) {
+        if self.folder_tree.poll() {
+            context.request_repaint();
+        }
         while let Ok(event) = self.archive_receiver.try_recv() {
             match event {
                 ArchiveEvent::Listed { generation, result }
@@ -2747,6 +3083,7 @@ impl Explorer {
                 input.key_pressed(Key::Space),
                 input.key_pressed(Key::PageUp),
                 input.key_pressed(Key::PageDown),
+                input.key_pressed(Key::F3),
             )
         });
         let (
@@ -2774,6 +3111,7 @@ impl Explorer {
             space,
             page_up,
             page_down,
+            f3,
         ) = keys;
         if ctrl && l {
             self.focus_address = true;
@@ -2811,6 +3149,9 @@ impl Explorer {
                 TabCommand::Cycle(1)
             });
         }
+        if f3 && !ctrl && !alt {
+            self.navigation_command(NavigationCommand::Split);
+        }
         // Text inputs must keep their normal copy/cut/paste shortcuts.
         let typing = context.egui_wants_keyboard_input();
         if !typing {
@@ -2827,14 +3168,14 @@ impl Explorer {
                 if context.input(|input| input.modifiers.shift) {
                     self.copy_selected_paths(context);
                 } else {
-                    self.copy_selection(false);
+                    self.file_command(FileCommand::Copy);
                 }
             }
             if ctrl && x {
-                self.copy_selection(true);
+                self.file_command(FileCommand::Cut);
             }
             if ctrl && v {
-                self.paste();
+                self.file_command(FileCommand::Paste);
             }
             if ctrl && d {
                 let sources = self.selected_paths();
@@ -2859,20 +3200,19 @@ impl Explorer {
             {
                 self.open_properties(path.clone());
             }
-            if ctrl && n {
-                self.dialog = Some(Dialog::Name {
-                    mode: NameMode::Folder(self.current().path.clone()),
-                    value: String::new(),
-                });
+            if ctrl && shift && n {
+                self.navigation_command(NavigationCommand::NewWindow);
+            } else if ctrl && n {
+                self.file_command(FileCommand::NewFolder);
             }
             if f2 {
-                self.rename_selected();
+                self.file_command(FileCommand::Rename);
             }
             if delete {
                 if context.input(|input| input.modifiers.shift) {
-                    self.ask_delete();
+                    self.file_command(FileCommand::Delete);
                 } else {
-                    self.ask_trash();
+                    self.file_command(FileCommand::Trash);
                 }
             }
             if enter && !alt && self.current().selected.len() == 1 {
@@ -2889,19 +3229,19 @@ impl Explorer {
             }
         }
         if ctrl && h {
-            self.toggle_hidden();
+            self.navigation_command(NavigationCommand::Hidden);
         }
         if ctrl && r {
-            self.scan(self.active);
+            self.navigation_command(NavigationCommand::Refresh);
         }
         if alt && left {
-            self.history(true);
+            self.navigation_command(NavigationCommand::Back);
         }
         if alt && right {
-            self.history(false);
+            self.navigation_command(NavigationCommand::Forward);
         }
         if alt && up {
-            self.parent();
+            self.navigation_command(NavigationCommand::Parent);
         }
     }
 
@@ -3433,6 +3773,9 @@ impl Explorer {
                                         self.navigate(path);
                                     }
                                 }
+                                ui.separator();
+                                ui.strong("FOLDER TREE");
+                                self.folder_tree_root(ui);
                             }
                             SidebarSection::Favorites => {
                                 for path in self.config.bookmarks.clone() {
@@ -3553,6 +3896,76 @@ impl Explorer {
             });
     }
 
+    fn folder_tree_root(&mut self, ui: &mut egui::Ui) {
+        let home = config::home();
+        self.folder_tree_entry(ui, home, 0);
+        self.folder_tree_entry(ui, PathBuf::from("/"), 0);
+    }
+
+    fn folder_tree_entry(&mut self, ui: &mut egui::Ui, path: PathBuf, depth: usize) {
+        if depth > 8 {
+            return;
+        }
+        let expanded = self.tree_expanded.contains(&path);
+        let title = if path == Path::new("/") {
+            "Filesystem".to_owned()
+        } else if depth == 0 {
+            "Home".to_owned()
+        } else {
+            path.file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned()
+        };
+        ui.horizontal(|ui| {
+            ui.add_space(depth as f32 * 9.0);
+            if ui
+                .small_button(if expanded { "▾" } else { "▸" })
+                .on_hover_text(if expanded {
+                    "Collapse folder"
+                } else {
+                    "Expand folder"
+                })
+                .clicked()
+            {
+                if expanded {
+                    self.tree_expanded.remove(&path);
+                } else {
+                    self.tree_expanded.insert(path.clone());
+                    self.folder_tree.request(path.clone(), false);
+                }
+            }
+            let label = ui
+                .add(egui::Button::new(shorten(&title, 22)).selected(self.current().path == path));
+            if label.on_hover_text(path.display().to_string()).clicked() {
+                self.navigate(path.clone());
+            }
+        });
+        if !self.tree_expanded.contains(&path) {
+            return;
+        }
+        match self.folder_tree.get(&path).cloned() {
+            Some(Ok(children)) => {
+                for child in children {
+                    self.folder_tree_entry(ui, child, depth + 1);
+                }
+            }
+            Some(Err(error)) => {
+                ui.small(format!("Cannot list: {}", shorten(&error, 60)));
+                if ui.small_button("Retry folder").clicked() {
+                    self.folder_tree.request(path, true);
+                }
+            }
+            None if self.folder_tree.is_pending(&path) => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.small("Loading folders…");
+                });
+            }
+            None => self.folder_tree.request(path, false),
+        }
+    }
+
     fn sidebar_tasks(&mut self, ui: &mut egui::Ui) {
         if self.current().remote_uri.is_some() {
             ui.label("Network folder (read-only)");
@@ -3561,44 +3974,40 @@ impl Explorer {
         let selection = self.current().selected.len();
         ui.add_space(8.0);
         if ui.button("New folder").clicked() {
-            self.dialog = Some(Dialog::Name {
-                mode: NameMode::Folder(self.current().path.clone()),
-                value: String::new(),
-            });
+            self.file_command(FileCommand::NewFolder);
         }
         if ui
             .add_enabled(selection > 0, egui::Button::new("Copy selected"))
             .clicked()
         {
-            self.copy_selection(false);
+            self.file_command(FileCommand::Copy);
         }
         if ui
             .add_enabled(selection > 0, egui::Button::new("Cut selected"))
             .clicked()
         {
-            self.copy_selection(true);
+            self.file_command(FileCommand::Cut);
         }
         if ui.button("Paste here").clicked() {
-            self.paste();
+            self.file_command(FileCommand::Paste);
         }
         if ui
             .add_enabled(selection > 0, egui::Button::new("Rename"))
             .clicked()
         {
-            self.rename_selected();
+            self.file_command(FileCommand::Rename);
         }
         if ui
             .add_enabled(selection > 0, egui::Button::new("Move to Trash"))
             .clicked()
         {
-            self.ask_trash();
+            self.file_command(FileCommand::Trash);
         }
         if ui
             .add_enabled(selection == 1, egui::Button::new("Properties"))
             .clicked()
-            && let Some(path) = self.selected_paths().first().cloned()
         {
-            self.open_properties(path);
+            self.file_command(FileCommand::Properties);
         }
     }
 
@@ -3706,6 +4115,13 @@ impl Explorer {
                             && let Some(path) = self.selected_paths().first()
                         {
                             self.open_preview(path.clone());
+                        }
+                        if ui
+                            .add(egui::Button::new("Split").selected(self.split_indices().is_some()))
+                            .on_hover_text("Toggle two-folder split view (F3)")
+                            .clicked()
+                        {
+                            self.toggle_split_view();
                         }
                         if ui
                             .small_button("Places")
@@ -3870,6 +4286,15 @@ impl Explorer {
                         ui.small("Local archives only · bounded extraction · no overwrite");
                     });
                     ui.menu_button("Session", |ui| {
+                        if ui.button("Open this folder in a new window  Ctrl+Shift+N").clicked() {
+                            self.spawn_window();
+                            ui.close();
+                        }
+                        if ui.button("Toggle split view  F3").clicked() {
+                            self.toggle_split_view();
+                            ui.close();
+                        }
+                        ui.separator();
                         if ui
                             .checkbox(&mut self.config.restore_session, "Restore tabs on startup")
                             .changed()
@@ -3877,7 +4302,7 @@ impl Explorer {
                             self.remember_session();
                             self.dirty_config = true;
                         }
-                        ui.small("Remembers up to 32 local paths, not file operations.");
+                        ui.small("Restores up to 32 tabs, bounded navigation and 16 closed tabs; no file operations.");
                         if ui
                             .add_enabled(
                                 self.config.restore_session,
@@ -3897,7 +4322,7 @@ impl Explorer {
                     egui::ComboBox::from_id_salt("sort_by")
                         .selected_text(&self.config.sort_by)
                         .show_ui(ui, |ui| {
-                            for option in ["name", "type", "size", "modified"] {
+                            for option in ["name", "lexical", "type", "size", "modified"] {
                                 ui.selectable_value(
                                     &mut self.config.sort_by,
                                     option.into(),
@@ -3911,6 +4336,26 @@ impl Explorer {
                             self.rebuild_visible(i);
                         }
                     }
+                    egui::ComboBox::from_id_salt("filter_kind")
+                        .selected_text(
+                            file_view::FILTERS
+                                .iter()
+                                .find(|(key, _)| *key == self.config.filter_kind)
+                                .map_or("All items", |(_, label)| *label),
+                        )
+                        .show_ui(ui, |ui| {
+                            for &(key, label) in file_view::FILTERS {
+                                if ui
+                                    .selectable_value(&mut self.config.filter_kind, key.into(), label)
+                                    .changed()
+                                {
+                                    self.dirty_config = true;
+                                    for index in 0..self.tabs.len() {
+                                        self.rebuild_visible(index);
+                                    }
+                                }
+                            }
+                        });
                     if ui
                         .small_button(if self.config.descending {
                             "Desc"
@@ -3953,37 +4398,83 @@ impl Explorer {
                 });
                 ui.separator();
 
-                if let Some(error) = self.current().error.as_ref() {
-                    ui.colored_label(
-                        Color32::from_rgb(177, 43, 37),
-                        format!("Cannot open folder: {error}"),
-                    );
-                    if ui.button("Retry").clicked() {
-                        self.scan(self.active);
-                    }
-                } else if self.current().loading && self.current().entries.is_empty() {
-                    ui.add(egui::Spinner::new());
-                    ui.label("Loading folder…");
-                } else if self.current().visible.is_empty() {
-                    ui.vertical_centered(|ui| {
-                        ui.add_space(64.0);
-                        ui.label(
-                            egui::RichText::new(if self.current().query.is_empty() {
-                                "This folder is empty"
-                            } else {
-                                "No matching files"
-                            })
-                            .size(18.0),
-                        );
-                        ui.label(
-                            egui::RichText::new("Try another folder or clear the search.")
-                                .color(theme.palette.muted()),
-                        );
+                if let Some((left, right)) = self.split_indices() {
+                    let pane_ids = [left, right];
+                    ui.columns(2, |columns| {
+                        for (column, index) in columns.iter_mut().zip(pane_ids) {
+                            let folder = self.tabs[index]
+                                .path
+                                .file_name()
+                                .map(|name| name.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| "/".to_owned());
+                            column.horizontal(|ui| {
+                                if ui
+                                    .add(egui::Button::new(if self.active == index {
+                                        "● Focused"
+                                    } else {
+                                        "○ Focus"
+                                    }).selected(self.active == index))
+                                    .on_hover_text("Make this folder the target for toolbar and keyboard actions")
+                                    .clicked()
+                                {
+                                    self.tab_command(TabCommand::Activate(index));
+                                }
+                                ui.strong(shorten(&folder, 28));
+                            });
+                            column.separator();
+                            self.file_area(column, index);
+                        }
                     });
                 } else {
-                    self.file_listing(ui);
+                    self.file_area(ui, self.active);
                 }
             });
+    }
+
+    fn file_area(&mut self, ui: &mut egui::Ui, index: usize) {
+        let theme = self.theme.clone();
+        self.drop_areas.push(DropArea {
+            tab_id: self.tabs[index].id,
+            destination: self.tabs[index].path.clone(),
+            rect: ui.available_rect_before_wrap(),
+            folder: false,
+        });
+        if let Some(error) = self.tabs[index].error.as_ref() {
+            ui.colored_label(
+                Color32::from_rgb(177, 43, 37),
+                format!("Cannot open folder: {error}"),
+            );
+            if ui.button("Retry").clicked() {
+                self.scan(index);
+            }
+        } else if self.tabs[index].loading && self.tabs[index].entries.is_empty() {
+            ui.add(egui::Spinner::new());
+            ui.label("Loading folder…");
+        } else if self.tabs[index].visible.is_empty() {
+            ui.vertical_centered(|ui| {
+                ui.add_space(64.0);
+                let empty_text =
+                    if !self.tabs[index].query.is_empty() || self.config.filter_kind != "all" {
+                        "No matching files"
+                    } else {
+                        "This folder is empty"
+                    };
+                ui.label(egui::RichText::new(empty_text).size(18.0));
+                ui.label(
+                    egui::RichText::new("Try another folder or clear the search.")
+                        .color(theme.palette.muted()),
+                );
+                if self.config.filter_kind != "all" && ui.button("Clear type filter").clicked() {
+                    self.config.filter_kind = "all".into();
+                    self.dirty_config = true;
+                    for tab in 0..self.tabs.len() {
+                        self.rebuild_visible(tab);
+                    }
+                }
+            });
+        } else {
+            self.file_listing(ui, index);
+        }
     }
 
     fn remote_panel(&mut self, ui: &mut egui::Ui) {
@@ -4105,7 +4596,7 @@ impl Explorer {
             });
     }
 
-    fn file_listing(&mut self, ui: &mut egui::Ui) {
+    fn file_listing(&mut self, ui: &mut egui::Ui, tab_index: usize) {
         let grid = self.config.view == "grid";
         let width = ui.available_width();
         let tile = self.theme.metrics.tile_width;
@@ -4114,7 +4605,7 @@ impl Explorer {
         } else {
             1
         };
-        let visible = self.current().visible.len();
+        let visible = self.tabs[tab_index].visible.len();
         let row_height = if grid {
             98.0
         } else {
@@ -4122,19 +4613,45 @@ impl Explorer {
         };
         let rows = visible.div_ceil(columns);
         if !grid {
+            let mut change_sort = None;
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Name").strong());
-                ui.add_space((width * 0.55 - 54.0).max(8.0));
-                ui.label(
-                    egui::RichText::new("Type   •   Size   •   Modified")
-                        .strong()
-                        .small(),
-                );
+                for (key, label) in [
+                    ("name", "Name"),
+                    ("type", "Type"),
+                    ("size", "Size"),
+                    ("modified", "Modified"),
+                ] {
+                    let active = self.config.sort_by == key;
+                    let caption = if active {
+                        format!("{label} {}", if self.config.descending { "↓" } else { "↑" })
+                    } else {
+                        label.to_owned()
+                    };
+                    if ui
+                        .small_button(caption)
+                        .on_hover_text("Sort by this column")
+                        .clicked()
+                    {
+                        change_sort = Some(key);
+                    }
+                }
             });
+            if let Some(sort) = change_sort {
+                if self.config.sort_by == sort {
+                    self.config.descending = !self.config.descending;
+                } else {
+                    self.config.sort_by = sort.into();
+                    self.config.descending = false;
+                }
+                self.dirty_config = true;
+                for index in 0..self.tabs.len() {
+                    self.rebuild_visible(index);
+                }
+            }
             ui.separator();
         }
         egui::ScrollArea::vertical()
-            .id_salt("file_scroller")
+            .id_salt(("file_scroller", self.tabs[tab_index].id))
             .auto_shrink([false, false])
             .show_rows(ui, row_height, rows, |ui, range| {
                 for row in range {
@@ -4142,20 +4659,22 @@ impl Explorer {
                         ui.spacing_mut().item_spacing.x = 8.0;
                         for col in 0..columns {
                             let visible_index = row * columns + col;
-                            let entry = self
-                                .current()
+                            let entry = self.tabs[tab_index]
                                 .visible
                                 .get(visible_index)
-                                .and_then(|index| self.current().entries.get(*index))
+                                .and_then(|index| self.tabs[tab_index].entries.get(*index))
                                 .cloned();
                             if let Some(entry) = entry {
                                 self.file_item(
                                     ui,
                                     &entry,
                                     visible_index,
-                                    if grid { tile } else { width },
-                                    row_height,
-                                    grid,
+                                    tab_index,
+                                    FileItemLayout {
+                                        width: if grid { tile } else { width },
+                                        height: row_height,
+                                        grid,
+                                    },
                                 );
                             }
                         }
@@ -4169,13 +4688,17 @@ impl Explorer {
         ui: &mut egui::Ui,
         entry: &Entry,
         index: usize,
-        width: f32,
-        height: f32,
-        grid: bool,
+        tab_index: usize,
+        item: FileItemLayout,
     ) {
-        let selected = self.current().selected.contains(&entry.path);
+        let FileItemLayout {
+            width,
+            height,
+            grid,
+        } = item;
+        let selected = self.tabs[tab_index].selected.contains(&entry.path);
         let (rect, response) =
-            ui.allocate_exact_size(Vec2::new(width.max(80.0), height), Sense::click());
+            ui.allocate_exact_size(Vec2::new(width.max(80.0), height), Sense::click_and_drag());
         let theme = self.theme.clone();
         let painter = ui.painter().with_clip_rect(rect);
         if selected || response.hovered() {
@@ -4244,8 +4767,31 @@ impl Explorer {
             );
         }
         let response = response.on_hover_text(entry.path.display().to_string());
+        if entry.is_dir {
+            self.drop_areas.push(DropArea {
+                tab_id: self.tabs[tab_index].id,
+                destination: entry.path.clone(),
+                rect,
+                folder: true,
+            });
+        }
+        if response.drag_started() {
+            if self.active != tab_index {
+                self.tab_command(TabCommand::Activate(tab_index));
+            }
+            if !selected {
+                self.select_entry(entry, index, Modifiers::default());
+            }
+            self.drag_files = Some(DragFiles {
+                source_tab: self.tabs[tab_index].id,
+                paths: self.selected_paths(),
+            });
+        }
         let double = response.double_clicked();
         let clicked = response.clicked();
+        if (clicked || double || response.secondary_clicked()) && self.active != tab_index {
+            self.tab_command(TabCommand::Activate(tab_index));
+        }
         if clicked || double {
             let modifiers = ui.input(|input| input.modifiers);
             self.select_entry(entry, index, modifiers);
@@ -5003,21 +5549,6 @@ impl eframe::App for Explorer {
             });
             self.last_refresh_check = Instant::now();
         }
-        let dropped: Vec<PathBuf> = context.input(|input| {
-            input
-                .raw
-                .dropped_files
-                .iter()
-                .map(|file| file.path().to_path_buf())
-                .collect()
-        });
-        if !dropped.is_empty() {
-            self.run_action(Action::Copy {
-                sources: dropped,
-                destination: self.current().path.clone(),
-                conflict: ConflictPolicy::KeepBoth,
-            });
-        }
         if self.dialog.is_none() && self.archive_dialog.is_none() {
             self.keyboard(&context);
         }
@@ -5030,13 +5561,16 @@ impl eframe::App for Explorer {
         self.chrome_region(ui, false);
         self.sidebar(ui);
         self.preview_panel(ui);
+        self.drop_areas.clear();
         self.main_panel(ui);
+        self.finish_drag(&context);
+        self.accept_external_drop(&context);
         self.dialogs(&context);
         self.archive_window(&context);
         self.volume_dialog(&context);
         self.recovery_dialog(&context);
         self.transfer_dialog(&context);
-        if self.dirty_config {
+        if self.dirty_config && self.session_owner {
             if let Err(error) = self.config.save() {
                 self.status = Some((format!("Cannot save preferences: {error}"), true));
             }
@@ -5056,6 +5590,7 @@ impl eframe::App for Explorer {
             || self.volume_busy
             || waiting_for_preview
             || waiting_for_properties
+            || self.folder_tree.has_pending()
             || self.tabs.iter().any(|tab| tab.loading)
         {
             Duration::from_millis(90)
@@ -5133,7 +5668,7 @@ mod tests {
         Action, CLIPBOARD_WAIT, Clipboard, Dialog, ItemCounts, NameMode, PasteMode, PendingPaste,
         PropertyResult, PropertySnapshot, Tab, TabSnapshot, accept_property_result,
         active_after_swap, choose_paste_clipboard, elapsed_label, next_search_repaint_delay,
-        read_property_snapshot, remaining_cut_paths, transfer_progress_details,
+        read_property_snapshot, remaining_cut_paths, resolve_split_tabs, transfer_progress_details,
     };
     use crate::clipboard;
     use crate::filesystem::{ItemResult, ItemState, Progress};
@@ -5142,6 +5677,21 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn split_view_resolves_stable_ids_after_tab_reordering_and_closure() {
+        let mut tabs = vec![
+            Tab::new(11, "/first".into()),
+            Tab::new(22, "/second".into()),
+            Tab::new(33, "/third".into()),
+        ];
+        assert_eq!(resolve_split_tabs(&tabs, Some((11, 33))), Some((0, 2)));
+        tabs.swap(0, 2);
+        assert_eq!(resolve_split_tabs(&tabs, Some((11, 33))), Some((2, 0)));
+        assert_eq!(resolve_split_tabs(&tabs, Some((11, 11))), None);
+        tabs.retain(|tab| tab.id != 33);
+        assert_eq!(resolve_split_tabs(&tabs, Some((11, 33))), None);
+    }
 
     #[test]
     fn duplicated_tab_retains_navigation_but_isolates_background_work() {
