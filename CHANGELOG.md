@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0 CI efficiency — verified pinned Cargo cache
+
+- Cache Rust registry, Git dependencies and incremental `target` outputs in
+  the development and release pipelines using a SHA-pinned official GitHub
+  cache action. Distinguish runner image and architecture in cache keys;
+  invalidate dependency snapshots when `Cargo.lock` changes.
+- All format, Clippy, test, release and graphical gates still execute on
+  every run; a cache hit is only an accelerator, never proof of correctness.
+
 ## 0.9 interaction safety — shortcut focus isolation
 
 - Suspend global file and tab keyboard shortcuts behind open network login,
