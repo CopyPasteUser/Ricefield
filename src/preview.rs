@@ -70,6 +70,12 @@ pub fn thumbnail(path: &Path) -> io::Result<Option<Thumbnail>> {
     if !image_extension(&extension) {
         return Ok(None);
     }
+    // Reject sockets, devices and oversized symlink targets before opening.
+    // The post-open check below still protects against a path replacement.
+    let candidate = fs::metadata(path)?;
+    if !candidate.is_file() || candidate.len() > MAX_THUMBNAIL_BYTES {
+        return Ok(None);
+    }
     let mut options = fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
