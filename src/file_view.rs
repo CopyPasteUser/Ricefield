@@ -292,8 +292,14 @@ mod tests {
         assert_eq!(names[COUNT / 2], "file050000.txt");
         assert_eq!(names.last().map(String::as_str), Some("file099999.txt"));
         let glob = CompiledGlob::new("file*9.txt");
-        assert_eq!(names.iter().filter(|name| glob.matches(name)).count(), 10_000);
-        eprintln!("100k synthetic natural sort + glob: {:?}", started.elapsed());
+        assert_eq!(
+            names.iter().filter(|name| glob.matches(name)).count(),
+            10_000
+        );
+        eprintln!(
+            "100k synthetic natural sort + glob: {:?}",
+            started.elapsed()
+        );
     }
 
     #[test]
