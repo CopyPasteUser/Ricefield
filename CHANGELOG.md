@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.0-rc.3 — readable NAS names and destination selection (verification pending)
+## 1.0.0-rc.3 — readable NAS names and destination selection (CI verified; device acceptance pending)
 
 - Show decoded Unicode and spaced filenames on remote shares while keeping
   the original percent-encoded URIs as action identifiers. Malformed escapes,
