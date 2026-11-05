@@ -58,7 +58,7 @@ rice-explorer --theme-file /path/to/my-rice.toml
 ## Important limits
 
 - Cross-filesystem **Move** leaves the source intact after a verified copy; cleanup is a separate user decision.
-- Network tabs provide **read-only browsing and explicit downloads** to a configurable local folder (default `~/Downloads`, 8 GiB per download, no overwrite). Recursive downloads are limited to 4,096 entries, 512 folders, 16 levels and 20 minutes; remote uploads, rename and deletion are not implemented.
+- Network tabs provide **read-only browsing and explicit downloads** to a configurable local folder (default `~/Downloads`, 8 GiB per download, no overwrite). Recursive downloads are limited to 4,096 entries, 512 folders, 16 levels and 20 minutes; GIO-reported symlinks/special entries cannot be downloaded. Remote uploads, rename and deletion are not implemented.
 - Recovery provides inspection and comparisons, **not automatic transaction rollback**.
 - Desktop integration does not silently take over the system's default file manager.
 

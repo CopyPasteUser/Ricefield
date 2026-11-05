@@ -312,7 +312,9 @@ recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
   be inspected through a bounded, cancellable, read-only text preview. RC.2
   added staged local single-file downloads; rc.4 adds bounded whole-folder
   content downloads without exposing incomplete local trees. Binary preview,
-  native high-volume network transfers and remote writes remain open.
+  native high-volume network transfers and remote writes remain open. RC.5
+  rejects symlink/special-file downloads from GIO listings, including inside
+  recursively downloaded folders, instead of following untrusted links.
 - [ ] Connect dialog, secure credential handling, favorites and reconnect.
   A basic URI dialog, 32 validated persistent URI favorites and manual
   reconnect are implemented. Alpha.6 supplies a masked one-attempt credential

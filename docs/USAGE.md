@@ -110,6 +110,10 @@ Interrupted transfers do not appear as completed downloads. An abrupt process
 termination can leave a private `.ricefield-download-*` staging directory in
 the chosen target folder containing unfinished data; check before removing it. This does not
 prove remote-source integrity if the server changes the file during reading.
+Only entries that GIO reports as regular files or directories can be
+downloaded. Reported symlinks and special network entries are refused,
+including within a downloaded folder. A server-side type change during
+transfer is not yet protected by a source-identity snapshot.
 Folder downloads preserve filenames and file bytes, not remote ownership,
 ACLs, extended attributes or server-side modification times; they are not
 lossless NAS backups. Remote uploads, rename, deletion, full file opening

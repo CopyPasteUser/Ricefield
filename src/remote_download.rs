@@ -396,6 +396,12 @@ where
             if entry.uri.strip_prefix(&prefix) != Some(entry.name.as_str()) {
                 return Err("Network listing contained an unrelated or nested URI".into());
             }
+            if !entry.is_directory && !entry.is_regular_file {
+                return Err(
+                    "Network folder contains a symlink or unsupported file type; refusing to follow it"
+                        .into(),
+                );
+            }
             let basename = checked_download_name(&entry.uri, &entry.name)?;
             let destination = local.join(basename);
             if entry.is_directory {
@@ -459,6 +465,7 @@ mod tests {
             uri: uri.into(),
             name: name.into(),
             is_directory,
+            is_regular_file: !is_directory,
         }
     }
 
@@ -676,6 +683,80 @@ mod tests {
         );
         assert!(traversal.is_err());
         assert!(fs::read_dir(&target).unwrap().next().is_none());
+        fs::remove_dir_all(target).unwrap();
+    }
+
+    #[test]
+    fn remote_folder_rejects_symlinks_before_following_them() {
+        let target = private_fixture("folder-symlink");
+        let root = "sftp://server/share/Backup";
+        let cancelled = AtomicBool::new(false);
+        let bytes = Arc::new(AtomicU64::new(0));
+        let result = download_folder_with(
+            root,
+            "Backup",
+            &target,
+            &cancelled,
+            &bytes,
+            |_, _| {
+                Ok(vec![volume::RemoteEntry {
+                    uri: format!("{root}/link"),
+                    name: "link".into(),
+                    is_directory: false,
+                    is_regular_file: false,
+                }])
+            },
+            |_, _, _, _, _| panic!("Must not follow remote symlinks or special files"),
+        );
+        assert!(result.unwrap_err().contains("unsupported file type"));
+        assert_eq!(bytes.load(Ordering::Relaxed), 0);
+        assert!(fs::read_dir(&target).unwrap().next().is_none());
+        fs::remove_dir_all(target).unwrap();
+    }
+
+    #[test]
+    fn remote_folder_cancellation_and_collision_leave_target_untouched() {
+        let target = private_fixture("folder-cancel");
+        let root = "smb://nas/share/Photos";
+        let cancelled = AtomicBool::new(false);
+        let bytes = Arc::new(AtomicU64::new(0));
+        let result = download_folder_with(
+            root,
+            "Photos",
+            &target,
+            &cancelled,
+            &bytes,
+            |_, _| {
+                Ok(vec![remote_entry(
+                    &format!("{root}/first.jpg"),
+                    "first.jpg",
+                    false,
+                )])
+            },
+            |_, path, _, _, _| {
+                fs::write(path, b"incomplete").unwrap();
+                cancelled.store(true, Ordering::Relaxed);
+                Ok(10)
+            },
+        );
+        assert!(result.unwrap_err().contains("cancelled"));
+        assert!(fs::read_dir(&target).unwrap().next().is_none());
+
+        cancelled.store(false, Ordering::Relaxed);
+        let existing = target.join("Photos");
+        fs::create_dir(&existing).unwrap();
+        fs::write(existing.join("keep.txt"), b"owner data").unwrap();
+        let collision = download_folder_with(
+            root,
+            "Photos",
+            &target,
+            &cancelled,
+            &bytes,
+            |_, _| panic!("Must not enumerate on a destination collision"),
+            |_, _, _, _, _| panic!("Must not fetch on a destination collision"),
+        );
+        assert!(collision.unwrap_err().contains("already exists"));
+        assert_eq!(fs::read(existing.join("keep.txt")).unwrap(), b"owner data");
         fs::remove_dir_all(target).unwrap();
     }
 

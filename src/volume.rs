@@ -26,6 +26,7 @@ pub struct RemoteEntry {
     pub uri: String,
     pub name: String,
     pub is_directory: bool,
+    pub is_regular_file: bool,
 }
 
 pub struct RemoteSearch {
@@ -370,6 +371,7 @@ fn parse_remote_listing(parent: &str, bytes: &[u8]) -> Result<Vec<RemoteEntry>, 
             uri: entry_uri.to_owned(),
             name: name.to_owned(),
             is_directory: kind == "(directory)",
+            is_regular_file: kind == "(regular)",
         });
         if entries.len() > MAX_REMOTE_ENTRIES {
             return Err("Network directory has more than 10,000 entries".into());
@@ -674,6 +676,14 @@ mod tests {
         assert_eq!(entries[0].name, "A%0Afile");
         assert!(entries[0].is_directory);
         assert!(!entries[1].is_directory);
+        assert!(entries[1].is_regular_file);
+        let special = parse_remote_listing(
+            uri,
+            b"smb://nas/share/Linked%20Folder\t0\t(symbolic link)\n",
+        )
+        .unwrap();
+        assert!(!special[0].is_directory);
+        assert!(!special[0].is_regular_file);
         assert!(parse_remote_listing(uri, b"file:///tmp/secret\t0\t(directory)\n").is_err());
         assert!(parse_remote_listing(uri, b"smb://nas/share/sub/file\t0\t(directory)\n").is_err());
         assert!(parse_remote_listing(uri, b"smb://nas/share/no-metadata\n").is_err());
@@ -693,22 +703,26 @@ mod tests {
                         uri: "smb://nas/share/Music".into(),
                         name: "Music".into(),
                         is_directory: true,
+                        is_regular_file: false,
                     },
                     RemoteEntry {
                         uri: "smb://nas/share/Offline".into(),
                         name: "Offline".into(),
                         is_directory: true,
+                        is_regular_file: false,
                     },
                     RemoteEntry {
                         uri: "smb://nas/share/Report.txt".into(),
                         name: "Report.txt".into(),
                         is_directory: false,
+                        is_regular_file: true,
                     },
                 ]),
                 "smb://nas/share/Music" => Ok(vec![RemoteEntry {
                     uri: "smb://nas/share/Music/REPORT.MP3".into(),
                     name: "REPORT.MP3".into(),
                     is_directory: false,
+                    is_regular_file: true,
                 }]),
                 _ => Err("Share unplugged".into()),
             }

@@ -1794,7 +1794,7 @@ impl Explorer {
                 .current()
                 .remote_entries
                 .iter()
-                .any(|entry| !entry.is_directory && entry.uri == uri)
+                .any(|entry| entry.is_regular_file && entry.uri == uri)
         {
             self.status = Some((
                 "Select an entry from the current network folder".into(),
@@ -1826,10 +1826,16 @@ impl Explorer {
         }
         if self.current().remote_uri.is_none()
             || !self.current().remote_entries.iter().any(|entry| {
-                entry.is_directory == is_directory && entry.uri == uri && entry.name == name
+                entry.is_directory == is_directory
+                    && (is_directory || entry.is_regular_file)
+                    && entry.uri == uri
+                    && entry.name == name
             })
         {
-            self.status = Some(("Select a file from the current network folder".into(), true));
+            self.status = Some((
+                "Select a regular file or folder from the network listing".into(),
+                true,
+            ));
             return;
         }
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -5685,10 +5691,10 @@ impl Explorer {
                                         download = Some((entry.uri.clone(), entry.name.clone(), true));
                                     }
                                 } else {
-                                    if ui.button(format!("Text preview  {}", volume::display_remote_name(&entry.name))).on_hover_text(&entry.uri).clicked() {
+                                    if ui.add_enabled(entry.is_regular_file, egui::Button::new(format!("Text preview  {}", volume::display_remote_name(&entry.name)))).on_hover_text(&entry.uri).clicked() {
                                         preview = Some(entry.uri.clone());
                                     }
-                                    if ui.add_enabled(!self.remote_download_busy, egui::Button::new("Download"))
+                                    if ui.add_enabled(entry.is_regular_file && !self.remote_download_busy, egui::Button::new("Download"))
                                         .on_hover_text("Save to the selected local folder without overwriting an existing file")
                                         .clicked() {
                                         download = Some((entry.uri.clone(), entry.name.clone(), false));
