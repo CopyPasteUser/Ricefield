@@ -56,6 +56,7 @@ struct Tab {
     generation: u64,
     loading: bool,
     error: Option<String>,
+    scan_warning: Option<String>,
     dir_mtime: Option<SystemTime>,
     recursive_search: bool,
     search_pending: Option<Instant>,
@@ -85,6 +86,7 @@ impl Tab {
             generation: 0,
             loading: false,
             error: None,
+            scan_warning: None,
             dir_mtime: None,
             recursive_search: false,
             search_pending: None,
@@ -160,6 +162,7 @@ impl Tab {
         self.query.clear();
         self.search_pending = None;
         self.dir_mtime = None;
+        self.scan_warning = None;
     }
 
     fn visit(&mut self, location: Location) {
@@ -313,7 +316,7 @@ fn next_search_repaint_delay(tabs: &[Tab], now: Instant) -> Option<Duration> {
 struct ScanResult {
     tab: u64,
     generation: u64,
-    result: std::io::Result<Vec<Entry>>,
+    result: std::io::Result<filesystem::FolderScan>,
     dir_mtime: Option<SystemTime>,
 }
 
@@ -1436,6 +1439,7 @@ impl Explorer {
         tab.generation += 1;
         tab.loading = true;
         tab.error = None;
+        tab.scan_warning = None;
         if let Some(uri) = tab.remote_uri.clone() {
             tab.clear_remote_preview();
             let sender = self.remote_scan_sender.clone();
@@ -1460,7 +1464,13 @@ impl Explorer {
         let sender = self.scan_sender.clone();
         thread::spawn(move || {
             let result = if recursive {
-                filesystem::search_cancellable(&task.2, &query, show_hidden, &cancel)
+                filesystem::search_cancellable(&task.2, &query, show_hidden, &cancel).map(
+                    |entries| filesystem::FolderScan {
+                        entries,
+                        unreadable: 0,
+                        first_error: None,
+                    },
+                )
             } else {
                 filesystem::scan_cancellable(&task.2, &cancel)
             };
@@ -1960,12 +1970,19 @@ impl Explorer {
                 tab.loading = false;
                 tab.dir_mtime = message.dir_mtime;
                 match message.result {
-                    Ok(entries) => {
-                        tab.folded_names = entries
+                    Ok(scan) => {
+                        tab.scan_warning = (scan.unreadable > 0).then(|| {
+                            format!(
+                                "{} entry/entries could not be inspected; other items remain visible. First error: {}",
+                                scan.unreadable,
+                                scan.first_error.as_deref().unwrap_or("unknown")
+                            )
+                        });
+                        tab.folded_names = scan.entries
                             .iter()
                             .map(|entry| entry.name.to_lowercase())
                             .collect();
-                        tab.entries = entries;
+                        tab.entries = scan.entries;
                         tab.error = None;
                         tab.selected
                             .retain(|path| tab.entries.iter().any(|entry| &entry.path == path));
@@ -1975,7 +1992,8 @@ impl Explorer {
                         tab.entries.clear();
                         tab.folded_names.clear();
                         tab.visible.clear();
-                        tab.error = Some(error.to_string());
+                        tab.error = Some(filesystem::folder_error_message(&tab.path, &error));
+                        tab.scan_warning = None;
                     }
                 }
             }
@@ -4439,6 +4457,14 @@ impl Explorer {
             rect: ui.available_rect_before_wrap(),
             folder: false,
         });
+        if let Some(warning) = self.tabs[index].scan_warning.clone() {
+            ui.horizontal_wrapped(|ui| {
+                ui.colored_label(Color32::from_rgb(168, 101, 14), warning);
+                if ui.button("Retry listing").clicked() {
+                    self.scan(index);
+                }
+            });
+        }
         if let Some(error) = self.tabs[index].error.as_ref() {
             ui.colored_label(
                 Color32::from_rgb(177, 43, 37),

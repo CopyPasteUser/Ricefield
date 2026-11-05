@@ -373,6 +373,10 @@ wider hostile corpora and real Mint device acceptance are open for stable 0.5.
   drag-in and alpha.2 internal copy-by-drag share no-overwrite operations.
 - [x] Alpha.2 adds a lazy symlink-safe folder tree, clickable details headers,
   existing list/grid layouts, natural/lexical sorting and type filters.
+- [x] Alpha.3 handles per-entry ENODEV/ENOTCONN/ESTALE-style metadata failures
+  without discarding readable siblings, identifies unavailable mounts, keeps
+  surviving folder-tree branches and discovers a direct `/mnt` mount.
+  Real Linux Mint/FUSE/device recovery acceptance remains unverified.
 - [ ] Complete responsive/accessibility checks for every dialog and real
   error/empty/loading workflows on all seven profiles (core states exist).
 

@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased — 0.6.0-alpha.3 mounted-folder resilience
+
+- Do not let a single disconnected FUSE/USB child or transient metadata error
+  make the entire parent folder look unreadable. Preserve remaining entries,
+  retain a best-effort child entry for retry/navigation, and warn about partial
+  metadata with a **Retry listing** action. Still fail visibly when the opened
+  directory itself cannot be read; never invent an empty-folder success.
+- Include mounts whose actual mount point is `/mnt` (not only `/mnt/*`) in
+  the Volumes sidebar. Trust `/proc/self/mountinfo` for discovery even when a
+  temporarily disconnected mount cannot be statted.
+- Keep usable folder-tree branches visible if a sibling's type lookup fails,
+  and identify Linux ENODEV/ENOTCONN/ESTALE folder errors as mount problems.
+  Tests inject the ENODEV metadata failure and cover root error propagation.
+- A screenshot alone cannot establish whether Linux can still read `/mnt`;
+  hardware/FUSE recovery and actual Mint mount acceptance remain open.
+
 ## Unreleased — 0.6.0-alpha.2 navigation expansion
 
 - Add a two-pane local split view (F3), with independently focused tab contents,

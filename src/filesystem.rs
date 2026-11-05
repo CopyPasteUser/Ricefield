@@ -195,29 +195,82 @@ fn check_scan_cancel(cancelled: &AtomicBool) -> io::Result<()> {
     }
 }
 
-pub fn scan_cancellable(path: &Path, cancelled: &AtomicBool) -> io::Result<Vec<Entry>> {
+pub struct FolderScan {
+    pub entries: Vec<Entry>,
+    pub unreadable: usize,
+    pub first_error: Option<String>,
+}
+
+/// Preserve readable siblings when an unplugged or stale mount refuses a
+/// metadata lookup. A failure to open the *folder itself* still returns Err.
+pub fn scan_cancellable(path: &Path, cancelled: &AtomicBool) -> io::Result<FolderScan> {
+    scan_with_metadata(path, cancelled, fs::symlink_metadata)
+}
+
+fn scan_with_metadata(
+    path: &Path,
+    cancelled: &AtomicBool,
+    metadata_for: impl Fn(&Path) -> io::Result<fs::Metadata>,
+) -> io::Result<FolderScan> {
     check_scan_cancel(cancelled)?;
     let mut entries = Vec::new();
+    let mut unreadable = 0;
+    let mut first_error = None;
     for result in fs::read_dir(path)? {
         check_scan_cancel(cancelled)?;
-        let item = result?;
+        let item = match result {
+            Ok(item) => item,
+            Err(error) => {
+                unreadable += 1;
+                first_error.get_or_insert_with(|| error.to_string());
+                continue;
+            }
+        };
+        let entry_path = item.path();
         // Metadata is gathered on a worker thread: large/slow folders never freeze the UI.
-        let metadata = match fs::symlink_metadata(item.path()) {
-            Ok(metadata) => metadata,
+        let metadata = match metadata_for(&entry_path) {
+            Ok(metadata) => Some(metadata),
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error),
+            Err(error) => {
+                unreadable += 1;
+                first_error.get_or_insert_with(|| {
+                    format!("{}: {error}", entry_path.display())
+                });
+                None
+            }
+        };
+        // Linux dirent often retains the file type even when an underlying
+        // FUSE/device mount has stopped answering stat. Keep the entry visible
+        // and navigable; all actual operations still revalidate the path.
+        let fallback_type = if metadata.is_none() {
+            item.file_type().ok()
+        } else {
+            None
         };
         entries.push(Entry {
             name: item.file_name().to_string_lossy().into_owned(),
-            path: item.path(),
-            is_dir: metadata.is_dir(),
-            is_symlink: metadata.file_type().is_symlink(),
-            size: metadata.len(),
-            modified: metadata.modified().ok(),
+            path: entry_path,
+            is_dir: metadata.as_ref().is_some_and(fs::Metadata::is_dir)
+                || fallback_type.as_ref().is_some_and(fs::FileType::is_dir),
+            is_symlink: metadata.as_ref().is_some_and(|value| value.file_type().is_symlink())
+                || fallback_type.as_ref().is_some_and(fs::FileType::is_symlink),
+            size: metadata.as_ref().map_or(0, fs::Metadata::len),
+            modified: metadata.and_then(|value| value.modified().ok()),
         });
     }
     check_scan_cancel(cancelled)?;
-    Ok(entries)
+    Ok(FolderScan { entries, unreadable, first_error })
+}
+
+pub fn folder_error_message(path: &Path, error: &io::Error) -> String {
+    if matches!(error.raw_os_error(), Some(libc::ENODEV | libc::ENOTCONN | libc::ESTALE)) {
+        format!(
+            "Mount/device unavailable at {}: {error}. Check the mount in Linux and retry.",
+            path.display()
+        )
+    } else {
+        format!("{}: {error}", path.display())
+    }
 }
 
 /// Bounded recursive filename search. Symlink directories are never followed.
@@ -1361,6 +1414,14 @@ pub struct MountedVolume {
     pub network: bool,
 }
 
+#[cfg(target_os = "linux")]
+fn is_desktop_mount_path(mount: &[u8]) -> bool {
+    mount == b"/mnt"
+        || mount.starts_with(b"/mnt/")
+        || mount.starts_with(b"/media/")
+        || mount.starts_with(b"/run/media/")
+}
+
 /// Mount points useful to a desktop user, without presenting /proc and other pseudo-filesystems.
 /// Enumeration is performed by the refresh worker, never by the render thread.
 pub fn mounted_volumes() -> Vec<MountedVolume> {
@@ -1380,9 +1441,7 @@ pub fn mounted_volumes() -> Vec<MountedVolume> {
                 .next()
                 .and_then(|bytes| std::str::from_utf8(bytes).ok())
                 .unwrap_or("");
-            let desktop_path = mount.starts_with(b"/media/")
-                || mount.starts_with(b"/run/media/")
-                || mount.starts_with(b"/mnt/");
+            let desktop_path = is_desktop_mount_path(mount);
             let remote = matches!(
                 fs_type,
                 "nfs" | "nfs4" | "cifs" | "fuse.sshfs" | "fuse.rclone" | "fuse.gvfsd-fuse"
@@ -1391,18 +1450,19 @@ pub fn mounted_volumes() -> Vec<MountedVolume> {
                 let Some(path) = decode_mountinfo_path(mount) else {
                     continue;
                 };
-                if path.is_dir() {
-                    if fs_type == "fuse.gvfsd-fuse"
-                        && let Ok(entries) = fs::read_dir(&path)
-                    {
-                        for entry in entries.flatten() {
-                            if entry.path().is_dir() {
-                                paths.insert((entry.path(), true));
-                            }
+                // /proc/self/mountinfo is the source of truth. stat can fail
+                // on a disconnected mount, which must remain visible for
+                // diagnosis instead of silently disappearing from Volumes.
+                if fs_type == "fuse.gvfsd-fuse"
+                    && let Ok(entries) = fs::read_dir(&path)
+                {
+                    for entry in entries.flatten() {
+                        if entry.path().is_dir() {
+                            paths.insert((entry.path(), true));
                         }
                     }
-                    paths.insert((path, remote));
                 }
+                paths.insert((path, remote));
             }
         }
     }
@@ -2758,6 +2818,26 @@ mod tests {
                 .iter()
                 .any(|volume| { volume.path == Path::new("/") && !volume.network })
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn volume_discovery_includes_mount_at_mnt_itself() {
+        assert!(is_desktop_mount_path(b"/mnt"));
+        assert!(is_desktop_mount_path(b"/mnt/data"));
+        assert!(is_desktop_mount_path(b"/media/usb"));
+        assert!(is_desktop_mount_path(b"/run/media/user/usb"));
+        assert!(!is_desktop_mount_path(b"/mnt-old"));
+        assert!(!is_desktop_mount_path(b"/proc"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn enodev_folder_errors_identify_unavailable_mounts() {
+        let error = io::Error::from_raw_os_error(libc::ENODEV);
+        let message = folder_error_message(Path::new("/mnt"), &error);
+        assert!(message.contains("Mount/device unavailable at /mnt"));
+        assert!(message.contains("os error 19"));
     }
 
     #[cfg(target_os = "linux")]
@@ -5254,6 +5334,39 @@ mod tests {
         let cancelled = AtomicBool::new(true);
         let result = scan_cancellable(&root, &cancelled);
         assert_eq!(result.err().unwrap().kind(), io::ErrorKind::Interrupted);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn inaccessible_mount_child_does_not_hide_readable_siblings() {
+        let root = test_root();
+        fs::create_dir(root.join("offline-mount")).unwrap();
+        fs::write(root.join("readable.txt"), b"still visible").unwrap();
+        let cancelled = AtomicBool::new(false);
+        let scan = scan_with_metadata(&root, &cancelled, |path| {
+            if path.file_name() == Some(OsStr::new("offline-mount")) {
+                Err(io::Error::from_raw_os_error(libc::ENODEV))
+            } else {
+                fs::symlink_metadata(path)
+            }
+        })
+        .unwrap();
+        assert_eq!(scan.entries.len(), 2);
+        assert_eq!(scan.unreadable, 1);
+        assert!(scan.first_error.unwrap().contains("offline-mount"));
+        assert!(scan.entries.iter().any(|entry| entry.name == "readable.txt"));
+        assert!(scan.entries.iter().any(|entry| entry.name == "offline-mount" && entry.is_dir));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unreadable_directory_itself_is_never_reported_as_empty() {
+        let root = test_root();
+        let not_a_folder = root.join("not-a-folder.txt");
+        fs::write(&not_a_folder, b"present").unwrap();
+        let result = scan_cancellable(&not_a_folder, &AtomicBool::new(false));
+        assert!(result.is_err());
         fs::remove_dir_all(root).unwrap();
     }
 
