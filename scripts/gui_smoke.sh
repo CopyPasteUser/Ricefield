@@ -115,14 +115,23 @@ for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sideba
   # rice. These are crash/regression smokes, not accessibility certification.
   for combo in ctrl+t ctrl+Page_Down ctrl+shift+Page_Up ctrl+w ctrl+shift+t; do
     xdotool key "$combo"
+    # Let egui process each command as a separate frame. Sending the whole
+    # sequence in one XTEST burst can coalesce events and leave focus stale.
+    sleep 0.15
   done
   # All skins must be able to open and dismiss a native settings/action dialog
   # without trapping keyboard input or creating a test directory.
+  # First move keyboard focus off any editable tab/address widget. This also
+  # checks that Ctrl+N works after clicking the file area, not merely at launch.
+  xdotool mousemove --window "$window_id" 620 420 click 1
+  sleep 0.2
+  import -window "$window_id" "screenshots/$theme-before-dialog.png"
   xdotool key ctrl+n
-  sleep 0.3
+  sleep 0.45
   import -window "$window_id" "screenshots/$theme-dialog.png"
+  require_visible_change "screenshots/$theme-before-dialog.png" "screenshots/$theme-dialog.png" "$theme dialog opening" 500
   xdotool key Escape
-  sleep 0.3
+  sleep 0.45
   import -window "$window_id" "screenshots/$theme-dialog-closed.png"
   require_visible_change "screenshots/$theme-dialog.png" "screenshots/$theme-dialog-closed.png" "$theme dialog dismissal" 500
   # Check compact split-capable layout in the project's supported minimum
