@@ -41,8 +41,10 @@ partial batch; earlier completed items are not automatically rolled back.
 Trash and permanent delete require confirmation of the selected paths.
 Single completed renames can offer a guarded, session-only Undo in Transfers.
 For multiple names, **F2** opens a batch-rename preview with prefix/suffix,
-numbering and literal search/replace. Regex rename, cycles and batch Undo are
-not implemented.
+numbering and literal search/replace. Enable **Regular expression** to match
+names using bounded Rust regex patterns with capture replacements such as `$1`
+or `${name}`; regex/literal matching requires UTF-8 names. Every generated name
+is validated before execution. Rename cycles and batch Undo are not implemented.
 
 Drag into a local folder or between panes to copy without overwriting. For
 outbound drag, the context action **Drag to another app…** uses an installed

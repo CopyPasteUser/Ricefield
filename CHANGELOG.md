@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.0-rc.5 — regex batch rename preview (verification pending)
+
+- Add an opt-in regular-expression mode for 2–256 item batch rename previews,
+  including capture substitutions with no additional dependencies.
+- Bound regex length and compiled program size, validate every generated
+  filename and reject non-UTF-8 names for pattern matching; never overwrite
+  existing targets. Safe rename cycles and batch Undo remain unimplemented.
+- Add regression tests for named captures, invalid patterns and filenames.
+
 ## 1.0.0-rc.4 — bounded remote folder downloads (verification pending)
 
 - Add a recursive read-only network-folder download with private local staging,

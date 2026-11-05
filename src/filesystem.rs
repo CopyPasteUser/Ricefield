@@ -666,6 +666,7 @@ pub struct BatchRenameOptions<'a> {
     pub suffix: &'a str,
     pub find: &'a str,
     pub replace: &'a str,
+    pub regex: bool,
     pub numbering: bool,
     pub number_start: u32,
     pub number_width: usize,
@@ -694,6 +695,7 @@ pub fn plan_batch_rename(
             suffix,
             find: "",
             replace: "",
+            regex: false,
             numbering: false,
             number_start: 1,
             number_width: 3,
@@ -728,6 +730,9 @@ pub fn plan_batch_rename_with_options(
         || options.replace.contains('/')
         || options.replace.contains('\0')
         || (options.find.is_empty() && !options.replace.is_empty())
+        || (options.regex && options.find.is_empty())
+        || options.find.len() > 256
+        || options.replace.len() > 256
     {
         return Err(invalid_name());
     }
@@ -741,6 +746,23 @@ pub fn plan_batch_rename_with_options(
             "Numbering needs a start from 1 and width 1–8 (max number 99,999,999)",
         ));
     }
+    // Compile once per preview, not once per filename. The regex crate uses
+    // a bounded, non-backtracking engine; the selection is capped at 256.
+    let pattern = if options.regex {
+        Some(
+            regex::RegexBuilder::new(options.find)
+                .size_limit(2 * 1024 * 1024)
+                .build()
+                .map_err(|error| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("Invalid batch rename regex: {error}"),
+                    )
+                })?,
+        )
+    } else {
+        None
+    };
     let mut destinations = BTreeSet::new();
     let mut changes = Vec::with_capacity(paths.len());
     for (index, path) in paths.iter().enumerate() {
@@ -754,7 +776,11 @@ pub fn plan_batch_rename_with_options(
                     "Search/replace requires UTF-8 filenames; prefix/suffix and numbering preserve arbitrary filename bytes",
                 )
             })?;
-            Some(utf8.replace(options.find, options.replace))
+            Some(if let Some(pattern) = &pattern {
+                pattern.replace_all(utf8, options.replace).into_owned()
+            } else {
+                utf8.replace(options.find, options.replace)
+            })
         };
         let mut name = OsString::from(options.prefix);
         if options.numbering {
@@ -5123,6 +5149,7 @@ mod tests {
                 suffix: "-backup",
                 find: "old-",
                 replace: "",
+                regex: false,
                 numbering: true,
                 number_start: 7,
                 number_width: 3,
@@ -5144,6 +5171,65 @@ mod tests {
     }
 
     #[test]
+    fn batch_rename_regex_captures_preview_and_execute_without_overwrite() {
+        let root = test_root();
+        let old = root.join("image-004.jpeg");
+        fs::write(&old, b"original payload").unwrap();
+        let options = BatchRenameOptions {
+            prefix: "",
+            suffix: "",
+            find: r"^image-(\d+)(\.jpeg)$",
+            replace: "picture_${1}${2}",
+            regex: true,
+            numbering: false,
+            number_start: 1,
+            number_width: 3,
+        };
+        let changes = plan_batch_rename_with_options(std::slice::from_ref(&old), &options)
+            .expect("regex capture preview");
+        assert_eq!(changes[0].1, OsString::from("picture_004.jpeg"));
+        perform(&Action::BatchRename { changes }).unwrap();
+        assert_eq!(
+            fs::read(root.join("picture_004.jpeg")).unwrap(),
+            b"original payload"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn batch_rename_regex_rejects_bad_patterns_and_unsafe_generated_names() {
+        let root = test_root();
+        let source = root.join("image.jpeg");
+        fs::write(&source, b"kept").unwrap();
+        let options = BatchRenameOptions {
+            prefix: "",
+            suffix: "",
+            find: "(",
+            replace: "image",
+            regex: true,
+            numbering: false,
+            number_start: 1,
+            number_width: 3,
+        };
+        assert!(
+            plan_batch_rename_with_options(std::slice::from_ref(&source), &options)
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid batch rename regex")
+        );
+        let unsafe_output = BatchRenameOptions {
+            find: "^.*$",
+            replace: "..",
+            ..options
+        };
+        assert!(
+            plan_batch_rename_with_options(std::slice::from_ref(&source), &unsafe_output).is_err()
+        );
+        assert_eq!(fs::read(source).unwrap(), b"kept");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn batch_rename_rejects_unchanged_invalid_and_duplicate_name_plans() {
         let root = test_root();
         let source = root.join("one.txt");
@@ -5153,6 +5239,7 @@ mod tests {
             suffix: "",
             find: "absent",
             replace: "new",
+            regex: false,
             numbering: false,
             number_start: 1,
             number_width: 3,
@@ -5169,6 +5256,7 @@ mod tests {
             suffix: "",
             find: "one",
             replace: "two",
+            regex: false,
             numbering: false,
             number_start: 1,
             number_width: 3,
@@ -5367,6 +5455,7 @@ mod tests {
             suffix: "",
             find: "",
             replace: "",
+            regex: false,
             numbering: true,
             number_start: 4,
             number_width: 2,

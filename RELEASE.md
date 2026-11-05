@@ -1,6 +1,6 @@
 # Release process (Linux x86_64)
 
-RiceField 1.0.0-rc.4 is a **release candidate**, not signed off for use
+RiceField 1.0.0-rc.5 is a **release candidate**, not signed off for use
 with irreplaceable files or as a complete network/archive file manager.
 The code can produce a tested distribution bundle, but a green CI run alone
 does not satisfy the safety, recovery and Linux Mint hardware gates in
