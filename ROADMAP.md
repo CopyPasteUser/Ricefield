@@ -449,7 +449,9 @@ marking 0.7 stable. The 0.6 NAS/mount acceptance is still blocked separately.
 - [x] Custom filename glob plus size and modified-age ranges (0.8 alpha.3),
   combined with type/size/date presets and safe selection pruning.
 - [ ] Full filename regex (glob is supported, but not general regex expressions).
-- [ ] Bounded cancellable network search, optional index (not mandatory).
+- [x] Bounded cancellable network filename search (0.9 alpha.4): explicitly
+  opt-in, read-only recursive GIO listing, no index or remote file-content
+  reads; optional indexing remains a post-1.0 enhancement.
 - [x] Opt-in, capped saved local searches with private atomic preferences
   (0.8 alpha.4); no query persisted or automatically rerun without consent.
 - [x] Bounded read-only duplicate candidate finder for visible local files,

@@ -2,6 +2,7 @@
 //! handles device permissions and Polkit; RiceExplorer never invokes sudo.
 
 use std::{
+    collections::{HashSet, VecDeque},
     ffi::OsString,
     io::{Read, Write},
     path::PathBuf,
@@ -14,12 +15,22 @@ use std::{
 const MAX_REMOTE_LIST_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_REMOTE_ENTRIES: usize = 10_000;
 const MAX_REMOTE_TEXT_BYTES: u64 = 32 * 1024;
+const MAX_REMOTE_SEARCH_DIRS: usize = 64;
+const MAX_REMOTE_SEARCH_ENTRIES: usize = 16_384;
+const MAX_REMOTE_SEARCH_MATCHES: usize = 2048;
+const MAX_REMOTE_SEARCH_DEPTH: usize = 8;
+const REMOTE_SEARCH_BUDGET: Duration = Duration::from_secs(12);
 
 #[derive(Clone, Debug)]
 pub struct RemoteEntry {
     pub uri: String,
     pub name: String,
     pub is_directory: bool,
+}
+
+pub struct RemoteSearch {
+    pub entries: Vec<RemoteEntry>,
+    pub notice: Option<String>,
 }
 
 /// Enumerate URIs rather than unescaped names: newline and tab in a remote
@@ -30,6 +41,15 @@ pub fn list_remote(
     show_hidden: bool,
     cancelled: &AtomicBool,
 ) -> Result<Vec<RemoteEntry>, String> {
+    list_remote_with_timeout(uri, show_hidden, cancelled, Duration::from_secs(20))
+}
+
+fn list_remote_with_timeout(
+    uri: &str,
+    show_hidden: bool,
+    cancelled: &AtomicBool,
+    timeout: Duration,
+) -> Result<Vec<RemoteEntry>, String> {
     let mut command = Command::new("gio");
     command.args(["list", "-l", "-a", "standard::type", "-u"]);
     if show_hidden {
@@ -39,11 +59,148 @@ pub fn list_remote(
     let bytes = capture_gio(
         command,
         MAX_REMOTE_LIST_BYTES,
-        Duration::from_secs(20),
+        timeout,
         cancelled,
         "Network listing",
     )?;
     parse_remote_listing(uri, &bytes)
+}
+
+/// Explicit, read-only network filename search. Never read file bodies,
+/// index, mutate a remote location or enumerate indefinitely. The GIO backend
+/// resolves metadata; bounds still apply if it exposes linked directories.
+/// Each GIO request respects the shared overall deadline.
+pub fn search_remote(
+    uri: &str,
+    query: &str,
+    recursive: bool,
+    show_hidden: bool,
+    cancelled: &AtomicBool,
+) -> Result<RemoteSearch, String> {
+    search_remote_with(uri, query, recursive, cancelled, |folder, remaining| {
+        list_remote_with_timeout(folder, show_hidden, cancelled, remaining)
+    })
+}
+
+fn search_remote_with(
+    uri: &str,
+    query: &str,
+    recursive: bool,
+    cancelled: &AtomicBool,
+    mut list: impl FnMut(&str, Duration) -> Result<Vec<RemoteEntry>, String>,
+) -> Result<RemoteSearch, String> {
+    if query.is_empty() || query.len() > 120 || query.chars().any(char::is_control) {
+        return Err("Network search needs a filename query of 1–120 characters".into());
+    }
+    if !matches!(
+        crate::location::Location::parse(uri.into()),
+        Ok(crate::location::Location::Remote(_))
+    ) {
+        return Err("Network search requires a validated remote URI".into());
+    }
+
+    let needle = query.to_lowercase();
+    let deadline = Instant::now() + REMOTE_SEARCH_BUDGET;
+    let mut queue = VecDeque::from([(uri.to_owned(), 0usize)]);
+    let mut seen = HashSet::new();
+    let mut entries = Vec::new();
+    let mut inspected = 0usize;
+    let mut skipped = 0usize;
+    let mut partial = false;
+    while let Some((folder, depth)) = queue.pop_front() {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err("Network search cancelled".into());
+        }
+        if seen.len() >= MAX_REMOTE_SEARCH_DIRS || Instant::now() >= deadline {
+            partial = true;
+            break;
+        }
+        if !seen.insert(folder.clone()) {
+            continue;
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let listed = match list(&folder, remaining) {
+            Ok(listed) => listed,
+            Err(error) if depth == 0 => return Err(error),
+            Err(_) => {
+                skipped += 1;
+                continue;
+            }
+        };
+        for item in listed {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err("Network search cancelled".into());
+            }
+            inspected += 1;
+            if inspected > MAX_REMOTE_SEARCH_ENTRIES {
+                partial = true;
+                break;
+            }
+            if remote_name_matches(&item.name, &needle) {
+                entries.push(item.clone());
+                if entries.len() >= MAX_REMOTE_SEARCH_MATCHES {
+                    partial = true;
+                    break;
+                }
+            }
+            if recursive && item.is_directory {
+                if depth < MAX_REMOTE_SEARCH_DEPTH {
+                    queue.push_back((item.uri, depth + 1));
+                } else {
+                    partial = true;
+                }
+            }
+        }
+        if partial {
+            break;
+        }
+    }
+    if !queue.is_empty() {
+        partial = true;
+    }
+    let notice = (partial || skipped > 0).then(|| {
+        format!(
+            "Partial network filename search: {} folders inspected, {inspected} entries checked, {skipped} folders unavailable; limits: 64 folders / 16,384 entries / 2,048 matches / 12 seconds",
+            seen.len()
+        )
+    });
+    Ok(RemoteSearch { entries, notice })
+}
+
+/// GIO URI-list output percent-encodes spaces and Unicode. Match what the
+/// person types, while keeping the original encoded URI as the only action key.
+fn remote_name_matches(encoded: &str, lower_needle: &str) -> bool {
+    if encoded.to_lowercase().contains(lower_needle) {
+        return true;
+    }
+    if !encoded.contains('%') {
+        return false;
+    }
+    let raw = encoded.as_bytes();
+    let mut decoded = Vec::with_capacity(raw.len());
+    let mut index = 0;
+    while index < raw.len() {
+        if raw[index] == b'%'
+            && index + 2 < raw.len()
+            && let (Some(hi), Some(lo)) = (hex(raw[index + 1]), hex(raw[index + 2]))
+        {
+            decoded.push((hi << 4) | lo);
+            index += 3;
+        } else {
+            decoded.push(raw[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).is_ok_and(|name| name.to_lowercase().contains(lower_needle))
+}
+
+fn hex(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 /// Reading a remote file never grants a POSIX path or a mutating capability.
@@ -510,6 +667,65 @@ mod tests {
         assert!(
             parse_remote_listing(uri, &vec![b'a'; MAX_REMOTE_LIST_BYTES as usize + 1]).is_err()
         );
+    }
+
+    #[test]
+    fn bounded_network_filename_search_handles_subfolders_and_partial_errors() {
+        let cancelled = AtomicBool::new(false);
+        let root = "smb://nas/share";
+        let entries_for = |folder: &str, _: Duration| -> Result<Vec<RemoteEntry>, String> {
+            match folder {
+                "smb://nas/share" => Ok(vec![
+                    RemoteEntry {
+                        uri: "smb://nas/share/Music".into(),
+                        name: "Music".into(),
+                        is_directory: true,
+                    },
+                    RemoteEntry {
+                        uri: "smb://nas/share/Offline".into(),
+                        name: "Offline".into(),
+                        is_directory: true,
+                    },
+                    RemoteEntry {
+                        uri: "smb://nas/share/Report.txt".into(),
+                        name: "Report.txt".into(),
+                        is_directory: false,
+                    },
+                ]),
+                "smb://nas/share/Music" => Ok(vec![RemoteEntry {
+                    uri: "smb://nas/share/Music/REPORT.MP3".into(),
+                    name: "REPORT.MP3".into(),
+                    is_directory: false,
+                }]),
+                _ => Err("Share unplugged".into()),
+            }
+        };
+        let direct = search_remote_with(root, "report", false, &cancelled, entries_for).unwrap();
+        assert_eq!(direct.entries.len(), 1);
+        assert!(direct.notice.is_none());
+        let nested = search_remote_with(root, "report", true, &cancelled, entries_for).unwrap();
+        assert_eq!(nested.entries.len(), 2);
+        assert!(nested.notice.unwrap().contains("Partial"));
+        assert!(search_remote_with(root, "\n", true, &cancelled, entries_for).is_err());
+    }
+
+    #[test]
+    fn network_search_checks_cancel_before_any_gio_call() {
+        let cancelled = AtomicBool::new(true);
+        let result = search_remote_with("smb://nas/share", "file", true, &cancelled, |_, _| {
+            panic!("cancelled search must not enumerate a folder")
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn network_search_matches_human_readable_uri_names() {
+        assert!(remote_name_matches(
+            "Season%201%20Finale.mkv",
+            "season 1 finale"
+        ));
+        assert!(remote_name_matches("%E6%97%A5%E6%9C%AC.mp3", "日本"));
+        assert!(!remote_name_matches("%FF.dat", "test"));
     }
 
     #[test]

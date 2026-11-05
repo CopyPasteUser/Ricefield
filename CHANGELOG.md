@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — 0.9.0-alpha.4 bounded remote filename search
+
+- Enable case-insensitive filename search in SMB/SFTP/WebDAV/MTP tabs using
+  explicitly requested, read-only GIO listings; Subfolders enables BFS search.
+- Bound traversal to 64 folders, 16,384 inspected entries, 2,048 matches,
+  depth 8 and 12 seconds; allow cancellation, skip failing subfolders and
+  visibly label incomplete results. Never scan remote file contents.
+- Query changes debounce and cancel obsolete workers; selected remote tabs
+  remain read-only. Actual Mint/NAS behavioral acceptance is deferred to 1.0.
+
 ## Unreleased — 0.9.0-alpha.3 private visual theme editor
 
 - Edit validated TOML in-app or visually modify palette colors, icon size,
