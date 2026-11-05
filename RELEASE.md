@@ -6,6 +6,11 @@ The code can produce a tested distribution bundle, but a green CI run alone
 does not satisfy the safety, recovery and Linux Mint hardware gates in
 [ROADMAP.md](ROADMAP.md).
 
+**Owner's release sequence:** complete the 1.0 code candidate autonomously,
+then hand over a concrete Linux Mint/NAS/USB/performance test checklist for
+owner acceptance. Do not request manual sign-off during alpha development;
+do not tag a stable `v1.0.0` until the post-code-freeze findings are resolved.
+
 ## Build a preview bundle
 
 Requires Rust/Cargo, GNU tar, gzip, sha256sum and a Linux x86_64 build host.

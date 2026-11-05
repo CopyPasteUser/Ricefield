@@ -488,9 +488,11 @@ touching disk; real HDD and UI responsiveness measurements remain outstanding.
   runtime plugin loader.
 - [ ] German/English localization, HiDPI, multi-monitor, accessibility review.
 
-**Gate:** complete Mint X11 and Wayland functional/visual matrix passes.
+**Code gate:** all supported shell behavior and automated visual regressions
+pass. Physical Mint X11/Wayland review is deliberately scheduled *after* the
+1.0 code-complete candidate, before stable release sign-off.
 
-### 1.0 — Production release
+### 1.0 — Code-complete candidate, then owner acceptance
 
 - [x] Serialize concurrent user-local installer, rollback and uninstall
   operations with a shared advisory lock and automated overlapping-process
@@ -501,13 +503,19 @@ touching disk; real HDD and UI responsiveness measurements remain outstanding.
   uninstall and power-loss verification remain open.
 - [ ] Format, Clippy, unit/integration/UI/security tests pass in CI.
 - [ ] Measure startup, idle RAM/CPU, 100k entries, HDD and large transfers.
-- [ ] Test 4 GB hardware, network disconnect and USB removal in a safe lab.
-- [ ] Verify install, update, uninstall, rollback and recoverability.
-- [ ] Ship current README, changelog, actual screenshots and release assets.
-- [ ] Resolve critical bugs and obtain real Linux Mint user sign-off.
+- [ ] Prepare a code-complete `1.0.0-rc` candidate with current README,
+  changelog, representative real screenshots and verifiable release artifacts.
+- [ ] Resolve known critical code defects and provide an explicit test matrix
+  **only once the candidate is code-complete**, not during alpha development.
+- [ ] **After the 1.0 code freeze**, have the owner run the provided tests on
+  4 GB hardware, network disconnect, NAS, Wayland/X11, USB removal, install,
+  update, uninstall, rollback and recovery in a safe lab.
+- [ ] Publish stable `v1.0.0` only after those owner results are reviewed and
+  critical failures fixed. Keep Thunar available until then.
 - [ ] Verify that a new rice can be assembled from configured components
   without changing the file-management core or interrupting transfers.
 
-**Definition of done:** dependable daily file management for explicitly
-supported devices and protocols, recoverable failure modes, accurate
-documentation and measured performance. Untested features stay open.
+**Definition of code-complete:** dependable daily file management for
+explicitly supported protocols, reviewed recovery and failure paths, automated
+tests, accurate docs and measured CI/lab performance. This is **not** the same
+as stable release: owner/manual acceptance starts afterward, as requested.
