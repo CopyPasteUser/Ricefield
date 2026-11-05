@@ -90,7 +90,11 @@ for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sideba
   # xvfb-run has no window manager, so the X input focus can remain on the
   # root/None window. Explicitly focus the app and use XTEST key injection;
   # xdotool --window sends synthetic events that egui/winit may not accept.
-  xdotool windowfocus --sync "$window_id"
+  if ! timeout 8s xdotool windowfocus --sync "$window_id"; then
+    echo "Cannot focus $theme within eight seconds (Xvfb may lack a responsive window manager)" >&2
+    report_startup_failure "$theme"
+    exit 1
+  fi
   focused_window_id="$(xdotool getwindowfocus)"
   if [[ "$focused_window_id" != "$window_id" ]]; then
     echo "Cannot focus $theme: expected $window_id, got $focused_window_id" >&2

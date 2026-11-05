@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0 CI resilience — bounded graphical smoke runtime
+
+- Consolidate previously separate graphics and Xvfb `apt` installations into
+  one dependency step. Retrospective runner logs attributed the apparent GUI
+  stall to an eight-minute second package install; the actual GUI script
+  completed in about one minute.
+- Fail with application/window diagnostics when a headless X11 focus request
+  cannot complete within eight seconds, rather than hanging indefinitely.
+- Bound the entire eight-profile Xvfb smoke in CI and the release workflow
+  to eight minutes with a short forced-cleanup grace period. Full checks are
+  still mandatory; timeouts are failures, never assumed passing results.
+
 ## 1.0 CI efficiency — verified pinned Cargo cache
 
 - Cache Rust registry, Git dependencies and incremental `target` outputs in
