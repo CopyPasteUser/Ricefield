@@ -12,7 +12,10 @@ use std::{
     os::unix::{ffi::OsStringExt, fs::DirBuilderExt},
     path::{Path, PathBuf},
     process::{Command, ExitStatus, Stdio},
-    sync::atomic::{AtomicBool, AtomicU64, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -104,7 +107,7 @@ fn stream_to_staging(
     mut command: Command,
     staging_file: &Path,
     cancelled: &AtomicBool,
-    bytes: &AtomicU64,
+    bytes: &Arc<AtomicU64>,
     timeout: Duration,
 ) -> Result<(), String> {
     let destination = OpenOptions::new()
@@ -122,6 +125,7 @@ fn stream_to_staging(
         .stdout
         .take()
         .ok_or("Network download output is unavailable")?;
+    let bytes = Arc::clone(bytes);
     let reader = thread::spawn(move || -> Result<(), String> {
         let mut output = destination;
         let mut buffer = [0; 128 * 1024];
@@ -210,7 +214,7 @@ pub fn download(
     encoded_name: &str,
     directory: &Path,
     cancelled: &AtomicBool,
-    bytes: &AtomicU64,
+    bytes: &Arc<AtomicU64>,
 ) -> Result<PathBuf, String> {
     let name = checked_download_name(uri, encoded_name)?;
     let mut command = Command::new("gio");
@@ -222,7 +226,7 @@ fn download_with_command(
     name: OsString,
     directory: &Path,
     cancelled: &AtomicBool,
-    bytes: &AtomicU64,
+    bytes: &Arc<AtomicU64>,
     command: Command,
 ) -> Result<PathBuf, String> {
     if cancelled.load(Ordering::Relaxed) {
@@ -298,7 +302,7 @@ mod tests {
         ));
         fs::create_dir(&folder).unwrap();
         let cancelled = AtomicBool::new(false);
-        let progress = AtomicU64::new(0);
+        let progress = Arc::new(AtomicU64::new(0));
         let mut cmd = Command::new("sh");
         cmd.args(["-c", "printf 'network bytes'"]);
         let final_path =
@@ -321,6 +325,19 @@ mod tests {
                 .is_err()
         );
         assert_eq!(fs::read(&existing).unwrap(), b"keep");
+        // A competing file created after the destination preflight must not
+        // be replaced by the staged remote content.
+        let raced = folder.join("raced");
+        let mut race = Command::new("sh");
+        race.args([
+            "-c",
+            "printf intruder > \"$RICEFIELD_TEST_RACE\"; printf remote",
+        ])
+        .env("RICEFIELD_TEST_RACE", &raced);
+        assert!(
+            download_with_command("raced".into(), &folder, &cancelled, &progress, race).is_err()
+        );
+        assert_eq!(fs::read(&raced).unwrap(), b"intruder");
         fs::remove_dir_all(folder).unwrap();
     }
 
@@ -335,7 +352,7 @@ mod tests {
             std::process::id()
         ));
         fs::create_dir(&folder).unwrap();
-        let progress = AtomicU64::new(0);
+        let progress = Arc::new(AtomicU64::new(0));
         let mut cmd = Command::new("sh");
         cmd.args(["-c", "printf partial; exit 12"]);
         assert!(
