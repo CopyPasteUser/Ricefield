@@ -962,7 +962,7 @@ impl Explorer {
             let root = config::config_file().parent()?.join("themes");
             (saved.parent() == Some(root.as_path())
                 && saved.extension().is_some_and(|ext| ext == "toml"))
-                .then(|| saved.clone())
+            .then(|| saved.clone())
         });
         let theme_result = if let Some(path) = theme_file.as_ref() {
             Theme::from_file(path)
