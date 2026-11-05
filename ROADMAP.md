@@ -509,7 +509,9 @@ pass. Physical Mint X11/Wayland review is deliberately scheduled *after* the
   failure, atomic binary replacement and installer rollback tests; enable
   `v1.0.*` artifact workflows without publishing a tag. Real-device update,
   uninstall and power-loss verification remain open.
-- [ ] Format, Clippy, unit/integration/UI/security tests pass in CI.
+- [x] Format, Clippy, unit/integration/UI/security tests pass in CI (rc.3:
+  [run #481](https://github.com/CopyPasteUser/Ricefield/actions/runs/42107821509),
+  258 unit/regression tests, separate D-Bus test, eight GUI profiles).
 - [ ] Measure startup, idle RAM/CPU, 100k entries, HDD and large transfers.
 - [ ] Prepare a code-complete `1.0.0-rc` candidate with current README,
   changelog, representative real screenshots and verifiable release artifacts.
