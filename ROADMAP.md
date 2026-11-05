@@ -442,7 +442,9 @@ marking 0.7 stable. The 0.6 NAS/mount acceptance is still blocked separately.
 
 - [x] Cancel obsolete local folder scans and recursive filename searches on
   new requests, tab closure and query changes; reject queued stale results.
-- [ ] Filename/content searches, type/date/size/regex filters.
+- [x] Add lightweight type/size/date presets to the same local filter policy;
+  remove hidden selections before any further operation. No indexing daemon.
+- [ ] Content search, regex, and custom filename/size/date filter ranges.
 - [ ] Bounded cancellable network search, optional index (not mandatory).
 - [ ] Saved searches, duplicate finder and batch action previews.
 

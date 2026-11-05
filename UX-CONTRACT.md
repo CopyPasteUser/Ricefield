@@ -25,6 +25,10 @@ Linux desktop file management for RiceBowl users. v0.1 interface English; runtim
   closure and changes to recursive search queries invalidate superseded
   workers; cancelled/queued stale results must never replace current entries.
 - Entering a new location clears local search and selection, but not bookmarks or preferences.
+- Changing local type/size/date filters recomputes the visible entries in
+  memory; any selected path no longer visible is deselected before file
+  operations. Size presets apply only to regular files (not directories or
+  symlink lengths); modified-date presets use the entry's reported timestamp.
 - Sorting always groups directories before files. Filters operate only on the current folder; no unrequested recursive search/indexing.
 - Shift selects a contiguous visible range; Ctrl toggles one item. Navigation history is independent of filesystem mutation history.
 - Keyboard shortcuts do not copy/cut/paste files while a text field has focus.
