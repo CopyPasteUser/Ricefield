@@ -4,7 +4,7 @@
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Development preview: v0.9.0-alpha.4** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+> **Development preview: v0.9.0-alpha.5** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
 **Distribution:** An [automated Linux x86_64 preview bundle](RELEASE.md) can
 be built without distributing Rust sources to every end user. The verified
@@ -193,6 +193,12 @@ overwrites a theme, and remembers your choice across restarts. Imported files
 are read-only until explicitly saved as a new theme. CLI `--theme` and
 `--theme-file` retain precedence for that process. Invalid TOML cannot be
 activated. Visual edits regenerate TOML formatting and may remove comments.
+**Shell composer (0.9 alpha.5):** Expand **Shell composer · component layout**
+inside the visual editor to put Menu bar, Tabs, Navigation and Command bar
+on the top or bottom edge, hide optional components, and reorder them with
+↑/↓. Also select the shell kind, sidebar/preview positions, sidebar sections,
+collapsible groups and status bar. Navigation is always retained. Each saved
+rice uses the same validated TOML schema without modifying other profiles.
 
 **Open With (0.9 alpha.2):** Select one local file, open **Actions → Open
 With…**, and choose a registered Linux desktop application. Handler lookup
