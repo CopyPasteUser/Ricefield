@@ -17,6 +17,7 @@ mod metadata;
 mod open_with;
 mod operation_queue;
 mod preview;
+mod remote_download;
 mod shell_components;
 mod shell_renderer;
 mod theme;

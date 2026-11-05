@@ -828,7 +828,7 @@ fn occupied(path: &Path) -> io::Result<bool> {
 }
 
 #[cfg(target_os = "linux")]
-fn rename_without_overwrite(source: &Path, destination: &Path) -> io::Result<()> {
+pub(crate) fn rename_without_overwrite(source: &Path, destination: &Path) -> io::Result<()> {
     use std::{ffi::CString, os::unix::ffi::OsStrExt};
     let source = CString::new(source.as_os_str().as_bytes()).map_err(|_| invalid_name())?;
     let destination =
@@ -851,7 +851,7 @@ fn rename_without_overwrite(source: &Path, destination: &Path) -> io::Result<()>
 }
 
 #[cfg(not(target_os = "linux"))]
-fn rename_without_overwrite(source: &Path, destination: &Path) -> io::Result<()> {
+pub(crate) fn rename_without_overwrite(source: &Path, destination: &Path) -> io::Result<()> {
     if occupied(destination)? {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
