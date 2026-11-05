@@ -74,7 +74,10 @@ impl ThumbnailManager {
         self.tick = self.tick.wrapping_add(1);
         if let Some(cached) = self.cache.get_mut(&key) {
             cached.touched = self.tick;
-            return cached.texture.as_ref().map(|texture| (texture.id(), texture.size_vec2()));
+            return cached
+                .texture
+                .as_ref()
+                .map(|texture| (texture.id(), texture.size_vec2()));
         }
         if self.active.as_ref() == Some(&key) {
             return None;
@@ -115,7 +118,13 @@ impl ThumbnailManager {
                 let key = oldest.0.clone();
                 self.cache.remove(&key);
             }
-            self.cache.insert(message.key, Cached { texture, touched: self.tick });
+            self.cache.insert(
+                message.key,
+                Cached {
+                    texture,
+                    touched: self.tick,
+                },
+            );
         }
     }
 
@@ -123,13 +132,16 @@ impl ThumbnailManager {
         if self.active.is_some() {
             return;
         }
-        let Some(key) = self.pending.pop_front() else { return; };
+        let Some(key) = self.pending.pop_front() else {
+            return;
+        };
         let sender = self.sender.clone();
         self.active = Some(key.clone());
         thread::spawn(move || {
             // Malformed image decoders must never permanently wedge the queue.
             let result = std::panic::catch_unwind(|| preview::thumbnail(&key.path).ok().flatten())
-                .ok().flatten();
+                .ok()
+                .flatten();
             let _ = sender.send(ResultMessage { key, result });
         });
     }
@@ -140,7 +152,14 @@ mod tests {
     use super::*;
 
     fn image(name: &str) -> Entry {
-        Entry { path: PathBuf::from(name), name: name.to_owned(), is_dir: false, is_symlink: false, size: 1, modified: None }
+        Entry {
+            path: PathBuf::from(name),
+            name: name.to_owned(),
+            is_dir: false,
+            is_symlink: false,
+            size: 1,
+            modified: None,
+        }
     }
 
     #[test]
@@ -150,11 +169,20 @@ mod tests {
             manager.request(&image(&format!("{index}.png")));
         }
         assert_eq!(manager.pending.len(), MAX_PENDING);
-        assert_eq!(manager.pending.front().unwrap().path, PathBuf::from("499.png"));
-        assert_eq!(manager.pending.back().unwrap().path, PathBuf::from("452.png"));
+        assert_eq!(
+            manager.pending.front().unwrap().path,
+            PathBuf::from("499.png")
+        );
+        assert_eq!(
+            manager.pending.back().unwrap().path,
+            PathBuf::from("452.png")
+        );
         manager.request(&image("485.png"));
         assert_eq!(manager.pending.len(), MAX_PENDING);
-        assert_eq!(manager.pending.front().unwrap().path, PathBuf::from("485.png"));
+        assert_eq!(
+            manager.pending.front().unwrap().path,
+            PathBuf::from("485.png")
+        );
         manager.clear_pending();
         assert!(!manager.has_pending());
     }

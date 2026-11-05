@@ -13,10 +13,10 @@ mod location;
 mod metadata;
 mod operation_queue;
 mod preview;
-mod thumbnail;
 mod shell_components;
 mod shell_renderer;
 mod theme;
+mod thumbnail;
 mod volume;
 
 use std::{env, ffi::OsString, path::PathBuf};

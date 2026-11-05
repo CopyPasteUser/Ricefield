@@ -118,7 +118,11 @@ pub fn paint_file_cell(
         )
     };
     if let Some((texture, size)) = thumbnail {
-        let maximum = if grid { Vec2::new(74.0, 55.0) } else { Vec2::splat(icon_size) };
+        let maximum = if grid {
+            Vec2::new(74.0, 55.0)
+        } else {
+            Vec2::splat(icon_size)
+        };
         let scale = (maximum.x / size.x).min(maximum.y / size.y).min(1.0);
         let image_area = Rect::from_center_size(icon_area.center(), size * scale);
         painter.image(

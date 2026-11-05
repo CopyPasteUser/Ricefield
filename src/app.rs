@@ -8,13 +8,13 @@ use crate::{
     journal::{self, Inspection as JournalInspection, State as JournalState},
     keyring,
     location::Location,
+    metadata,
     operation_queue::OperationQueue,
     preview,
     shell_components::{self, ToolbarAction},
     shell_renderer::{self, FileCellLayout, shorten},
-    thumbnail::ThumbnailManager,
-    metadata,
     theme::{BUILTIN_IDS, ChromeComponent, SidebarPosition, SidebarSection, Theme},
+    thumbnail::ThumbnailManager,
     volume::{self, MountCredentials, VolumeAction},
 };
 use eframe::egui::{self, Align2, Color32, Key, Modifiers, Pos2, Rect, Vec2};
@@ -2225,7 +2225,12 @@ impl Explorer {
         }
         while let Ok(message) = self.analysis_receiver.try_recv() {
             self.analysis_worker_running = false;
-            if let Some(Dialog::Properties { path, generation, analysis, .. }) = self.dialog.as_mut()
+            if let Some(Dialog::Properties {
+                path,
+                generation,
+                analysis,
+                ..
+            }) = self.dialog.as_mut()
                 && *path == message.path
                 && *generation == message.generation
             {
@@ -3718,14 +3723,20 @@ impl Explorer {
     }
 
     fn start_deep_analysis(&mut self, path: PathBuf, generation: u64) {
-        if self.analysis_worker_running { return; }
+        if self.analysis_worker_running {
+            return;
+        }
         self.analysis_worker_running = true;
         let cancel = Arc::new(AtomicBool::new(false));
         self.analysis_cancel = Arc::clone(&cancel);
         let sender = self.analysis_sender.clone();
         thread::spawn(move || {
             let result = metadata::deep_analysis(&path, &cancel).map_err(|error| error.to_string());
-            let _ = sender.send(PropertyAnalysis { generation, path, result });
+            let _ = sender.send(PropertyAnalysis {
+                generation,
+                path,
+                result,
+            });
         });
     }
 
@@ -3747,7 +3758,11 @@ impl Explorer {
         let sender = self.preview_sender.clone();
         thread::spawn(move || {
             let result = preview::load(&path);
-            let _ = sender.send(PreviewResult { generation, path, result });
+            let _ = sender.send(PreviewResult {
+                generation,
+                path,
+                result,
+            });
         });
     }
 
@@ -4467,24 +4482,27 @@ impl Explorer {
             return;
         };
         let mut open = true;
-        egui::Window::new(format!("Quick Look · {}", path.file_name().unwrap_or_default().to_string_lossy()))
-            .id(egui::Id::new("rice-quick-look"))
-            .open(&mut open)
-            .default_size([700.0, 500.0])
-            .min_size([280.0, 170.0])
-            .resizable(true)
-            .show(context, |ui| {
-                if self.preview_loading {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label("Loading preview…");
-                    });
-                } else if let Some(content) = &self.preview_content {
-                    Self::preview_body(ui, content);
-                }
-                ui.separator();
-                ui.label(egui::RichText::new("Space or Esc to close · read-only preview").small());
-            });
+        egui::Window::new(format!(
+            "Quick Look · {}",
+            path.file_name().unwrap_or_default().to_string_lossy()
+        ))
+        .id(egui::Id::new("rice-quick-look"))
+        .open(&mut open)
+        .default_size([700.0, 500.0])
+        .min_size([280.0, 170.0])
+        .resizable(true)
+        .show(context, |ui| {
+            if self.preview_loading {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("Loading preview…");
+                });
+            } else if let Some(content) = &self.preview_content {
+                Self::preview_body(ui, content);
+            }
+            ui.separator();
+            ui.label(egui::RichText::new("Space or Esc to close · read-only preview").small());
+        });
         if !open {
             self.preview_quick_look = false;
             self.preview_path = None;
@@ -5810,18 +5828,32 @@ impl Explorer {
                         if let Some(Ok(snapshot)) = details.as_ref() {
                             if !snapshot.is_symlink {
                                 ui.separator();
-                                let name = if snapshot.is_dir { "Calculate folder size" } else { "Calculate SHA-256" };
-                                if ui.add_enabled(!analysis_busy, egui::Button::new(name)).clicked() {
+                                let name = if snapshot.is_dir {
+                                    "Calculate folder size"
+                                } else {
+                                    "Calculate SHA-256"
+                                };
+                                if ui
+                                    .add_enabled(!analysis_busy, egui::Button::new(name))
+                                    .clicked()
+                                {
                                     *analysis = None;
                                     requested_analysis = Some((path.clone(), *generation));
                                 }
                                 if analysis_busy {
-                                    ui.horizontal(|ui| { ui.spinner(); ui.label("Analysing in background…"); });
+                                    ui.horizontal(|ui| {
+                                        ui.spinner();
+                                        ui.label("Analysing in background…");
+                                    });
                                 }
                                 if let Some(result) = analysis {
                                     match result {
-                                        Ok(result) => { ui.label(egui::RichText::new(result).monospace()); }
-                                        Err(error) => { ui.colored_label(Color32::RED, error.as_str()); }
+                                        Ok(result) => {
+                                            ui.label(egui::RichText::new(result).monospace());
+                                        }
+                                        Err(error) => {
+                                            ui.colored_label(Color32::RED, error.as_str());
+                                        }
                                     }
                                 }
                             }
