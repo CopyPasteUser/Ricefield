@@ -26,6 +26,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: Cache Cargo dependencies and incremental build outputs
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rice-explorer-ubuntu-24.04-${{ runner.arch }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            rice-explorer-ubuntu-24.04-${{ runner.arch }}-cargo-
       - name: Linux development and GUI smoke dependencies
         run: |
           sudo apt-get update
