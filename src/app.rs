@@ -8,15 +8,14 @@ use crate::{
     location::Location,
     operation_queue::OperationQueue,
     preview,
+    shell_renderer::{self, shorten},
     theme::{
-        BUILTIN_IDS, ChromeComponent, Layout, ShellKind, SidebarPosition, SidebarSection,
+        BUILTIN_IDS, ChromeComponent, ShellKind, SidebarPosition, SidebarSection,
         SidebarSectionMode, Theme,
     },
     volume::{self, VolumeAction},
 };
-use eframe::egui::{
-    self, Align2, Color32, FontId, Key, Modifiers, Pos2, Rect, Sense, Stroke, Vec2,
-};
+use eframe::egui::{self, Align2, Color32, Key, Modifiers, Pos2, Rect, Sense, Vec2};
 use std::{
     collections::{BTreeSet, HashMap, VecDeque},
     path::{Path, PathBuf},
@@ -4726,73 +4725,15 @@ impl Explorer {
         let selected = self.tabs[tab_index].selected.contains(&entry.path);
         let (rect, response) =
             ui.allocate_exact_size(Vec2::new(width.max(80.0), height), Sense::click_and_drag());
-        let theme = self.theme.clone();
-        let painter = ui.painter().with_clip_rect(rect);
-        if selected || response.hovered() {
-            painter.rect_filled(
-                rect.shrink(2.0),
-                theme.metrics.rounding,
-                if selected {
-                    theme.palette.selection()
-                } else {
-                    theme.palette.background()
-                },
-            );
-        }
-        let icon_size = theme.metrics.icon_size;
-        let icon_area = if grid {
-            Rect::from_center_size(
-                Pos2::new(rect.center().x, rect.top() + 34.0),
-                Vec2::splat(icon_size * 1.6),
-            )
-        } else {
-            Rect::from_center_size(
-                Pos2::new(rect.left() + 22.0, rect.center().y),
-                Vec2::splat(icon_size),
-            )
-        };
-        paint_file_icon(&painter, icon_area, entry, &theme);
-        let name = if grid {
-            shorten(&entry.name, 22)
-        } else {
-            shorten(&entry.name, ((width * 0.53) / 7.3) as usize)
-        };
-        let font = FontId::proportional(if grid { 12.5 } else { 13.0 });
-        let foreground = theme.palette.text();
-        if grid {
-            painter.text(
-                Pos2::new(rect.center().x, rect.top() + 67.0),
-                Align2::CENTER_CENTER,
-                name,
-                font,
-                foreground,
-            );
-        } else {
-            painter.text(
-                Pos2::new(rect.left() + 43.0, rect.center().y),
-                Align2::LEFT_CENTER,
-                name,
-                font,
-                foreground,
-            );
-            let label = format!(
-                "{}    {}    {}",
-                entry.kind(),
-                if entry.is_dir {
-                    "—".into()
-                } else {
-                    filesystem::human_size(entry.size)
-                },
-                filesystem::age(entry.modified)
-            );
-            painter.text(
-                Pos2::new(rect.left() + width * 0.61, rect.center().y),
-                Align2::LEFT_CENTER,
-                shorten(&label, ((width * 0.38) / 7.0) as usize),
-                FontId::proportional(11.5),
-                theme.palette.muted(),
-            );
-        }
+        shell_renderer::paint_file_cell(
+            ui.painter(),
+            rect,
+            entry,
+            &self.theme,
+            selected,
+            response.hovered(),
+            grid,
+        );
         let response = response.on_hover_text(entry.path.display().to_string());
         if entry.is_dir {
             self.drop_areas.push(DropArea {
@@ -5627,65 +5568,6 @@ impl eframe::App for Explorer {
         let delay = next_search_repaint_delay(&self.tabs, Instant::now())
             .map_or(idle_delay, |search_delay| search_delay.min(idle_delay));
         context.request_repaint_after(delay);
-    }
-}
-
-fn shorten(name: &str, max: usize) -> String {
-    let count = name.chars().count();
-    if count <= max {
-        return name.into();
-    }
-    let keep = max.saturating_sub(1);
-    format!("{}…", name.chars().take(keep).collect::<String>())
-}
-
-fn paint_file_icon(painter: &egui::Painter, rect: Rect, file: &Entry, theme: &Theme) {
-    let round: u8 = if theme.layout == Layout::Classic {
-        0
-    } else {
-        3
-    };
-    if file.is_dir {
-        let top = Rect::from_min_max(
-            Pos2::new(rect.left() + 2.0, rect.top() + 6.0),
-            Pos2::new(rect.left() + rect.width() * 0.55, rect.top() + 15.0),
-        );
-        painter.rect_filled(top, round, theme.palette.folder());
-        let body = Rect::from_min_max(
-            Pos2::new(rect.left() + 1.0, rect.top() + 12.0),
-            Pos2::new(rect.right() - 1.0, rect.bottom() - 3.0),
-        );
-        painter.rect_filled(body, round, theme.palette.folder());
-        painter.line_segment(
-            [
-                Pos2::new(body.left() + 2.0, body.top() + 3.0),
-                Pos2::new(body.right() - 2.0, body.top() + 3.0),
-            ],
-            Stroke::new(1.0, Color32::WHITE.gamma_multiply(0.6)),
-        );
-    } else {
-        let body = Rect::from_min_max(
-            Pos2::new(rect.left() + rect.width() * 0.15, rect.top() + 1.0),
-            Pos2::new(rect.right() - rect.width() * 0.15, rect.bottom() - 1.0),
-        );
-        painter.rect_filled(body, round, theme.palette.file());
-        let short = match file.kind() {
-            "Image" => "IMG",
-            "Audio" => "AUD",
-            "Video" => "VID",
-            "Archive" => "ZIP",
-            "PDF" => "PDF",
-            "Code" => "</>",
-            "Link" => "LNK",
-            _ => "FILE",
-        };
-        painter.text(
-            body.center(),
-            Align2::CENTER_CENTER,
-            short,
-            FontId::proportional((rect.width() * 0.29).clamp(8.0, 13.0)),
-            Color32::WHITE,
-        );
     }
 }
 
