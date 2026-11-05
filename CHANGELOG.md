@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased — 0.7.0-alpha.1 previews and metadata
+
+- Add a 96-entry LRU image thumbnail cache with a 48-item priority queue,
+  single background decoder, file-size/pixel limits, negative results for
+  corrupt images, and lazy requests for visible grid cells only.
+- Add Space-to-toggle resizable Quick Look independent of the side preview,
+  without granting any file modifications. Preview work is single-flight with
+  latest-request-wins scheduling.
+- Extend read-only preview to first-page PDF (`pdftoppm` optional), media
+  metadata (`ffprobe` optional) and bounded archive entry listings. Image,
+  text and code previews retain input limits and reject special files.
+- Expose extended-attribute names and Linux POSIX ACL presence in Properties,
+  plus on-demand bounded folder size or SHA-256 via the opened file descriptor.
+  Deep metadata is cancellable, asynchronous, and never writes to files.
+- Add regressions for corrupt/control-character input, over-limit files,
+  thumbnail queue ordering, symlinks and bounded folder traversal.
+- **Not a stable release:** malformed-file fuzzing, Mint image/PDF/media
+  backends, hardware performance and unresolved 0.6 NAS acceptance remain open.
+
 ## Unreleased — 0.6.0-alpha.8 passive NAS discovery and opt-in keyring
 
 - Add a cancellable, read-only network browser that finds SMB servers from

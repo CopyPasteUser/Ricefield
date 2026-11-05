@@ -28,6 +28,7 @@ pub fn file_cell(
     theme: &Theme,
     selected: bool,
     layout: FileCellLayout,
+    thumbnail: Option<(egui::TextureId, Vec2)>,
 ) -> (Rect, Response) {
     let (rect, response) = ui.allocate_exact_size(
         Vec2::new(layout.width.max(80.0), layout.height),
@@ -41,6 +42,7 @@ pub fn file_cell(
         selected,
         response.hovered(),
         layout.grid,
+        thumbnail,
     );
     let response = response.on_hover_text(file.path.display().to_string());
     (rect, response)
@@ -89,6 +91,7 @@ pub fn paint_file_cell(
     selected: bool,
     hovered: bool,
     grid: bool,
+    thumbnail: Option<(egui::TextureId, Vec2)>,
 ) {
     let painter = painter.with_clip_rect(rect);
     if selected || hovered {
@@ -114,7 +117,19 @@ pub fn paint_file_cell(
             Vec2::splat(icon_size),
         )
     };
-    paint_file_icon(&painter, icon_area, file, theme);
+    if let Some((texture, size)) = thumbnail {
+        let maximum = if grid { Vec2::new(74.0, 55.0) } else { Vec2::splat(icon_size) };
+        let scale = (maximum.x / size.x).min(maximum.y / size.y).min(1.0);
+        let image_area = Rect::from_center_size(icon_area.center(), size * scale);
+        painter.image(
+            texture,
+            image_area,
+            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+            Color32::WHITE,
+        );
+    } else {
+        paint_file_icon(&painter, icon_area, file, theme);
+    }
     let name = if grid {
         shorten(&file.name, 22)
     } else {

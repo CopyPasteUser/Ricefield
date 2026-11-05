@@ -12,6 +12,8 @@ use crate::{
     preview,
     shell_components::{self, ToolbarAction},
     shell_renderer::{self, FileCellLayout, shorten},
+    thumbnail::ThumbnailManager,
+    metadata,
     theme::{BUILTIN_IDS, ChromeComponent, SidebarPosition, SidebarSection, Theme},
     volume::{self, MountCredentials, VolumeAction},
 };
@@ -344,6 +346,7 @@ enum KeyringEvent {
 }
 
 struct PreviewResult {
+    generation: u64,
     path: PathBuf,
     result: std::io::Result<preview::Preview>,
 }
@@ -352,12 +355,19 @@ struct PropertySnapshot {
     lines: Vec<(String, String)>,
     mode: String,
     is_symlink: bool,
+    is_dir: bool,
 }
 
 struct PropertyResult {
     generation: u64,
     path: PathBuf,
     result: Result<PropertySnapshot, String>,
+}
+
+struct PropertyAnalysis {
+    generation: u64,
+    path: PathBuf,
+    result: Result<String, String>,
 }
 
 fn read_property_snapshot(path: &Path) -> std::io::Result<PropertySnapshot> {
@@ -372,9 +382,14 @@ fn read_property_snapshot(path: &Path) -> std::io::Result<PropertySnapshot> {
     #[cfg(not(unix))]
     let mode = String::new();
     Ok(PropertySnapshot {
-        lines: filesystem::property_lines(path)?,
+        lines: {
+            let mut rows = filesystem::property_lines(path)?;
+            rows.extend(metadata::xattr_rows(path));
+            rows
+        },
         mode,
         is_symlink: metadata.file_type().is_symlink(),
+        is_dir: metadata.is_dir(),
     })
 }
 
@@ -655,6 +670,7 @@ enum Dialog {
         mode: String,
         generation: u64,
         details: Option<Result<PropertySnapshot, String>>,
+        analysis: Option<Result<String, String>>,
     },
 }
 
@@ -754,6 +770,7 @@ fn accept_property_result(dialog: &mut Option<Dialog>, message: PropertyResult) 
         mode,
         generation,
         details,
+        ..
     }) = dialog
         && *generation == message.generation
         && *path == message.path
@@ -810,8 +827,15 @@ pub struct Explorer {
     volume_busy: bool,
     preview_sender: Sender<PreviewResult>,
     preview_receiver: Receiver<PreviewResult>,
+    preview_generation: u64,
+    preview_worker_running: bool,
+    preview_pending: Option<(u64, PathBuf)>,
     property_sender: Sender<PropertyResult>,
     property_receiver: Receiver<PropertyResult>,
+    analysis_sender: Sender<PropertyAnalysis>,
+    analysis_receiver: Receiver<PropertyAnalysis>,
+    analysis_worker_running: bool,
+    analysis_cancel: Arc<AtomicBool>,
     property_generation: u64,
     property_worker_running: bool,
     property_pending: Option<(u64, PathBuf)>,
@@ -867,6 +891,8 @@ pub struct Explorer {
     preview_path: Option<PathBuf>,
     preview_loading: bool,
     preview_content: Option<PreviewContent>,
+    preview_quick_look: bool,
+    thumbnails: ThumbnailManager,
     dirty_config: bool,
     focus_address: bool,
     focus_search: bool,
@@ -907,6 +933,7 @@ impl Explorer {
         let (discovery_sender, discovery_receiver) = mpsc::channel();
         let (preview_sender, preview_receiver) = mpsc::channel();
         let (property_sender, property_receiver) = mpsc::channel();
+        let (analysis_sender, analysis_receiver) = mpsc::channel();
         let (op_sender, op_receiver) = mpsc::channel();
         let (paste_preview_sender, paste_preview_receiver) = mpsc::channel();
         let (recovery_sender, recovery_receiver) = mpsc::channel();
@@ -972,8 +999,15 @@ impl Explorer {
             volume_busy: false,
             preview_sender,
             preview_receiver,
+            preview_generation: 0,
+            preview_worker_running: false,
+            preview_pending: None,
             property_sender,
             property_receiver,
+            analysis_sender,
+            analysis_receiver,
+            analysis_worker_running: false,
+            analysis_cancel: Arc::new(AtomicBool::new(false)),
             property_generation: 0,
             property_worker_running: false,
             property_pending: None,
@@ -1032,6 +1066,8 @@ impl Explorer {
             preview_path: None,
             preview_loading: false,
             preview_content: None,
+            preview_quick_look: false,
+            thumbnails: ThumbnailManager::default(),
             dirty_config: false,
             focus_address: false,
             focus_search: false,
@@ -1860,6 +1896,7 @@ impl Explorer {
     }
 
     fn navigate(&mut self, path: PathBuf) {
+        self.thumbnails.clear_pending();
         let path = if path.is_file() {
             path.parent().map(Path::to_path_buf).unwrap_or(path)
         } else {
@@ -1871,6 +1908,7 @@ impl Explorer {
         }
         self.preview_path = None;
         self.preview_content = None;
+        self.preview_quick_look = false;
         self.current_mut().visit(Location::Local(path));
         self.scan(self.active);
         self.remember_session();
@@ -1897,6 +1935,7 @@ impl Explorer {
     }
 
     fn navigate_remote(&mut self, uri: String) {
+        self.thumbnails.clear_pending();
         if self.current().remote_uri.as_deref() == Some(&uri) {
             self.scan(self.active);
             return;
@@ -1907,6 +1946,7 @@ impl Explorer {
         };
         self.preview_path = None;
         self.preview_content = None;
+        self.preview_quick_look = false;
         self.current_mut().visit(remote);
         self.scan(self.active);
         self.remember_session();
@@ -1916,6 +1956,7 @@ impl Explorer {
         if self.current_mut().travel(backwards) {
             self.preview_path = None;
             self.preview_content = None;
+            self.preview_quick_look = false;
             self.scan(self.active);
             self.remember_session();
         }
@@ -1973,6 +2014,7 @@ impl Explorer {
     }
 
     fn poll_background(&mut self, context: &egui::Context) {
+        self.thumbnails.poll(context);
         if self.folder_tree.poll() {
             context.request_repaint();
         }
@@ -2132,7 +2174,10 @@ impl Explorer {
             }
         }
         while let Ok(message) = self.preview_receiver.try_recv() {
-            if self.preview_path.as_ref() == Some(&message.path) {
+            self.preview_worker_running = false;
+            if message.generation == self.preview_generation
+                && self.preview_path.as_ref() == Some(&message.path)
+            {
                 self.preview_loading = false;
                 self.preview_content = Some(match message.result {
                     Ok(preview::Preview::Image {
@@ -2153,6 +2198,12 @@ impl Explorer {
                     Err(error) => PreviewContent::Info(format!("Preview unavailable: {error}")),
                 });
             }
+            if let Some((generation, path)) = self.preview_pending.take()
+                && self.preview_path.as_ref() == Some(&path)
+                && generation == self.preview_generation
+            {
+                self.start_preview_worker(generation, path);
+            }
         }
         while let Ok(message) = self.property_receiver.try_recv() {
             self.property_worker_running = false;
@@ -2170,6 +2221,15 @@ impl Explorer {
                 )
             {
                 self.start_property_worker(generation, path);
+            }
+        }
+        while let Ok(message) = self.analysis_receiver.try_recv() {
+            self.analysis_worker_running = false;
+            if let Some(Dialog::Properties { path, generation, analysis, .. }) = self.dialog.as_mut()
+                && *path == message.path
+                && *generation == message.generation
+            {
+                *analysis = Some(message.result);
             }
         }
         while let Ok(result) = self.refresh_receiver.try_recv() {
@@ -3473,6 +3533,11 @@ impl Explorer {
         // Text inputs must keep their normal copy/cut/paste shortcuts.
         let typing = context.egui_wants_keyboard_input();
         if !typing {
+            if context.input(|input| input.key_pressed(Key::Escape)) {
+                self.preview_quick_look = false;
+                self.preview_path = None;
+                self.preview_content = None;
+            }
             if ctrl && a {
                 let paths: Vec<_> = self
                     .current()
@@ -3505,11 +3570,17 @@ impl Explorer {
                     });
                 }
             }
-            if space
-                && self.current().selected.len() == 1
-                && let Some(path) = self.selected_paths().first()
-            {
-                self.open_preview(path.clone());
+            if space {
+                if self.preview_quick_look {
+                    self.preview_quick_look = false;
+                    self.preview_path = None;
+                    self.preview_content = None;
+                } else if self.current().selected.len() == 1
+                    && let Some(path) = self.selected_paths().first()
+                {
+                    self.preview_quick_look = true;
+                    self.open_preview(path.clone());
+                }
             }
             if alt
                 && enter
@@ -3616,6 +3687,7 @@ impl Explorer {
     }
 
     fn open_properties(&mut self, path: PathBuf) {
+        self.analysis_cancel.store(true, Ordering::Relaxed);
         self.property_generation = self.property_generation.wrapping_add(1);
         let generation = self.property_generation;
         self.dialog = Some(Dialog::Properties {
@@ -3623,6 +3695,7 @@ impl Explorer {
             mode: String::new(),
             generation,
             details: None,
+            analysis: None,
         });
         if self.property_worker_running {
             self.property_pending = Some((generation, path));
@@ -3644,14 +3717,37 @@ impl Explorer {
         });
     }
 
+    fn start_deep_analysis(&mut self, path: PathBuf, generation: u64) {
+        if self.analysis_worker_running { return; }
+        self.analysis_worker_running = true;
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.analysis_cancel = Arc::clone(&cancel);
+        let sender = self.analysis_sender.clone();
+        thread::spawn(move || {
+            let result = metadata::deep_analysis(&path, &cancel).map_err(|error| error.to_string());
+            let _ = sender.send(PropertyAnalysis { generation, path, result });
+        });
+    }
+
     fn open_preview(&mut self, path: PathBuf) {
+        self.preview_generation = self.preview_generation.wrapping_add(1);
+        let generation = self.preview_generation;
         self.preview_path = Some(path.clone());
         self.preview_content = None;
         self.preview_loading = true;
+        if self.preview_worker_running {
+            self.preview_pending = Some((generation, path));
+        } else {
+            self.start_preview_worker(generation, path);
+        }
+    }
+
+    fn start_preview_worker(&mut self, generation: u64, path: PathBuf) {
+        self.preview_worker_running = true;
         let sender = self.preview_sender.clone();
         thread::spawn(move || {
             let result = preview::load(&path);
-            let _ = sender.send(PreviewResult { path, result });
+            let _ = sender.send(PreviewResult { generation, path, result });
         });
     }
 
@@ -4286,6 +4382,9 @@ impl Explorer {
     }
 
     fn preview_panel(&mut self, ui: &mut egui::Ui) {
+        if self.preview_quick_look {
+            return;
+        }
         let Some(path) = self.preview_path.clone() else {
             return;
         };
@@ -4319,26 +4418,7 @@ impl Explorer {
                     ui.add(egui::Spinner::new());
                     ui.label("Loading preview…");
                 } else if let Some(content) = &self.preview_content {
-                    match content {
-                        PreviewContent::Image(texture) => {
-                            let size = texture.size_vec2();
-                            let ratio = ((ui.available_width() - 8.0) / size.x).min(1.0);
-                            ui.add(
-                                egui::Image::new((texture.id(), size))
-                                    .fit_to_exact_size(size * ratio.max(0.1)),
-                            );
-                        }
-                        PreviewContent::Text(contents) => {
-                            egui::ScrollArea::vertical()
-                                .max_height(480.0)
-                                .show(ui, |ui| {
-                                    ui.label(egui::RichText::new(contents).monospace());
-                                });
-                        }
-                        PreviewContent::Info(contents) => {
-                            ui.label(contents);
-                        }
-                    }
+                    Self::preview_body(ui, content);
                 }
                 ui.separator();
                 if ui.button("Properties").clicked() {
@@ -4353,6 +4433,63 @@ impl Explorer {
                     }
                 }
             });
+    }
+
+    fn preview_body(ui: &mut egui::Ui, content: &PreviewContent) {
+        match content {
+            PreviewContent::Image(texture) => {
+                let size = texture.size_vec2();
+                let scale = ((ui.available_width() - 8.0) / size.x)
+                    .min((ui.available_height() - 12.0) / size.y)
+                    .min(1.0)
+                    .max(0.1);
+                ui.add(egui::Image::new((texture.id(), size)).fit_to_exact_size(size * scale));
+            }
+            PreviewContent::Text(contents) => {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.label(egui::RichText::new(contents).monospace());
+                });
+            }
+            PreviewContent::Info(contents) => {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.label(contents);
+                });
+            }
+        }
+    }
+
+    fn quick_look_window(&mut self, context: &egui::Context) {
+        if !self.preview_quick_look {
+            return;
+        }
+        let Some(path) = self.preview_path.clone() else {
+            self.preview_quick_look = false;
+            return;
+        };
+        let mut open = true;
+        egui::Window::new(format!("Quick Look · {}", path.file_name().unwrap_or_default().to_string_lossy()))
+            .id(egui::Id::new("rice-quick-look"))
+            .open(&mut open)
+            .default_size([700.0, 500.0])
+            .min_size([280.0, 170.0])
+            .resizable(true)
+            .show(context, |ui| {
+                if self.preview_loading {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label("Loading preview…");
+                    });
+                } else if let Some(content) = &self.preview_content {
+                    Self::preview_body(ui, content);
+                }
+                ui.separator();
+                ui.label(egui::RichText::new("Space or Esc to close · read-only preview").small());
+            });
+        if !open {
+            self.preview_quick_look = false;
+            self.preview_path = None;
+            self.preview_content = None;
+        }
     }
 
     fn main_panel(&mut self, ui: &mut egui::Ui) {
@@ -4954,7 +5091,13 @@ impl Explorer {
         item: FileCellLayout,
     ) {
         let selected = self.tabs[tab_index].selected.contains(&entry.path);
-        let (rect, response) = shell_renderer::file_cell(ui, entry, &self.theme, selected, item);
+        let thumbnail = if item.grid {
+            self.thumbnails.request(entry)
+        } else {
+            None
+        };
+        let (rect, response) =
+            shell_renderer::file_cell(ui, entry, &self.theme, selected, item, thumbnail);
         if entry.is_dir {
             self.drop_areas.push(DropArea {
                 tab_id: self.tabs[tab_index].id,
@@ -5305,12 +5448,15 @@ impl Explorer {
 
     fn dialogs(&mut self, context: &egui::Context) {
         if self.dialog.is_some() && context.input(|input| input.key_pressed(Key::Escape)) {
+            self.analysis_cancel.store(true, Ordering::Relaxed);
             self.dialog = None;
             return;
         }
         let mut action = None;
         let mut dismiss = false;
         let mut refresh_paste_preview = None;
+        let mut requested_analysis = None;
+        let analysis_busy = self.analysis_worker_running;
         if let Some(dialog) = self.dialog.as_mut() {
             match dialog {
                 Dialog::PasteOptions {
@@ -5633,6 +5779,8 @@ impl Explorer {
                     path,
                     mode,
                     details,
+                    analysis,
+                    generation,
                     ..
                 } => {
                     shell_components::show_dialog(context, "Properties", true, Some(460.0), |ui| {
@@ -5659,7 +5807,27 @@ impl Explorer {
                             }
                         }
                         #[cfg(unix)]
-                        if let Some(Ok(snapshot)) = details {
+                        if let Some(Ok(snapshot)) = details.as_ref() {
+                            if !snapshot.is_symlink {
+                                ui.separator();
+                                let name = if snapshot.is_dir { "Calculate folder size" } else { "Calculate SHA-256" };
+                                if ui.add_enabled(!analysis_busy, egui::Button::new(name)).clicked() {
+                                    *analysis = None;
+                                    requested_analysis = Some((path.clone(), *generation));
+                                }
+                                if analysis_busy {
+                                    ui.horizontal(|ui| { ui.spinner(); ui.label("Analysing in background…"); });
+                                }
+                                if let Some(result) = analysis {
+                                    match result {
+                                        Ok(result) => { ui.label(egui::RichText::new(result).monospace()); }
+                                        Err(error) => { ui.colored_label(Color32::RED, error.as_str()); }
+                                    }
+                                }
+                            }
+                        }
+                        #[cfg(unix)]
+                        if let Some(Ok(snapshot)) = details.as_ref() {
                             ui.separator();
                             if snapshot.is_symlink {
                                 ui.label("Symlink permissions cannot be changed here.");
@@ -5693,7 +5861,11 @@ impl Explorer {
             }
         }
         if dismiss {
+            self.analysis_cancel.store(true, Ordering::Relaxed);
             self.dialog = None;
+        }
+        if let Some((path, generation)) = requested_analysis {
+            self.start_deep_analysis(path, generation);
         }
         if let Some((clipboard, destination, conflict)) = refresh_paste_preview {
             let generation = self.request_paste_preview(&clipboard, &destination, conflict);
@@ -5721,6 +5893,7 @@ impl Explorer {
 
 impl Drop for Explorer {
     fn drop(&mut self) {
+        self.analysis_cancel.store(true, Ordering::Relaxed);
         volume::clear_password(&mut self.volume_connect_password);
         self.discovery_cancel.store(true, Ordering::Relaxed);
     }
@@ -5779,6 +5952,8 @@ impl eframe::App for Explorer {
         self.preview_panel(ui);
         self.drop_areas.clear();
         self.main_panel(ui);
+        self.thumbnails.dispatch();
+        self.quick_look_window(&context);
         self.finish_drag(&context);
         self.accept_external_drop(&context);
         self.dialogs(&context);
@@ -5808,6 +5983,7 @@ impl eframe::App for Explorer {
             || waiting_for_preview
             || waiting_for_properties
             || self.folder_tree.has_pending()
+            || self.thumbnails.has_pending()
             || self.tabs.iter().any(|tab| tab.loading)
         {
             Duration::from_millis(90)
@@ -5974,11 +6150,13 @@ mod tests {
             mode: String::new(),
             generation: 8,
             details: None,
+            analysis: None,
         });
         let result = || PropertySnapshot {
             lines: vec![("Type".into(), "File".into())],
             mode: "644".into(),
             is_symlink: false,
+            is_dir: false,
         };
         accept_property_result(
             &mut dialog,

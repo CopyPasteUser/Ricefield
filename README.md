@@ -4,7 +4,7 @@
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Development preview: v0.6.0-alpha.8** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+> **Development preview: v0.7.0-alpha.1** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
 **Distribution:** An [automated Linux x86_64 preview bundle](RELEASE.md) can
 be built without distributing Rust sources to every end user. The verified
@@ -135,7 +135,21 @@ renderers remain part of the roadmap.
 
 ![RiceExplorer icon](assets/rice-explorer.svg)
 
-## Implemented on `main` — v0.3 core, 0.4 groundwork, 0.5 archives and 0.6 navigation alpha
+## Implemented on `main` — 0.3 core through 0.7 preview alpha
+
+**0.7 preview alpha:** The Grid view requests thumbnails only for visible
+images, with a 96-item in-memory cache and one decoder at a time (no persistent
+thumbnail files). Select a local file and press **Space** for a resizable
+**Quick Look** window; press Space or Esc to close. The Preview panel remains
+available separately. Local PDF first-page preview uses optional
+`poppler-utils` (`pdftoppm`); audio/video metadata uses optional `ffprobe`
+from `ffmpeg`. Both commands have timeouts and output caps. Archive preview
+shows an entry listing without extraction, and text/code previews read only
+the initial 32 KiB. Right-click a local file or folder and select **Properties**
+to inspect Linux extended attribute names / ACL presence. Use **Calculate
+folder size** or **Calculate SHA-256** explicitly for background-only
+analysis (100,000 entries / 12 s and 2 GiB / 30 s respective limits).
+Preview/backends and actual low-memory Mint behavior need physical acceptance.
 
 - Native Rust GUI with GPU-accelerated drawing; no Electron, browser or persistent background daemon.
 - Seven bundled visual profiles: `win98`, `xp-luna`, `win7`, `win10`, `frutiger-aero`, `chromeos` and `macos`.
