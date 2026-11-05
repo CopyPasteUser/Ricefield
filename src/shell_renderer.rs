@@ -8,7 +8,69 @@ use crate::{
     filesystem::{self, Entry},
     theme::{Layout, Theme},
 };
-use eframe::egui::{Align2, Color32, FontId, Painter, Pos2, Rect, Stroke, Vec2};
+use eframe::egui::{
+    self, Align2, Color32, FontId, Painter, Pos2, Rect, Response, Sense, Stroke, Vec2,
+};
+
+#[derive(Clone, Copy)]
+pub struct FileCellLayout {
+    pub width: f32,
+    pub height: f32,
+    pub grid: bool,
+}
+
+/// Draw a file cell and return its response so the controller can decide
+/// selection, navigation, context menus and drag/drop without renderer access
+/// to any of those actions.
+pub fn file_cell(
+    ui: &mut egui::Ui,
+    file: &Entry,
+    theme: &Theme,
+    selected: bool,
+    layout: FileCellLayout,
+) -> (Rect, Response) {
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(layout.width.max(80.0), layout.height),
+        Sense::click_and_drag(),
+    );
+    paint_file_cell(
+        ui.painter(),
+        rect,
+        file,
+        theme,
+        selected,
+        response.hovered(),
+        layout.grid,
+    );
+    let response = response.on_hover_text(file.path.display().to_string());
+    (rect, response)
+}
+
+pub fn sort_header(ui: &mut egui::Ui, sort_by: &str, descending: bool) -> Option<&'static str> {
+    let mut change_sort = None;
+    ui.horizontal(|ui| {
+        for (key, label) in [
+            ("name", "Name"),
+            ("type", "Type"),
+            ("size", "Size"),
+            ("modified", "Modified"),
+        ] {
+            let caption = if sort_by == key {
+                format!("{label} {}", if descending { "↓" } else { "↑" })
+            } else {
+                label.to_owned()
+            };
+            if ui
+                .small_button(caption)
+                .on_hover_text("Sort by this column")
+                .clicked()
+            {
+                change_sort = Some(key);
+            }
+        }
+    });
+    change_sort
+}
 
 pub fn shorten(name: &str, max: usize) -> String {
     let count = name.chars().count();

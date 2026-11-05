@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased — 0.6.0-alpha.5 shell widgets and compact-dialog checks
+
+- Split file cells (including input response) and sorting headers into the
+  read-only shell renderer; dispatch selection, navigation and filesystem
+  actions exclusively from the controller. Toolbar buttons now return semantic
+  events from a separate, rice-aware presentation module, and sidebar group
+  headers and common file dialogs use that same UI layer.
+- Make navigation fields stack into three rows in compact windows and constrain
+  primary file dialogs to the available width. Preserve all seven existing
+  visual identities without requiring new dependencies or changing file
+  operations.
+- Upgrade the Xvfb regression matrix from crash-only checks to visible split
+  and dialog-dismissal assertions, plus 380px-wide screenshots in eight profiles.
+- Still blocked for stable 0.6: native outbound drag-and-drop requires source
+  support in the Linux window/backend integration, plus real X11/Wayland Mint
+  pointer, keyboard, screen-reader and removable-device acceptance.
+
 ## Unreleased — 0.6.0-alpha.4 shell renderer and interaction checks
 
 - Extract file-cell painting (list/grid icons, labels, selection/hover and

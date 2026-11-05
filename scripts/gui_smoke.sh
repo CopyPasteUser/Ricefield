@@ -45,6 +45,17 @@ report_startup_failure() {
   sed -n '1,100p' "$fixture_dir/app.log" >&2
 }
 
+require_visible_change() {
+  local before="$1" after="$2" description="$3" minimum="$4" difference
+  # ImageMagick exits 1 when images differ; the numeric AE metric is printed
+  # on stderr. Never hide missing/corrupt screenshots behind that exit code.
+  difference="$(compare -metric AE "$before" "$after" null: 2>&1 || true)"
+  if ! [[ "$difference" =~ ^[0-9]+$ ]] || (( difference < minimum )); then
+    echo "$description did not visibly change ($difference pixels; expected >= $minimum)" >&2
+    exit 1
+  fi
+}
+
 for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sidebar; do
   if [[ "$theme" == custom-sidebar ]]; then
     ./target/release/rice-explorer --theme-file "$fixture_dir/custom-theme.toml" "$fixture_dir" > "$fixture_dir/app.log" 2>&1 &
@@ -98,17 +109,31 @@ for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sideba
   fi
   import -window "$window_id" "screenshots/$theme-split.png"
   identify -format '%wx%h\n' "screenshots/$theme-split.png"
+  require_visible_change "screenshots/$theme.png" "screenshots/$theme-split.png" "$theme split view" 1000
   xdotool key F3
   # Exercise tab creation, cycling, reordering, closure and recovery in every
   # rice. These are crash/regression smokes, not accessibility certification.
   for combo in ctrl+t ctrl+Page_Down ctrl+shift+Page_Up ctrl+w ctrl+shift+t; do
     xdotool key "$combo"
+    # Let egui process each command as a separate frame. Sending the whole
+    # sequence in one XTEST burst can coalesce events and leave focus stale.
+    sleep 0.15
   done
   # All skins must be able to open and dismiss a native settings/action dialog
   # without trapping keyboard input or creating a test directory.
+  # First move keyboard focus off any editable tab/address widget. This also
+  # checks that Ctrl+N works after clicking the file area, not merely at launch.
+  xdotool mousemove --window "$window_id" 620 420 click 1
+  sleep 0.2
+  import -window "$window_id" "screenshots/$theme-before-dialog.png"
   xdotool key ctrl+n
-  sleep 0.3
+  sleep 0.45
+  import -window "$window_id" "screenshots/$theme-dialog.png"
+  require_visible_change "screenshots/$theme-before-dialog.png" "screenshots/$theme-dialog.png" "$theme dialog opening" 500
   xdotool key Escape
+  sleep 0.45
+  import -window "$window_id" "screenshots/$theme-dialog-closed.png"
+  require_visible_change "screenshots/$theme-dialog.png" "screenshots/$theme-dialog-closed.png" "$theme dialog dismissal" 500
   # Check compact split-capable layout in the project's supported minimum
   # window range. Screenshots provide review evidence, not hit-target proof.
   xdotool windowsize "$window_id" 700 470
@@ -120,6 +145,15 @@ for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sideba
   fi
   import -window "$window_id" "screenshots/$theme-compact.png"
   identify -format '%wx%h\n' "screenshots/$theme-compact.png"
+  xdotool windowsize "$window_id" 380 650
+  sleep 0.4
+  if ! kill -0 "$app_pid" 2>/dev/null; then
+    echo "Narrow window crashed in theme $theme" >&2
+    report_startup_failure "$theme"
+    exit 1
+  fi
+  import -window "$window_id" "screenshots/$theme-narrow.png"
+  identify -format '%wx%h\n' "screenshots/$theme-narrow.png"
   xdotool windowsize "$window_id" 1120 720
   # The Windows 7 profile also proves a second native process/window can
   # launch without replacing the existing window. Close it before the next

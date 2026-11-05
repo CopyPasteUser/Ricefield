@@ -9,6 +9,7 @@ mod journal;
 mod location;
 mod operation_queue;
 mod preview;
+mod shell_components;
 mod shell_renderer;
 mod theme;
 mod volume;

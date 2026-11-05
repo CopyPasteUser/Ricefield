@@ -1,6 +1,6 @@
 # Release process (Linux x86_64)
 
-RiceExplorer 0.6.0-alpha.4 is a **development preview candidate**, not signed off for use
+RiceExplorer 0.6.0-alpha.5 is a **development preview candidate**, not signed off for use
 with irreplaceable files or as a complete network/archive file manager.
 The code can produce a tested distribution bundle, but a green CI run alone
 does not satisfy the safety, recovery and Linux Mint hardware gates in
@@ -107,6 +107,10 @@ as prereleases. Do **not** create the final tag before these gates pass.
    Alpha.4 separates file-list painting from actions and extends eight-profile
    keyboard/compact-window smoke checks; actual X11/Wayland pointer and screen
    reader acceptance still requires real-device verification.
+   Alpha.5 extracts additional presentation widgets, makes small navigation and
+   common dialogs more responsive, and asserts visible split/dialog transitions
+   in Xvfb. A native outbound drag source and the [Mint acceptance matrix](docs/0.6-MINT-ACCEPTANCE.md)
+   still block stable 0.6.
 2. Verify duplication, reordering and reopen with mouse and keyboard in all
    seven skins, including offline remote tabs without blocking launch.
 3. Repeat the 0.3/0.4/0.5 safety and physical-device checks before sign-off.
