@@ -197,8 +197,8 @@ activated. Visual edits regenerate TOML formatting and may remove comments.
 inside the visual editor to put Menu bar, Tabs, Navigation and Command bar
 on the top or bottom edge, hide optional components, and reorder them with
 ↑/↓. Also select the shell kind, sidebar/preview positions, sidebar sections,
-collapsible groups and status bar. Navigation is always retained. The
-composition is stored in the same validated TOML, shared by all rices.
+collapsible groups and status bar. Navigation is always retained. Each saved
+rice uses the same validated TOML schema without modifying other profiles.
 
 **Open With (0.9 alpha.2):** Select one local file, open **Actions → Open
 With…**, and choose a registered Linux desktop application. Handler lookup

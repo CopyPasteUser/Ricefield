@@ -3,7 +3,9 @@
 
 use crate::{
     config,
-    theme::{ChromeComponent, ShellKind, SidebarPosition, SidebarSection, SidebarSectionMode, Theme},
+    theme::{
+        ChromeComponent, ShellKind, SidebarPosition, SidebarSection, SidebarSectionMode, Theme,
+    },
 };
 use eframe::egui::{self, Color32};
 use std::{
@@ -43,7 +45,9 @@ impl ThemeEditor {
             .take(36)
             .map(char::from)
             .collect::<String>();
-        let directory = config::config_file().parent().map(|path| path.join("themes"));
+        let directory = config::config_file()
+            .parent()
+            .map(|path| path.join("themes"));
         let save_name = suggest_name(&base, |name| {
             directory
                 .as_ref()
@@ -232,7 +236,11 @@ impl ThemeEditor {
 fn suggest_name(base: &str, exists: impl Fn(&str) -> bool) -> String {
     let base = if base.is_empty() { "rice-custom" } else { base };
     for suffix in 1..=99 {
-        let candidate = if suffix == 1 { base.to_owned() } else { format!("{base}-{suffix}") };
+        let candidate = if suffix == 1 {
+            base.to_owned()
+        } else {
+            format!("{base}-{suffix}")
+        };
         if !exists(&candidate) {
             return candidate;
         }
@@ -551,7 +559,10 @@ mod tests {
         set_component_region(&mut theme, ChromeComponent::Navigation, Region::Bottom);
         set_component_region(&mut theme, ChromeComponent::MenuBar, Region::Top);
         set_component_region(&mut theme, ChromeComponent::Tabs, Region::Off);
-        assert_eq!(component_region(&theme, ChromeComponent::Navigation), Region::Bottom);
+        assert_eq!(
+            component_region(&theme, ChromeComponent::Navigation),
+            Region::Bottom
+        );
         assert_eq!(component_region(&theme, ChromeComponent::Tabs), Region::Off);
         assert!(shift_component(&mut theme, ChromeComponent::MenuBar, -1));
         theme.validate().unwrap();
@@ -562,7 +573,10 @@ mod tests {
 
     #[test]
     fn editor_suggests_an_unused_name_without_overwriting() {
-        assert_eq!(suggest_name("xp-custom", |name| name == "xp-custom"), "xp-custom-2");
+        assert_eq!(
+            suggest_name("xp-custom", |name| name == "xp-custom"),
+            "xp-custom-2"
+        );
         assert_eq!(suggest_name("", |_| false), "rice-custom");
     }
 }
