@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased — 0.6.0-alpha.1 development preview
+
+- Begin 0.6 everyday navigation: duplicate and reorder tabs through a shared
+  command dispatcher; right-click any tab for actions, cycle tabs with
+  Ctrl+PageUp/PageDown, move them with Ctrl+Shift+PageUp/PageDown and reopen
+  closed tabs with Ctrl+Shift+T (session-only, most recent 16).
+- Preserve local/remote location, Back/Forward history and search in duplicated
+  and reopened tabs, but allocate fresh scan/preview cancellation tokens;
+  tab reorder persists in the existing bounded location-only session snapshot.
+  Do not replay pending operations, selections or ephemeral history at startup.
+- Test upstream encrypted ZIP/7z/RAR fixtures independently against libarchive
+  3.7.4. ZIP traditional and WinZip AES-128/256 full reads pass; additional
+  encrypted ZIP extensions and encrypted 7z/RAR vectors fail closed on this
+  backend. Document exact results and a reproducible backend probe in
+  [docs/ARCHIVE-INTEROPERABILITY.md](docs/ARCHIVE-INTEROPERABILITY.md).
+- Maintain owner-approved deferral of keyrings and physical Mint/USB/network
+  interruption acceptance. 0.5 stable and 0.6 stable are not signed off.
+
 ## Unreleased — 0.5.0-alpha.2 candidate
 
 - Add masked session-only passwords to archive browsing, reload, verification

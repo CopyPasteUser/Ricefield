@@ -7,6 +7,15 @@ Linux desktop file management for RiceBowl users. v0.1 interface English; runtim
 ## Navigation and selection
 
 - Tabs preserve their own path, back/forward history, search query, selection and pending scan generation.
+- Tab actions use one skin-independent dispatcher: a tab context menu can
+  duplicate, move or close the chosen tab and reopen the last closed tab.
+  Ctrl+PageUp/PageDown cycles tabs, Ctrl+Shift+PageUp/PageDown reorders the
+  active tab, Ctrl+T opens a new tab, Ctrl+W closes it and Ctrl+Shift+T reopens
+  a closed one. Reordering keeps the same logical tab active. Duplication and
+  reopen copy local/remote address and navigation/search history but create
+  independent scan and preview cancellation tokens, and never clone stale
+  entry lists or selections. The closed-tab stack holds at most 16 snapshots
+  in memory; it is not serialized and closing the only tab goes Home.
 - The session snapshot keeps at most 32 absolute, UTF-8 tab paths and one
   active index. An explicit launch path overrides restoration, and opting out
   clears the stored paths. Unavailable mounts are handled by asynchronous
