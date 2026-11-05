@@ -26,6 +26,59 @@ const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(20 * 60);
 const MAX_FOLDER_ENTRIES: usize = 4096;
 const MAX_FOLDER_DEPTH: usize = 16;
 const MAX_FOLDER_DIRECTORIES: usize = 512;
+pub const MAX_WAITING_DOWNLOADS: usize = 16;
+
+/// Only explicitly selected network downloads enter this in-memory FIFO.
+/// Enqueued paths are snapshots, never reconstructed from later UI state.
+/// Jobs are intentionally not replayed automatically after a process restart.
+pub struct DownloadRequest {
+    pub uri: String,
+    pub encoded_name: String,
+    pub directory: PathBuf,
+    pub is_directory: bool,
+}
+
+#[derive(Default)]
+pub struct DownloadQueue {
+    pending: VecDeque<DownloadRequest>,
+}
+
+impl DownloadQueue {
+    pub fn enqueue(&mut self, job: DownloadRequest) -> Result<usize, &'static str> {
+        if self.pending.len() >= MAX_WAITING_DOWNLOADS {
+            return Err("Network download queue is full (16 waiting jobs)");
+        }
+        if self
+            .pending
+            .iter()
+            .any(|waiting| waiting.uri == job.uri && waiting.directory == job.directory)
+        {
+            return Err("This network entry is already waiting for download");
+        }
+        self.pending.push_back(job);
+        Ok(self.pending.len())
+    }
+
+    pub fn dequeue(&mut self) -> Option<DownloadRequest> {
+        self.pending.pop_front()
+    }
+
+    pub fn remove(&mut self, index: usize) -> bool {
+        self.pending.remove(index).is_some()
+    }
+
+    pub fn len(&self) -> usize {
+        self.pending.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.pending.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &DownloadRequest> {
+        self.pending.iter()
+    }
+}
 
 /// A user-selected target must never silently resolve against the app's
 /// working directory. The directory is created only after the user clicks
@@ -448,6 +501,47 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn request(id: usize) -> DownloadRequest {
+        DownloadRequest {
+            uri: format!("smb://nas/share/file-{id}.txt"),
+            encoded_name: format!("file-{id}.txt"),
+            directory: PathBuf::from("/tmp/ricefield-test-downloads"),
+            is_directory: false,
+        }
+    }
+
+    #[test]
+    fn network_download_queue_is_bounded_fifo_and_removable() {
+        let mut queue = DownloadQueue::default();
+        for id in 0..MAX_WAITING_DOWNLOADS {
+            assert_eq!(queue.enqueue(request(id)).unwrap(), id + 1);
+        }
+        assert!(queue.enqueue(request(MAX_WAITING_DOWNLOADS)).is_err());
+        assert!(queue.enqueue(request(0)).is_err());
+        assert!(queue.remove(1));
+        assert_eq!(queue.len(), MAX_WAITING_DOWNLOADS - 1);
+        assert_eq!(queue.dequeue().unwrap().encoded_name, "file-0.txt");
+        assert_eq!(queue.dequeue().unwrap().encoded_name, "file-2.txt");
+        assert_eq!(
+            queue.enqueue(request(50)).unwrap(),
+            MAX_WAITING_DOWNLOADS - 2
+        );
+        assert!(!queue.is_empty());
+        assert!(!queue.remove(100));
+        // Pending jobs are deliberately session-only and never reloaded.
+        assert!(DownloadQueue::default().is_empty());
+    }
+
+    #[test]
+    fn network_queue_duplicate_uses_original_target_snapshot() {
+        let mut queue = DownloadQueue::default();
+        assert_eq!(queue.enqueue(request(5)).unwrap(), 1);
+        assert!(queue.enqueue(request(5)).is_err());
+        let mut separate_target = request(5);
+        separate_target.directory = PathBuf::from("/tmp/another-local-folder");
+        assert_eq!(queue.enqueue(separate_target).unwrap(), 2);
+    }
 
     fn private_fixture(label: &str) -> PathBuf {
         let unique = SystemTime::now()

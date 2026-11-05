@@ -867,6 +867,9 @@ pub struct Explorer {
     remote_download_sender: Sender<Result<PathBuf, String>>,
     remote_download_receiver: Receiver<Result<PathBuf, String>>,
     remote_download_busy: bool,
+    remote_download_active: Option<(String, PathBuf)>,
+    remote_download_queue: remote_download::DownloadQueue,
+    remote_download_queue_paused: bool,
     remote_download_cancel: Arc<AtomicBool>,
     remote_download_bytes: Arc<AtomicU64>,
     remote_download_directory: String,
@@ -1086,6 +1089,9 @@ impl Explorer {
             remote_download_sender,
             remote_download_receiver,
             remote_download_busy: false,
+            remote_download_active: None,
+            remote_download_queue: remote_download::DownloadQueue::default(),
+            remote_download_queue_paused: false,
             remote_download_cancel: Arc::new(AtomicBool::new(false)),
             remote_download_bytes: Arc::new(AtomicU64::new(0)),
             remote_download_directory,
@@ -1821,9 +1827,6 @@ impl Explorer {
     }
 
     fn start_remote_download(&mut self, uri: String, name: String, is_directory: bool) {
-        if self.remote_download_busy {
-            return;
-        }
         if self.current().remote_uri.is_none()
             || !self.current().remote_entries.iter().any(|entry| {
                 entry.is_directory == is_directory
@@ -1838,19 +1841,12 @@ impl Explorer {
             ));
             return;
         }
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let bytes = Arc::new(AtomicU64::new(0));
-        self.remote_download_cancel = Arc::clone(&cancelled);
-        self.remote_download_bytes = Arc::clone(&bytes);
-        self.remote_download_busy = true;
-        let sender = self.remote_download_sender.clone();
         // Only an explicitly selected absolute directory is accepted;
         // atomic no-overwrite publication protects existing names there.
         let destination = match remote_download::download_directory(&self.remote_download_directory)
         {
             Ok(directory) => directory,
             Err(error) => {
-                self.remote_download_busy = false;
                 self.status = Some((error.into(), true));
                 return;
             }
@@ -1859,14 +1855,66 @@ impl Explorer {
             self.config.remote_download_directory = Some(destination.clone());
             self.dirty_config = true;
         }
+        let job = remote_download::DownloadRequest {
+            uri,
+            encoded_name: name,
+            directory: destination,
+            is_directory,
+        };
+        if self.remote_download_active.as_ref() == Some(&(job.uri.clone(), job.directory.clone())) {
+            self.status = Some(("This network entry is already downloading".into(), true));
+            return;
+        }
+        if self.remote_download_busy || self.remote_download_queue_paused {
+            self.status = Some(match self.remote_download_queue.enqueue(job) {
+                Ok(waiting) => (
+                    format!("Network download queued ({waiting} waiting)"),
+                    false,
+                ),
+                Err(error) => (error.into(), true),
+            });
+        } else {
+            self.launch_remote_download(job);
+        }
+    }
+
+    fn launch_remote_download(&mut self, job: remote_download::DownloadRequest) {
+        self.remote_download_active = Some((job.uri.clone(), job.directory.clone()));
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let bytes = Arc::new(AtomicU64::new(0));
+        self.remote_download_cancel = Arc::clone(&cancelled);
+        self.remote_download_bytes = Arc::clone(&bytes);
+        self.remote_download_busy = true;
+        let sender = self.remote_download_sender.clone();
         thread::spawn(move || {
-            let result = if is_directory {
-                remote_download::download_folder(&uri, &name, &destination, &cancelled, &bytes)
+            let result = if job.is_directory {
+                remote_download::download_folder(
+                    &job.uri,
+                    &job.encoded_name,
+                    &job.directory,
+                    &cancelled,
+                    &bytes,
+                )
             } else {
-                remote_download::download(&uri, &name, &destination, &cancelled, &bytes)
+                remote_download::download(
+                    &job.uri,
+                    &job.encoded_name,
+                    &job.directory,
+                    &cancelled,
+                    &bytes,
+                )
             };
             let _ = sender.send(result);
         });
+    }
+
+    fn start_next_remote_download(&mut self) {
+        if !self.remote_download_busy
+            && !self.remote_download_queue_paused
+            && let Some(job) = self.remote_download_queue.dequeue()
+        {
+            self.launch_remote_download(job);
+        }
     }
 
     fn toggle_hidden(&mut self) {
@@ -2728,10 +2776,18 @@ impl Explorer {
         }
         while let Ok(result) = self.remote_download_receiver.try_recv() {
             self.remote_download_busy = false;
+            self.remote_download_active = None;
+            if result.is_err() && !self.remote_download_queue.is_empty() {
+                self.remote_download_queue_paused = true;
+            }
+            if self.remote_download_queue.is_empty() {
+                self.remote_download_queue_paused = false;
+            }
             self.status = Some(match result {
                 Ok(path) => (format!("Downloaded to {}", path.display()), false),
                 Err(error) => (error, true),
             });
+            self.start_next_remote_download();
         }
         while let Ok(event) = self.op_receiver.try_recv() {
             match event {
@@ -5595,7 +5651,7 @@ impl Explorer {
             .show(ui, |ui| {
                 ui.heading("Network location");
                 ui.monospace(self.current().remote_uri.as_deref().unwrap_or_default());
-                ui.small("Remote folders are read-only. You can preview text or download files locally; network uploads and changes are disabled.");
+                ui.small("Remote folders are read-only. You can preview text and queue local downloads; network uploads and changes are disabled.");
                 ui.horizontal(|ui| {
                     ui.label("Download to:");
                     let edit = ui.add(egui::TextEdit::singleline(&mut self.remote_download_directory)
@@ -5618,6 +5674,37 @@ impl Explorer {
                             self.remote_download_cancel.store(true, Ordering::Relaxed);
                         }
                     });
+                }
+                if !self.remote_download_queue.is_empty() {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.strong(format!("Waiting network downloads: {}", self.remote_download_queue.len()));
+                        if self.remote_download_queue_paused {
+                            ui.colored_label(Color32::YELLOW, "Queue paused");
+                            if ui.button("Resume queue").clicked() {
+                                self.remote_download_queue_paused = false;
+                                self.start_next_remote_download();
+                            }
+                        } else if ui.button("Pause after current").clicked() {
+                            self.remote_download_queue_paused = true;
+                        }
+                    });
+                    let mut remove_index = None;
+                    egui::ScrollArea::vertical().max_height(105.0).show(ui, |ui| {
+                        for (index, job) in self.remote_download_queue.iter().enumerate() {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.small(format!("{}. {}", index + 1, volume::display_remote_name(&job.encoded_name)));
+                                if ui.small_button("Remove").clicked() {
+                                    remove_index = Some(index);
+                                }
+                            });
+                        }
+                    });
+                    if let Some(index) = remove_index {
+                        self.remote_download_queue.remove(index);
+                        if self.remote_download_queue.is_empty() {
+                            self.remote_download_queue_paused = false;
+                        }
+                    }
                 }
                 ui.horizontal(|ui| {
                     if ui.button("Parent").clicked() {
@@ -5685,7 +5772,7 @@ impl Explorer {
                                     if ui.button(format!("Folder  {}", volume::display_remote_name(&entry.name))).on_hover_text(&entry.uri).clicked() {
                                         open = Some(entry.uri.clone());
                                     }
-                                    if ui.add_enabled(!self.remote_download_busy, egui::Button::new("Download folder"))
+                                    if ui.button("Download folder")
                                         .on_hover_text("Download all files and subfolders to the selected local folder (bounded and no-overwrite)")
                                         .clicked() {
                                         download = Some((entry.uri.clone(), entry.name.clone(), true));
@@ -5694,7 +5781,7 @@ impl Explorer {
                                     if ui.add_enabled(entry.is_regular_file, egui::Button::new(format!("Text preview  {}", volume::display_remote_name(&entry.name)))).on_hover_text(&entry.uri).clicked() {
                                         preview = Some(entry.uri.clone());
                                     }
-                                    if ui.add_enabled(entry.is_regular_file && !self.remote_download_busy, egui::Button::new("Download"))
+                                    if ui.add_enabled(entry.is_regular_file, egui::Button::new("Download"))
                                         .on_hover_text("Save to the selected local folder without overwriting an existing file")
                                         .clicked() {
                                         download = Some((entry.uri.clone(), entry.name.clone(), false));
