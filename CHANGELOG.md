@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — 0.6.0-alpha.6 NAS sign-in and external drag bridge
+
+- Add username, optional workgroup and masked password fields to network
+  Connect and Reconnect. Answer GIO's interactive mount prompts with a bounded
+  input pipe, not with URI/query credentials or shell arguments; no keyring
+  integration or password persistence.
+- Add **Drag to another app…** to the local file context menu, launching
+  optional `ripdrag` or `dragon` only on demand; existing internal drag stays
+  unchanged. Direct tile-to-app drag still requires framework support.
+- Pending before stable 0.6: actual Synology and GDBus/GVfs acceptance on Mint,
+  X11/Wayland external drag interoperability and real pointer/accessibility tests.
+
 ## Unreleased — 0.6.0-alpha.5 shell widgets and compact-dialog checks
 
 - Split file cells (including input response) and sorting headers into the

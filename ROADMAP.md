@@ -296,21 +296,25 @@ recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
 - [ ] Connect SMB/SFTP/WebDAV, browse system NFS and supported MTP devices.
   Initial non-blocking `gio mount` connection attempts are supported without
   URI credentials. Read-only remote listing works in normal tabs; native remote
-  file operations and interactive authentication are not yet available. A
+  file operations are not yet available. Alpha.6 adds a limited interactive
+  username/domain/password flow through the GIO console mount operation;
+  real-device verification and native mount APIs remain outstanding. A
   bounded metadata listing distinguishes traversable directories from files
   that cannot yet be opened or transferred. Small UTF-8 remote files can now
   be inspected through a bounded, cancellable, read-only text preview; binary
   preview, downloading and writes still require the native operation backend.
 - [ ] Connect dialog, secure credential handling, favorites and reconnect.
   A basic URI dialog, 32 validated persistent URI favorites and manual
-  reconnect are implemented. Credential prompts/keyring integration and
-  recovery from mid-operation disconnects remain open.
+  reconnect are implemented. Alpha.6 supplies a masked one-attempt credential
+  prompt; system keyring integration and recovery from mid-operation
+  disconnects remain open.
 
 **Gate:** offline shares, disconnections, bad credentials and removed USB
 devices produce clear errors without frozen UI or silent data loss.
 
-**Owner decision (2026-11-04):** Defer keyring/interactive credential work and
-all real-device, unplug and disconnection acceptance until a later phase.
+**Owner decision (2026-11-04, updated 2026-11-05):** Keep keyring persistence
+and real-device, unplug and disconnection acceptance deferred, but implement
+an explicit session-only NAS sign-in dialog in alpha.6.
 Keep remote mutations disabled; do not present these untested integrations as
 stable or infer that skipping the tests satisfies the 0.4 release gate.
 
@@ -375,9 +379,10 @@ wider hostile corpora and real Mint device acceptance are open for stable 0.5.
 - [ ] Native external drag-out for X11/Wayland and a complete keyboard/mouse
   acceptance matrix. Existing file context menus, toolbar actions, external
   drag-in and alpha.2 internal copy-by-drag share no-overwrite operations.
-  Native outbound drag-source integration cannot be claimed with the current
-  eframe 0.37 / winit 0.30.13 inbound-only file-drop API; needs a tested
-  platform backend and actual compositor acceptance before enabling.
+  Alpha.6 adds a context-menu bridge to optional installed `ripdrag` or
+  `dragon` native drag-source helpers. Direct tile-to-app dragging still
+  needs framework support; eframe 0.37 / winit 0.30.13 cannot initiate it.
+  X11/Wayland compositor acceptance is open.
 - [x] Alpha.2 adds a lazy symlink-safe folder tree, clickable details headers,
   existing list/grid layouts, natural/lexical sorting and type filters.
 - [x] Alpha.3 handles per-entry ENODEV/ENOTCONN/ESTALE-style metadata failures

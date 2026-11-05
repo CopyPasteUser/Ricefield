@@ -11,7 +11,7 @@ use crate::{
     shell_components::{self, ToolbarAction},
     shell_renderer::{self, FileCellLayout, shorten},
     theme::{BUILTIN_IDS, ChromeComponent, SidebarPosition, SidebarSection, Theme},
-    volume::{self, VolumeAction},
+    volume::{self, MountCredentials, VolumeAction},
 };
 use eframe::egui::{self, Align2, Color32, Key, Modifiers, Pos2, Rect, Vec2};
 use std::{
@@ -778,6 +778,9 @@ pub struct Explorer {
     volume_receiver: Receiver<Result<(String, Option<String>), String>>,
     volume_connect_open: bool,
     volume_connect_uri: String,
+    volume_connect_user: String,
+    volume_connect_domain: String,
+    volume_connect_password: String,
     volume_confirm: Option<VolumeAction>,
     volume_busy: bool,
     preview_sender: Sender<PreviewResult>,
@@ -923,6 +926,9 @@ impl Explorer {
             volume_receiver,
             volume_connect_open: false,
             volume_connect_uri: String::new(),
+            volume_connect_user: String::new(),
+            volume_connect_domain: String::new(),
+            volume_connect_password: String::new(),
             volume_confirm: None,
             volume_busy: false,
             preview_sender,
@@ -1539,7 +1545,9 @@ impl Explorer {
         thread::spawn(move || {
             let label = action.label();
             let connected_uri = match &action {
-                VolumeAction::Connect(uri) => Some(uri.clone()),
+                VolumeAction::Connect(uri) | VolumeAction::ConnectAuthenticated(uri, _) => {
+                    Some(uri.clone())
+                }
                 _ => None,
             };
             let result = volume::execute(&action).map(|()| {
@@ -1560,21 +1568,55 @@ impl Explorer {
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
+                .default_width(420.0)
                 .show(context, |ui| {
                     ui.label("SMB, SFTP, WebDAV or MTP address (no passwords in the URL):");
                     ui.add_sized(
-                        [420.0, 26.0],
+                        [ui.available_width().min(420.0), 26.0],
                         egui::TextEdit::singleline(&mut self.volume_connect_uri)
                             .hint_text("smb://server/share"),
                     );
-                    ui.small("Uses system GIO/GVfs. Authentication prompts are not yet integrated; shares requiring credentials may fail.");
+                    ui.separator();
+                    ui.label("Username (leave empty for server default):");
+                    ui.add_sized(
+                        [ui.available_width().min(420.0), 26.0],
+                        egui::TextEdit::singleline(&mut self.volume_connect_user)
+                            .hint_text("NAS username"),
+                    );
+                    ui.label("Domain / workgroup (optional):");
+                    ui.add_sized(
+                        [ui.available_width().min(420.0), 26.0],
+                        egui::TextEdit::singleline(&mut self.volume_connect_domain)
+                            .hint_text("WORKGROUP"),
+                    );
+                    ui.label("Password (leave empty for guest / existing session):");
+                    ui.add_sized(
+                        [ui.available_width().min(420.0), 26.0],
+                        egui::TextEdit::singleline(&mut self.volume_connect_password)
+                            .password(true)
+                            .hint_text("NAS password"),
+                    );
+                    ui.small("Credentials stay in this connection attempt only. RiceExplorer does not save a password or put it in the URL.");
                     connect = ui.add_enabled(!self.volume_busy, egui::Button::new("Connect")).clicked();
                 });
             self.volume_connect_open = open;
             if connect {
                 match Location::parse(self.volume_connect_uri.clone().into()) {
                     Ok(Location::Remote(remote)) => {
-                        self.start_volume_action(VolumeAction::Connect(remote.uri));
+                        let credentials = MountCredentials {
+                            username: self.volume_connect_user.clone(),
+                            domain: self.volume_connect_domain.clone(),
+                            password: std::mem::take(&mut self.volume_connect_password),
+                        };
+                        let action = if credentials.username.is_empty()
+                            && credentials.domain.is_empty()
+                            && credentials.password.is_empty()
+                        {
+                            VolumeAction::Connect(remote.uri)
+                        } else {
+                            VolumeAction::ConnectAuthenticated(remote.uri, credentials)
+                        };
+                        self.start_volume_action(action);
                         self.volume_connect_open = false;
                         self.volume_connect_uri.clear();
                     }
@@ -1583,6 +1625,8 @@ impl Explorer {
                     }
                     Err(error) => self.status = Some((error.into(), true)),
                 }
+            } else if !open {
+                volume::clear_password(&mut self.volume_connect_password);
             }
         }
         if let Some(action) = self.volume_confirm.clone() {
@@ -4465,11 +4509,13 @@ impl Explorer {
                         self.scan(self.active);
                     }
                     if ui
-                        .add_enabled(!self.volume_busy, egui::Button::new("Reconnect"))
+                        .add_enabled(!self.volume_busy, egui::Button::new("Connect / Sign in"))
                         .clicked()
                     {
-                        let uri = self.current().remote_uri.clone().unwrap_or_default();
-                        self.start_volume_action(VolumeAction::Connect(uri));
+                        self.volume_connect_uri =
+                            self.current().remote_uri.clone().unwrap_or_default();
+                        volume::clear_password(&mut self.volume_connect_password);
+                        self.volume_connect_open = true;
                     }
                     let uri = self.current().remote_uri.clone().unwrap_or_default();
                     let saved = self.config.remote_favorites.contains(&uri);
@@ -4700,6 +4746,16 @@ impl Explorer {
                     self.select_entry(entry, index, Modifiers::default());
                 }
                 self.copy_selected_paths(ui.ctx());
+                ui.close();
+            }
+            if ui.button("Drag to another app…").clicked() {
+                if !self.current().selected.contains(&entry.path) {
+                    self.select_entry(entry, index, Modifiers::default());
+                }
+                self.status = Some(match crate::external_drag::launch(&self.selected_paths()) {
+                    Ok(helper) => (format!("Opened {helper} drag source; drop files into the other app."), false),
+                    Err(error) => (error, true),
+                });
                 ui.close();
             }
             if ui.button("Cut").clicked() {

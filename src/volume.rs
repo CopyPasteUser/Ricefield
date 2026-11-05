@@ -3,7 +3,7 @@
 
 use std::{
     ffi::OsString,
-    io::Read,
+    io::{Read, Write},
     path::PathBuf,
     process::{Command, Stdio},
     sync::atomic::{AtomicBool, Ordering},
@@ -186,14 +186,44 @@ fn parse_remote_listing(parent: &str, bytes: &[u8]) -> Result<Vec<RemoteEntry>, 
 #[derive(Clone, Debug)]
 pub enum VolumeAction {
     Connect(String),
+    ConnectAuthenticated(String, MountCredentials),
     Unmount(PathBuf),
     Eject(PathBuf),
+}
+
+/// Credentials are deliberately ephemeral: never embed them in a URI or
+/// process arguments, and never include them in a Debug/status message.
+#[derive(Clone)]
+pub struct MountCredentials {
+    pub username: String,
+    pub domain: String,
+    pub password: String,
+}
+
+impl std::fmt::Debug for MountCredentials {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("MountCredentials([REDACTED])")
+    }
+}
+
+impl Drop for MountCredentials {
+    fn drop(&mut self) {
+        clear_password(&mut self.password);
+    }
+}
+
+pub fn clear_password(password: &mut String) {
+    // Best-effort wipe of our owned buffer, including when the sign-in dialog
+    // is dismissed. External libraries and the server may keep other copies.
+    let mut bytes = std::mem::take(password).into_bytes();
+    bytes.fill(0);
+    std::hint::black_box(&bytes);
 }
 
 impl VolumeAction {
     fn arguments(&self) -> Vec<OsString> {
         match self {
-            Self::Connect(uri) => vec![OsString::from(uri)],
+            Self::Connect(uri) | Self::ConnectAuthenticated(uri, _) => vec![OsString::from(uri)],
             Self::Unmount(path) => vec![OsString::from("-u"), path.as_os_str().to_owned()],
             Self::Eject(path) => vec![OsString::from("-e"), path.as_os_str().to_owned()],
         }
@@ -201,7 +231,7 @@ impl VolumeAction {
 
     pub fn label(&self) -> &'static str {
         match self {
-            Self::Connect(_) => "Connect",
+            Self::Connect(_) | Self::ConnectAuthenticated(_, _) => "Connect",
             Self::Unmount(_) => "Unmount",
             Self::Eject(_) => "Eject",
         }
@@ -211,9 +241,12 @@ impl VolumeAction {
 /// A bounded operation: offline servers and unresponsive device backends must
 /// not keep a worker alive forever. Never use a shell or forward credentials.
 pub fn execute(action: &VolumeAction) -> Result<(), String> {
-    let mut child = Command::new("gio")
-        .arg("mount")
-        .args(action.arguments())
+    let mut command = Command::new("gio");
+    command.arg("mount").args(action.arguments()).env("LC_ALL", "C");
+    if let VolumeAction::ConnectAuthenticated(_, credentials) = action {
+        return execute_authenticated(command, credentials.clone(), Duration::from_secs(30));
+    }
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -244,6 +277,99 @@ pub fn execute(action: &VolumeAction) -> Result<(), String> {
     }
 }
 
+/// GIO's console mount operation asks for User, Domain and Password in the
+/// order required by the backend. Answer only recognized prompts; piping a
+/// blind list of credentials could send a password to a username prompt.
+/// No TTY or external password dialog is required, and secrets never appear
+/// in process arguments or the filesystem.
+fn answer_mount_prompts(
+    mut stdout: impl Read,
+    mut stdin: impl Write,
+    credentials: MountCredentials,
+) -> Result<(), String> {
+    let mut buffer = Vec::new();
+    let mut one = [0_u8; 1];
+    let mut requests = 0;
+    let mut password_attempted = false;
+    loop {
+        match stdout.read(&mut one) {
+            Ok(0) => return Ok(()),
+            Ok(_) => {}
+            Err(error) => return Err(format!("Cannot read GIO authentication prompt: {error}")),
+        }
+        buffer.push(one[0]);
+        if buffer.len() > 8192 {
+            return Err("GIO authentication prompt exceeded the safety limit".into());
+        }
+        if one[0] != b' ' || !buffer.ends_with(b": ") {
+            continue;
+        }
+        let prompt = String::from_utf8_lossy(&buffer);
+        let prompt = prompt.rsplit('\n').next().unwrap_or("");
+        let value = if prompt.starts_with("User") {
+            &credentials.username
+        } else if prompt.starts_with("Domain") {
+            &credentials.domain
+        } else if prompt.starts_with("Password") {
+            if password_attempted {
+                return Err("NAS requested the password again. Check credentials before retrying".into());
+            }
+            password_attempted = true;
+            &credentials.password
+        } else {
+            // Unexpected requests must not accidentally receive a password.
+            return Err("GIO requested an unsupported authentication field".into());
+        };
+        requests += 1;
+        if requests > 6 || value.contains(['\r', '\n', '\0']) {
+            return Err("Unsafe or repeated GIO authentication request".into());
+        }
+        stdin
+            .write_all(value.as_bytes())
+            .and_then(|()| stdin.write_all(b"\n"))
+            .and_then(|()| stdin.flush())
+            .map_err(|error| format!("Cannot submit GIO authentication: {error}"))?;
+        buffer.clear();
+    }
+}
+
+fn execute_authenticated(
+    mut command: Command,
+    credentials: MountCredentials,
+    timeout: Duration,
+) -> Result<(), String> {
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("Cannot start authenticated GIO mount: {error}"))?;
+    let stdout = child.stdout.take().ok_or("GIO output unavailable")?;
+    let stdin = child.stdin.take().ok_or("GIO input unavailable")?;
+    let reader = thread::spawn(move || answer_mount_prompts(stdout, stdin, credentials));
+    let deadline = Instant::now() + timeout;
+    let result = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break if status.success() { Ok(()) } else {
+                Err("Connect failed. Check NAS credentials, GVfs services and the session D-Bus.".into())
+            },
+            Ok(None) if reader.is_finished() => {
+                break Err("GIO authentication ended before the mount finished".into());
+            }
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
+            Ok(None) => break Err(format!("Authenticated connect timed out after {} seconds", timeout.as_secs())),
+            Err(error) => break Err(format!("Cannot check GIO connection: {error}")),
+        }
+    };
+    if result.is_err() {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+    let prompt_result = reader.join().map_err(|_| "GIO authentication reader panicked")?;
+    prompt_result?;
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,6 +389,60 @@ mod tests {
             VolumeAction::Connect("smb://host/share".into()).arguments(),
             vec![OsString::from("smb://host/share")]
         );
+        let auth = VolumeAction::ConnectAuthenticated(
+            "smb://host/share".into(),
+            MountCredentials {
+                username: "admin".into(),
+                domain: "WORKGROUP".into(),
+                password: "secret123".into(),
+            },
+        );
+        assert_eq!(auth.arguments(), vec![OsString::from("smb://host/share")]);
+        assert!(!format!("{auth:?}").contains("secret123"));
+    }
+
+    #[test]
+    fn authenticated_mount_answers_prompts_in_backend_order() {
+        let mut command = Command::new("sh");
+        command.arg("-c").arg(
+            "printf 'Password: '; IFS= read -r pass; \
+             printf 'User [guest]: '; IFS= read -r user; \
+             printf 'Domain [LOCAL]: '; IFS= read -r domain; \
+             test \"$pass\" = 'test-password' && \
+             test \"$user\" = 'alice' && test \"$domain\" = 'WORKGROUP'",
+        );
+        let credentials = MountCredentials {
+            username: "alice".into(),
+            domain: "WORKGROUP".into(),
+            password: "test-password".into(),
+        };
+        assert!(execute_authenticated(command, credentials, Duration::from_secs(2)).is_ok());
+    }
+
+    #[test]
+    fn authenticated_mount_does_not_reply_to_unrecognized_prompts() {
+        let mut command = Command::new("sh");
+        command.arg("-c").arg("printf 'Security question: '; IFS= read -r ignored");
+        let credentials = MountCredentials {
+            username: "alice".into(),
+            domain: String::new(),
+            password: "test-password".into(),
+        };
+        let error = execute_authenticated(command, credentials, Duration::from_secs(2)).unwrap_err();
+        assert!(error.contains("unsupported authentication field"));
+    }
+
+    #[test]
+    fn authenticated_mount_does_not_retry_bad_password_automatically() {
+        let mut command = Command::new("sh");
+        command.arg("-c").arg("printf 'Password: '; IFS= read -r one; printf 'Password: '; IFS= read -r two");
+        let credentials = MountCredentials {
+            username: String::new(),
+            domain: String::new(),
+            password: "wrong-password".into(),
+        };
+        let error = execute_authenticated(command, credentials, Duration::from_secs(2)).unwrap_err();
+        assert!(error.contains("requested the password again"));
     }
 
     #[test]

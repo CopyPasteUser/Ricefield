@@ -4,7 +4,7 @@
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Development preview: v0.6.0-alpha.5** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+> **Development preview: v0.6.0-alpha.6** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
 **Distribution:** An [automated Linux x86_64 preview bundle](RELEASE.md) can
 be built without distributing Rust sources to every end user. The verified
@@ -29,7 +29,11 @@ persistent network favorites and explicit reconnect. The system `gio`
 executable and suitable GVfs backends are required. Optional session restore
 now remembers remote tabs alongside local folders without storing credentials;
 offline shares report errors through background scans rather than delaying
-startup.
+startup. **0.6 alpha.6:** the Connect / Sign in dialog takes a username,
+optional workgroup and masked password for a single GIO mount attempt. GIO's
+interactive prompts are answered through a bounded pipe, never through CLI
+arguments, URLs or saved settings. A broken GDBus/GVfs session can still
+prevent mounting with valid credentials; NAS acceptance on Mint is pending.
 
 **Safety boundary:** remote file modification, copy/move, rename, delete and
 paste remain disabled; remote tabs never fall through to local POSIX file
@@ -83,9 +87,12 @@ includes an asynchronous expandable folder tree; list headings sort by
 name/type/size/date and natural sorting places `file2` before `file10`.
 The type filter shows images, documents, audio, video, code or archives.
 Drag files into the Explorer, or between its local folders/panes, to enqueue
-a no-overwrite copy. **Dragging files out into other Linux applications is
-not supported yet**; real Mint/Wayland/X11 drag and multi-window acceptance
-remains outstanding. This is not a stable 0.6 release.
+a no-overwrite copy. **0.6 alpha.6:** right-click a local file or selection
+and choose **Drag to another app…** to open an installed `ripdrag` or `dragon`
+native drag-source helper. No persistent process or filesystem change is
+made. Directly dragging a file tile *out* of RiceExplorer is still unsupported;
+helper availability and actual Mint X11/Wayland acceptance remain open.
+This is not a stable 0.6 release.
 
 **Shell component progress (alpha.5):** File-cell widgets, sorting headers,
 toolbar events, sidebar group framing and common file-dialog windows now have
