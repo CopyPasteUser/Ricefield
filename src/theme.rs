@@ -704,7 +704,10 @@ mod tests {
         for left in 0..themes.len() {
             for right in (left + 1)..themes.len() {
                 assert_ne!(themes[left].shell_kind(), themes[right].shell_kind());
-                assert_ne!(themes[left].top_components(), themes[right].top_components());
+                assert_ne!(
+                    themes[left].top_components(),
+                    themes[right].top_components()
+                );
             }
         }
     }
