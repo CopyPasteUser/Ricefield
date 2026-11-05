@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9 navigation accessibility — reliable folder tree controls
+
+- Replace missing-glyph Unicode disclosure triangles with visible native
+  `+`/`-` tree expand/collapse buttons across every rice, retaining tooltips,
+  focus and keyboard activation. Align the UX contract with read-only URI tabs.
+
 ## 1.0 release safety — serialize user install and uninstall
 
 - Protect install, upgrade, rollback and uninstall with a common per-user

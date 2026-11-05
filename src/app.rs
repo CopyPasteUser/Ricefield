@@ -4548,7 +4548,11 @@ impl Explorer {
         ui.horizontal(|ui| {
             ui.add_space(depth as f32 * 9.0);
             if ui
-                .small_button(if expanded { "▾" } else { "▸" })
+                // Linux's bundled egui font cannot render the Unicode tree
+                // triangles consistently on the older Mint/Xfce targets.
+                // Classic +/- affordances are period-correct for Win98 and
+                // remain legible and keyboard-operable in every rice.
+                .small_button(if expanded { "-" } else { "+" })
                 .on_hover_text(if expanded {
                     "Collapse folder"
                 } else {
