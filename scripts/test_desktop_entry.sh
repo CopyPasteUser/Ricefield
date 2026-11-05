@@ -21,7 +21,7 @@ for mode in default custom; do
   launcher="$data_dir/applications/rice-explorer.desktop"
   test -f "$launcher"
   test -f "$data_dir/icons/hicolor/scalable/apps/rice-explorer.svg"
-  grep -Fqx -- "Exec=\"$HOME/.local/bin/rice-explorer\" %F" "$launcher"
+  grep -Fqx -- "Exec=\"$HOME/.local/bin/rice-explorer\" %U" "$launcher"
   grep -Fqx -- 'Terminal=false' "$launcher"
   grep -Fqx -- 'Categories=System;FileManager;' "$launcher"
   if command -v desktop-file-validate >/dev/null 2>&1; then

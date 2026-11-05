@@ -944,7 +944,7 @@ impl Explorer {
         context: &egui::Context,
         selected_theme: Option<String>,
         theme_file: Option<PathBuf>,
-        locations: Vec<PathBuf>,
+        locations: Vec<Location>,
         separate_window: bool,
     ) -> Self {
         let mut config = Config::load();
@@ -1011,7 +1011,7 @@ impl Explorer {
         let (startup_locations, startup_active) = if from_session {
             config.restored_session()
         } else {
-            (locations.into_iter().map(Location::Local).collect(), 0)
+            (locations, 0)
         };
         let mut explorer = Self {
             config,

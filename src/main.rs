@@ -24,8 +24,8 @@ mod volume;
 
 use std::{env, ffi::OsString, path::PathBuf};
 
-fn location_argument(argument: OsString) -> Result<PathBuf, &'static str> {
-    location::Location::parse(argument)?.into_local_path()
+fn location_argument(argument: OsString) -> Result<location::Location, &'static str> {
+    location::Location::parse(argument)
 }
 
 fn invalid_argument(message: &str) -> ! {
@@ -36,14 +36,14 @@ fn invalid_argument(message: &str) -> ! {
 fn main() -> eframe::Result {
     let mut selected_theme = None;
     let mut theme_file = None;
-    let mut locations = Vec::<PathBuf>::new();
+    let mut locations = Vec::<location::Location>::new();
     let mut separate_window = false;
     let mut args = env::args_os().skip(1);
     while let Some(arg) = args.next() {
         match arg.to_str() {
             Some("--help" | "-h") => {
                 println!(
-                    "RiceExplorer {}\nUsage: rice-explorer [--theme ID] [--theme-file FILE] [FOLDER ...]\n\n--version        Show the package version\n--list-themes    Show bundled profiles\n--theme ID       Select a RiceBowl visual profile\n--theme-file FILE  Load an external editable TOML theme\n--separate-window  Open a secondary window without saving its tab session\n\nCLI accepts local paths and file:// URIs; supported remote addresses can be entered in the application. Remote browsing is read-only.\n\nLocal Archive menu: browse, verify, extract selected, and create ZIP/tar.gz/tar.xz/tar.zst/7z (system libarchive required); masked password prompts and optional AES-256 ZIP creation. Encrypted 7z/RAR support depends on the system backend.\n\nKeyboard: F3 two-folder split view, Ctrl+Shift+N separate window, Ctrl+L path, Ctrl+F search, Ctrl+T/W open/close tab, Ctrl+Shift+T reopen, Ctrl+PageUp/PageDown cycle, Ctrl+Shift+PageUp/PageDown reorder; Ctrl+C/X/V copy/cut/paste, F2 rename, Delete trash, Shift+Delete permanent delete, Ctrl+A select all, Ctrl+D duplicate file, Alt+Enter properties, Space preview, Ctrl+H hidden, Ctrl+R refresh.",
+                    "RiceExplorer {}\nUsage: rice-explorer [--theme ID] [--theme-file FILE] [LOCATION ...]\n\n--version        Show the package version\n--list-themes    Show bundled profiles\n--theme ID       Select a RiceBowl visual profile\n--theme-file FILE  Load an external editable TOML theme\n--separate-window  Open a secondary window without saving its tab session\n\nLocations accept local paths, file://, smb://, sftp://, dav(s):// and mtp:// URIs. Remote browsing is read-only. Credentials belong in RiceExplorer's secure connection prompt, never in command-line URIs.\n\nLocal Archive menu: browse, verify, extract selected, and create ZIP/tar.gz/tar.xz/tar.zst/7z (system libarchive required); masked password prompts and optional AES-256 ZIP creation. Encrypted 7z/RAR support depends on the system backend.\n\nKeyboard: F3 two-folder split view, Ctrl+Shift+N separate window, Ctrl+L path, Ctrl+F search, Ctrl+T/W open/close tab, Ctrl+Shift+T reopen, Ctrl+PageUp/PageDown cycle, Ctrl+Shift+PageUp/PageDown reorder; Ctrl+C/X/V copy/cut/paste, F2 rename, Delete trash, Shift+Delete permanent delete, Ctrl+A select all, Ctrl+D duplicate file, Alt+Enter properties, Space preview, Ctrl+H hidden, Ctrl+R refresh.",
                     env!("CARGO_PKG_VERSION")
                 );
                 return Ok(());
@@ -128,28 +128,44 @@ mod tests {
     fn local_file_uris_preserve_paths() {
         assert_eq!(
             location_argument("file:///tmp/a%20b%23c".into()).unwrap(),
-            PathBuf::from("/tmp/a b#c")
+            location::Location::Local(PathBuf::from("/tmp/a b#c"))
         );
         assert_eq!(
             location_argument("file://LOCALHOST/home/user".into()).unwrap(),
-            PathBuf::from("/home/user")
+            location::Location::Local(PathBuf::from("/home/user"))
         );
         assert_eq!(
             location_argument("FILE:///tmp/README".into()).unwrap(),
-            PathBuf::from("/tmp/README")
+            location::Location::Local(PathBuf::from("/tmp/README"))
         );
         assert_eq!(
             location_argument("notes:2026".into()).unwrap(),
-            PathBuf::from("notes:2026")
+            location::Location::Local(PathBuf::from("notes:2026"))
         );
     }
 
     #[test]
-    fn invalid_or_remote_uris_are_rejected() {
+    fn remote_uris_enter_the_read_only_backend() {
+        for (uri, scheme) in [
+            ("smb://server/share", location::RemoteScheme::Smb),
+            ("sftp://example.org/home", location::RemoteScheme::Sftp),
+            ("davs://example.org/drive", location::RemoteScheme::Davs),
+            ("mtp://[usb:001,008]/", location::RemoteScheme::Mtp),
+        ] {
+            assert_eq!(
+                location_argument(uri.into()).unwrap(),
+                location::Location::Remote(location::RemoteLocation {
+                    scheme,
+                    uri: uri.into()
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_uris_are_rejected_before_backend_use() {
         for uri in [
-            "smb://server/share",
-            "sftp://example.org/home",
-            "davs://example.org/drive",
+            "smb://name:password@server/share",
             "trash:///",
             "file://remote-host/home",
             "file:///tmp/a%XXb",
@@ -163,18 +179,15 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn unix_non_utf8_names_survive_argument_parsing() {
-        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        use std::os::unix::ffi::OsStringExt;
         let raw = OsString::from_vec(b"/tmp/\xffname".to_vec());
         assert_eq!(
-            location_argument(raw).unwrap().as_os_str().as_bytes(),
-            b"/tmp/\xffname"
+            location_argument(raw.clone()).unwrap(),
+            location::Location::Local(raw.into())
         );
         assert_eq!(
-            location_argument("file:///tmp/%FFname".into())
-                .unwrap()
-                .as_os_str()
-                .as_bytes(),
-            b"/tmp/\xffname"
+            location_argument("file:///tmp/%FFname".into()).unwrap(),
+            location::Location::Local(OsString::from_vec(b"/tmp/\xffname".to_vec()).into())
         );
     }
 }

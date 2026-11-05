@@ -31,7 +31,7 @@ temporary="$(mktemp "$apps_dir/.rice-explorer.XXXXXX.desktop")"
 trap 'rm -f -- "$temporary"' EXIT
 while IFS= read -r line || [[ -n "$line" ]]; do
   case "$line" in
-    Exec=*) printf 'Exec="%s" %%F\n' "$escaped" ;;
+    Exec=*) printf 'Exec="%s" %%U\n' "$escaped" ;;
     *) printf '%s\n' "$line" ;;
   esac
 done < "$project_dir/assets/rice-explorer.desktop" > "$temporary"
