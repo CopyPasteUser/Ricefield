@@ -4457,8 +4457,7 @@ impl Explorer {
                 let size = texture.size_vec2();
                 let scale = ((ui.available_width() - 8.0) / size.x)
                     .min((ui.available_height() - 12.0) / size.y)
-                    .min(1.0)
-                    .max(0.1);
+                    .clamp(0.1, 1.0);
                 ui.add(egui::Image::new((texture.id(), size)).fit_to_exact_size(size * scale));
             }
             PreviewContent::Text(contents) => {
@@ -5825,37 +5824,37 @@ impl Explorer {
                             }
                         }
                         #[cfg(unix)]
-                        if let Some(Ok(snapshot)) = details.as_ref() {
-                            if !snapshot.is_symlink {
-                                ui.separator();
-                                let name = if snapshot.is_dir {
-                                    "Calculate folder size"
-                                } else {
-                                    "Calculate SHA-256"
-                                };
-                                if ui
-                                    .add_enabled(!analysis_busy, egui::Button::new(name))
-                                    .clicked()
-                                {
-                                    *analysis = None;
-                                    requested_analysis = Some((path.clone(), *generation));
-                                }
-                                if analysis_busy {
-                                    ui.horizontal(|ui| {
-                                        ui.spinner();
-                                        ui.label("Analysing in background…");
-                                    });
-                                }
-                                if let Some(result) = analysis {
-                                    match result {
-                                        Ok(result) => {
-                                            ui.label(
-                                                egui::RichText::new(result.as_str()).monospace(),
-                                            );
-                                        }
-                                        Err(error) => {
-                                            ui.colored_label(Color32::RED, error.as_str());
-                                        }
+                        if let Some(Ok(snapshot)) = details.as_ref()
+                            && !snapshot.is_symlink
+                        {
+                            ui.separator();
+                            let name = if snapshot.is_dir {
+                                "Calculate folder size"
+                            } else {
+                                "Calculate SHA-256"
+                            };
+                            if ui
+                                .add_enabled(!analysis_busy, egui::Button::new(name))
+                                .clicked()
+                            {
+                                *analysis = None;
+                                requested_analysis = Some((path.clone(), *generation));
+                            }
+                            if analysis_busy {
+                                ui.horizontal(|ui| {
+                                    ui.spinner();
+                                    ui.label("Analysing in background…");
+                                });
+                            }
+                            if let Some(result) = analysis {
+                                match result {
+                                    Ok(result) => {
+                                        ui.label(
+                                            egui::RichText::new(result.as_str()).monospace(),
+                                        );
+                                    }
+                                    Err(error) => {
+                                        ui.colored_label(Color32::RED, error.as_str());
                                     }
                                 }
                             }
