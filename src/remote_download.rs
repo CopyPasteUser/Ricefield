@@ -307,7 +307,7 @@ fn publish(
     // renameat2(RENAME_NOREPLACE) is atomic on Linux, including a competing
     // file/symlink created after preflight; it also works on filesystems
     // without hard-link support.
-    filesystem::rename_without_overwrite(&staged_file, &final_path).map_err(|error| {
+    filesystem::rename_without_overwrite(staged_file, final_path).map_err(|error| {
         format!("Cannot publish download without overwriting an existing file: {error}")
     })?;
     File::open(directory)
