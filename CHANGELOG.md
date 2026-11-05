@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — 0.9.0-alpha.1 live external rice TOML
+
+- Watch an explicitly loaded `--theme-file` at the existing three-second UI
+  idle cadence; apply valid edits live without restarting or interrupting tabs.
+- Reject invalid/oversized/non-regular TOML inputs and retain the last good
+  theme, with visible error feedback and a manual Reload control. Choosing a
+  bundled rice disables external watching for that window.
+- Cap theme file reads to 256 KiB and avoid opening potentially blocking FIFO
+  files on Unix. Direct RiceBowl event integration, TOML visual editing,
+  hardware checks and official 1.0 acceptance remain open.
+
 ## Unreleased — 0.8.0-alpha.5 read-only duplicate candidates
 
 - Add a background, cancellable duplicate-candidate viewer for current visible

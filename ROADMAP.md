@@ -462,7 +462,9 @@ marking 0.7 stable. The 0.6 NAS/mount acceptance is still blocked separately.
 ### 0.9 — RiceBowl and Linux desktop integration
 
 - [ ] MIME/Open With, FileManager1, portals, URI and clipboard interoperability.
-- [ ] Live RiceBowl theme sync, TOML editor/import/export and safe fallback.
+- [x] Live reload for an explicitly supplied `--theme-file` TOML with
+  256 KiB validation, previous-theme fallback and manual retry (0.9 alpha.1).
+- [ ] Direct RiceBowl event/theme sync and visual TOML editor/import/export.
 - [ ] Seven distinct shells and matching icons, controls and layouts.
 - [ ] Confirm Windows 98, Windows 7 and macOS render three materially
   different component structures; support custom Rust components via a

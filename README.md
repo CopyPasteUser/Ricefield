@@ -4,7 +4,7 @@
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Development preview: v0.8.0-alpha.5** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+> **Development preview: v0.9.0-alpha.1** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
 **Distribution:** An [automated Linux x86_64 preview bundle](RELEASE.md) can
 be built without distributing Rust sources to every end user. The verified
@@ -169,6 +169,14 @@ SHA-256 in a cancellable worker. The scan is read-only (256 files, 128 MiB per
 file, 512 MiB total and a 45-second budget); incomplete results are marked.
 It never deletes or overwrites files. Review hashes and contents yourself
 before any removal. Requires the system `sha256sum` utility.
+
+**External rice live reload (0.9 alpha.1):** Launch with
+`rice-explorer --theme-file /path/to/rice.toml`. Changes to this file are
+checked every three seconds and applied without restarting or replacing open
+tabs. Invalid, missing, non-regular or oversized (over 256 KiB) themes are
+rejected while the last working theme remains active. The theme picker also
+offers **Reload external TOML**, or select a bundled rice to stop watching
+the custom file. A native RiceBowl API and visual theme editor are still open.
 
 **0.7 preview alpha:** The Grid view requests thumbnails only for visible
 images, with a 96-item in-memory cache and one decoder at a time (no persistent
