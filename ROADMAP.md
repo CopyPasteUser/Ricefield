@@ -1,6 +1,6 @@
 # RiceField roadmap to 1.0
 
-**Current candidate: `1.0.0-rc.5`.** See [the scope and evidence ledger](docs/1.0-STATUS.md).
+**Current candidate: `1.0.0-rc.6`.** See [the scope and evidence ledger](docs/1.0-STATUS.md).
 This roadmap retains incomplete capabilities explicitly: a candidate version
 does not turn unchecked safety, integration or physical-device work into a pass.
 
@@ -314,7 +314,10 @@ recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
   content downloads without exposing incomplete local trees. Binary preview,
   native high-volume network transfers and remote writes remain open. RC.5
   rejects symlink/special-file downloads from GIO listings, including inside
-  recursively downloaded folders, instead of following untrusted links.
+  recursively downloaded folders, instead of following untrusted links. RC.6
+  introduces up to 16 explicit waiting network downloads, snapshotted target
+  folders, FIFO dispatch, remove/cancel/pause/resume and pause-on-error. Waiting
+  jobs are session-only and never automatically replayed after a restart.
 - [ ] Connect dialog, secure credential handling, favorites and reconnect.
   A basic URI dialog, 32 validated persistent URI favorites and manual
   reconnect are implemented. Alpha.6 supplies a masked one-attempt credential

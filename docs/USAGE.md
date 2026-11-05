@@ -99,7 +99,13 @@ search and small UTF-8 text previews. Click **Download** beside a remote file
 or **Download folder** beside a directory to save its contents to the configured
 local target directory (default `~/Downloads`).
 Edit the **Download to** field using an absolute local folder path; valid
-choices are saved for later sessions. The application creates it if needed,
+choices are saved for later sessions. Downloads use the destination selected
+when each item was queued, even if this field is subsequently changed.
+Up to 16 jobs can wait while one download runs. Remove individual waiting jobs,
+pause the queue after the current job or resume it manually. After any transfer
+error or cancellation, queued downloads pause to avoid repeated errors.
+Waiting jobs are not restored or replayed after a restart.
+The application creates the destination if needed,
 streams no more than 8 GiB per file (20-minute timeout), and supports progress
 and cancellation. Folder downloads additionally stop at 4,096 entries, 512
 directories or 16 levels of depth. The 8 GiB and 20-minute limits apply to

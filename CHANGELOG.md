@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.0-rc.6 — bounded network download queue (verification pending)
+
+- Queue up to 16 explicitly selected remote file or folder downloads, capture
+  each local destination at selection time and run one transfer at a time.
+- Show pending transfers; allow removing a waiting job, cancelling the active
+  job, pausing the queue after the current transfer and manually resuming.
+  Pause automatically after a failed or cancelled transfer.
+- Reject duplicated pending downloads to the same local target and preserve
+  the session-only/no-replay guarantee. Add FIFO, capacity and duplicate tests.
+
 ## 1.0.0-rc.5 — regex batch rename preview (verification pending)
 
 - Harden GIO remote listings by distinguishing regular files, directories and
