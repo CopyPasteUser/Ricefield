@@ -4,7 +4,7 @@
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Development preview: v0.8.0-alpha.3** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+> **Development preview: v0.8.0-alpha.4** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
 **Distribution:** An [automated Linux x86_64 preview bundle](RELEASE.md) can
 be built without distributing Rust sources to every end user. The verified
@@ -155,6 +155,13 @@ maximum file size in MiB, and modification-age boundaries in whole days.
 These combine with the basic filters, are persisted locally, and never inspect
 file contents or start another background process. **Clear filters** resets
 all of them. A conflicting min/max bound shows a warning and no results.
+
+**Saved searches (0.8 alpha.4):** Use the **Saved searches** menu to explicitly
+keep up to 16 local folder/query/scope combinations and reopen them later.
+Ordinary search text is never saved; saving is opt-in. Preferences are now
+atomically replaced via a private (0600) file in a private (0700) directory;
+predictable `.tmp` paths are not followed. Filename globs use a compiled,
+linear-time matcher, including on folders with large entry counts.
 
 **0.7 preview alpha:** The Grid view requests thumbnails only for visible
 images, with a 96-item in-memory cache and one decoder at a time (no persistent

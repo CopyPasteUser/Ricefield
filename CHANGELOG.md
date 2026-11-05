@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — 0.8.0-alpha.4 saved local searches and private settings
+
+- Add an opt-in Saved searches menu (up to 16 validated local folder/query/
+  scope combinations); ordinary search text stays transient and no search
+  executes at startup.
+- Write preferences through a private, unpredictable, create-new staging file
+  with atomic replacement. The RiceExplorer-specific config directory is 0700
+  and file mode 0600 on Unix; legacy fixed `.tmp` paths are untouched.
+- Compile Unicode filename globs to bounded, bit-parallel matchers that need
+  constant work per input character even for pathological wildcard patterns.
+- Regression tests cover Unicode wildcard semantics, local-only saved-search
+  validation and private config replacement. No stable release sign-off yet.
+
 ## Unreleased — 0.8.0-alpha.3 custom local filters
 
 - Add case-insensitive filename globs (`*`, `?`) and optional numeric size

@@ -141,6 +141,10 @@ not silently rolled back; cancelled/unstarted entries remain explicit.
   The theme-independent Filters menu also supports an opt-in filename glob
   and numeric size/age bounds; invalid combinations fail closed and show
   a warning. A single Clear action removes both presets and custom bounds.
+  Saved local searches require an explicit action, are capped at 16, and
+  restore only query, folder and search scope when opened. No saved search
+  triggers background disk or network IO during startup; preferences are
+  written via private, atomically replaced files on Unix.
 - **Dialog/confirmation:** `Explorer::dialogs`; no system-wide native dialog side effects.
 - **Feedback:** `Explorer::status_bar` when enabled, otherwise the shared
   `Explorer::transfer_strip` displays the latest status with a full-message

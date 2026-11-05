@@ -2006,12 +2006,7 @@ impl Explorer {
         let config = &self.config;
         let tab = &mut self.tabs[index];
         let search = tab.query.to_lowercase();
-        let name_glob: Vec<_> = config
-            .filter_name_glob
-            .to_lowercase()
-            .chars()
-            .take(120)
-            .collect();
+        let name_glob = file_view::CompiledGlob::new(&config.filter_name_glob);
         let now = SystemTime::now();
         tab.visible = (0..tab.entries.len())
             .filter(|&index| {
@@ -2022,7 +2017,7 @@ impl Explorer {
                     && file_view::matches_filter(entry, &config.filter_kind)
                     && file_view::matches_size(entry, &config.filter_size)
                     && file_view::matches_modified(entry, &config.filter_modified, now)
-                    && file_view::matches_compiled_glob(&entry.name, &name_glob)
+                    && name_glob.matches(&entry.name)
                     && file_view::matches_custom_ranges(
                         entry,
                         config.filter_min_size_mib,
@@ -4976,6 +4971,67 @@ impl Explorer {
                             }
                         },
                     );
+                    ui.menu_button("Saved searches", |ui| {
+                        ui.set_min_width(240.0);
+                        let current = self.current();
+                        let can_save = current.remote_uri.is_none()
+                            && !current.query.trim().is_empty()
+                            && current.query.len() <= 120
+                            && current.path.to_str().is_some();
+                        if ui
+                            .add_enabled(can_save, egui::Button::new("Save current local search"))
+                            .on_hover_text("Explicitly save this folder, query and scope in your private local settings")
+                            .clicked()
+                        {
+                            let tab = self.current();
+                            let record = config::SavedSearch {
+                                folder: tab.path.to_string_lossy().into_owned(),
+                                query: tab.query.clone(),
+                                subfolders: tab.recursive_search,
+                                contents: tab.content_search,
+                            };
+                            if self.config.save_search(record) {
+                                self.dirty_config = true;
+                                self.status = Some(("Saved search to private preferences".into(), false));
+                            } else {
+                                self.status = Some(("Search is already saved or invalid".into(), false));
+                            }
+                            ui.close();
+                        }
+                        ui.separator();
+                        let saved_searches = self.config.saved_searches();
+                        if saved_searches.is_empty() {
+                            ui.small("No saved searches yet");
+                        }
+                        for saved in saved_searches {
+                            ui.horizontal(|ui| {
+                                let label = format!(
+                                    "{}  ·  {}{}",
+                                    saved.query.chars().take(32).collect::<String>(),
+                                    if saved.subfolders { "↳" } else { "·" },
+                                    if saved.contents { " text" } else { " names" },
+                                );
+                                if ui
+                                    .button(label)
+                                    .on_hover_text(format!("{}\n{}", saved.query, saved.folder))
+                                    .clicked()
+                                {
+                                    self.navigate(PathBuf::from(&saved.folder));
+                                    let tab = self.current_mut();
+                                    tab.query = saved.query.clone();
+                                    tab.recursive_search = saved.subfolders;
+                                    tab.content_search = saved.contents;
+                                    self.scan(self.active);
+                                    ui.close();
+                                }
+                                if ui.small_button("Remove").clicked() {
+                                    self.config.saved_searches.retain(|entry| entry != &saved);
+                                    self.dirty_config = true;
+                                    ui.close();
+                                }
+                            });
+                        }
+                    });
                     if ui
                         .small_button(if self.config.descending {
                             "Desc"
