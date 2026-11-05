@@ -60,6 +60,7 @@ struct Tab {
     scan_warning: Option<String>,
     dir_mtime: Option<SystemTime>,
     recursive_search: bool,
+    content_search: bool,
     search_pending: Option<Instant>,
     scan_cancel: Arc<AtomicBool>,
 }
@@ -90,6 +91,7 @@ impl Tab {
             scan_warning: None,
             dir_mtime: None,
             recursive_search: false,
+            content_search: false,
             search_pending: None,
             scan_cancel: Arc::new(AtomicBool::new(false)),
         }
@@ -209,6 +211,7 @@ struct TabSnapshot {
     back: Vec<Location>,
     forward: Vec<Location>,
     recursive_search: bool,
+    content_search: bool,
 }
 
 impl TabSnapshot {
@@ -220,6 +223,7 @@ impl TabSnapshot {
             back: tab.back.clone(),
             forward: tab.forward.clone(),
             recursive_search: tab.recursive_search,
+            content_search: tab.content_search,
         }
     }
 
@@ -230,6 +234,7 @@ impl TabSnapshot {
         tab.back = self.back;
         tab.forward = self.forward;
         tab.recursive_search = self.recursive_search;
+        tab.content_search = self.content_search;
         tab
     }
 }
@@ -1124,6 +1129,7 @@ impl Explorer {
                     back,
                     forward,
                     recursive_search: false,
+                    content_search: false,
                 });
             }
             explorer.remember_session();
@@ -1545,17 +1551,20 @@ impl Explorer {
             return;
         }
         let task = (tab.id, tab.generation, tab.path.clone());
-        let recursive = tab.recursive_search && !tab.query.is_empty();
+        let searching = (tab.recursive_search || tab.content_search) && !tab.query.is_empty();
+        let recursive = tab.recursive_search;
+        let contents = tab.content_search;
         let query = tab.query.clone();
         let sender = self.scan_sender.clone();
         thread::spawn(move || {
-            let result = if recursive {
-                filesystem::search_cancellable(&task.2, &query, show_hidden, &cancel).map(
-                    |entries| filesystem::FolderScan {
-                        entries,
-                        unreadable: 0,
-                        first_error: None,
-                    },
+            let result = if searching {
+                filesystem::search_with_options(
+                    &task.2,
+                    &query,
+                    show_hidden,
+                    recursive,
+                    contents,
+                    &cancel,
                 )
             } else {
                 filesystem::scan_cancellable(&task.2, &cancel)
@@ -1617,7 +1626,10 @@ impl Explorer {
         self.config.show_hidden = !self.config.show_hidden;
         self.dirty_config = true;
         for index in 0..self.tabs.len() {
-            if self.tabs[index].remote_uri.is_some() || self.tabs[index].recursive_search {
+            if self.tabs[index].remote_uri.is_some()
+                || self.tabs[index].recursive_search
+                || self.tabs[index].content_search
+            {
                 self.scan(index);
             } else {
                 self.rebuild_visible(index);
@@ -1999,7 +2011,8 @@ impl Explorer {
             .filter(|&index| {
                 let entry = &tab.entries[index];
                 (config.show_hidden || !entry.name.starts_with('.'))
-                    && tab.folded_names[index].contains(&search)
+                    && ((tab.content_search && !tab.query.is_empty())
+                        || tab.folded_names[index].contains(&search))
                     && file_view::matches_filter(entry, &config.filter_kind)
                     && file_view::matches_size(entry, &config.filter_size)
                     && file_view::matches_modified(entry, &config.filter_modified, now)
@@ -2360,6 +2373,12 @@ impl Explorer {
                                 scan.first_error.as_deref().unwrap_or("unknown")
                             )
                         });
+                        if let Some(notice) = scan.notice {
+                            tab.scan_warning = Some(match tab.scan_warning.take() {
+                                Some(warning) => format!("{warning} · {notice}"),
+                                None => notice,
+                            });
+                        }
                         tab.folded_names = scan
                             .entries
                             .iter()
@@ -4048,7 +4067,7 @@ impl Explorer {
         let address_width = if compact {
             (ui.available_width() - 92.0).max(90.0)
         } else {
-            (ui.available_width() - 300.0).max(90.0)
+            (ui.available_width() - 380.0).max(90.0)
         };
         let address = ui.add_sized(
             [address_width, 28.0],
@@ -4074,11 +4093,11 @@ impl Explorer {
 
     fn navigation_search(&mut self, ui: &mut egui::Ui, compact: bool) {
         let search_width = if compact {
-            (ui.available_width() - 137.0).max(80.0)
-        } else if ui.available_width() < 220.0 {
-            100.0
+            (ui.available_width() - 220.0).max(80.0)
+        } else if ui.available_width() < 300.0 {
+            90.0
         } else {
-            190.0
+            170.0
         };
         let search_enabled = self.current().remote_uri.is_none();
         let search = ui.add_enabled(
@@ -4093,7 +4112,7 @@ impl Explorer {
         }
         if search.changed() {
             self.current_mut().selected.clear();
-            if self.current().recursive_search {
+            if self.current().recursive_search || self.current().content_search {
                 self.current().cancel_scan();
                 self.current_mut().search_pending = Some(Instant::now());
             } else {
@@ -4105,7 +4124,7 @@ impl Explorer {
         {
             self.current_mut().query.clear();
             self.current_mut().search_pending = None;
-            if self.current().recursive_search {
+            if self.current().recursive_search || self.current().content_search {
                 self.scan(self.active);
             } else {
                 self.rebuild_visible(self.active);
@@ -4113,12 +4132,28 @@ impl Explorer {
             ui.memory_mut(|memory| memory.request_focus(search.id));
         }
         if ui
-            .add(egui::Button::new("Subfolders").selected(self.current().recursive_search))
-            .on_hover_text("Search filenames recursively (maximum 20,000 matches)")
+            .add_enabled(
+                search_enabled,
+                egui::Button::new("Subfolders").selected(self.current().recursive_search),
+            )
+            .on_hover_text("Search the current folder and its subfolders (same filesystem for content search)")
             .clicked()
         {
             let next = !self.current().recursive_search;
             self.current_mut().recursive_search = next;
+            self.current_mut().search_pending = None;
+            self.scan(self.active);
+        }
+        if ui
+            .add_enabled(
+                search_enabled,
+                egui::Button::new("Contents").selected(self.current().content_search),
+            )
+            .on_hover_text("Also search local UTF-8 file contents (up to 2 MiB/file, 4,096 files, 64 MiB/12 s total); no background index")
+            .clicked()
+        {
+            let next = !self.current().content_search;
+            self.current_mut().content_search = next;
             self.current_mut().search_pending = None;
             self.scan(self.active);
         }
@@ -6184,6 +6219,7 @@ mod tests {
             .push(Location::Local(PathBuf::from("/forward")));
         original.query = "draft".into();
         original.recursive_search = true;
+        original.content_search = true;
         original.generation = 5;
         original.selected.insert(PathBuf::from("/old-selection"));
 
@@ -6194,6 +6230,7 @@ mod tests {
         assert_eq!(duplicate.forward, original.forward);
         assert_eq!(duplicate.query, "draft");
         assert!(duplicate.recursive_search);
+        assert!(duplicate.content_search);
         assert!(duplicate.entries.is_empty());
         assert!(duplicate.selected.is_empty());
         assert_eq!(duplicate.generation, 0);

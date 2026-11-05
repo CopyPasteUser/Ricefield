@@ -132,6 +132,12 @@ not silently rolled back; cancelled/unstarted entries remain explicit.
 
 - **File list/table:** `Explorer::file_listing`, shared for all themes; virtualized rows.
 - **Search and clear:** `Explorer::navigation_bar`/`rebuild_visible`.
+  The optional Contents mode uses the shared cancellable local worker, with
+  visible partial-result notices and no persistent index. The independent
+  Subfolders toggle selects current-folder or recursive search. Contents
+  never reads special files, follows symbolic links or crosses filesystem
+  boundaries; each search is constrained by file-size, byte, count and time
+  limits. A filtered-out selection never remains eligible for mutation.
 - **Dialog/confirmation:** `Explorer::dialogs`; no system-wide native dialog side effects.
 - **Feedback:** `Explorer::status_bar` when enabled, otherwise the shared
   `Explorer::transfer_strip` displays the latest status with a full-message
