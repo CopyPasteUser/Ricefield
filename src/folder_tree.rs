@@ -82,12 +82,23 @@ impl FolderTree {
 }
 
 fn list_directories(path: &Path) -> std::io::Result<Vec<PathBuf>> {
+    list_directories_with(path, |entry| entry.file_type())
+}
+
+fn list_directories_with(
+    path: &Path,
+    file_type: impl Fn(&fs::DirEntry) -> std::io::Result<fs::FileType>,
+) -> std::io::Result<Vec<PathBuf>> {
     let mut entries = Vec::new();
     for item in fs::read_dir(path)? {
-        let item = item?;
+        let item = match item {
+            Ok(item) => item,
+            Err(_) => continue,
+        };
         // file_type() is not a recursive stat of the symlink target; only
         // real directories are traversable and loops are never followed.
-        if item.file_type()?.is_dir() {
+        // An unplugged child mount must not hide unrelated tree branches.
+        if file_type(&item).is_ok_and(|kind| kind.is_dir()) {
             entries.push(item.path());
             if entries.len() > MAX_CHILDREN {
                 return Err(std::io::Error::other(format!(
@@ -114,8 +125,31 @@ fn list_directories(path: &Path) -> std::io::Result<Vec<PathBuf>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FolderTree, list_directories};
-    use std::{fs, os::unix::fs::symlink, path::PathBuf};
+    use super::{FolderTree, list_directories, list_directories_with};
+    use std::{ffi::OsStr, fs, os::unix::fs::symlink, path::PathBuf};
+
+    #[test]
+    fn stale_child_mount_does_not_hide_other_tree_directories() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("rice-tree-stale-{}-{nonce}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(root.join("stale")).unwrap();
+        fs::create_dir(root.join("good")).unwrap();
+        let result = list_directories_with(&root, |item| {
+            if item.file_name() == OsStr::new("stale") {
+                Err(std::io::Error::from_raw_os_error(libc::ENODEV))
+            } else {
+                item.file_type()
+            }
+        })
+        .unwrap();
+        assert_eq!(result, vec![root.join("good")]);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn tree_lists_real_folders_naturally_without_following_symlinks() {

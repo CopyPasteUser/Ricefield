@@ -4,7 +4,7 @@
 
 [![Rust checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
-> **Development preview: v0.6.0-alpha.2** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
+> **Development preview: v0.6.0-alpha.3** — [`main`](https://github.com/CopyPasteUser/riceExplorer/tree/main). This is an **alpha**, not a safe replacement for Thunar with irreplaceable data. **Cross-filesystem Move publishes a verified copy and keeps the original for manual cleanup; same-filesystem Move still renames.** Network mutations and physical Mint/USB acceptance are outstanding. [Development roadmap](ROADMAP.md) · [Changes](CHANGELOG.md) · [Latest build checks](https://github.com/CopyPasteUser/riceExplorer/actions/workflows/ci.yml)
 
 **Distribution:** An [automated Linux x86_64 preview bundle](RELEASE.md) can
 be built without distributing Rust sources to every end user. The verified
@@ -86,6 +86,15 @@ Drag files into the Explorer, or between its local folders/panes, to enqueue
 a no-overwrite copy. **Dragging files out into other Linux applications is
 not supported yet**; real Mint/Wayland/X11 drag and multi-window testing
 remains outstanding. This is not a stable 0.6 release.
+
+**Mounted-folder resilience (alpha.3):** A disconnected child mount no longer
+causes the entire *parent* folder listing to fail when other entries remain
+readable. RiceExplorer shows a partial-list warning and Retry instead. The
+Volumes sidebar now discovers filesystems mounted directly at `/mnt`, and
+disconnected mounts remain visible even if metadata inspection fails. If
+Linux itself reports `No such device` when opening `/mnt`, RiceExplorer cannot
+repair that system mount; see the diagnosis below. Hardware verification is
+still required before a stable 0.6 release.
 
 **Built for structural customization.** RiceExplorer is not intended to be
 one file manager with seven recolors. Its TOML shells can move whole navigation,
@@ -246,11 +255,28 @@ Back/Forward location history (at most 40 entries each) and up to 16 closed
 tab locations are restored; search queries, selections and pending file
 operations are **not** replayed on restart.
 
-To update a source installation after the alpha.2 merge:
+To update an existing source installation:
 
 ```bash
 cd riceExplorer && git pull --ff-only && bash install.sh
 ```
+
+If Git refuses an update because an **untracked** `Cargo.lock` would be
+overwritten, back up that file outside the repository before retrying the
+pull. Do not discard other uncommitted changes.
+
+If `/mnt` displays **No such device (os error 19)**, first determine whether
+Linux itself can read that mount (these checks do not change the mount):
+
+```bash
+findmnt -T /mnt -o TARGET,SOURCE,FSTYPE,OPTIONS
+ls -ld /mnt
+ls -la /mnt 2>&1 | head -30
+```
+
+If `ls` also fails, investigate the mount/remote backend before retrying the
+Explorer. If `ls` succeeds but RiceExplorer fails after upgrading, attach
+the exact command output and the Explorer error for a targeted regression fix.
 
 To uninstall the application files, run `bash uninstall.sh` from the
 repository. This leaves personal settings and themes intact; it does not
