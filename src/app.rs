@@ -1627,6 +1627,7 @@ impl Explorer {
                 }
             } else if !open {
                 volume::clear_password(&mut self.volume_connect_password);
+                self.volume_connect_open = false;
             }
         }
         if let Some(action) = self.volume_confirm.clone() {
