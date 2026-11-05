@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased — 0.6.0-alpha.4 shell renderer and interaction checks
+
+- Extract file-cell painting (list/grid icons, labels, selection/hover and
+  theme colors) into `src/shell_renderer.rs`. The app's selection, navigation,
+  context-menu and drag/drop code now invokes a presentation-only primitive;
+  it cannot run file operations. No visual profile is intentionally changed.
+- Extend the native Xvfb smoke across all seven bundled skins and the custom
+  sidebar with Ctrl+T/Tab cycling/reordering/closing/reopening, Ctrl+N/Escape
+  dialog dismissal and compact 700x470 screenshots. Exercise Ctrl+Shift+N
+  second-window creation in the Windows 7 profile with explicit cleanup.
+- Retain outstanding native external drag-out and full hardware/accessibility
+  acceptance as explicit stable-0.6 blockers. Automated smoke tests do not
+  certify real pointer hit targets or network device behavior.
+
 ## Unreleased — 0.6.0-alpha.3 mounted-folder resilience
 
 - Do not let a single disconnected FUSE/USB child or transient metadata error

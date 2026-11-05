@@ -1,6 +1,6 @@
 # Release process (Linux x86_64)
 
-RiceExplorer 0.6.0-alpha.3 is a **development preview candidate**, not signed off for use
+RiceExplorer 0.6.0-alpha.4 is a **development preview candidate**, not signed off for use
 with irreplaceable files or as a complete network/archive file manager.
 The code can produce a tested distribution bundle, but a green CI run alone
 does not satisfy the safety, recovery and Linux Mint hardware gates in
@@ -104,6 +104,9 @@ as prereleases. Do **not** create the final tag before these gates pass.
    shell-specific UI primitives are still open before stable 0.6.
    Alpha.3 adds resilient mounted-folder listing and `/mnt` volume discovery,
    but actual disconnected-device and FUSE testing on Mint remains open.
+   Alpha.4 separates file-list painting from actions and extends eight-profile
+   keyboard/compact-window smoke checks; actual X11/Wayland pointer and screen
+   reader acceptance still requires real-device verification.
 2. Verify duplication, reordering and reopen with mouse and keyboard in all
    seven skins, including offline remote tabs without blocking launch.
 3. Repeat the 0.3/0.4/0.5 safety and physical-device checks before sign-off.

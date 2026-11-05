@@ -367,7 +367,9 @@ wider hostile corpora and real Mint device acceptance are open for stable 0.5.
   remains open.
 - [ ] Extract remaining file-list, toolbar, sidebar and dialog primitives into
   replaceable shell modules. Alpha.2 adds a common navigation/file quick-action
-  dispatcher alongside the existing shared tab dispatcher.
+  dispatcher alongside the existing shared tab dispatcher. Alpha.4 moves
+  file-cell painting into a presentation-only renderer; toolbar, sidebar,
+  dialogs and the full override contract are not yet independently replaceable.
 - [ ] Native external drag-out for X11/Wayland and a complete keyboard/mouse
   acceptance matrix. Existing file context menus, toolbar actions, external
   drag-in and alpha.2 internal copy-by-drag share no-overwrite operations.
@@ -379,6 +381,9 @@ wider hostile corpora and real Mint device acceptance are open for stable 0.5.
   Real Linux Mint/FUSE/device recovery acceptance remains unverified.
 - [ ] Complete responsive/accessibility checks for every dialog and real
   error/empty/loading workflows on all seven profiles (core states exist).
+  Alpha.4 adds compact-window, dialog Escape and keyboard tab-action Xvfb
+  smokes across eight profiles, plus separate-window startup in Windows 7;
+  the real-device pointer, focus and accessibility matrix is still open.
 
 **Gate:** important local workflows work by mouse and keyboard in all themes.
 

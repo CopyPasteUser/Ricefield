@@ -4,7 +4,11 @@ set -euo pipefail
 # Run under xvfb-run. Smoke-test all bundled RiceBowl layouts without touching the host desktop.
 fixture_dir="$(mktemp -d)"
 app_pid=''
+extra_window_id=''
 cleanup() {
+  if [[ -n "$extra_window_id" ]]; then
+    xdotool windowclose "$extra_window_id" 2>/dev/null || true
+  fi
   if [[ -n "$app_pid" ]]; then
     kill "$app_pid" 2>/dev/null || true
     wait "$app_pid" 2>/dev/null || true
@@ -85,8 +89,50 @@ for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sideba
   import -window "$window_id" "screenshots/$theme-split.png"
   identify -format '%wx%h\n' "screenshots/$theme-split.png"
   xdotool key --window "$window_id" F3
+  # Exercise tab creation, cycling, reordering, closure and recovery in every
+  # rice. These are crash/regression smokes, not accessibility certification.
+  for combo in ctrl+t ctrl+Page_Down ctrl+shift+Page_Up ctrl+w ctrl+shift+t; do
+    xdotool key --window "$window_id" "$combo"
+  done
+  # All skins must be able to open and dismiss a native settings/action dialog
+  # without trapping keyboard input or creating a test directory.
+  xdotool key --window "$window_id" ctrl+n
+  sleep 0.3
+  xdotool key --window "$window_id" Escape
+  # Check compact split-capable layout in the project's supported minimum
+  # window range. Screenshots provide review evidence, not hit-target proof.
+  xdotool windowsize "$window_id" 700 470
+  sleep 0.4
+  if ! kill -0 "$app_pid" 2>/dev/null; then
+    echo "Compact layout crashed in theme $theme" >&2
+    report_startup_failure "$theme"
+    exit 1
+  fi
+  import -window "$window_id" "screenshots/$theme-compact.png"
+  identify -format '%wx%h\n' "screenshots/$theme-compact.png"
+  xdotool windowsize "$window_id" 1120 720
+  # The Windows 7 profile also proves a second native process/window can
+  # launch without replacing the existing window. Close it before the next
+  # profile; no desktop session or personal settings are touched.
+  if [[ "$theme" == win7 ]]; then
+    xdotool key --window "$window_id" ctrl+shift+n
+    for ((attempt = 0; attempt < 40; attempt++)); do
+      extra_window_id="$(xdotool search --onlyvisible --name '^RiceExplorer$' 2>/dev/null | grep -vx "$window_id" | head -n 1 || true)"
+      if [[ -n "$extra_window_id" ]]; then
+        break
+      fi
+      sleep 0.25
+    done
+    if [[ -z "$extra_window_id" ]]; then
+      echo 'Ctrl+Shift+N failed to open a second native RiceExplorer window' >&2
+      report_startup_failure "$theme"
+      exit 1
+    fi
+    xdotool windowclose "$extra_window_id" 2>/dev/null || true
+    extra_window_id=''
+  fi
   kill "$app_pid" 2>/dev/null || true
   wait "$app_pid" 2>/dev/null || true
   app_pid=''
 done
-echo 'Native GUI smoke checks passed for seven themes and one custom sidebar (startup, F3 toggle and screenshots; not physical acceptance).'
+echo 'Native GUI smoke checks passed for seven themes and one custom sidebar (startup, F3, tab/keyboard actions, dialog dismissal, compact layouts, and secondary window; not physical acceptance).'
