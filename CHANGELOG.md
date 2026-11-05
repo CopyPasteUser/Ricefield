@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — 0.8.0-alpha.5 read-only duplicate candidates
+
+- Add a background, cancellable duplicate-candidate viewer for current visible
+  local files: group by exact size, compare SHA-256, display grouped paths.
+- Refuse special files and symlinks (including no-follow opens), bound scanning
+  to 256 hashes, 128 MiB per file, 512 MiB in total and 45 seconds before
+  starting each hash. Partial/unreadable results are explicitly marked.
+- No deletion or automatic cleanup is associated with this view. Hash results
+  are advisory because files may change after inspection. Actual disk/USB
+  acceptance is still required after the 1.0 code-complete milestone.
+
 ## Unreleased — 0.8.0-alpha.4 saved local searches and private settings
 
 - Add an opt-in Saved searches menu (up to 16 validated local folder/query/

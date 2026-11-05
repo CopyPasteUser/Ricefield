@@ -1,7 +1,7 @@
 use crate::{
     archive, clipboard,
     config::{self, Config},
-    discovery,
+    discovery, duplicates,
     file_view::{self, natural_cmp},
     filesystem::{self, Action, ConflictPolicy, Entry, Progress},
     folder_tree::FolderTree,
@@ -691,6 +691,10 @@ enum Dialog {
         details: Option<Result<PropertySnapshot, String>>,
         analysis: Option<Result<String, String>>,
     },
+    Duplicates {
+        generation: u64,
+        result: Option<Result<duplicates::Report, String>>,
+    },
 }
 
 enum ArchiveMode {
@@ -853,6 +857,10 @@ pub struct Explorer {
     property_receiver: Receiver<PropertyResult>,
     analysis_sender: Sender<PropertyAnalysis>,
     analysis_receiver: Receiver<PropertyAnalysis>,
+    duplicate_sender: Sender<(u64, Result<duplicates::Report, String>)>,
+    duplicate_receiver: Receiver<(u64, Result<duplicates::Report, String>)>,
+    duplicate_generation: u64,
+    duplicate_cancel: Arc<AtomicBool>,
     analysis_worker_running: bool,
     analysis_cancel: Arc<AtomicBool>,
     property_generation: u64,
@@ -953,6 +961,7 @@ impl Explorer {
         let (preview_sender, preview_receiver) = mpsc::channel();
         let (property_sender, property_receiver) = mpsc::channel();
         let (analysis_sender, analysis_receiver) = mpsc::channel();
+        let (duplicate_sender, duplicate_receiver) = mpsc::channel();
         let (op_sender, op_receiver) = mpsc::channel();
         let (paste_preview_sender, paste_preview_receiver) = mpsc::channel();
         let (recovery_sender, recovery_receiver) = mpsc::channel();
@@ -1025,6 +1034,10 @@ impl Explorer {
             property_receiver,
             analysis_sender,
             analysis_receiver,
+            duplicate_sender,
+            duplicate_receiver,
+            duplicate_generation: 0,
+            duplicate_cancel: Arc::new(AtomicBool::new(false)),
             analysis_worker_running: false,
             analysis_cancel: Arc::new(AtomicBool::new(false)),
             property_generation: 0,
@@ -2055,6 +2068,16 @@ impl Explorer {
     }
 
     fn poll_background(&mut self, context: &egui::Context) {
+        while let Ok((generation, result)) = self.duplicate_receiver.try_recv() {
+            if let Some(Dialog::Duplicates {
+                generation: active,
+                result: slot,
+            }) = self.dialog.as_mut()
+                && *active == generation
+            {
+                *slot = Some(result);
+            }
+        }
         self.thumbnails.poll(context);
         if self.folder_tree.poll() {
             context.request_repaint();
@@ -3724,6 +3747,36 @@ impl Explorer {
         }
     }
 
+    fn find_duplicates_in_view(&mut self) {
+        if self.current().remote_uri.is_some() {
+            self.status = Some((
+                "Duplicate scan is available for local folders only".into(),
+                true,
+            ));
+            return;
+        }
+        let entries: Vec<_> = self
+            .current()
+            .visible
+            .iter()
+            .map(|&index| self.current().entries[index].clone())
+            .collect();
+        self.duplicate_cancel.store(true, Ordering::Relaxed);
+        self.duplicate_cancel = Arc::new(AtomicBool::new(false));
+        self.duplicate_generation = self.duplicate_generation.wrapping_add(1);
+        let generation = self.duplicate_generation;
+        self.dialog = Some(Dialog::Duplicates {
+            generation,
+            result: None,
+        });
+        let stop = Arc::clone(&self.duplicate_cancel);
+        let sender = self.duplicate_sender.clone();
+        thread::spawn(move || {
+            let result = duplicates::find(&entries, &stop).map_err(|error| error.to_string());
+            let _ = sender.send((generation, result));
+        });
+    }
+
     fn ask_trash(&mut self) {
         let selected = self.selected_paths();
         if !selected.is_empty() {
@@ -4753,6 +4806,18 @@ impl Explorer {
                             }
                             ui.close();
                         }
+                        if ui
+                            .add_enabled(
+                                self.current().remote_uri.is_none()
+                                    && self.current().visible.len() >= 2,
+                                egui::Button::new("Find duplicate candidates in view…"),
+                            )
+                            .on_hover_text("Read-only SHA-256 comparison of visible local files; bounded and cancellable, never auto-deletes")
+                            .clicked()
+                        {
+                            self.find_duplicates_in_view();
+                            ui.close();
+                        }
                     });
                     ui.menu_button("Archive", |ui| {
                         let local = self.current().remote_uri.is_none();
@@ -5715,6 +5780,7 @@ impl Explorer {
     fn dialogs(&mut self, context: &egui::Context) {
         if self.dialog.is_some() && context.input(|input| input.key_pressed(Key::Escape)) {
             self.analysis_cancel.store(true, Ordering::Relaxed);
+            self.duplicate_cancel.store(true, Ordering::Relaxed);
             self.dialog = None;
             return;
         }
@@ -5725,6 +5791,61 @@ impl Explorer {
         let analysis_busy = self.analysis_worker_running;
         if let Some(dialog) = self.dialog.as_mut() {
             match dialog {
+                Dialog::Duplicates { result, .. } => {
+                    shell_components::show_dialog(
+                        context,
+                        "Potential duplicate files",
+                        true,
+                        Some(620.0),
+                        |ui| {
+                            ui.small("Read-only SHA-256 comparison of visible local files. Verify files again before deleting anything.");
+                            match result {
+                                None => {
+                                    ui.horizontal(|ui| {
+                                        ui.spinner();
+                                        ui.label("Scanning equal-size candidates (up to 256 files / 512 MiB / 45 seconds)…");
+                                    });
+                                }
+                                Some(Err(error)) => {
+                                    ui.colored_label(Color32::RED, error.as_str());
+                                }
+                                Some(Ok(report)) => {
+                                    ui.label(format!(
+                                        "Hashed {} files · {} skipped{}",
+                                        report.hashed,
+                                        report.skipped,
+                                        if report.partial {
+                                            " · partial results"
+                                        } else {
+                                            ""
+                                        }
+                                    ));
+                                    if report.groups.is_empty() {
+                                        ui.label("No matching hashes among inspected files.");
+                                    }
+                                    egui::ScrollArea::vertical()
+                                        .max_height(320.0)
+                                        .show(ui, |ui| {
+                                            for (index, group) in report.groups.iter().enumerate() {
+                                                ui.separator();
+                                                ui.strong(format!(
+                                                    "Group {} · {} files",
+                                                    index + 1,
+                                                    group.len()
+                                                ));
+                                                for path in group {
+                                                    ui.monospace(path.display().to_string());
+                                                }
+                                            }
+                                        });
+                                }
+                            }
+                            if ui.button("Close / Cancel").clicked() {
+                                dismiss = true;
+                            }
+                        },
+                    );
+                }
                 Dialog::PasteOptions {
                     clipboard,
                     destination,
@@ -6142,6 +6263,7 @@ impl Explorer {
         }
         if dismiss {
             self.analysis_cancel.store(true, Ordering::Relaxed);
+            self.duplicate_cancel.store(true, Ordering::Relaxed);
             self.dialog = None;
         }
         if let Some((path, generation)) = requested_analysis {
@@ -6174,6 +6296,7 @@ impl Explorer {
 impl Drop for Explorer {
     fn drop(&mut self) {
         self.analysis_cancel.store(true, Ordering::Relaxed);
+        self.duplicate_cancel.store(true, Ordering::Relaxed);
         volume::clear_password(&mut self.volume_connect_password);
         self.discovery_cancel.store(true, Ordering::Relaxed);
     }
@@ -6254,6 +6377,8 @@ impl eframe::App for Explorer {
         );
         let waiting_for_properties =
             matches!(&self.dialog, Some(Dialog::Properties { details: None, .. }));
+        let waiting_for_duplicates =
+            matches!(&self.dialog, Some(Dialog::Duplicates { result: None, .. }));
         let idle_delay = if self.busy
             || self
                 .archive_dialog
@@ -6262,6 +6387,7 @@ impl eframe::App for Explorer {
             || self.volume_busy
             || waiting_for_preview
             || waiting_for_properties
+            || waiting_for_duplicates
             || self.folder_tree.has_pending()
             || self.thumbnails.has_pending()
             || self.tabs.iter().any(|tab| tab.loading)

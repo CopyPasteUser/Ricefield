@@ -3,6 +3,7 @@ mod archive;
 mod clipboard;
 mod config;
 mod discovery;
+mod duplicates;
 mod external_drag;
 mod file_view;
 mod filesystem;

@@ -152,6 +152,15 @@ fn folder_size(path: &Path, stop: &AtomicBool) -> io::Result<String> {
 }
 
 fn sha256(path: &Path, stop: &AtomicBool) -> io::Result<String> {
+    sha256_limited(path, MAX_HASH_BYTES, Duration::from_secs(30), stop)
+}
+
+pub(crate) fn sha256_limited(
+    path: &Path,
+    max_bytes: u64,
+    timeout: Duration,
+    stop: &AtomicBool,
+) -> io::Result<String> {
     if stop.load(Ordering::Relaxed) {
         return Err(cancelled());
     }
@@ -160,7 +169,7 @@ fn sha256(path: &Path, stop: &AtomicBool) -> io::Result<String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NONBLOCK);
+        options.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
     }
     let file = options.open(path)?;
     let meta = file.metadata()?;
@@ -170,24 +179,21 @@ fn sha256(path: &Path, stop: &AtomicBool) -> io::Result<String> {
             "Only regular files can be hashed",
         ));
     }
-    if meta.len() > MAX_HASH_BYTES {
+    if meta.len() > max_bytes.min(MAX_HASH_BYTES) {
         return Err(io::Error::new(
             ErrorKind::InvalidInput,
-            "Hash limited to 2 GiB to bound resource use",
+            format!(
+                "Hash limited to {} MiB to bound resource use",
+                max_bytes.min(MAX_HASH_BYTES) / (1024 * 1024)
+            ),
         ));
     }
     let mut command = Command::new("sha256sum");
     command.stdin(file);
     // `sha256sum` with no file arguments hashes the supplied file descriptor.
     // Its stdout is 68 bytes for a SHA-256 digest and it never sees a pathname.
-    let result = crate::volume::capture_gio_with_stdin(
-        command,
-        128,
-        Duration::from_secs(30),
-        stop,
-        "SHA-256",
-    )
-    .map_err(io::Error::other)?;
+    let result = crate::volume::capture_gio_with_stdin(command, 128, timeout, stop, "SHA-256")
+        .map_err(io::Error::other)?;
     let digest = std::str::from_utf8(&result).map_err(io::Error::other)?;
     let hex = digest.split_whitespace().next().unwrap_or("");
     if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
