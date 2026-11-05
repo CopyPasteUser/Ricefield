@@ -1646,9 +1646,7 @@ impl Explorer {
                 {
                     match keyring::save(uri, credentials) {
                         Ok(()) => message.push_str(" Login saved in the Linux keyring."),
-                        Err(error) => {
-                            message.push_str(&format!(" Login was not saved: {error}"))
-                        }
+                        Err(error) => message.push_str(&format!(" Login was not saved: {error}")),
                     }
                 }
                 (message, connected_uri)
