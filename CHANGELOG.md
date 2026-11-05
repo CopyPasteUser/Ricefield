@@ -19,7 +19,8 @@
   operation queue and block self/descendant targets. Refuse drops on read-only
   remote views; external drag-out is not yet available in egui's native backend.
 - Centralize keyboard and sidebar quick actions, preserve responsive
-  loading/empty/retry states, and keep real Linux desktop drag/drop and
+  loading/empty/retry states. Extend eight-profile Xvfb smoke with an F3 split
+  toggle and screenshots. Keep real Linux desktop drag/drop and
   multi-window acceptance outstanding before stable 0.6.
 
 ## Unreleased — 0.6.0-alpha.1 development preview

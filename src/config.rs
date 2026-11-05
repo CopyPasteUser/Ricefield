@@ -5,6 +5,8 @@ use std::{env, fs, io, path::PathBuf};
 pub const MAX_SAVED_TABS: usize = 32;
 pub const MAX_SAVED_HISTORY: usize = 40;
 pub const MAX_SAVED_CLOSED_TABS: usize = 16;
+pub type SessionHistory = (Vec<Location>, Vec<Location>);
+pub type SessionNavigation = (Location, Vec<Location>, Vec<Location>);
 
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -138,8 +140,8 @@ impl Config {
     /// of file operations, searches, credentials or clipboard contents.
     pub fn remember_navigation(
         &mut self,
-        tabs: &[(Location, Vec<Location>, Vec<Location>)],
-        closed: &[(Location, Vec<Location>, Vec<Location>)],
+        tabs: &[SessionNavigation],
+        closed: &[SessionNavigation],
     ) -> bool {
         let (histories, closed_tabs) = if self.restore_session {
             let histories = tabs
@@ -182,12 +184,7 @@ impl Config {
 
     /// Maps saved history to *validated* restored tabs, even if a corrupted or
     /// legacy config contains invalid session locations between valid ones.
-    pub fn restored_navigation(
-        &self,
-    ) -> (
-        Vec<(Vec<Location>, Vec<Location>)>,
-        Vec<(Location, Vec<Location>, Vec<Location>)>,
-    ) {
+    pub fn restored_navigation(&self) -> (Vec<SessionHistory>, Vec<SessionNavigation>) {
         if !self.restore_session {
             return (Vec::new(), Vec::new());
         }

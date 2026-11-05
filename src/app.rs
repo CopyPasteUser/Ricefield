@@ -276,6 +276,12 @@ struct DropArea {
     folder: bool,
 }
 
+struct FileItemLayout {
+    width: f32,
+    height: f32,
+    grid: bool,
+}
+
 fn active_after_swap(active: usize, first: usize, second: usize) -> usize {
     if active == first {
         second
@@ -4664,9 +4670,11 @@ impl Explorer {
                                     &entry,
                                     visible_index,
                                     tab_index,
-                                    if grid { tile } else { width },
-                                    row_height,
-                                    grid,
+                                    FileItemLayout {
+                                        width: if grid { tile } else { width },
+                                        height: row_height,
+                                        grid,
+                                    },
                                 );
                             }
                         }
@@ -4681,10 +4689,9 @@ impl Explorer {
         entry: &Entry,
         index: usize,
         tab_index: usize,
-        width: f32,
-        height: f32,
-        grid: bool,
+        item: FileItemLayout,
     ) {
+        let FileItemLayout { width, height, grid } = item;
         let selected = self.tabs[tab_index].selected.contains(&entry.path);
         let (rect, response) =
             ui.allocate_exact_size(Vec2::new(width.max(80.0), height), Sense::click_and_drag());
@@ -4778,10 +4785,8 @@ impl Explorer {
         }
         let double = response.double_clicked();
         let clicked = response.clicked();
-        if clicked || double || response.secondary_clicked() {
-            if self.active != tab_index {
-                self.tab_command(TabCommand::Activate(tab_index));
-            }
+        if (clicked || double || response.secondary_clicked()) && self.active != tab_index {
+            self.tab_command(TabCommand::Activate(tab_index));
         }
         if clicked || double {
             let modifiers = ui.input(|input| input.modifiers);
