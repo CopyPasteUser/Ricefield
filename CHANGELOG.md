@@ -2,6 +2,10 @@
 
 ## 1.0.0-rc.5 — regex batch rename preview (verification pending)
 
+- Harden GIO remote listings by distinguishing regular files, directories and
+  special entries. Refuse GIO-reported symlink/special-file downloads and
+  previews, and fail closed before recursively following a reported link.
+  Test cancellation, conflicting destinations and unsupported entry types.
 - Add an opt-in regular-expression mode for 2–256 item batch rename previews,
   including capture substitutions with no additional dependencies.
 - Bound regex length and compiled program size, validate every generated
