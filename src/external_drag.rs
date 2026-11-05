@@ -6,7 +6,12 @@
 //! is explicitly invoked from the file context menu, never during an internal
 //! drag, so the built-in safe copy-by-drag behavior remains unchanged.
 
-use std::{io, path::PathBuf, process::{Child, Command, Stdio}, thread};
+use std::{
+    io,
+    path::PathBuf,
+    process::{Child, Command, Stdio},
+    thread,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Helper {
@@ -29,12 +34,20 @@ impl Helper {
     fn configure(self, paths: &[PathBuf]) -> Command {
         let mut command = Command::new(self.executable());
         match self {
-            Self::Ripdrag => { command.arg("--and-exit"); }
-            Self::Dragon => { command.arg("-x"); }
+            Self::Ripdrag => {
+                command.arg("--and-exit");
+            }
+            Self::Dragon => {
+                command.arg("-x");
+            }
         }
         // Absolute paths cannot be interpreted as option flags. Passing them
         // as individual OsStr arguments also avoids all shell expansion.
-        command.args(paths).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        command
+            .args(paths)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
         command
     }
 }
@@ -58,7 +71,9 @@ where
         match start(helper, paths) {
             Ok(mut child) => {
                 // Avoid zombies without blocking egui while the user drags.
-                thread::spawn(move || { let _ = child.wait(); });
+                thread::spawn(move || {
+                    let _ = child.wait();
+                });
                 return Ok(helper.executable());
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
@@ -89,6 +104,9 @@ mod tests {
         let paths = [PathBuf::from("/tmp/a file; $(false)")];
         let command = Helper::Ripdrag.configure(&paths);
         assert_eq!(command.get_program(), "ripdrag");
-        assert_eq!(command.get_args().collect::<Vec<_>>(), vec!["--and-exit", "/tmp/a file; $(false)"]);
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            vec!["--and-exit", "/tmp/a file; $(false)"]
+        );
     }
 }

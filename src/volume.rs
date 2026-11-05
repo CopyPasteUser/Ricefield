@@ -242,7 +242,10 @@ impl VolumeAction {
 /// not keep a worker alive forever. Never use a shell or forward credentials.
 pub fn execute(action: &VolumeAction) -> Result<(), String> {
     let mut command = Command::new("gio");
-    command.arg("mount").args(action.arguments()).env("LC_ALL", "C");
+    command
+        .arg("mount")
+        .args(action.arguments())
+        .env("LC_ALL", "C");
     if let VolumeAction::ConnectAuthenticated(_, credentials) = action {
         return execute_authenticated(command, credentials.clone(), Duration::from_secs(30));
     }
@@ -312,7 +315,9 @@ fn answer_mount_prompts(
             &credentials.domain
         } else if prompt.starts_with("Password") {
             if password_attempted {
-                return Err("NAS requested the password again. Check credentials before retrying".into());
+                return Err(
+                    "NAS requested the password again. Check credentials before retrying".into(),
+                );
             }
             password_attempted = true;
             &credentials.password
@@ -350,14 +355,23 @@ fn execute_authenticated(
     let deadline = Instant::now() + timeout;
     let result = loop {
         match child.try_wait() {
-            Ok(Some(status)) => break if status.success() { Ok(()) } else {
-                Err("Connect failed. Check NAS credentials, GVfs services and the session D-Bus.".into())
-            },
+            Ok(Some(status)) => {
+                break if status.success() {
+                    Ok(())
+                } else {
+                    Err("Connect failed. Check NAS credentials, GVfs services and the session D-Bus.".into())
+                };
+            }
             Ok(None) if reader.is_finished() => {
                 break Err("GIO authentication ended before the mount finished".into());
             }
             Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
-            Ok(None) => break Err(format!("Authenticated connect timed out after {} seconds", timeout.as_secs())),
+            Ok(None) => {
+                break Err(format!(
+                    "Authenticated connect timed out after {} seconds",
+                    timeout.as_secs()
+                ));
+            }
             Err(error) => break Err(format!("Cannot check GIO connection: {error}")),
         }
     };
@@ -365,7 +379,9 @@ fn execute_authenticated(
         let _ = child.kill();
     }
     let _ = child.wait();
-    let prompt_result = reader.join().map_err(|_| "GIO authentication reader panicked")?;
+    let prompt_result = reader
+        .join()
+        .map_err(|_| "GIO authentication reader panicked")?;
     prompt_result?;
     result
 }
@@ -422,26 +438,32 @@ mod tests {
     #[test]
     fn authenticated_mount_does_not_reply_to_unrecognized_prompts() {
         let mut command = Command::new("sh");
-        command.arg("-c").arg("printf 'Security question: '; IFS= read -r ignored");
+        command
+            .arg("-c")
+            .arg("printf 'Security question: '; IFS= read -r ignored");
         let credentials = MountCredentials {
             username: "alice".into(),
             domain: String::new(),
             password: "test-password".into(),
         };
-        let error = execute_authenticated(command, credentials, Duration::from_secs(2)).unwrap_err();
+        let error =
+            execute_authenticated(command, credentials, Duration::from_secs(2)).unwrap_err();
         assert!(error.contains("unsupported authentication field"));
     }
 
     #[test]
     fn authenticated_mount_does_not_retry_bad_password_automatically() {
         let mut command = Command::new("sh");
-        command.arg("-c").arg("printf 'Password: '; IFS= read -r one; printf 'Password: '; IFS= read -r two");
+        command
+            .arg("-c")
+            .arg("printf 'Password: '; IFS= read -r one; printf 'Password: '; IFS= read -r two");
         let credentials = MountCredentials {
             username: String::new(),
             domain: String::new(),
             password: "wrong-password".into(),
         };
-        let error = execute_authenticated(command, credentials, Duration::from_secs(2)).unwrap_err();
+        let error =
+            execute_authenticated(command, credentials, Duration::from_secs(2)).unwrap_err();
         assert!(error.contains("requested the password again"));
     }
 

@@ -4753,7 +4753,10 @@ impl Explorer {
                     self.select_entry(entry, index, Modifiers::default());
                 }
                 self.status = Some(match crate::external_drag::launch(&self.selected_paths()) {
-                    Ok(helper) => (format!("Opened {helper} drag source; drop files into the other app."), false),
+                    Ok(helper) => (
+                        format!("Opened {helper} drag source; drop files into the other app."),
+                        false,
+                    ),
                     Err(error) => (error, true),
                 });
                 ui.close();
