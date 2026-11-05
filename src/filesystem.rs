@@ -289,6 +289,7 @@ pub fn search(root: &Path, query: &str, show_hidden: bool) -> io::Result<Vec<Ent
 }
 
 /// A cancelled search returns Interrupted without exposing incomplete results.
+#[cfg(test)]
 pub fn search_cancellable(
     root: &Path,
     query: &str,
