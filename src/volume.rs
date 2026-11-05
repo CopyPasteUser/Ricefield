@@ -136,7 +136,7 @@ fn search_remote_with(
                 partial = true;
                 break;
             }
-            if item.name.to_lowercase().contains(&needle) {
+            if remote_name_matches(&item.name, &needle) {
                 entries.push(item.clone());
                 if entries.len() >= MAX_REMOTE_SEARCH_MATCHES {
                     partial = true;
@@ -165,6 +165,43 @@ fn search_remote_with(
         )
     });
     Ok(RemoteSearch { entries, notice })
+}
+
+/// GIO URI-list output percent-encodes spaces and Unicode. Match what the
+/// person types, while keeping the original encoded URI as the only action key.
+fn remote_name_matches(encoded: &str, lower_needle: &str) -> bool {
+    if encoded.to_lowercase().contains(lower_needle) {
+        return true;
+    }
+    if !encoded.contains('%') {
+        return false;
+    }
+    let raw = encoded.as_bytes();
+    let mut decoded = Vec::with_capacity(raw.len());
+    let mut index = 0;
+    while index < raw.len() {
+        if raw[index] == b'%'
+            && index + 2 < raw.len()
+            && let (Some(hi), Some(lo)) = (hex(raw[index + 1]), hex(raw[index + 2]))
+        {
+            decoded.push((hi << 4) | lo);
+            index += 3;
+        } else {
+            decoded.push(raw[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded)
+        .is_ok_and(|name| name.to_lowercase().contains(lower_needle))
+}
+
+fn hex(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 /// Reading a remote file never grants a POSIX path or a mutating capability.
@@ -640,13 +677,27 @@ mod tests {
         let entries_for = |folder: &str, _: Duration| -> Result<Vec<RemoteEntry>, String> {
             match folder {
                 "smb://nas/share" => Ok(vec![
-                    RemoteEntry { uri: "smb://nas/share/Music".into(), name: "Music".into(), is_directory: true },
-                    RemoteEntry { uri: "smb://nas/share/Offline".into(), name: "Offline".into(), is_directory: true },
-                    RemoteEntry { uri: "smb://nas/share/Report.txt".into(), name: "Report.txt".into(), is_directory: false },
+                    RemoteEntry {
+                        uri: "smb://nas/share/Music".into(),
+                        name: "Music".into(),
+                        is_directory: true,
+                    },
+                    RemoteEntry {
+                        uri: "smb://nas/share/Offline".into(),
+                        name: "Offline".into(),
+                        is_directory: true,
+                    },
+                    RemoteEntry {
+                        uri: "smb://nas/share/Report.txt".into(),
+                        name: "Report.txt".into(),
+                        is_directory: false,
+                    },
                 ]),
-                "smb://nas/share/Music" => Ok(vec![
-                    RemoteEntry { uri: "smb://nas/share/Music/REPORT.MP3".into(), name: "REPORT.MP3".into(), is_directory: false },
-                ]),
+                "smb://nas/share/Music" => Ok(vec![RemoteEntry {
+                    uri: "smb://nas/share/Music/REPORT.MP3".into(),
+                    name: "REPORT.MP3".into(),
+                    is_directory: false,
+                }]),
                 _ => Err("Share unplugged".into()),
             }
         };
@@ -662,11 +713,17 @@ mod tests {
     #[test]
     fn network_search_checks_cancel_before_any_gio_call() {
         let cancelled = AtomicBool::new(true);
-        let result = search_remote_with(
-            "smb://nas/share", "file", true, &cancelled,
-            |_, _| panic!("cancelled search must not enumerate a folder"),
-        );
+        let result = search_remote_with("smb://nas/share", "file", true, &cancelled, |_, _| {
+            panic!("cancelled search must not enumerate a folder")
+        });
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn network_search_matches_human_readable_uri_names() {
+        assert!(remote_name_matches("Season%201%20Finale.mkv", "season 1 finale"));
+        assert!(remote_name_matches("%E6%97%A5%E6%9C%AC.mp3", "日本"));
+        assert!(!remote_name_matches("%FF.dat", "test"));
     }
 
     #[test]

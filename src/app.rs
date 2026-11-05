@@ -1591,9 +1591,11 @@ impl Explorer {
             let recursive = tab.recursive_search;
             thread::spawn(move || {
                 let result = if query.is_empty() {
-                    volume::list_remote(&uri, show_hidden, &cancel).map(|entries| volume::RemoteSearch {
-                        entries,
-                        notice: None,
+                    volume::list_remote(&uri, show_hidden, &cancel).map(|entries| {
+                        volume::RemoteSearch {
+                            entries,
+                            notice: None,
+                        }
                     })
                 } else {
                     volume::search_remote(&uri, &query, recursive, show_hidden, &cancel)
