@@ -130,7 +130,7 @@ pub fn show_dialog(
     default_width: Option<f32>,
     contents: impl FnOnce(&mut egui::Ui),
 ) {
-    let available = context.available_rect().width();
+    let available = context.content_rect().width();
     let mut window = egui::Window::new(title)
         .collapsible(false)
         .resizable(resizable)
