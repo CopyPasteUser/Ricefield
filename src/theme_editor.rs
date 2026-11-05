@@ -11,7 +11,7 @@ use std::{
 
 pub enum Outcome {
     Close,
-    Activate { path: PathBuf, theme: Theme },
+    Activate { path: PathBuf, theme: Box<Theme> },
 }
 
 pub struct ThemeEditor {
@@ -188,7 +188,12 @@ impl ThemeEditor {
                 match Theme::from_text(&self.source).and_then(|theme| {
                     save_private(&self.save_name, &self.source).map(|path| (path, theme))
                 }) {
-                    Ok((path, theme)) => outcome = Some(Outcome::Activate { path, theme }),
+                    Ok((path, theme)) => {
+                        outcome = Some(Outcome::Activate {
+                            path,
+                            theme: Box::new(theme),
+                        });
+                    }
                     Err(error) => self.message = Some((error, true)),
                 }
             }

@@ -702,7 +702,7 @@ enum Dialog {
         generation: u64,
         apps: Option<Result<Vec<String>, String>>,
     },
-    ThemeEditor(ThemeEditor),
+    ThemeEditor(Box<ThemeEditor>),
 }
 
 enum ArchiveMode {
@@ -5253,17 +5253,17 @@ impl Explorer {
                                 }
                                 ui.separator();
                                 if ui.button("Customize theme…").clicked() {
-                                    self.dialog = Some(Dialog::ThemeEditor(ThemeEditor::new(
+                                    self.dialog = Some(Dialog::ThemeEditor(Box::new(ThemeEditor::new(
                                         &self.theme,
                                         self.theme_file.as_deref(),
-                                    )));
+                                    ))));
                                     ui.close();
                                 }
-                                if self.theme_file.is_some() {
-                                    if ui.button("Reload external TOML").clicked() {
-                                        self.reload_theme_file(ui.ctx(), true);
-                                        ui.close();
-                                    }
+                                if self.theme_file.is_some()
+                                    && ui.button("Reload external TOML").clicked()
+                                {
+                                    self.reload_theme_file(ui.ctx(), true);
+                                    ui.close();
                                 }
                             });
                     });
@@ -6456,7 +6456,7 @@ impl Explorer {
                 theme_editor::Outcome::Activate { path, theme } => {
                     self.config.theme = theme.id.clone();
                     self.config.custom_theme_file = Some(path.clone());
-                    self.theme = theme;
+                    self.theme = *theme;
                     self.theme_file = Some(path.clone());
                     self.theme_file_state = Self::theme_file_fingerprint(&path);
                     self.theme.apply(context);
