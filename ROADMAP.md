@@ -1,6 +1,6 @@
-# RiceExplorer roadmap to 1.0
+# RiceField roadmap to 1.0
 
-**Current candidate: `1.0.0-rc.2`.** See [the scope and evidence ledger](docs/1.0-STATUS.md).
+**Current candidate: `1.0.0-rc.3`.** See [the scope and evidence ledger](docs/1.0-STATUS.md).
 This roadmap retains incomplete capabilities explicitly: a candidate version
 does not turn unchecked safety, integration or physical-device work into a pass.
 
@@ -307,8 +307,9 @@ recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
   missing advertisements still require typing an address once. A
   bounded metadata listing distinguishes traversable directories from files
   that cannot yet be opened or transferred. Small UTF-8 remote files can now
-  be inspected through a bounded, cancellable, read-only text preview; binary
-  preview, downloading and writes still require the native operation backend.
+  be inspected through a bounded, cancellable, read-only text preview. RC.2
+  added an explicit staged local download of one file at a time; binary preview,
+  remote folder download and remote writes still require further work.
 - [ ] Connect dialog, secure credential handling, favorites and reconnect.
   A basic URI dialog, 32 validated persistent URI favorites and manual
   reconnect are implemented. Alpha.6 supplies a masked one-attempt credential

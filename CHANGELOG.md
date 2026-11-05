@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.0-rc.3 — readable NAS names and destination selection (verification pending)
+
+- Show decoded Unicode and spaced filenames on remote shares while keeping
+  the original percent-encoded URIs as action identifiers. Malformed escapes,
+  separators and control characters retain their escaped representation.
+- Allow an explicit local target folder for downloads, with absolute-path
+  validation and persistence in the existing backwards-compatible config.
+- Align visible window/launcher/CLI branding to RiceField; preserve the
+  `rice-explorer` command, desktop file identifiers and settings locations.
+  Update the graphical and packaging tests for the visible window name.
+- Keep remote writes and full-folder downloads disabled pending safety work;
+  this is not yet a stable release.
+
 ## 1.0.0-rc.2 — explicit safe remote downloads (verification pending)
 
 - Add an opt-in download action beside remote files, streaming via GIO/GVfs

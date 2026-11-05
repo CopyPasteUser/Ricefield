@@ -21,7 +21,7 @@ From a source checkout, rebuild/register with `bash install.sh`. From a verified
 binary bundle, run its `bash install.sh`. No default file-manager association
 is changed, and Thunar remains available.
 
-## Clipboard or drag-out works only inside RiceExplorer
+## Clipboard or drag-out works only inside RiceField
 
 Install `xclip` for X11 or `wl-clipboard` for Wayland to exchange file selections
 with other applications. Without them the internal clipboard still works.
@@ -44,7 +44,7 @@ share is offline. Read-only remote tabs do not support transfers or mutations.
 
 ## A mount reports “No such device” or becomes unavailable
 
-RiceExplorer cannot repair a broken system mount. Check whether Linux itself
+RiceField cannot repair a broken system mount. Check whether Linux itself
 can enumerate it, replacing `/mnt/share` with the affected path:
 
 ```bash
@@ -58,7 +58,7 @@ or mount backend first. Do not force-unmount or automatically remount a live
 volume while pending I/O is unresolved. For a supported NAS, a GIO SMB URI can
 provide a separate read-only route while diagnosing the system mount.
 
-If Linux can read the folder but the current RiceExplorer build cannot, report
+If Linux can read the folder but the current RiceField build cannot, report
 the application version, exact error, mount type and the diagnostic output.
 Review output before sharing it: mount sources and paths can be private.
 

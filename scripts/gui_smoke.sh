@@ -20,7 +20,7 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$fixture_dir/Documents" "$fixture_dir/Pictures" screenshots
-printf 'RiceExplorer native GUI smoke test\n' > "$fixture_dir/Readme.txt"
+printf 'RiceField native GUI smoke test\n' > "$fixture_dir/Readme.txt"
 printf '# Markdown preview test\n' > "$fixture_dir/Documents/Example.md"
 cp assets/rice-explorer.png "$fixture_dir/Pictures/icon.png"
 cp themes/win7.toml "$fixture_dir/custom-theme.toml"
@@ -77,14 +77,14 @@ for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sideba
       report_startup_failure "$theme"
       exit 1
     fi
-    window_id="$(xdotool search --onlyvisible --name '^RiceExplorer$' | head -n 1 || true)"
+    window_id="$(xdotool search --onlyvisible --name '^RiceField$' | head -n 1 || true)"
     if [[ -n "$window_id" ]]; then
       break
     fi
     sleep 1
   done
   if [[ -z "$window_id" ]]; then
-    echo "No visible RiceExplorer window for theme $theme after 35 seconds" >&2
+    echo "No visible RiceField window for theme $theme after 35 seconds" >&2
     report_startup_failure "$theme"
     exit 1
   fi
@@ -170,14 +170,14 @@ for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sideba
   if [[ "$theme" == win7 ]]; then
     xdotool key ctrl+shift+n
     for ((attempt = 0; attempt < 40; attempt++)); do
-      extra_window_id="$(xdotool search --onlyvisible --name '^RiceExplorer$' 2>/dev/null | grep -vx "$window_id" | head -n 1 || true)"
+      extra_window_id="$(xdotool search --onlyvisible --name '^RiceField$' 2>/dev/null | grep -vx "$window_id" | head -n 1 || true)"
       if [[ -n "$extra_window_id" ]]; then
         break
       fi
       sleep 0.25
     done
     if [[ -z "$extra_window_id" ]]; then
-      echo 'Ctrl+Shift+N failed to open a second native RiceExplorer window' >&2
+      echo 'Ctrl+Shift+N failed to open a second native RiceField window' >&2
       report_startup_failure "$theme"
       exit 1
     fi

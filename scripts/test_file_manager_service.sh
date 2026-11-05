@@ -28,7 +28,7 @@ call_service() {
 window=''
 for ((attempt = 0; attempt < 100; attempt++)); do
   kill -0 "$app_pid" 2>/dev/null || { cat "$fixture/app.log" >&2; exit 1; }
-  window="$(xdotool search --onlyvisible --pid "$app_pid" --name '^RiceExplorer$' | head -n 1 || true)"
+  window="$(xdotool search --onlyvisible --pid "$app_pid" --name '^RiceField$' | head -n 1 || true)"
   if [[ -n "$window" ]] && call_service ShowItems "['file://$fixture/files/reveal.txt']" > /dev/null 2>&1; then
     break
   fi

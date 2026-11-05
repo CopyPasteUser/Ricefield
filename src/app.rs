@@ -868,6 +868,7 @@ pub struct Explorer {
     remote_download_busy: bool,
     remote_download_cancel: Arc<AtomicBool>,
     remote_download_bytes: Arc<AtomicU64>,
+    remote_download_directory: String,
     refresh_sender: Sender<RefreshResult>,
     refresh_receiver: Receiver<RefreshResult>,
     volume_sender: Sender<Result<(String, Option<String>), String>>,
@@ -1020,6 +1021,14 @@ impl Explorer {
         let (remote_scan_sender, remote_scan_receiver) = mpsc::channel();
         let (remote_preview_sender, remote_preview_receiver) = mpsc::channel();
         let (remote_download_sender, remote_download_receiver) = mpsc::channel();
+        let remote_download_directory = config
+            .remote_download_directory
+            .as_ref()
+            .and_then(|folder| folder.to_str())
+            .and_then(|folder| remote_download::download_directory(folder).ok())
+            .unwrap_or_else(|| config::home().join("Downloads"))
+            .display()
+            .to_string();
         let (refresh_sender, refresh_receiver) = mpsc::channel();
         let (volume_sender, volume_receiver) = mpsc::channel();
         let (keyring_sender, keyring_receiver) = mpsc::channel();
@@ -1078,6 +1087,7 @@ impl Explorer {
             remote_download_busy: false,
             remote_download_cancel: Arc::new(AtomicBool::new(false)),
             remote_download_bytes: Arc::new(AtomicU64::new(0)),
+            remote_download_directory,
             refresh_sender,
             refresh_receiver,
             volume_sender,
@@ -1826,9 +1836,21 @@ impl Explorer {
         self.remote_download_bytes = Arc::clone(&bytes);
         self.remote_download_busy = true;
         let sender = self.remote_download_sender.clone();
-        // The target is intentionally predictable; atomic no-overwrite
-        // publication protects any previously downloaded name.
-        let destination = config::home().join("Downloads");
+        // Only an explicitly selected absolute directory is accepted;
+        // atomic no-overwrite publication protects existing names there.
+        let destination = match remote_download::download_directory(&self.remote_download_directory)
+        {
+            Ok(directory) => directory,
+            Err(error) => {
+                self.remote_download_busy = false;
+                self.status = Some((error.into(), true));
+                return;
+            }
+        };
+        if self.config.remote_download_directory.as_ref() != Some(&destination) {
+            self.config.remote_download_directory = Some(destination.clone());
+            self.dirty_config = true;
+        }
         thread::spawn(move || {
             let result = remote_download::download(&uri, &name, &destination, &cancelled, &bytes);
             let _ = sender.send(result);
@@ -2051,7 +2073,7 @@ impl Explorer {
                             .hint_text("NAS password"),
                     );
                     ui.checkbox(&mut self.volume_connect_remember, "Remember login in Linux keyring")
-                        .on_hover_text("Only after a successful connection. Requires libsecret-tools and an unlocked Secret Service; never stored in RiceExplorer settings.");
+                        .on_hover_text("Only after a successful connection. Requires libsecret-tools and an unlocked Secret Service; never stored in RiceField settings.");
                     ui.horizontal(|ui| {
                         if ui.add_enabled(!self.keyring_busy, egui::Button::new("Use saved login")).clicked() {
                             self.request_keyring(false);
@@ -2861,7 +2883,7 @@ impl Explorer {
             .default_height(340.0)
             .resizable(true)
             .show(context, |ui| {
-                ui.label("Inspection is read-only. RiceExplorer will not delete, resume, or overwrite either side automatically.");
+                ui.label("Inspection is read-only. RiceField will not delete, resume, or overwrite either side automatically.");
                 ui.label("Compare file contents on demand (maximum 512 MiB and 10,000 entries). A match is only a snapshot, never authorization to delete a source.");
                 ui.small("If the original source identity still matches, you can separately prepare a new Copy with a full preview. This does not complete the interrupted Move or clear its journal.");
                 if let Some(error) = &self.recovery_error {
@@ -4187,7 +4209,7 @@ impl Explorer {
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label(
-                egui::RichText::new("RiceExplorer")
+                egui::RichText::new("RiceField")
                     .color(Color32::WHITE)
                     .strong(),
             );
@@ -5561,11 +5583,24 @@ impl Explorer {
                 ui.heading("Network location");
                 ui.monospace(self.current().remote_uri.as_deref().unwrap_or_default());
                 ui.small("Remote folders are read-only. You can preview text or download files locally; network uploads and changes are disabled.");
+                ui.horizontal(|ui| {
+                    ui.label("Download to:");
+                    let edit = ui.add(egui::TextEdit::singleline(&mut self.remote_download_directory)
+                        .desired_width((ui.available_width() - 20.0).max(160.0))
+                        .hint_text("Absolute local directory"));
+                    if edit.lost_focus()
+                        && let Ok(directory) = remote_download::download_directory(&self.remote_download_directory)
+                        && self.config.remote_download_directory.as_ref() != Some(&directory)
+                    {
+                        self.config.remote_download_directory = Some(directory);
+                        self.dirty_config = true;
+                    }
+                });
                 if self.remote_download_busy {
                     ui.horizontal(|ui| {
                         ui.spinner();
                         let mib = self.remote_download_bytes.load(Ordering::Relaxed) as f64 / (1024.0 * 1024.0);
-                        ui.label(format!("Downloading to ~/Downloads · {mib:.1} MiB received (8 GiB maximum)"));
+                        ui.label(format!("Downloading · {mib:.1} MiB received (8 GiB maximum)"));
                         if ui.button("Cancel download").clicked() {
                             self.remote_download_cancel.store(true, Ordering::Relaxed);
                         }
@@ -5634,15 +5669,15 @@ impl Explorer {
                         for entry in &entries[rows] {
                             ui.horizontal(|ui| {
                                 if entry.is_directory {
-                                    if ui.button(format!("Folder  {}", entry.name)).on_hover_text(&entry.uri).clicked() {
+                                    if ui.button(format!("Folder  {}", volume::display_remote_name(&entry.name))).on_hover_text(&entry.uri).clicked() {
                                         open = Some(entry.uri.clone());
                                     }
                                 } else {
-                                    if ui.button(format!("Text preview  {}", entry.name)).on_hover_text(&entry.uri).clicked() {
+                                    if ui.button(format!("Text preview  {}", volume::display_remote_name(&entry.name))).on_hover_text(&entry.uri).clicked() {
                                         preview = Some(entry.uri.clone());
                                     }
                                     if ui.add_enabled(!self.remote_download_busy, egui::Button::new("Download"))
-                                        .on_hover_text("Save to ~/Downloads without overwriting an existing file")
+                                        .on_hover_text("Save to the selected local folder without overwriting an existing file")
                                         .clicked() {
                                         download = Some((entry.uri.clone(), entry.name.clone()));
                                     }
@@ -6143,7 +6178,7 @@ impl Explorer {
                 Dialog::ThemeEditor(editor) => {
                     shell_components::show_dialog(
                         context,
-                        "Customize RiceExplorer",
+                        "Customize RiceField",
                         true,
                         Some(680.0),
                         |ui| {

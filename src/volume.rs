@@ -1,5 +1,5 @@
 //! GIO volume actions run outside the egui thread. The system's GIO/GVfs
-//! handles device permissions and Polkit; RiceExplorer never invokes sudo.
+//! handles device permissions and Polkit; RiceField never invokes sudo.
 
 use std::{
     collections::{HashSet, VecDeque},
@@ -173,8 +173,19 @@ fn remote_name_matches(encoded: &str, lower_needle: &str) -> bool {
     if encoded.to_lowercase().contains(lower_needle) {
         return true;
     }
+    decode_remote_label(encoded).is_some_and(|name| name.to_lowercase().contains(lower_needle))
+}
+
+/// Render percent-encoded GIO URI segments as human-readable names without
+/// changing the original URI used for navigation, preview and download.
+/// Invalid UTF-8 or embedded controls remain visibly escaped.
+pub fn display_remote_name(encoded: &str) -> String {
+    decode_remote_label(encoded).unwrap_or_else(|| encoded.to_owned())
+}
+
+fn decode_remote_label(encoded: &str) -> Option<String> {
     if !encoded.contains('%') {
-        return false;
+        return Some(encoded.to_owned());
     }
     let raw = encoded.as_bytes();
     let mut decoded = Vec::with_capacity(raw.len());
@@ -191,7 +202,9 @@ fn remote_name_matches(encoded: &str, lower_needle: &str) -> bool {
             index += 1;
         }
     }
-    String::from_utf8(decoded).is_ok_and(|name| name.to_lowercase().contains(lower_needle))
+    String::from_utf8(decoded)
+        .ok()
+        .filter(|name| !name.chars().any(char::is_control) && !name.contains(['/', '\\']))
 }
 
 fn hex(byte: u8) -> Option<u8> {
@@ -726,6 +739,20 @@ mod tests {
         ));
         assert!(remote_name_matches("%E6%97%A5%E6%9C%AC.mp3", "日本"));
         assert!(!remote_name_matches("%FF.dat", "test"));
+    }
+
+    #[test]
+    fn remote_labels_decode_display_only_and_escape_unsafe_bytes() {
+        assert_eq!(
+            display_remote_name("Season%201%20Finale.mkv"),
+            "Season 1 Finale.mkv"
+        );
+        assert_eq!(display_remote_name("%E6%97%A5%E6%9C%AC.mp3"), "日本.mp3");
+        assert_eq!(display_remote_name("100%25.txt"), "100%.txt");
+        for invalid in ["%FF.dat", "line%0Afeed", "a%2Fb", "a%5Cb"] {
+            assert_eq!(display_remote_name(invalid), invalid);
+        }
+        assert_eq!(display_remote_name("plain.txt"), "plain.txt");
     }
 
     #[test]

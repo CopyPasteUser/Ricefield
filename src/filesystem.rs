@@ -2195,7 +2195,7 @@ fn stage_and_publish_with_sync(
         && let Err(error) = record.set_staging(&staging_dir)
     {
         if let Err(cleanup_error) = fs::remove_dir(&staging_dir) {
-            eprintln!("RiceExplorer: cannot clean staging directory: {cleanup_error}");
+            eprintln!("RiceField: cannot clean staging directory: {cleanup_error}");
         }
         return Err(error);
     }
@@ -2242,14 +2242,14 @@ fn stage_and_publish_with_sync(
             // Publication is committed; a failed cleanup must not report it as failed.
             if let Err(error) = fs::remove_dir(&staging_dir) {
                 eprintln!(
-                    "RiceExplorer: published copy, but cannot remove staging directory: {error}"
+                    "RiceField: published copy, but cannot remove staging directory: {error}"
                 );
             }
             Ok(())
         }
         Err(error) => {
             if let Err(cleanup_error) = remove_created(&staging_dir) {
-                eprintln!("RiceExplorer: cannot clean staging directory: {cleanup_error}");
+                eprintln!("RiceField: cannot clean staging directory: {cleanup_error}");
             }
             Err(error)
         }

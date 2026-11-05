@@ -4,8 +4,8 @@ set -euo pipefail
 # Install the binary by rename, then register the desktop integration. An
 # ordinary registration failure restores all three previously installed files.
 # This does not claim power-loss atomicity across multiple directories.
-source_binary="${1:?Expected an executable RiceExplorer binary}"
-project_dir="${2:?Expected a RiceExplorer source or release bundle directory}"
+source_binary="${1:?Expected an executable RiceField binary}"
+project_dir="${2:?Expected a RiceField source or release bundle directory}"
 user_home="${HOME:?HOME must be set}"
 data_dir="${XDG_DATA_HOME:-$user_home/.local/share}"
 
@@ -14,7 +14,7 @@ case "$data_dir" in
   *) echo 'XDG_DATA_HOME must be an absolute path' >&2; exit 1 ;;
 esac
 if [[ ! -f "$source_binary" || ! -x "$source_binary" ]]; then
-  echo 'RiceExplorer installation source is missing or not executable' >&2
+  echo 'RiceField installation source is missing or not executable' >&2
   exit 1
 fi
 
@@ -59,9 +59,9 @@ on_exit() {
       fi
     done
     if (( restored == 1 )); then
-      echo 'RiceExplorer install failed; previous binary and launcher restored.' >&2
+      echo 'RiceField install failed; previous binary and launcher restored.' >&2
     else
-      echo 'RiceExplorer install failed and rollback was incomplete; inspect the three installation paths.' >&2
+      echo 'RiceField install failed and rollback was incomplete; inspect the three installation paths.' >&2
     fi
   fi
   rm -r -- "$backup_dir"
@@ -88,4 +88,4 @@ published=1
   exec {RICE_EXPLORER_INSTALL_LOCK_FD}>&-
   bash "$project_dir/scripts/install_desktop_entry.sh" "$project_dir"
 )
-echo 'Installed RiceExplorer and its application-menu launcher.'
+echo 'Installed RiceField and its application-menu launcher.'

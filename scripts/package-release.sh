@@ -24,7 +24,7 @@ if [[ ! -f "$binary_path" || ! -x "$binary_path" ]]; then
   echo "Release binary not found or not executable: $binary_path" >&2
   exit 1
 fi
-if [[ "$("$binary_path" --version)" != "RiceExplorer $release_version" ]]; then
+if [[ "$("$binary_path" --version)" != "RiceField $release_version" ]]; then
   echo 'Binary --version does not match Cargo.toml; rebuild before packaging' >&2
   exit 1
 fi

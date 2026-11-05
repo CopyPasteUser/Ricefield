@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=RiceExplorer
+Name=RiceField
 GenericName=File Manager
 Comment=Customizable Rust file explorer for RiceBowl
 Exec=rice-explorer %U
@@ -10,4 +10,4 @@ Categories=System;FileManager;
 Keywords=Files;Folders;Explorer;RiceBowl;
 MimeType=inode/directory;
 StartupNotify=true
-StartupWMClass=RiceExplorer
+StartupWMClass=RiceField

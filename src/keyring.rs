@@ -1,5 +1,5 @@
 //! Persist explicitly opted-in network logins in the desktop Secret Service.
-//! No credentials are written to RiceExplorer config, argv or log messages.
+//! No credentials are written to RiceField config, argv or log messages.
 //! `secret-tool` is an optional libsecret helper; there is no plaintext fallback.
 
 use crate::{
@@ -50,7 +50,7 @@ fn command(action: Action, uri: &str) -> Command {
     let mut command = Command::new("secret-tool");
     match action {
         Action::Store => {
-            command.args(["store", "--label=RiceExplorer network login"]);
+            command.args(["store", "--label=RiceField network login"]);
         }
         Action::Lookup => {
             command.arg("lookup");

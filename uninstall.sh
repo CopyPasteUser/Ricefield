@@ -16,4 +16,4 @@ rm -f -- \
   "$data_dir/applications/rice-explorer.desktop" \
   "$data_dir/icons/hicolor/scalable/apps/rice-explorer.svg"
 
-echo 'Uninstalled RiceExplorer. User configuration and themes were preserved.'
+echo 'Uninstalled RiceField. User configuration and themes were preserved.'

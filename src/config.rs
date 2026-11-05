@@ -69,6 +69,7 @@ pub struct Config {
     pub saved_searches: Vec<SavedSearch>,
     pub bookmarks: Vec<PathBuf>,
     pub remote_favorites: Vec<String>,
+    pub remote_download_directory: Option<PathBuf>,
     pub restore_session: bool,
     // Local absolute paths and validated network URIs share this legacy TOML
     // string field, so existing saved sessions remain readable.
@@ -100,6 +101,7 @@ impl Default for Config {
             saved_searches: Vec::new(),
             bookmarks: Vec::new(),
             remote_favorites: Vec::new(),
+            remote_download_directory: None,
             restore_session: true,
             session_tabs: Vec::new(),
             session_active: 0,
@@ -339,7 +341,7 @@ fn write_private_config(file: &Path, contents: &[u8]) -> io::Result<()> {
             if fs::symlink_metadata(parent)?.file_type().is_symlink() {
                 return Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,
-                    "RiceExplorer config directory must not be a symlink",
+                    "RiceField config directory must not be a symlink",
                 ));
             }
             fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
@@ -433,7 +435,22 @@ mod tests {
         assert!(config.session_tabs.is_empty());
         assert!(config.show_hidden);
         assert!(config.remote_favorites.is_empty());
+        assert!(config.remote_download_directory.is_none());
         assert_eq!(config.active_filter_count(), 0);
+    }
+
+    #[test]
+    fn configured_remote_download_folder_survives_restart() {
+        let config = Config {
+            remote_download_directory: Some("/mnt/usb/My Downloads".into()),
+            ..Config::default()
+        };
+        let saved = toml::to_string(&config).unwrap();
+        let loaded: Config = toml::from_str(&saved).unwrap();
+        assert_eq!(
+            loaded.remote_download_directory,
+            config.remote_download_directory
+        );
     }
 
     #[test]

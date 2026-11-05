@@ -55,7 +55,7 @@ impl FileManager {
     fn send(&self, request: Request) -> fdo::Result<()> {
         self.sender
             .try_send(request)
-            .map_err(|_| fdo::Error::LimitsExceeded("RiceExplorer request queue is busy".into()))?;
+            .map_err(|_| fdo::Error::LimitsExceeded("RiceField request queue is busy".into()))?;
         self.context.request_repaint();
         Ok(())
     }

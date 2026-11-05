@@ -25,7 +25,7 @@ app_pid=$!
 window=''
 for ((attempt = 0; attempt < 200; attempt++)); do
   kill -0 "$app_pid" 2>/dev/null || { cat "$fixture/app.log" >&2; exit 1; }
-  window="$(xdotool search --onlyvisible --pid "$app_pid" --name '^RiceExplorer$' | head -n 1 || true)"
+  window="$(xdotool search --onlyvisible --pid "$app_pid" --name '^RiceField$' | head -n 1 || true)"
   [[ -z "$window" ]] || break
   sleep 0.05
 done
