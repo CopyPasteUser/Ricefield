@@ -353,6 +353,42 @@ mod tests {
     }
 
     #[test]
+    fn malformed_images_never_panic_in_the_decoder() {
+        let valid = include_bytes!("../assets/rice-explorer.png");
+        for length in [0, 1, 8, 24, 32, 128, 1024] {
+            let _ = std::panic::catch_unwind(|| decode_image(&valid[..length], 108, 108))
+                .expect("a truncated image must not crash the preview worker");
+        }
+        for offset in [0, 1, 8, 16, 20, 24, 29, 64, 128] {
+            let mut corrupted = valid.to_vec();
+            corrupted[offset] ^= 0xff;
+            let _ = std::panic::catch_unwind(|| decode_image(&corrupted, 108, 108))
+                .expect("a corrupt image must not crash the preview worker");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn thumbnails_reject_special_files_and_oversized_symlink_targets() {
+        use std::{os::unix::fs::symlink, os::unix::net::UnixListener};
+
+        let root = test_root();
+        let socket = root.join("socket.png");
+        let _listener = UnixListener::bind(&socket).unwrap();
+        assert!(thumbnail(&socket).unwrap().is_none());
+
+        let huge = root.join("huge.dat");
+        fs::File::create(&huge)
+            .unwrap()
+            .set_len(MAX_THUMBNAIL_BYTES + 1)
+            .unwrap();
+        let link = root.join("linked.png");
+        symlink(&huge, &link).unwrap();
+        assert!(thumbnail(&link).unwrap().is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn rejects_control_characters_in_apparently_text_files() {
         let root = test_root();
         let path = root.join("escape.txt");

@@ -92,7 +92,7 @@ pub fn shorten(name: &str, max: usize) -> String {
     format!("{}…", name.chars().take(keep).collect::<String>())
 }
 
-pub fn paint_file_cell(
+fn paint_file_cell(
     painter: &Painter,
     rect: Rect,
     file: &Entry,
