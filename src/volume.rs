@@ -385,6 +385,11 @@ pub enum VolumeAction {
     Connect(String),
     ConnectAuthenticated(String, MountCredentials),
     MountDevice(String),
+    UnmountDevice {
+        object_path: String,
+        mount_point: PathBuf,
+    },
+    EjectDrive(String),
     Unmount(PathBuf),
     Eject(PathBuf),
 }
@@ -423,6 +428,7 @@ impl VolumeAction {
         match self {
             Self::Connect(uri) | Self::ConnectAuthenticated(uri, _) => vec![OsString::from(uri)],
             Self::MountDevice(_) => Vec::new(),
+            Self::UnmountDevice { .. } | Self::EjectDrive(_) => Vec::new(),
             Self::Unmount(path) => vec![OsString::from("-u"), path.as_os_str().to_owned()],
             Self::Eject(path) => vec![OsString::from("-e"), path.as_os_str().to_owned()],
         }
@@ -432,6 +438,8 @@ impl VolumeAction {
         match self {
             Self::Connect(_) | Self::ConnectAuthenticated(_, _) => "Connect",
             Self::MountDevice(_) => "Mount",
+            Self::UnmountDevice { .. } => "Unmount",
+            Self::EjectDrive(_) => "Eject",
             Self::Unmount(_) => "Unmount",
             Self::Eject(_) => "Eject",
         }
@@ -443,6 +451,16 @@ impl VolumeAction {
 pub fn execute(action: &VolumeAction) -> Result<(), String> {
     if let VolumeAction::MountDevice(object_path) = action {
         return crate::udisks2::mount(object_path);
+    }
+    if let VolumeAction::UnmountDevice {
+        object_path,
+        mount_point,
+    } = action
+    {
+        return crate::udisks2::unmount(object_path, mount_point);
+    }
+    if let VolumeAction::EjectDrive(drive_path) = action {
+        return crate::udisks2::eject(drive_path);
     }
     let mut command = Command::new("gio");
     command
