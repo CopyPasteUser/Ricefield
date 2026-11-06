@@ -9,6 +9,23 @@ Thunar for supported workflows. Keep Thunar installed until real Linux Mint
 acceptance passes. Prioritize data integrity, functionality, stability,
 performance, Linux integration, then visual polish.
 
+### macOS · Finder-inspired shell
+
+- [x] Replace the generic theme with a Finder-like toolbar, address/search
+  row, Favorites/Locations sidebar, original vector folder/file icons and
+  sortable Name/Date modified/Kind/Size detail columns.
+- [x] Wire icon/list toggling, Quick Look, New Folder, More menu, favorites,
+  tabs, mounted volumes and network discovery into shared RiceField actions.
+- [x] Use narrow two-row toolbar and dedicated search row; retain the safe
+  command strip for custom TOML shell configurations. Keep advanced tools
+  available on demand without crowding default Finder.
+- [x] Preserve Linux remote write guards and desktop/RiceBowl window
+  decoration ownership. Avoid proprietary Apple artwork and fake iCloud/AirDrop.
+- [ ] Inspect native GUI smoke captures for full, split, compact and narrow
+  layouts, then publish unedited screenshots to the README/gallery.
+- [ ] Verify keyboard, interaction, network mounts, scaling, accessibility
+  and visual fidelity on the owner's Linux Mint hardware.
+
 ### Frutiger Aero · Blue Skies shell
 
 - [x] Build an original sky-and-water masthead, low-overhead glass-shelf dock,

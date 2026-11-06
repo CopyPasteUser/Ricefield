@@ -66,7 +66,7 @@ pub fn sort_header(
     let mut change_sort = None;
     if matches!(
         theme.shell_kind(),
-        ShellKind::Aero | ShellKind::Ribbon | ShellKind::Aqua
+        ShellKind::Aero | ShellKind::Ribbon | ShellKind::Aqua | ShellKind::Finder
     ) {
         // Both Explorer-era shells align their sortable details columns with
         // the same virtualized rows; the skins differ only in paint tokens.
@@ -96,16 +96,26 @@ pub fn sort_header(
                 };
                 let response = ui.add_sized(
                     [width.max(1.0), 25.0],
-                    egui::Button::new(format!("{label}{arrow}"))
-                        .fill(
-                            if matches!(theme.shell_kind(), ShellKind::Ribbon | ShellKind::Aqua) {
-                                theme.palette.panel()
-                            } else {
-                                Color32::from_rgb(247, 250, 253)
-                            },
-                        )
-                        .stroke(Stroke::new(0.6, theme.palette.border()))
-                        .corner_radius(egui::CornerRadius::ZERO),
+                    egui::Button::new(format!(
+                        "{}{arrow}",
+                        if theme.shell_kind() == ShellKind::Finder && key == "type" {
+                            "Kind"
+                        } else {
+                            label
+                        }
+                    ))
+                    .fill(
+                        if matches!(
+                            theme.shell_kind(),
+                            ShellKind::Ribbon | ShellKind::Aqua | ShellKind::Finder
+                        ) {
+                            theme.palette.panel()
+                        } else {
+                            Color32::from_rgb(247, 250, 253)
+                        },
+                    )
+                    .stroke(Stroke::new(0.6, theme.palette.border()))
+                    .corner_radius(egui::CornerRadius::ZERO),
                 );
                 if response.on_hover_text(format!("Sort by {label}")).clicked() {
                     change_sort = Some(key);
@@ -200,6 +210,8 @@ fn paint_file_cell(
                 Color32::from_rgb(232, 246, 254)
             } else if theme.shell_kind() == ShellKind::Aqua {
                 Color32::from_rgb(237, 252, 249)
+            } else if theme.shell_kind() == ShellKind::Finder {
+                Color32::from_rgb(244, 247, 252)
             } else {
                 theme.palette.background()
             },
@@ -244,7 +256,7 @@ fn paint_file_cell(
     }
     let explorer_list = matches!(
         theme.shell_kind(),
-        ShellKind::Aero | ShellKind::Ribbon | ShellKind::Aqua
+        ShellKind::Aero | ShellKind::Ribbon | ShellKind::Aqua | ShellKind::Finder
     ) && !visual.grid;
     let compact_explorer = explorer_list && rect.width() < 470.0;
     let compact_luna = theme.shell_kind() == ShellKind::Luna && rect.width() < 420.0;
@@ -364,6 +376,10 @@ fn paint_file_icon(painter: &Painter, rect: Rect, file: &Entry, theme: &Theme) {
         paint_aqua_file_icon(painter, rect, file, theme);
         return;
     }
+    if theme.shell_kind() == ShellKind::Finder {
+        paint_finder_file_icon(painter, rect, file, theme);
+        return;
+    }
     let round: u8 = if theme.layout == Layout::Classic {
         0
     } else {
@@ -408,6 +424,68 @@ fn paint_file_icon(painter: &Painter, rect: Rect, file: &Entry, theme: &Theme) {
             Align2::CENTER_CENTER,
             short,
             FontId::proportional((rect.width() * 0.29).clamp(8.0, 13.0)),
+            Color32::WHITE,
+        );
+    }
+}
+
+/// Original Finder-era blue folders and paper icons drawn locally. The shapes
+/// are vector primitives rather than extracted Apple image resources.
+fn paint_finder_file_icon(painter: &Painter, rect: Rect, file: &Entry, theme: &Theme) {
+    let s = rect.width().min(rect.height()).max(12.0);
+    let p = |x: f32, y: f32| Pos2::new(rect.left() + x * s, rect.top() + y * s);
+    let box_at = |x1: f32, y1: f32, x2: f32, y2: f32| Rect::from_min_max(p(x1, y1), p(x2, y2));
+    if file.is_dir {
+        painter.rect_filled(
+            box_at(0.10, 0.20, 0.48, 0.40),
+            3,
+            Color32::from_rgb(60, 144, 225),
+        );
+        painter.rect_filled(
+            box_at(0.06, 0.33, 0.94, 0.85),
+            4,
+            Color32::from_rgb(38, 125, 208),
+        );
+        painter.rect_filled(box_at(0.07, 0.38, 0.93, 0.81), 4, theme.palette.folder());
+        painter.rect_filled(
+            box_at(0.10, 0.42, 0.89, 0.50),
+            2,
+            Color32::WHITE.gamma_multiply(0.28),
+        );
+        painter.line_segment(
+            [p(0.12, 0.74), p(0.88, 0.74)],
+            Stroke::new(1.1, Color32::from_rgb(34, 119, 205)),
+        );
+    } else {
+        let paper = box_at(0.17, 0.06, 0.83, 0.92);
+        painter.rect_filled(paper, 2, Color32::from_rgb(252, 253, 255));
+        painter.rect_stroke(
+            paper,
+            2,
+            Stroke::new(1.0, Color32::from_rgb(127, 145, 165)),
+            egui::StrokeKind::Inside,
+        );
+        painter.rect_filled(
+            box_at(0.23, 0.14, 0.76, 0.29),
+            2,
+            Color32::from_rgb(225, 233, 244),
+        );
+        let extension = match file.kind() {
+            "Image" => "IMG",
+            "Audio" => "AUD",
+            "Video" => "VID",
+            "Archive" => "ZIP",
+            "PDF" => "PDF",
+            "Code" => "DEV",
+            "Link" => "URL",
+            _ => "DOC",
+        };
+        painter.rect_filled(box_at(0.22, 0.39, 0.79, 0.73), 2, theme.palette.file());
+        painter.text(
+            p(0.5, 0.56),
+            Align2::CENTER_CENTER,
+            extension,
+            FontId::proportional((s * 0.21).clamp(7.0, 10.0)),
             Color32::WHITE,
         );
     }

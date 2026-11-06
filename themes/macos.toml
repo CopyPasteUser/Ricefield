@@ -1,26 +1,30 @@
 id = "macos"
-name = "macOS · Finder-inspired"
+name = "macOS · Finder"
 layout = "modern"
 schema_version = 1
 [palette]
-background = "#edf0f3"
-chrome = "#e4e6eb"
-panel = "#ffffff"
-sidebar = "#e8ebef"
-text = "#252b34"
-muted = "#636d79"
-accent = "#307cda"
-selection = "#d2e6ff"
-border = "#cbd0d9"
-folder = "#64abed"
-file = "#a2b6cc"
+background = "#F1F2F5"
+chrome = "#EAECF0"
+panel = "#FFFFFF"
+sidebar = "#EEF0F4"
+text = "#242832"
+muted = "#646D79"
+accent = "#3478D4"
+selection = "#CFE2FA"
+border = "#D1D5DC"
+folder = "#459DEB"
+file = "#A8B8CE"
 [metrics]
-rounding = 9
-row_height = 33
-tile_width = 125
-sidebar_width = 205
+rounding = 6
+row_height = 31
+tile_width = 122
+sidebar_width = 221
 icon_size = 27
 
 [shell]
 kind = "finder"
-top = ["tabs", "command-bar", "navigation"]
+top = ["tabs", "navigation"]
+
+[shell.sidebar]
+sections = ["favorites", "volumes"]
+width = 221

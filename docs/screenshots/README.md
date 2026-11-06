@@ -53,9 +53,23 @@ Original vector icons, a sky-and-water masthead and a responsive bottom dock;
 no downloaded or proprietary operating-system assets. File actions remain
 shared and network tabs remain read-only.
 
+## macOS · Finder rice
+
+![Finder-inspired macOS shell in a real 1120 × 720 GUI capture](macos.png)
+
+| Additional view | Screenshot |
+| --- | --- |
+| Two-folder split (1120 × 720) | [macos-split.png](macos-split.png) |
+| Compact window (700 × 470) | [macos-compact.png](macos-compact.png) |
+| Narrow window (380 × 650) | [macos-narrow.png](macos-narrow.png) |
+
+Original blue-folder/file vectors and Finder-like navigation, Favorites and
+Locations, with functional icon/list switches, Quick Look and More commands.
+There are no Apple icons or imitation traffic-light window controls: native
+decorations come from the desktop/window manager.
+
 ## Other shells
 
 - [Windows 98-inspired](win98.png)
-- [macOS-inspired](macos.png)
 
 Theme-specific UI uses original RiceField vector shapes and styling; no Microsoft assets or branding are copied. OS-level window decorations are left to the window manager / RiceBowl.

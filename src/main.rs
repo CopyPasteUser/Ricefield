@@ -11,6 +11,7 @@ mod duplicates;
 mod external_drag;
 mod file_view;
 mod filesystem;
+mod finder;
 mod folder_tree;
 mod journal;
 mod keyring;
