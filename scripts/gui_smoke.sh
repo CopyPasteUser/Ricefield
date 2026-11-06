@@ -20,8 +20,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p "$display_dir/Documents" "$display_dir/Pictures" screenshots
+mkdir -p "$display_dir/Documents" "$display_dir/Pictures" "$display_dir/My Music" "$display_dir/My Pictures" "$display_dir/Projects" screenshots
 printf 'RiceField native GUI smoke test\n' > "$display_dir/Readme.txt"
+printf 'Personal notes for the GUI fixture\n' > "$display_dir/Notes.txt"
+printf 'Month,Amount\nNovember,42\n' > "$display_dir/Budget.csv"
 printf '# Markdown preview test\n' > "$display_dir/Documents/Example.md"
 cp assets/rice-explorer.png "$display_dir/Pictures/icon.png"
 cp themes/win7.toml "$fixture_dir/custom-theme.toml"

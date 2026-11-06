@@ -6,7 +6,7 @@
 
 use crate::{
     filesystem::{self, Entry},
-    theme::{Layout, Theme},
+    theme::{Layout, ShellKind, Theme},
 };
 use eframe::egui::{
     self, Align2, Color32, FontId, Painter, Pos2, Rect, Response, Sense, Stroke, Vec2,
@@ -57,25 +57,58 @@ pub fn file_cell(
     (rect, response)
 }
 
-pub fn sort_header(ui: &mut egui::Ui, sort_by: &str, descending: bool) -> Option<&'static str> {
+pub fn sort_header(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    sort_by: &str,
+    descending: bool,
+) -> Option<&'static str> {
     let mut change_sort = None;
+    let luna = theme.shell_kind() == ShellKind::Luna;
+    let widths = [0.49, 0.13, 0.16, 0.22];
+    let available = ui.available_width();
+    let compact_luna = luna && available < 420.0;
     ui.horizontal(|ui| {
-        for (key, label) in [
+        if luna {
+            ui.spacing_mut().item_spacing.x = 0.0;
+        }
+        for (index, (key, label)) in [
             ("name", "Name"),
-            ("type", "Type"),
             ("size", "Size"),
+            ("type", "Type"),
             ("modified", "Modified"),
-        ] {
-            let caption = if sort_by == key {
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if compact_luna && index > 0 {
+                continue;
+            }
+            let caption = if !luna && sort_by == key {
                 format!("{label} ({})", if descending { "desc" } else { "asc" })
             } else {
                 label.to_owned()
             };
-            if ui
-                .small_button(caption)
-                .on_hover_text("Sort by this column")
-                .clicked()
-            {
+            let button = egui::Button::new(caption);
+            let response = if luna {
+                ui.add_sized(
+                    [
+                        if compact_luna {
+                            available
+                        } else {
+                            (available * widths[index]).max(40.0)
+                        },
+                        23.0,
+                    ],
+                    button
+                        .fill(Color32::from_rgb(240, 239, 233))
+                        .stroke(Stroke::new(1.0, Color32::from_rgb(184, 186, 194)))
+                        .corner_radius(egui::CornerRadius::ZERO),
+                )
+            } else {
+                ui.add(button.small())
+            };
+            if response.on_hover_text("Sort by this column").clicked() {
                 change_sort = Some(key);
             }
         }
@@ -141,8 +174,11 @@ fn paint_file_cell(
     } else {
         paint_file_icon(&painter, icon_area, file, theme);
     }
+    let compact_luna = theme.shell_kind() == ShellKind::Luna && rect.width() < 420.0;
     let name = if visual.grid {
         shorten(&file.name, 22)
+    } else if compact_luna {
+        shorten(&file.name, ((rect.width() - 52.0) / 7.0).max(1.0) as usize)
     } else {
         shorten(&file.name, ((rect.width() * 0.53) / 7.3) as usize)
     };
@@ -164,27 +200,55 @@ fn paint_file_cell(
             font,
             foreground,
         );
-        let label = format!(
-            "{}    {}    {}",
-            file.kind(),
-            if file.is_dir {
-                "—".into()
+        if theme.shell_kind() == ShellKind::Luna && !compact_luna {
+            let size = if file.is_dir {
+                String::new()
             } else {
                 filesystem::human_size(file.size)
-            },
-            filesystem::age(file.modified)
-        );
-        painter.text(
-            Pos2::new(rect.left() + rect.width() * 0.61, rect.center().y),
-            Align2::LEFT_CENTER,
-            shorten(&label, ((rect.width() * 0.38) / 7.0) as usize),
-            FontId::proportional(11.5),
-            theme.palette.muted(),
-        );
+            };
+            for (offset, column_width, value) in [
+                (0.49, 0.13, size),
+                (0.62, 0.16, file.kind().to_owned()),
+                (0.78, 0.22, filesystem::age(file.modified)),
+            ] {
+                painter.text(
+                    Pos2::new(rect.left() + rect.width() * offset + 5.0, rect.center().y),
+                    Align2::LEFT_CENTER,
+                    shorten(
+                        &value,
+                        ((rect.width() * column_width - 10.0) / 6.5).max(1.0) as usize,
+                    ),
+                    FontId::proportional(11.7),
+                    theme.palette.text(),
+                );
+            }
+        } else if !compact_luna {
+            let label = format!(
+                "{}    {}    {}",
+                file.kind(),
+                if file.is_dir {
+                    "—".into()
+                } else {
+                    filesystem::human_size(file.size)
+                },
+                filesystem::age(file.modified)
+            );
+            painter.text(
+                Pos2::new(rect.left() + rect.width() * 0.61, rect.center().y),
+                Align2::LEFT_CENTER,
+                shorten(&label, ((rect.width() * 0.38) / 7.0) as usize),
+                FontId::proportional(11.5),
+                theme.palette.muted(),
+            );
+        }
     }
 }
 
 fn paint_file_icon(painter: &Painter, rect: Rect, file: &Entry, theme: &Theme) {
+    if theme.shell_kind() == ShellKind::Luna {
+        paint_luna_file_icon(painter, rect, file);
+        return;
+    }
     let round: u8 = if theme.layout == Layout::Classic {
         0
     } else {
@@ -231,6 +295,69 @@ fn paint_file_icon(painter: &Painter, rect: Rect, file: &Entry, theme: &Theme) {
             FontId::proportional((rect.width() * 0.29).clamp(8.0, 13.0)),
             Color32::WHITE,
         );
+    }
+}
+
+/// Original multi-layer vector icons evoke the depth of the XP era without
+/// bundling or tracing platform artwork.
+fn paint_luna_file_icon(painter: &Painter, rect: Rect, file: &Entry) {
+    let s = rect.width().min(rect.height());
+    let p = |x: f32, y: f32| Pos2::new(rect.left() + x * s, rect.top() + y * s);
+    if file.is_dir {
+        let shadow = Rect::from_min_max(p(0.12, 0.29), p(0.92, 0.78));
+        painter.rect_filled(shadow, 1, Color32::from_rgb(170, 116, 21));
+        let tab = Rect::from_min_max(p(0.12, 0.20), p(0.48, 0.37));
+        painter.rect_filled(tab, 1, Color32::from_rgb(228, 167, 39));
+        painter.rect_filled(
+            Rect::from_min_max(p(0.14, 0.25), p(0.88, 0.72)),
+            1,
+            Color32::from_rgb(255, 217, 98),
+        );
+        painter.rect_filled(
+            Rect::from_min_max(p(0.10, 0.39), p(0.90, 0.80)),
+            2,
+            Color32::from_rgb(245, 184, 53),
+        );
+        painter.line_segment(
+            [p(0.13, 0.42), p(0.88, 0.42)],
+            Stroke::new((s * 0.035).max(1.0), Color32::from_rgb(255, 236, 148)),
+        );
+        painter.line_segment(
+            [p(0.13, 0.77), p(0.88, 0.77)],
+            Stroke::new(1.0, Color32::from_rgb(206, 139, 28)),
+        );
+    } else {
+        let paper = Rect::from_min_max(p(0.21, 0.10), p(0.77, 0.88));
+        painter.rect_filled(
+            paper.translate(Vec2::new(1.5, 1.5)),
+            1,
+            Color32::from_rgb(139, 158, 181),
+        );
+        painter.rect_filled(paper, 1, Color32::WHITE);
+        painter.rect_stroke(
+            paper,
+            1,
+            Stroke::new(1.0, Color32::from_rgb(90, 118, 150)),
+            egui::StrokeKind::Inside,
+        );
+        painter.add(egui::Shape::convex_polygon(
+            vec![p(0.61, 0.10), p(0.77, 0.25), p(0.61, 0.25)],
+            Color32::from_rgb(192, 219, 240),
+            Stroke::NONE,
+        ));
+        for y in [0.39, 0.47, 0.55, 0.63] {
+            painter.line_segment(
+                [p(0.28, y), p(0.69, y)],
+                Stroke::new(1.0, Color32::from_rgb(134, 166, 194)),
+            );
+        }
+        let strip = match file.kind() {
+            "Image" => Color32::from_rgb(83, 160, 72),
+            "Archive" => Color32::from_rgb(198, 122, 50),
+            "PDF" => Color32::from_rgb(188, 67, 62),
+            _ => Color32::from_rgb(75, 134, 199),
+        };
+        painter.rect_filled(Rect::from_min_max(p(0.19, 0.68), p(0.47, 0.83)), 1, strip);
     }
 }
 
