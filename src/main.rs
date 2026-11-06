@@ -24,6 +24,7 @@ mod theme;
 mod theme_editor;
 mod thumbnail;
 mod transfer_history;
+mod udisks2;
 mod volume;
 
 use std::{env, ffi::OsString, path::PathBuf};

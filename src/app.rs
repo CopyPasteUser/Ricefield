@@ -379,6 +379,7 @@ struct RemotePreviewResult {
 struct RefreshResult {
     folders: Vec<(u64, PathBuf, Option<SystemTime>)>,
     volumes: Vec<filesystem::MountedVolume>,
+    unmounted_volumes: Vec<crate::udisks2::UnmountedVolume>,
     places: Vec<(&'static str, PathBuf)>,
 }
 
@@ -1026,6 +1027,7 @@ pub struct Explorer {
     progress: Option<Progress>,
     cancel: Arc<AtomicBool>,
     volumes: Vec<filesystem::MountedVolume>,
+    unmounted_volumes: Vec<crate::udisks2::UnmountedVolume>,
     last_refresh_check: Instant,
     places: Vec<(&'static str, PathBuf)>,
     refresh_in_flight: bool,
@@ -1260,6 +1262,7 @@ impl Explorer {
                 path: PathBuf::from("/"),
                 network: false,
             }],
+            unmounted_volumes: Vec::new(),
             last_refresh_check: Instant::now() - Duration::from_secs(3),
             places: vec![("Home", config::home()), ("Filesystem", PathBuf::from("/"))],
             refresh_in_flight: false,
@@ -2702,6 +2705,7 @@ impl Explorer {
             self.places = result.places;
             self.refresh_in_flight = false;
             self.volumes = result.volumes;
+            self.unmounted_volumes = result.unmounted_volumes;
             for (tab_id, path, modified) in result.folders {
                 if let Some(index) = self.tabs.iter().position(|tab| {
                     tab.id == tab_id && tab.path == path && tab.remote_uri.is_none()
@@ -4822,7 +4826,30 @@ impl Explorer {
                                     self.open_network_login(String::new());
                                 }
                                 if self.volume_busy {
-                                    ui.small("GIO device operation in progress…");
+                                    ui.small("Device operation in progress…");
+                                }
+                                for volume in self.unmounted_volumes.clone() {
+                                    let title = format!(
+                                        "{}: {}",
+                                        if volume.removable { "Removable" } else { "USB" },
+                                        volume.label
+                                    );
+                                    if ui
+                                        .add_enabled(
+                                            !self.volume_busy,
+                                            egui::Button::new(format!("Mount {title}")),
+                                        )
+                                        .on_hover_text(format!(
+                                            "{} · click to mount using UDisks2/Polkit",
+                                            volume.device
+                                        ))
+                                        .clicked()
+                                    {
+                                        self.start_volume_action(
+                                            VolumeAction::MountDevice(volume.object_path),
+                                            false,
+                                        );
+                                    }
                                 }
                                 for uri in self.config.remote_favorites.clone() {
                                     if !matches!(
@@ -7057,6 +7084,7 @@ impl eframe::App for Explorer {
                 let _ = sender.send(RefreshResult {
                     folders,
                     volumes: filesystem::mounted_volumes(),
+                    unmounted_volumes: crate::udisks2::unmounted_volumes(),
                     places: {
                         let home = config::home();
                         let mut places = vec![("Home", home.clone())];

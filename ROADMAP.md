@@ -1,6 +1,6 @@
 # RiceField roadmap to 1.0
 
-**Current candidate: `1.0.0-rc.9`.** See [the scope and evidence ledger](docs/1.0-STATUS.md).
+**Current candidate: `1.0.0-rc.10`.** See [the scope and evidence ledger](docs/1.0-STATUS.md).
 This roadmap retains incomplete capabilities explicitly: a candidate version
 does not turn unchecked safety, integration or physical-device work into a pass.
 
@@ -306,12 +306,15 @@ recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
   Never enable uploads based on GIO's flags alone.
 - [ ] Discover drives/volumes/mounts and their capabilities dynamically.
   Existing background mountinfo enumeration now labels detected network mounts
-  separately in the Volumes sidebar. Device capabilities and unmounted drives
-  still require UDisks2/GIO integration.
+  separately in the Volumes sidebar. RC.10 adds throttled UDisks2 ObjectManager
+  discovery of unmounted external/removable filesystems, with strict filtering
+  and fallback when the system bus is unavailable. Rich device capabilities,
+  LUKS and internal fixed drives still require further integration.
 - [ ] Mount/unmount/eject/unlock through OS APIs and Polkit.
   The Volumes sidebar can now invoke bounded background GIO unmount/eject
-  commands after confirmation; drive unlocking and a native Polkit flow are
-  still open. No forced unmount is offered.
+  commands after confirmation. RC.10 adds explicit native UDisks2 mounting of
+  discovered removable filesystems through system Polkit authorization; encrypted
+  drive unlocking and native unmount/eject remain open. No forced unmount is offered.
 - [ ] Connect SMB/SFTP/WebDAV, browse system NFS and supported MTP devices.
   Initial non-blocking `gio mount` connection attempts are supported without
   URI credentials. Read-only remote listing works in normal tabs; native remote
