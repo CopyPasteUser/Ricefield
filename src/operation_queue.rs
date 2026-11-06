@@ -80,6 +80,7 @@ pub fn describe(action: &Action) -> String {
         Action::NewFolder { .. } => "New folder".into(),
         Action::NewFile { .. } => "New file".into(),
         Action::SetMode { .. } => "Change permissions".into(),
+        Action::SetOwnership { .. } => "Change owner/group".into(),
     }
 }
 

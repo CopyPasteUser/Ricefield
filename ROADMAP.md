@@ -1,6 +1,6 @@
 # RiceField roadmap to 1.0
 
-**Current candidate: `1.0.0-rc.13`.** See [the scope and evidence ledger](docs/1.0-STATUS.md).
+**Current candidate: `1.0.0-rc.14`.** See [the scope and evidence ledger](docs/1.0-STATUS.md).
 This roadmap retains incomplete capabilities explicitly: a candidate version
 does not turn unchecked safety, integration or physical-device work into a pass.
 
@@ -86,7 +86,12 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   O_PATH and Linux fchmodat2 with AT_EMPTY_PATH where supported (rc.12).
   RC.13 additionally records the selected inode's metadata in the Properties
   snapshot, and refuses chmod if that exact file changed or was replaced
-  before Apply. Full ACL/ownership editing still requires separate work.
+  before Apply. Full ACL and privileged ownership editing still require separate work.
+- [x] RC.14 adds basic UID/GID ownership changes through descriptor-bound
+  `fchownat(AT_EMPTY_PATH)` on Linux. The Properties selection is checked
+  again before mutation; the kernel handles normal permission and group
+  membership checks. There is no sudo/privileged helper. GUI support for
+  complex POSIX ACL rules and privileged ownership changes remains open.
 - [x] Refuse staged publication if a source's identity, size, modification
   time, inode change time or mode changes during the copy; open regular
   sources without following
