@@ -1,5 +1,6 @@
 mod aero;
 mod app;
+mod aqua;
 mod archive;
 mod benchmark;
 mod clipboard;

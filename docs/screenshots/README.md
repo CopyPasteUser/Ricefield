@@ -38,6 +38,20 @@ compact and narrow windows wrap to a smaller command set with a More menu.
 | Narrow window (380 × 650) | [xp-luna-narrow.png](xp-luna-narrow.png) |
 | New-folder dialog | [xp-luna-dialog.png](xp-luna-dialog.png) |
 
+## Frutiger Aero · Blue Skies rice
+
+![Frutiger Aero-inspired Aqua shell in a real 1120 × 720 GUI capture](frutiger-aero.png)
+
+| Additional view | Screenshot |
+| --- | --- |
+| Two-folder split (1120 × 720) | [frutiger-aero-split.png](frutiger-aero-split.png) |
+| Compact window (700 × 470) | [frutiger-aero-compact.png](frutiger-aero-compact.png) |
+| Narrow window (380 × 650) | [frutiger-aero-narrow.png](frutiger-aero-narrow.png) |
+
+Original vector icons, a sky-and-water masthead and a responsive bottom dock;
+no downloaded or proprietary operating-system assets. File actions remain
+shared and network tabs remain read-only.
+
 ## Other shells
 
 - [Windows 98-inspired](win98.png)

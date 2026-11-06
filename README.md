@@ -20,6 +20,8 @@ A customizable Linux file manager built with **Rust + egui**, designed to work o
 
 **XP Luna:** [full window](docs/screenshots/xp-luna.png) · [split view](docs/screenshots/xp-luna-split.png) · [more real GUI screenshots](docs/screenshots/)
 
+**Frutiger Aero · Blue Skies:** [full window](docs/screenshots/frutiger-aero.png) · [split view](docs/screenshots/frutiger-aero-split.png) · [compact](docs/screenshots/frutiger-aero-compact.png) · [narrow](docs/screenshots/frutiger-aero-narrow.png)
+
 > **Status: 1.0.0-rc.17 candidate.** Not a signed-off stable 1.0. Network-write safety, complete recovery and physical Linux Mint/NAS/USB acceptance remain open. Keep your current file manager and use disposable data for testing risky operations.
 
 ## Built for real file management
@@ -35,6 +37,8 @@ A customizable Linux file manager built with **Rust + egui**, designed to work o
 **Windows 7 · Aero:** [Explorer-style shell](docs/screenshots/win7.png) with clickable breadcrumb paths, an Organize/Share command strip, Favorites/Libraries/Computer navigation, aligned details columns and a bottom selection-details pane. File operations, network safety and window decorations remain shared with the core and desktop window manager.
 
 **Windows 10 · Explorer:** [Ribbon shell](docs/screenshots/win10.png) with File/Home/Share/View pages, responsive command groups, Quick access, This PC, breadcrumb navigation, details/icon view switching and original flat vector icons. Its controls reuse RiceField's guarded file operations; window decorations belong to RiceBowl/the window manager.
+
+**Frutiger Aero · Blue Skies:** [Aqua shell](docs/screenshots/frutiger-aero.png) with an original sky-and-water masthead, pearl-green places sidebar, glossy file and folder vectors, live breadcrumb/search navigation and a responsive bottom glass-shelf dock. Its tools perform real file operations; local-only actions are disabled for read-only network locations. No borrowed Windows or Vista artwork.
 
 File operations remain independent of the selected visual shell.
 
@@ -63,6 +67,7 @@ Prefer a bundle? Check [Releases](https://github.com/CopyPasteUser/Ricefield/rel
 rice-explorer --theme win7 ~/Downloads
 rice-explorer --theme win10 ~/Downloads
 rice-explorer --theme xp-luna ~/Documents
+rice-explorer --theme frutiger-aero ~/Pictures
 rice-explorer --theme macos
 rice-explorer --theme-file /path/to/my-rice.toml
 ```
