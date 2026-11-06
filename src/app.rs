@@ -3250,10 +3250,18 @@ impl Explorer {
         }
     }
 
-    /// One shared transfer surface for every rice, including shells without
-    /// a status bar. It intentionally reserves a stable row while idle.
+    /// One shared transfer surface for every rice. In Luna it is hidden when
+    /// idle; transfer history remains accessible from the Tools menu.
     fn transfer_strip(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme.clone();
+        if theme.shell_kind() == ShellKind::Luna
+            && !self.busy
+            && self.operation_queue.is_empty()
+            && self.active_operation.is_none()
+            && !self.show_operations
+        {
+            return;
+        }
         egui::Panel::top("transfer_status")
             .frame(
                 egui::Frame::new()
@@ -4483,8 +4491,10 @@ impl Explorer {
             Color32::WHITE
         };
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("RiceField").color(menu_text).strong());
-            ui.separator();
+            if !is_luna {
+                ui.label(egui::RichText::new("RiceField").color(menu_text).strong());
+                ui.separator();
+            }
             ui.menu_button(egui::RichText::new("File").color(menu_text), |ui| {
                 if ui.button("New folder  Ctrl+N").clicked() {
                     self.dialog = Some(Dialog::Name {
@@ -4599,6 +4609,10 @@ impl Explorer {
                         if self.discovery_hosts.is_empty() {
                             self.start_discovery();
                         }
+                        ui.close();
+                    }
+                    if ui.button("Transfers and history…").clicked() {
+                        self.show_operations = true;
                         ui.close();
                     }
                 });
