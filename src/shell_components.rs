@@ -117,7 +117,9 @@ pub fn sidebar_section(
         } else {
             heading
         };
-        let arrow = if expanded { "▾" } else { "▸" };
+        // Avoid missing-glyph boxes: egui's embedded font does not contain
+        // every triangular disclosure arrow.
+        let arrow = if expanded { "-" } else { "+" };
         let header = egui::Button::new(
             egui::RichText::new(format!("{arrow}  {display_title}"))
                 .strong()
@@ -134,11 +136,15 @@ pub fn sidebar_section(
             ui.data_mut(|data| data.insert_persisted(id, !expanded));
         }
         if expanded {
+            let body_width = (ui.available_width() - 16.0).max(0.0);
             egui::Frame::new()
                 .fill(Color32::from_rgb(245, 249, 255))
                 .stroke(egui::Stroke::new(1.0, Color32::from_rgb(172, 195, 230)))
                 .inner_margin(egui::Margin::symmetric(7, 9))
-                .show(ui, contents);
+                .show(ui, |ui| {
+                    ui.set_min_width(body_width);
+                    contents(ui);
+                });
         }
         return;
     }

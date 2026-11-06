@@ -4814,6 +4814,9 @@ impl Explorer {
                     .min((ui.available_width() * 0.36).max(126.0)),
             )
             .min_size(120.0)
+            // `default_size` only affects the initial frame. Cap an already
+            // open/resized sidebar as the application window shrinks, too.
+            .max_size((ui.available_width() * 0.42).max(120.0))
             .frame(
                 egui::Frame::new()
                     .fill(theme.palette.sidebar())
@@ -5306,7 +5309,7 @@ impl Explorer {
                     .inner_margin(egui::Margin::same(14)),
             )
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     let title = self
                         .current()
                         .path
@@ -5362,7 +5365,7 @@ impl Explorer {
                     });
                 });
                 ui.add_space(8.0);
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.menu_button("New", |ui| {
                         if ui.button("New folder  Ctrl+N").clicked() {
                             self.dialog = Some(Dialog::Name {
