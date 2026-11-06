@@ -45,10 +45,10 @@ click_at 649 140 # Filters in the revealed tools row (above the column headings)
 import -window "$window" screenshots/filters-menu-open.png
 click_at 750 290 # Custom pattern and ranges (inside the header hitbox)
 import -window "$window" screenshots/filters-invalid-regex.png
-# Navigate the editable controls by keyboard rather than depending on the
-# popup's dynamic height (the invalid-regex message adds an extra row).
-xdotool key Tab Tab # Filename glob, then filename regex
-sleep 0.2
+# The invalid-regex message is rendered below the second text field. This
+# coordinate was verified against the full 1120x720 Xvfb failure capture;
+# y=390 lands on the regex label, not in its editable area.
+click_at 750 403 # Filename regex text field
 xdotool key ctrl+a
 xdotool type --delay 20 '42'
 for ((attempt = 0; attempt < 50; attempt++)); do
