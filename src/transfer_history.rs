@@ -294,7 +294,7 @@ fn spawn_worker_with_path(
     Receiver<()>,
     thread::JoinHandle<()>,
 ) {
-    let (sender, receiver) = mpsc::sync_channel(64);
+    let (sender, receiver) = mpsc::sync_channel::<Record>(64);
     let (event_sender, event_receiver) = mpsc::channel();
     let (done_sender, done_receiver) = mpsc::channel();
     let handle = thread::spawn(move || {
