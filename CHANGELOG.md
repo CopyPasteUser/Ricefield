@@ -7,8 +7,10 @@
   selection, new files/folders, rename, delete confirmations, properties,
   compressing, network discovery and switching file layouts.
 - Add original flat vector ribbon/file/sidebar icons, Quick access, This PC,
-  network navigation, breadcrumbs and a slim status-view switcher. The ribbon
+  network/device navigation, breadcrumbs and a slim status-view switcher. The ribbon
   wraps into quick commands at smaller widths instead of clipping controls.
+- Ensure the File tab has visible blue contrast and remove the idle transfer
+  strip from this shell (active transfers and history remain accessible).
 - Keep keyboard and file safety logic shared across all seven themes; remote
   tabs cannot trigger destructive local actions. Keep window borders and
   decorations in the desktop/window manager, not RiceField.

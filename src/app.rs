@@ -3261,11 +3261,12 @@ impl Explorer {
         }
     }
 
-    /// One shared transfer surface for every rice. In Luna it is hidden when
-    /// idle; transfer history remains accessible from the Tools menu.
+    /// One shared transfer surface for every rice. In Luna and Windows 10 it
+    /// stays hidden when idle; transfer history remains accessible from the
+    /// Tools menu or the Windows 10 File/Share ribbon.
     fn transfer_strip(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme.clone();
-        if theme.shell_kind() == ShellKind::Luna
+        if matches!(theme.shell_kind(), ShellKind::Luna | ShellKind::Ribbon)
             && !self.busy
             && self.operation_queue.is_empty()
             && self.active_operation.is_none()
@@ -5907,8 +5908,22 @@ impl Explorer {
                                             path.file_name().unwrap_or_default().to_string_lossy()
                                         )
                                     };
-                                    let response = ui
-                                        .add_sized(
+                                    let response = if ribbon {
+                                        shell_components::win10_sidebar_response(
+                                            ui,
+                                            &theme,
+                                            &label,
+                                            self.current().path == path,
+                                            if path == Path::new("/") {
+                                                shell_components::Win10NavIcon::Computer
+                                            } else if volume.network {
+                                                shell_components::Win10NavIcon::Network
+                                            } else {
+                                                shell_components::Win10NavIcon::Folder
+                                            },
+                                        )
+                                    } else {
+                                        ui.add_sized(
                                             [ui.available_width(), if aero { 26.0 } else { 29.0 }],
                                             egui::Button::new(if aero {
                                                 format!("    {label}")
@@ -5918,10 +5933,11 @@ impl Explorer {
                                             .selected(self.current().path == path)
                                             .frame(!aero || self.current().path == path),
                                         )
-                                        .on_hover_text(format!(
-                                            "{}\nRight-click for mount actions",
-                                            path.display()
-                                        ));
+                                    }
+                                    .on_hover_text(format!(
+                                        "{}\nRight-click for mount actions",
+                                        path.display()
+                                    ));
                                     if path != Path::new("/") {
                                         response.context_menu(|ui| {
                                             if ui
@@ -5965,7 +5981,12 @@ impl Explorer {
                                             }
                                         });
                                     }
-                                    if response.clicked() {
+                                    let activated = if ribbon {
+                                        shell_components::win10_sidebar_activated(ui, &response)
+                                    } else {
+                                        response.clicked()
+                                    };
+                                    if activated {
                                         self.navigate(path);
                                     }
                                 }

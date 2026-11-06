@@ -110,6 +110,22 @@ for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sideba
   sleep 1
   import -window "$window_id" "screenshots/$theme.png"
   identify -format '%wx%h\n' "screenshots/$theme.png"
+  # Windows 10 has distinct interactive ribbon pages, not merely a painted
+  # Home toolbar. Verify that both other pages visibly change the running UI.
+  if [[ "$theme" == win10 ]]; then
+    xdotool mousemove --window "$window_id" 221 21 click 1
+    sleep 1
+    xdotool mousemove --window "$window_id" 1050 650
+    import -window "$window_id" screenshots/win10-view.png
+    require_visible_change screenshots/win10.png screenshots/win10-view.png 'Windows 10 View ribbon' 1500
+    xdotool mousemove --window "$window_id" 150 21 click 1
+    sleep 1
+    xdotool mousemove --window "$window_id" 1050 650
+    import -window "$window_id" screenshots/win10-share.png
+    require_visible_change screenshots/win10.png screenshots/win10-share.png 'Windows 10 Share ribbon' 1500
+    xdotool mousemove --window "$window_id" 81 21 click 1
+    sleep 1
+  fi
   # Exercise the new two-pane command on every shell; a screenshot is a smoke
   # artifact, not proof of correct hit targets or system drag-and-drop.
   xdotool key F3

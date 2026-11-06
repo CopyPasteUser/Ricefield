@@ -21,6 +21,8 @@ These are unedited screenshots captured from the **running Rust/egui application
 | Two-folder split (1120 × 720) | [win10-split.png](win10-split.png) |
 | Compact window (700 × 470) | [win10-compact.png](win10-compact.png) |
 | Narrow window (380 × 650) | [win10-narrow.png](win10-narrow.png) |
+| View ribbon page | [win10-view.png](win10-view.png) |
+| Share ribbon page | [win10-share.png](win10-share.png) |
 
 The ribbon has File/Home/Share/View pages with enabled-state-aware commands;
 compact and narrow windows wrap to a smaller command set with a More menu.

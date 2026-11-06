@@ -18,8 +18,8 @@ performance, Linux integration, then visual polish.
   sorter-aligned details view, flatter folder/document icons and view switches.
 - [x] Preserve custom TOML shell composition, network read-only rules and
   RiceBowl-owned window decorations; avoid proprietary Windows artwork.
-- [ ] Inspect and publish unedited GUI smoke captures for full, split, compact
-  and narrow layouts, and verify the Rust checks workflow is green.
+- [ ] Inspect and publish unedited GUI smoke captures for full, split, compact,
+  narrow, View and Share layouts, and verify the Rust checks workflow is green.
 - [ ] Check ribbon focus/selection/menu behavior, keyboard paths, real NAS,
   decorations and display scaling on Linux Mint hardware.
 - [ ] Compare visual proportions against licensed Windows 10 references:

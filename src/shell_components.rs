@@ -506,6 +506,26 @@ pub fn win10_sidebar_link(
     selected: bool,
     icon: Win10NavIcon,
 ) -> bool {
+    let response = win10_sidebar_response(ui, theme, label, selected, icon);
+    win10_sidebar_activated(ui, &response)
+}
+
+pub fn win10_sidebar_activated(ui: &egui::Ui, response: &egui::Response) -> bool {
+    response.clicked()
+        || (response.has_focus()
+            && ui.input(|input| {
+                input.key_pressed(egui::Key::Enter) || input.key_pressed(egui::Key::Space)
+            }))
+}
+
+/// Return the full response when a row also needs a device context menu.
+pub fn win10_sidebar_response(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    label: &str,
+    selected: bool,
+    icon: Win10NavIcon,
+) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(
         Vec2::new(ui.available_width().max(85.0), 28.0),
         Sense::click(),
@@ -583,13 +603,7 @@ pub fn win10_sidebar_link(
         FontId::proportional(12.5),
         theme.palette.text(),
     );
-    let activated = response.clicked()
-        || (response.has_focus()
-            && ui.input(|input| {
-                input.key_pressed(egui::Key::Enter) || input.key_pressed(egui::Key::Space)
-            }));
-    response.on_hover_text(label);
-    activated
+    response.on_hover_text(label)
 }
 
 pub fn sidebar_section(
