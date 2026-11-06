@@ -680,6 +680,12 @@ pub enum Action {
         gid: u32,
         expected: fs::Metadata,
     },
+    CreateUserAttribute {
+        path: PathBuf,
+        name: String,
+        value: String,
+        expected: fs::Metadata,
+    },
 }
 
 pub fn valid_name(name: &str) -> bool {
@@ -822,6 +828,73 @@ fn set_ownership_guarded(
             uid as libc::uid_t,
             gid as libc::gid_t,
             libc::AT_EMPTY_PATH,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+/// Create a small text attribute without ever replacing an existing value.
+/// A pinned O_NOFOLLOW descriptor prevents path and symlink substitution;
+/// XATTR_CREATE is the kernel-enforced no-overwrite condition.
+#[cfg(target_os = "linux")]
+fn create_user_attribute_guarded(
+    path: &Path,
+    name: &str,
+    value: &str,
+    expected: &fs::Metadata,
+) -> io::Result<()> {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+
+    if !name.starts_with("user.")
+        || name.len() <= "user.".len()
+        || name.len() > 255
+        || name.as_bytes().contains(&0)
+        || value.len() > 4096
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Expected a user.* attribute name (max 255 bytes) and text value (max 4 KiB)",
+        ));
+    }
+    let attribute = CString::new(name)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Invalid attribute name"))?;
+    let source = CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Invalid filename"))?;
+    // SAFETY: valid NUL-terminated pathname; opening nofollow with read access
+    // pins the inode without resolving the final symlink. The kernel still
+    // enforces ordinary permissions to modify attributes.
+    let raw = unsafe {
+        libc::open(
+            source.as_ptr(),
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK,
+        )
+    };
+    if raw < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `open` succeeded; OwnedFd closes the descriptor on drop.
+    let file = File::from(unsafe { OwnedFd::from_raw_fd(raw) });
+    let metadata = file.metadata()?;
+    ensure_same_source_metadata(expected, &metadata)?;
+    if !metadata.is_file() && !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Attributes require an ordinary file or directory",
+        ));
+    }
+    // SAFETY: name and value have valid storage for the supplied lengths.
+    // XATTR_CREATE atomically refuses collisions, including concurrent writes.
+    let result = unsafe {
+        libc::fsetxattr(
+            file.as_raw_fd(),
+            attribute.as_ptr(),
+            value.as_ptr().cast(),
+            value.len(),
+            libc::XATTR_CREATE,
         )
     };
     if result == 0 {
@@ -2005,6 +2078,26 @@ fn perform_with_progress_and_items(
                 Err(io::Error::new(
                     io::ErrorKind::Unsupported,
                     "Owner/group changes require Linux",
+                ))
+            }
+        }
+        Action::CreateUserAttribute {
+            path,
+            name,
+            value,
+            expected,
+        } => {
+            transfer.check()?;
+            #[cfg(target_os = "linux")]
+            {
+                create_user_attribute_guarded(path, name, value, expected)?;
+                Ok(format!("Created attribute {name}"))
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "Extended attribute editing requires Linux",
                 ))
             }
         }
@@ -6752,6 +6845,92 @@ mod tests {
         let after = fs::metadata(&selected).unwrap();
         assert_eq!((after.uid(), after.gid()), (current.uid(), current.gid()));
         assert_eq!(fs::read(&old).unwrap(), b"original owner target");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn creating_user_attribute_never_overwrites_an_existing_value() {
+        let root = test_root();
+        let target = root.join("file");
+        fs::write(&target, b"data").unwrap();
+        let snapshot = fs::metadata(&target).unwrap();
+        perform(&Action::CreateUserAttribute {
+            path: target.clone(),
+            name: "user.ricefield_test".into(),
+            value: "first value".into(),
+            expected: snapshot,
+        })
+        .unwrap();
+        assert_eq!(
+            read_link_xattr(&target, b"user.ricefield_test").unwrap(),
+            b"first value"
+        );
+
+        let current = fs::metadata(&target).unwrap();
+        let error = create_user_attribute_guarded(
+            &target,
+            "user.ricefield_test",
+            "must not replace",
+            &current,
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            read_link_xattr(&target, b"user.ricefield_test").unwrap(),
+            b"first value"
+        );
+        assert_eq!(fs::read(&target).unwrap(), b"data");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn creating_user_attribute_rejects_symlinks_stale_inodes_and_invalid_input() {
+        use std::os::unix::fs::symlink;
+
+        let root = test_root();
+        let selected = root.join("selected");
+        fs::write(&selected, b"original").unwrap();
+        let expected = fs::metadata(&selected).unwrap();
+        for name in ["system.posix_acl_access", "user.", "user.bad\0name"] {
+            assert_eq!(
+                create_user_attribute_guarded(&selected, name, "data", &expected)
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::InvalidInput
+            );
+        }
+        assert_eq!(
+            create_user_attribute_guarded(&selected, "user.test", &"x".repeat(4097), &expected)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidInput
+        );
+
+        let link = root.join("link");
+        symlink(&selected, &link).unwrap();
+        assert!(
+            create_user_attribute_guarded(
+                &link,
+                "user.test",
+                "data",
+                &fs::symlink_metadata(&link).unwrap()
+            )
+            .is_err()
+        );
+
+        let old = root.join("old");
+        fs::rename(&selected, &old).unwrap();
+        fs::write(&selected, b"replacement").unwrap();
+        assert_eq!(
+            create_user_attribute_guarded(&selected, "user.test", "data", &expected)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert!(read_link_xattr(&selected, b"user.test").is_err());
+        assert!(read_link_xattr(&old, b"user.test").is_err());
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -1,6 +1,6 @@
 # RiceField roadmap to 1.0
 
-**Current candidate: `1.0.0-rc.14`.** See [the scope and evidence ledger](docs/1.0-STATUS.md).
+**Current candidate: `1.0.0-rc.15`.** See [the scope and evidence ledger](docs/1.0-STATUS.md).
 This roadmap retains incomplete capabilities explicitly: a candidate version
 does not turn unchecked safety, integration or physical-device work into a pass.
 
@@ -92,6 +92,12 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   again before mutation; the kernel handles normal permission and group
   membership checks. There is no sudo/privileged helper. GUI support for
   complex POSIX ACL rules and privileged ownership changes remains open.
+- [x] RC.15 offers bounded creation of `user.*` text extended attributes on
+  ordinary local files/directories. An O_NOFOLLOW file descriptor pins the
+  selected inode and `XATTR_CREATE` rejects every existing name atomically,
+  including races. There is no ACL editor, attribute replacement/deletion,
+  privileged namespace writer or guarantee that every filesystem supports
+  xattrs. Ordinary kernel permissions and disposable Mint testing apply.
 - [x] Refuse staged publication if a source's identity, size, modification
   time, inode change time or mode changes during the copy; open regular
   sources without following
