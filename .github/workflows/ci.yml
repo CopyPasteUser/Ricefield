@@ -87,9 +87,11 @@ jobs:
           path: performance-*.toml
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
         with:
           name: rice-explorer-gui-smoke
           path: screenshots/
+          if-no-files-found: warn
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rice-explorer-linux-x86_64

@@ -37,10 +37,14 @@ click_at() {
   xdotool click 1
   sleep 0.3
 }
-click_at 660 180 # Filters
-click_at 750 330 # Custom pattern and ranges
+# The Aero shell intentionally keeps advanced tools hidden until requested.
+# Exercise that user-facing disclosure before opening the editable Filters
+# menu. The old positions assumed the now-removed generic Explorer toolbar.
+click_at 680 55  # More tools (Aero command strip)
+click_at 660 155 # Filters in the revealed tools row
+click_at 750 305 # Custom pattern and ranges
 import -window "$window" screenshots/filters-invalid-regex.png
-click_at 750 443 # Filename regex
+click_at 750 418 # Filename regex
 xdotool key ctrl+a
 xdotool type --delay 20 '42'
 for ((attempt = 0; attempt < 50; attempt++)); do
