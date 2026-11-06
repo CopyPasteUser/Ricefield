@@ -1,0 +1,22 @@
+# RiceField screenshots
+
+These are unedited screenshots captured from the **running Rust/egui application** in GitHub Actions' Xvfb GUI smoke test. The fixtures contain disposable example files; the images are not renders or concept mockups. They verify rendering, not usability on a physical Linux desktop.
+
+## XP Luna rice
+
+![XP Luna file manager with the classic task pane](xp-luna.png)
+
+| Additional view | Screenshot |
+| --- | --- |
+| Two-folder split | [xp-luna-split.png](xp-luna-split.png) |
+| Compact window (700 × 470) | [xp-luna-compact.png](xp-luna-compact.png) |
+| Narrow window (380 × 650) | [xp-luna-narrow.png](xp-luna-narrow.png) |
+| New-folder dialog | [xp-luna-dialog.png](xp-luna-dialog.png) |
+
+## Other shells
+
+- [Windows 7-inspired](win7.png)
+- [Windows 98-inspired](win98.png)
+- [macOS-inspired](macos.png)
+
+Theme-specific UI uses original RiceField vector shapes and styling; no Microsoft assets or branding are copied. OS-level window decorations are left to the window manager / RiceBowl.
