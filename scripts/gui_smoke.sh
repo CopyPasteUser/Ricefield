@@ -21,6 +21,10 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$display_dir/Documents" "$display_dir/Pictures" "$display_dir/My Music" "$display_dir/My Pictures" "$display_dir/Projects" screenshots
+# Native screenshots must show realistic available Finder favorites, without
+# touching the runner's or developer's actual ~/Desktop/Downloads directories.
+mkdir -p "$fixture_dir/Desktop" "$fixture_dir/Documents" "$fixture_dir/Downloads" "$fixture_dir/Pictures" "$fixture_dir/Music" "$fixture_dir/Videos"
+export HOME="$fixture_dir"
 printf 'RiceField native GUI smoke test\n' > "$display_dir/Readme.txt"
 printf 'Personal notes for the GUI fixture\n' > "$display_dir/Notes.txt"
 printf 'Month,Amount\nNovember,42\n' > "$display_dir/Budget.csv"

@@ -5925,27 +5925,8 @@ impl Explorer {
                                             self.navigate(path);
                                         }
                                     }
-                                    // Reflect the actual working location so a freshly opened
-                                    // Finder also has a useful, actionable shortcut in test fixtures.
-                                    let current = self.current().path.clone();
-                                    if self.current().remote_uri.is_none() && current != home {
-                                        let name = current
-                                            .file_name()
-                                            .unwrap_or_default()
-                                            .to_string_lossy()
-                                            .into_owned();
-                                        if finder::sidebar_link(
-                                            ui,
-                                            &theme,
-                                            &shorten(&name, 22),
-                                            true,
-                                            FinderNavIcon::Folder,
-                                        ) {
-                                            self.navigate(current);
-                                        }
-                                    }
                                     for path in self.config.bookmarks.clone() {
-                                        if path == home || path == self.current().path {
+                                        if path == home {
                                             continue;
                                         }
                                         let name = path
@@ -5957,7 +5938,7 @@ impl Explorer {
                                             ui,
                                             &theme,
                                             &shorten(&name, 22),
-                                            false,
+                                            self.current().path == path,
                                             FinderNavIcon::Favorite,
                                         ) {
                                             self.navigate(path);
