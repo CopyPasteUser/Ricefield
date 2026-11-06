@@ -304,6 +304,23 @@ mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    #[cfg(unix)]
+    fn special_file_fixture(path: &Path) -> Option<std::os::unix::net::UnixListener> {
+        use std::{ffi::CString, os::unix::ffi::OsStrExt, os::unix::net::UnixListener};
+
+        match UnixListener::bind(path) {
+            Ok(listener) => Some(listener),
+            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+                // Exercise the same special-file refusal with a FIFO when
+                // the execution environment blocks AF_UNIX socket creation.
+                let name = CString::new(path.as_os_str().as_bytes()).unwrap();
+                assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+                None
+            }
+            Err(error) => panic!("Cannot create special-file test fixture: {error}"),
+        }
+    }
+
     fn test_root() -> std::path::PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -376,11 +393,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn thumbnails_reject_special_files_and_oversized_symlink_targets() {
-        use std::{os::unix::fs::symlink, os::unix::net::UnixListener};
+        use std::os::unix::fs::symlink;
 
         let root = test_root();
         let socket = root.join("socket.png");
-        let _listener = UnixListener::bind(&socket).unwrap();
+        let _listener = special_file_fixture(&socket);
         assert!(thumbnail(&socket).unwrap().is_none());
 
         let huge = root.join("huge.dat");
@@ -444,11 +461,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn special_file_is_not_opened_for_preview() {
-        use std::os::unix::net::UnixListener;
-
         let root = test_root();
         let path = root.join("socket.txt");
-        let _listener = UnixListener::bind(&path).unwrap();
+        let _listener = special_file_fixture(&path);
         assert!(matches!(
             load(&path).unwrap(),
             Preview::Info(message) if message.contains("Special file")

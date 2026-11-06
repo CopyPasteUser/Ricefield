@@ -3580,6 +3580,24 @@ mod tests {
     use super::*;
     use std::time::UNIX_EPOCH;
 
+    #[cfg(unix)]
+    fn special_file_fixture(path: &Path) -> Option<std::os::unix::net::UnixListener> {
+        use std::{ffi::CString, os::unix::ffi::OsStrExt, os::unix::net::UnixListener};
+
+        match UnixListener::bind(path) {
+            Ok(listener) => Some(listener),
+            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+                // Some CI containers prohibit AF_UNIX sockets with seccomp,
+                // while still allowing FIFOs. Both must be rejected by the
+                // regular-file transfer engine, so keep the assertion active.
+                let name = CString::new(path.as_os_str().as_bytes()).unwrap();
+                assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+                None
+            }
+            Err(error) => panic!("Cannot create special-file test fixture: {error}"),
+        }
+    }
+
     #[test]
     fn mounted_volumes_include_local_system_root() {
         assert!(
@@ -4791,7 +4809,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn transfer_report_preserves_partial_failure_and_unstarted_items() {
-        use std::os::unix::net::UnixListener;
         let root = test_root();
         let destination = root.join("out");
         fs::create_dir(&destination).unwrap();
@@ -4800,7 +4817,7 @@ mod tests {
         fs::write(&first, b"completed").unwrap();
         fs::write(&last, b"not started").unwrap();
         let socket = root.join("socket");
-        let _listener = UnixListener::bind(&socket).unwrap();
+        let _listener = special_file_fixture(&socket);
         let report = perform_with_report(
             &Action::Copy {
                 sources: vec![first.clone(), socket.clone(), last.clone()],
@@ -4837,7 +4854,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn batch_failure_counts_skips_separately_from_completed_items() {
-        use std::os::unix::net::UnixListener;
         let root = test_root();
         let destination = root.join("out");
         fs::create_dir(&destination).unwrap();
@@ -4845,7 +4861,7 @@ mod tests {
         fs::write(&existing, b"source").unwrap();
         fs::write(destination.join("existing.txt"), b"keep").unwrap();
         let socket = root.join("socket");
-        let _listener = UnixListener::bind(&socket).unwrap();
+        let _listener = special_file_fixture(&socket);
         let report = perform_with_report(
             &Action::Copy {
                 sources: vec![existing.clone(), socket],
@@ -5400,13 +5416,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn partial_copy_batch_reports_failed_item_and_prior_successes() {
-        use std::os::unix::net::UnixListener;
-
         let root = test_root();
         let valid = root.join("valid.txt");
         fs::write(&valid, b"already committed").unwrap();
         let socket = root.join("unsupported-socket");
-        let _listener = UnixListener::bind(&socket).unwrap();
+        let _listener = special_file_fixture(&socket);
         let output = root.join("output");
         fs::create_dir(&output).unwrap();
 
@@ -5505,11 +5519,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn failed_copy_cleans_staging_and_preserves_unsupported_source() {
-        use std::os::unix::net::UnixListener;
-
         let root = test_root();
         let socket = root.join("unix-socket");
-        let _listener = UnixListener::bind(&socket).unwrap();
+        let _listener = special_file_fixture(&socket);
         let output = root.join("output");
         fs::create_dir(&output).unwrap();
 

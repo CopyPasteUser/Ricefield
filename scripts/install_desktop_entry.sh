@@ -28,7 +28,12 @@ escaped="${escaped//%/%%}"
 apps_dir="$data_dir/applications"
 mkdir -p -- "$apps_dir"
 temporary="$(mktemp "$apps_dir/.rice-explorer.XXXXXX.desktop")"
-trap 'rm -f -- "$temporary"' EXIT
+icon_temporary=''
+cleanup() {
+  [[ -z "$temporary" ]] || rm -f -- "$temporary"
+  [[ -z "$icon_temporary" ]] || rm -f -- "$icon_temporary"
+}
+trap cleanup EXIT
 while IFS= read -r line || [[ -n "$line" ]]; do
   case "$line" in
     Exec=*) printf 'Exec="%s" %%U\n' "$escaped" ;;
@@ -39,11 +44,17 @@ chmod 0644 "$temporary"
 if command -v desktop-file-validate >/dev/null 2>&1; then
   desktop-file-validate "$temporary"
 fi
-mv -f -- "$temporary" "$apps_dir/rice-explorer.desktop"
-trap - EXIT
+mv -fT -- "$temporary" "$apps_dir/rice-explorer.desktop"
+temporary=''
 
-install -Dm644 "$project_dir/assets/rice-explorer.svg" \
-  "$data_dir/icons/hicolor/scalable/apps/rice-explorer.svg"
+icon_dir="$data_dir/icons/hicolor/scalable/apps"
+mkdir -p -- "$icon_dir"
+icon_temporary="$(mktemp "$icon_dir/.rice-explorer.XXXXXX.svg")"
+# Never write into the published icon path. A killed process during copying
+# must leave the previous complete icon visible until the final rename.
+install -m644 -- "$project_dir/assets/rice-explorer.svg" "$icon_temporary"
+mv -fT -- "$icon_temporary" "$icon_dir/rice-explorer.svg"
+icon_temporary=''
 
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database "$apps_dir" || true
