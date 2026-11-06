@@ -14,6 +14,8 @@
 - Preserve TOML recomposition of the Aero shell and custom sidebar append
   compatibility; test real clickable breadcrumb destinations and default
   section ordering. Visual acceptance on physical Linux remains pending.
+- Refresh the README hero and screenshot gallery with unedited Windows 7 Aero
+  GUI smoke captures (full window, split view, compact and narrow layouts).
 
 ## 1.0.0-rc.17 — atomic desktop icon upgrades and bounded release setup (verification pending)
 

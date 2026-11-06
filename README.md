@@ -12,9 +12,11 @@ A customizable Linux file manager built with **Rust + egui**, designed to work o
 
 </div>
 
-![RiceField with its XP Luna-inspired file-manager shell](docs/screenshots/xp-luna.png)
+![RiceField with its Windows 7 Aero-inspired file-manager shell](docs/screenshots/win7.png)
 
-**XP Luna rice:** [full window](docs/screenshots/xp-luna.png) · [split view](docs/screenshots/xp-luna-split.png) · [compact](docs/screenshots/xp-luna-compact.png) · [narrow](docs/screenshots/xp-luna-narrow.png) · [all screenshots](docs/screenshots/)
+**Windows 7 · Aero:** [full window](docs/screenshots/win7.png) · [split view](docs/screenshots/win7-split.png) · [compact](docs/screenshots/win7-compact.png) · [narrow](docs/screenshots/win7-narrow.png)
+
+**XP Luna:** [full window](docs/screenshots/xp-luna.png) · [split view](docs/screenshots/xp-luna-split.png) · [more real GUI screenshots](docs/screenshots/)
 
 > **Status: 1.0.0-rc.17 candidate.** Not a signed-off stable 1.0. Network-write safety, complete recovery and physical Linux Mint/NAS/USB acceptance remain open. Keep your current file manager and use disposable data for testing risky operations.
 

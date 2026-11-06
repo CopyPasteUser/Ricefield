@@ -17,7 +17,7 @@ performance, Linux integration, then visual polish.
   actions, Favorites, Libraries, Computer/network sidebar and bottom details.
 - [x] Native sortable Name/Date modified/Type/Size columns and original
   layered vector icons; preserve all core file operations and custom TOML.
-- [ ] Inspect actual Xvfb screenshots for full/compact/narrow/split layouts,
+- [x] Inspect actual Xvfb screenshots for full/compact/narrow/split layouts,
   then update `docs/screenshots/win7*.png` from a successful GUI smoke run.
 - [ ] Check icon proportions, typography, focus states, scrolling, search,
   selection and native window-decoration integration on Linux Mint in person.
