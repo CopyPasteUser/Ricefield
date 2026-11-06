@@ -45,7 +45,10 @@ click_at 649 140 # Filters in the revealed tools row (above the column headings)
 import -window "$window" screenshots/filters-menu-open.png
 click_at 750 290 # Custom pattern and ranges (inside the header hitbox)
 import -window "$window" screenshots/filters-invalid-regex.png
-click_at 750 390 # Filename regex edit box after expanding the panel
+# Navigate the editable controls by keyboard rather than depending on the
+# popup's dynamic height (the invalid-regex message adds an extra row).
+xdotool key Tab Tab # Filename glob, then filename regex
+sleep 0.2
 xdotool key ctrl+a
 xdotool type --delay 20 '42'
 for ((attempt = 0; attempt < 50; attempt++)); do
@@ -56,6 +59,14 @@ for ((attempt = 0; attempt < 50; attempt++)); do
 done
 if ! grep -Fqx 'filter_name_regex = "42"' "$fixture/config/rice-explorer/config.toml"; then
   import -window "$window" screenshots/filters-edit-failed.png
+  if [[ ${CI:-} == true ]] && command -v convert >/dev/null 2>&1; then
+    # Keep a small visual diagnostic in CI logs when artifact download is
+    # unavailable; never print fixture contents or user paths.
+    echo 'FILTER_DEBUG_PNG_BEGIN'
+    convert screenshots/filters-edit-failed.png -resize 560x png:- | base64 -w 80
+    echo
+    echo 'FILTER_DEBUG_PNG_END'
+  fi
   echo 'Custom filter input did not accept and persist editing' >&2
   exit 1
 fi
