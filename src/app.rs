@@ -4877,17 +4877,34 @@ impl Explorer {
                                             false,
                                         );
                                     }
-                                    if volume.ejectable {
+                                    if volume.ejectable || volume.can_power_off {
                                         response.context_menu(|ui| {
-                                            if ui
-                                                .add_enabled(
-                                                    !self.volume_busy,
-                                                    egui::Button::new("Eject drive…"),
-                                                )
-                                                .clicked()
+                                            if volume.ejectable
+                                                && ui
+                                                    .add_enabled(
+                                                        !self.volume_busy,
+                                                        egui::Button::new("Eject drive…"),
+                                                    )
+                                                    .clicked()
                                             {
                                                 self.volume_confirm =
                                                     Some(VolumeAction::EjectDrive(
+                                                        volume.drive_path.clone(),
+                                                    ));
+                                                ui.close();
+                                            }
+                                            if volume.can_power_off
+                                                && ui
+                                                    .add_enabled(
+                                                        !self.volume_busy,
+                                                        egui::Button::new(
+                                                            "Safely power off USB drive…",
+                                                        ),
+                                                    )
+                                                    .clicked()
+                                            {
+                                                self.volume_confirm =
+                                                    Some(VolumeAction::PowerOffDrive(
                                                         volume.drive_path.clone(),
                                                     ));
                                                 ui.close();

@@ -38,6 +38,7 @@ pub struct DeviceVolume {
     pub device: String,
     pub removable: bool,
     pub ejectable: bool,
+    pub can_power_off: bool,
     pub mount_paths: Vec<PathBuf>,
 }
 
@@ -77,6 +78,10 @@ pub fn invalidate_cache() {
 }
 
 fn discover() -> Result<Vec<DeviceVolume>, zbus::Error> {
+    Ok(project_volumes(&discover_objects()?))
+}
+
+fn discover_objects() -> Result<ManagedObjects, zbus::Error> {
     let connection = Connection::system()?;
     let proxy = Proxy::new(
         &connection,
@@ -84,8 +89,7 @@ fn discover() -> Result<Vec<DeviceVolume>, zbus::Error> {
         ROOT,
         "org.freedesktop.DBus.ObjectManager",
     )?;
-    let objects: ManagedObjects = proxy.call("GetManagedObjects", &())?;
-    Ok(project_volumes(&objects))
+    proxy.call("GetManagedObjects", &())
 }
 
 fn block_path_is_valid(path: &str) -> bool {
@@ -181,6 +185,7 @@ fn project_volumes(objects: &ManagedObjects) -> Vec<DeviceVolume> {
         let removable = property::<bool>(drive, "Removable").unwrap_or(false);
         let bus = property::<String>(drive, "ConnectionBus").unwrap_or_default();
         let ejectable = property::<bool>(drive, "Ejectable").unwrap_or(false);
+        let can_power_off = bus == "usb" && property::<bool>(drive, "CanPowerOff") == Some(true);
         if !removable && !ejectable && bus != "usb" {
             continue;
         }
@@ -206,6 +211,7 @@ fn project_volumes(objects: &ManagedObjects) -> Vec<DeviceVolume> {
             device,
             removable,
             ejectable,
+            can_power_off,
             mount_paths,
         });
     }
@@ -233,6 +239,56 @@ fn is_current_ejectable(volumes: &[DeviceVolume], drive_path: &str) -> bool {
     volumes
         .iter()
         .any(|volume| volume.drive_path == drive_path && volume.ejectable)
+}
+
+/// Power off is deliberately more conservative than eject: the daemon must
+/// advertise USB PowerOff and *every* filesystem on the drive must currently
+/// be unmounted, including hidden/ignored partitions not shown in the sidebar.
+fn can_power_off_safely(objects: &ManagedObjects, drive_path: &str) -> bool {
+    if !drive_path_is_valid(drive_path) {
+        return false;
+    }
+    let Some(drive) = objects
+        .iter()
+        .find(|(path, _)| path.as_str() == drive_path)
+        .and_then(|(_, interfaces)| interfaces.get(DRIVE_INTERFACE))
+    else {
+        return false;
+    };
+    if property::<bool>(drive, "CanPowerOff") != Some(true)
+        || property::<String>(drive, "ConnectionBus").as_deref() != Some("usb")
+    {
+        return false;
+    }
+
+    let mut inspected = false;
+    for interfaces in objects.values() {
+        let Some(block) = interfaces.get(BLOCK_INTERFACE) else {
+            continue;
+        };
+        let Some(parent) = property::<zbus::zvariant::OwnedObjectPath>(block, "Drive") else {
+            // Ignore unrelated blocks with no drive pointer. UDisks2 checks
+            // global device usage during PowerOff as a final safety net.
+            continue;
+        };
+        if parent.as_str() != drive_path {
+            continue;
+        }
+        inspected = true;
+        if let Some(fs) = interfaces.get(FS_INTERFACE) {
+            let Some(mounts) = property::<Vec<Vec<u8>>>(fs, "MountPoints") else {
+                return false;
+            };
+            if !mounts.is_empty() || mounts.iter().any(|path| parse_mount_path(path).is_none()) {
+                return false;
+            }
+        } else if property::<String>(block, "IdUsage").is_some_and(|usage| !usage.is_empty()) {
+            // Unknown active uses (swap, crypto mapping, etc.) are not safe
+            // candidates for unattended disk power-off.
+            return false;
+        }
+    }
+    inspected
 }
 
 /// UDisks2 validates mount state, authorization and device access. Only an
@@ -307,6 +363,30 @@ pub fn eject(drive_path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Explicitly request UDisks2/Polkit to flush and power off a removable USB
+/// drive only after every known partition has been unmounted. A fresh daemon
+/// inventory is consulted rather than trusting the potentially stale sidebar.
+pub fn power_off(drive_path: &str) -> Result<(), String> {
+    if !drive_path_is_valid(drive_path) {
+        return Err("Invalid UDisks2 drive identifier".into());
+    }
+    let current =
+        discover_objects().map_err(|error| format!("Cannot verify drive state: {error}"))?;
+    if !can_power_off_safely(&current, drive_path) {
+        return Err("USB drive is not ready for power-off: unmount all volumes and refresh".into());
+    }
+    let connection =
+        Connection::system().map_err(|error| format!("System bus unavailable: {error}"))?;
+    let proxy = Proxy::new(&connection, SERVICE, drive_path, DRIVE_INTERFACE)
+        .map_err(|error| format!("Cannot contact removable USB drive: {error}"))?;
+    let options = HashMap::<&str, Value<'_>>::new();
+    let _: () = proxy
+        .call("PowerOff", &(options,))
+        .map_err(|error| format!("Cannot safely power off USB drive: {error}"))?;
+    invalidate_cache();
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -342,6 +422,7 @@ mod tests {
         let mut drive_props = HashMap::new();
         insert_prop(&mut drive_props, "Removable", true);
         insert_prop(&mut drive_props, "ConnectionBus", "usb");
+        insert_prop(&mut drive_props, "CanPowerOff", true);
         let mut objects = ManagedObjects::new();
         objects.insert(
             disk,
@@ -386,6 +467,10 @@ mod tests {
             "/org/freedesktop/UDisks2/drives/foo/bar",
         ] {
             assert_eq!(eject(path).unwrap_err(), "Invalid UDisks2 drive identifier");
+            assert_eq!(
+                power_off(path).unwrap_err(),
+                "Invalid UDisks2 drive identifier"
+            );
         }
         assert!(drive_path_is_valid("/org/freedesktop/UDisks2/drives/usb_1"));
     }
@@ -432,6 +517,7 @@ mod tests {
                 device: "/dev/sdc1".into(),
                 removable: true,
                 ejectable: false,
+                can_power_off: true,
                 mount_paths: Vec::new(),
             }]
         );
@@ -527,5 +613,72 @@ mod tests {
         volumes.clear();
         assert!(!is_current_mount(&volumes, block, Path::new("/media/USB")));
         assert!(!is_current_ejectable(&volumes, drive));
+    }
+
+    #[test]
+    fn poweroff_requires_usb_capability_and_every_sibling_unmounted() {
+        let mut objects = removable_fixture();
+        let drive = "/org/freedesktop/UDisks2/drives/usb_drive";
+        assert!(can_power_off_safely(&objects, drive));
+
+        let sibling: OwnedObjectPath = "/org/freedesktop/UDisks2/block_devices/sdc2"
+            .try_into()
+            .unwrap();
+        let mut sibling_block = HashMap::new();
+        insert_prop(
+            &mut sibling_block,
+            "Drive",
+            OwnedObjectPath::try_from(drive).unwrap(),
+        );
+        insert_prop(&mut sibling_block, "IdUsage", "filesystem");
+        insert_prop(&mut sibling_block, "HintIgnore", true);
+        let mut sibling_fs = HashMap::new();
+        insert_prop(
+            &mut sibling_fs,
+            "MountPoints",
+            vec![b"/media/secret\0".to_vec()],
+        );
+        objects.insert(
+            sibling.clone(),
+            HashMap::from([
+                (BLOCK_INTERFACE.try_into().unwrap(), sibling_block),
+                (FS_INTERFACE.try_into().unwrap(), sibling_fs),
+            ]),
+        );
+        assert!(!can_power_off_safely(&objects, drive));
+
+        insert_prop(
+            objects
+                .get_mut(&sibling)
+                .unwrap()
+                .get_mut(FS_INTERFACE)
+                .unwrap(),
+            "MountPoints",
+            Vec::<Vec<u8>>::new(),
+        );
+        assert!(can_power_off_safely(&objects, drive));
+        objects
+            .get_mut(&sibling)
+            .unwrap()
+            .get_mut(FS_INTERFACE)
+            .unwrap()
+            .remove("MountPoints");
+        assert!(!can_power_off_safely(&objects, drive));
+
+        let root_drive: OwnedObjectPath = drive.try_into().unwrap();
+        insert_prop(
+            objects
+                .get_mut(&root_drive)
+                .unwrap()
+                .get_mut(DRIVE_INTERFACE)
+                .unwrap(),
+            "ConnectionBus",
+            "sata",
+        );
+        assert!(!can_power_off_safely(&objects, drive));
+        assert!(!can_power_off_safely(
+            &objects,
+            "/org/freedesktop/UDisks2/drives/../evil"
+        ));
     }
 }

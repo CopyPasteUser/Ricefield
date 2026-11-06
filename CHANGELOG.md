@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.0-rc.16 — explicit safe USB drive power-off (verification pending)
+
+- Show **Safely power off USB drive** in the unmounted-removable-volume menu
+  only when UDisks2 advertises the USB drive's `CanPowerOff` capability.
+- Require user confirmation, refresh the raw ObjectManager inventory and
+  refuse power-off if any sibling filesystem remains mounted, even if hidden
+  from RiceField's sidebar; reject incomplete or non-USB device metadata.
+- Delegate final busy-drive checks, cache flush, physical power-off and Polkit
+  authorization to UDisks2 Drive.PowerOff; never force unmount other users'
+  filesystems. Test eligible, busy, missing-metadata and non-USB fixtures.
+- Physical USB/Polkit/power-loss verification on the owner's Mint system is
+  still pending; stable v1.0.0 must not be published yet.
+
 ## 1.0.0-rc.15 — no-overwrite Linux extended attributes (verification pending)
 
 - Add `user.*` text attribute creation (max 4 KiB) in the file Properties

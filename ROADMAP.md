@@ -1,6 +1,6 @@
 # RiceField roadmap to 1.0
 
-**Current candidate: `1.0.0-rc.15`.** See [the scope and evidence ledger](docs/1.0-STATUS.md).
+**Current candidate: `1.0.0-rc.16`.** See [the scope and evidence ledger](docs/1.0-STATUS.md).
 This roadmap retains incomplete capabilities explicitly: a candidate version
 does not turn unchecked safety, integration or physical-device work into a pass.
 
@@ -333,8 +333,13 @@ recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
   discovered removable filesystems through system Polkit authorization. RC.11
   binds mounted USB paths to discovered device objects, adds native UDisks2
   unmount/eject with fresh-state checks, and retains GIO for other mounts.
-  Encrypted drive unlocking, generic USB PowerOff, portal integration and
-  real-hardware acceptance remain open. No forced unmount is offered.
+  Encrypted drive unlocking, portal integration and real-hardware acceptance
+  remain open. No forced unmount is offered.
+- [x] RC.16 adds opt-in UDisks2 USB PowerOff when explicitly advertised. The
+  backend re-queries all sibling filesystems, including ignored/hidden block
+  objects, and refuses if any are mounted or metadata is incomplete. UDisks2
+  handles Polkit, final busy checks and flushing. LUKS and physical USB/power
+  safety acceptance remain open; other buses cannot be powered off here.
 - [ ] Connect SMB/SFTP/WebDAV, browse system NFS and supported MTP devices.
   Initial non-blocking `gio mount` connection attempts are supported without
   URI credentials. Read-only remote listing works in normal tabs; native remote
