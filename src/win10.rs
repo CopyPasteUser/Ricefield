@@ -282,35 +282,31 @@ pub fn ribbon(
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
         ui.horizontal(|ui| {
-            egui::Frame::new()
-                .fill(theme.palette.accent())
-                .inner_margin(egui::Margin::symmetric(9, 4))
-                .show(ui, |ui| {
-                    ui.menu_button(
-                        egui::RichText::new("File").color(Color32::WHITE).strong(),
-                        |ui| {
-                            for command in [
-                                RibbonAction::NewWindow,
-                                RibbonAction::NewTab,
-                                RibbonAction::NewFolder,
-                                RibbonAction::Properties,
-                                RibbonAction::Transfers,
-                                RibbonAction::MoreTools,
-                            ] {
-                                if ui
-                                    .add_enabled(
-                                        state.enabled(command),
-                                        egui::Button::new(command.label()),
-                                    )
-                                    .clicked()
-                                {
-                                    action = Some(command);
-                                    ui.close();
-                                }
-                            }
-                        },
-                    );
-                });
+            egui::containers::menu::MenuButton::from_button(
+                egui::Button::new(egui::RichText::new("File").color(Color32::WHITE).strong())
+                    .fill(theme.palette.accent())
+                    .stroke(Stroke::NONE)
+                    .corner_radius(egui::CornerRadius::ZERO)
+                    .min_size(Vec2::new(48.0, 26.0)),
+            )
+            .ui(ui, |ui| {
+                for command in [
+                    RibbonAction::NewWindow,
+                    RibbonAction::NewTab,
+                    RibbonAction::NewFolder,
+                    RibbonAction::Properties,
+                    RibbonAction::Transfers,
+                    RibbonAction::MoreTools,
+                ] {
+                    if ui
+                        .add_enabled(state.enabled(command), egui::Button::new(command.label()))
+                        .clicked()
+                    {
+                        action = Some(command);
+                        ui.close();
+                    }
+                }
+            });
             for target in RibbonPage::ALL {
                 let selected = *page == target;
                 let button = egui::Button::new(
