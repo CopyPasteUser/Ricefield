@@ -14,7 +14,7 @@ A customizable Linux file manager built with **Rust + egui**, designed to work o
 
 ![RiceField with its Windows 10 Explorer-inspired ribbon shell](docs/screenshots/win10.png)
 
-**Windows 10 · Explorer:** [full window](docs/screenshots/win10.png) · [split view](docs/screenshots/win10-split.png) · [compact](docs/screenshots/win10-compact.png) · [narrow](docs/screenshots/win10-narrow.png)
+**Windows 10 · Explorer:** [full window](docs/screenshots/win10.png) · [View](docs/screenshots/win10-view.png) · [Share](docs/screenshots/win10-share.png) · [split](docs/screenshots/win10-split.png) · [compact](docs/screenshots/win10-compact.png) · [narrow](docs/screenshots/win10-narrow.png)
 
 **Windows 7 · Aero:** [full window](docs/screenshots/win7.png) · [split view](docs/screenshots/win7-split.png) · [compact](docs/screenshots/win7-compact.png) · [narrow](docs/screenshots/win7-narrow.png)
 

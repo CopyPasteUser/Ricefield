@@ -14,8 +14,9 @@
 - Keep keyboard and file safety logic shared across all seven themes; remote
   tabs cannot trigger destructive local actions. Keep window borders and
   decorations in the desktop/window manager, not RiceField.
-- Plan actual GUI-smoke screenshots for the README/gallery and the same
-  physical Linux Mint acceptance as other historical themes.
+- Publish six actual, unedited GUI-smoke screenshots in the README/gallery:
+  full, split, compact, narrow, View and Share. Physical Linux Mint acceptance
+  remains open like other historical themes.
 
 ## Unreleased — Windows 7 Aero Explorer shell
 
