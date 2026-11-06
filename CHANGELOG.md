@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased — macOS Finder-inspired shell
+
+- Replace the generic macOS skin with a distinctive Finder-like chrome,
+  compact back/forward navigation, location/search row, interactive icon/list
+  toolbar, Quick Look, New Folder and a categorized More menu.
+- Present local Favorites and actual Locations in a compact illustrated rail;
+  retain real bookmarks, mounted volumes, network discovery and SMB/SFTP
+  connection rather than imitating unavailable Apple-only services.
+- Render original blue folder/document vectors, aligned sortable details
+  columns and a responsive two-row toolbar in narrow windows. Keep advanced
+  tools on demand so the file surface receives most of the space.
+- Preserve shared file-operation safety, read-only remote locations, TOML
+  composition, keyboard controls and desktop-owned window decorations.
+  The native GUI smoke passes with real screenshots of full, icon, More, split,
+  compact and narrow states (CI `42295370012`). Physical Linux Mint and
+  hardware/NAS acceptance remain separate verification gates.
+
 ## Unreleased — Frutiger Aero · Blue Skies Aqua shell
 
 - Rebuild the former generic cyan Aqua skin into an original sky/water-themed

@@ -69,6 +69,15 @@ The renderer uses egui's bundled system-like proportional font, with a technical
   `[shell].status_bar` is optional; transfer/recovery warnings are not.
 - Frutiger Aero intentionally places its command strip below the file area,
   while Windows 10 keeps its command strip in the upper ribbon position.
+- The Finder-inspired macOS profile owns only the application chrome, not
+  native title bars. `themes/macos.toml` is its canonical palette and density
+  source: quiet silver chrome, a pale Favorites/Locations rail, blue original
+  folder artwork, compact back/forward controls, icon/list view switching,
+  Quick Look and an enabled-state-aware More menu. At narrow widths the toolbar
+  and search wrap into separate rows. `src/finder.rs` paints and emits action
+  identifiers; `Explorer` alone owns navigation, filesystem operations,
+  read-only network restrictions and keyboard behavior. Real folders, mounts
+  and network connections are shown instead of fake Apple-only services.
 - The Aqua-specific Frutiger Aero skin uses the canonical
   `themes/frutiger-aero.toml` palette. Its identity is sky blue, pearl green,
   sunlight yellow and clean aqua ink: an original, painted 48-point horizon

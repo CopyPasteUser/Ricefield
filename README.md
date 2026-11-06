@@ -12,7 +12,9 @@ A customizable Linux file manager built with **Rust + egui**, designed to work o
 
 </div>
 
-![RiceField with its original Frutiger Aero Blue Skies file-manager shell](docs/screenshots/frutiger-aero.png)
+![RiceField's original macOS Finder-inspired file-manager shell](docs/screenshots/macos.png)
+
+**macOS · Finder:** [full window](docs/screenshots/macos.png) · [icon view](docs/screenshots/macos-icons.png) · [More menu](docs/screenshots/macos-more.png) · [split view](docs/screenshots/macos-split.png) · [compact](docs/screenshots/macos-compact.png) · [narrow](docs/screenshots/macos-narrow.png)
 
 **Windows 10 · Explorer:** [full window](docs/screenshots/win10.png) · [View](docs/screenshots/win10-view.png) · [Share](docs/screenshots/win10-share.png) · [split](docs/screenshots/win10-split.png) · [compact](docs/screenshots/win10-compact.png) · [narrow](docs/screenshots/win10-narrow.png)
 
@@ -39,6 +41,8 @@ A customizable Linux file manager built with **Rust + egui**, designed to work o
 **Windows 10 · Explorer:** [Ribbon shell](docs/screenshots/win10.png) with File/Home/Share/View pages, responsive command groups, Quick access, This PC, breadcrumb navigation, details/icon view switching and original flat vector icons. Its controls reuse RiceField's guarded file operations; window decorations belong to RiceBowl/the window manager.
 
 **Frutiger Aero · Blue Skies:** [Aqua shell](docs/screenshots/frutiger-aero.png) with an original sky-and-water masthead, pearl-green places sidebar, glossy file and folder vectors, live breadcrumb/search navigation and a responsive bottom glass-shelf dock. Its tools perform real file operations; local-only actions are disabled for read-only network locations. No borrowed Windows or Vista artwork.
+
+**macOS · Finder:** [Finder-inspired shell](docs/screenshots/macos.png) with a compact navigation toolbar, working icon/list switches, Quick Look, favorite folders, local/network locations and aligned sortable details columns. Original blue-folder vector art and a responsive compact mode; actions reuse RiceField's protected file operations. Apple assets and fake cloud services are not included, and window decorations remain the desktop's responsibility.
 
 File operations remain independent of the selected visual shell.
 
