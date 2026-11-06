@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.0-rc.9 — guarded session-only batch rename Undo (verification pending)
+
+- Offer **Undo batch rename** in Transfers after a completely successful batch,
+  including swaps and rename cycles. Reversal uses the same atomic Linux
+  exchanges and no-overwrite moves as the original operation.
+- Preserve each renamed entry's post-operation identity/metadata snapshot;
+  refuse Undo entirely if any item was edited, replaced or missing or if an
+  unrelated writer now owns an original filename. Guard rollback of ordinary
+  execution errors, and report partial states honestly.
+- Keep Undo session-only and unavailable for incomplete batches or restored
+  read-only history. Do not claim crash-safe batch replay or recovery.
+
+
 ## 1.0.0-rc.8 — atomic batch rename cycles (verification pending)
 
 - Allow safe batch renames whose destinations are other selected filenames,

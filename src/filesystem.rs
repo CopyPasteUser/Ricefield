@@ -45,6 +45,7 @@ pub struct OperationReport {
     pub result: io::Result<String>,
     pub items: Vec<ItemResult>,
     pub rename_undo: Option<Box<RenameUndo>>,
+    pub batch_rename_undo: Option<Box<BatchRenameUndo>>,
 }
 
 /// Session-only rename reversal. The original name is preserved as raw OS
@@ -63,6 +64,22 @@ impl RenameUndo {
             current: self.current.clone(),
             original: self.original.clone(),
             snapshot: self.snapshot.clone(),
+        }
+    }
+}
+
+/// Session-only reversal of an entire successfully completed batch. Every
+/// current name retains the post-operation metadata snapshot, so an external
+/// replacement or content change blocks the whole Undo before any renames.
+#[derive(Clone)]
+pub struct BatchRenameUndo {
+    pub items: Vec<(PathBuf, OsString, fs::Metadata)>,
+}
+
+impl BatchRenameUndo {
+    pub fn action(&self) -> Action {
+        Action::UndoBatchRename {
+            items: self.items.clone(),
         }
     }
 }
@@ -629,6 +646,9 @@ pub enum Action {
     BatchRename {
         changes: Vec<(PathBuf, OsString)>,
     },
+    UndoBatchRename {
+        items: Vec<(PathBuf, OsString, fs::Metadata)>,
+    },
     Copy {
         sources: Vec<PathBuf>,
         destination: PathBuf,
@@ -968,6 +988,7 @@ fn refresh_selected_hardlinks(
 /// rollback, in which case the partial positions are reported honestly.
 fn apply_batch_rename(
     changes: &[(PathBuf, OsString)],
+    expected: Option<&[fs::Metadata]>,
     transfer: &mut Transfer<'_>,
     on_item: &mut dyn FnMut(ItemUpdate),
 ) -> io::Result<String> {
@@ -975,6 +996,12 @@ fn apply_batch_rename(
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "Batch rename requires between 1 and 256 items",
+        ));
+    }
+    if expected.is_some_and(|items| items.len() != changes.len()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Batch undo source evidence does not match the requested operation",
         ));
     }
     let parent = changes[0].0.parent();
@@ -997,7 +1024,11 @@ fn apply_batch_rename(
             ));
         }
         destinations.push(target);
-        snapshots.push(fs::symlink_metadata(source)?);
+        let snapshot = fs::symlink_metadata(source)?;
+        if let Some(saved) = expected {
+            ensure_same_source(source, &saved[index])?;
+        }
+        snapshots.push(snapshot);
     }
     for target in &destinations {
         if !originals.contains_key(target) && occupied(target)? {
@@ -1214,12 +1245,22 @@ pub fn perform_with_report(
         Action::Rename { source, .. } => fs::symlink_metadata(source).ok(),
         _ => None,
     };
+    let before_batch = match action {
+        Action::BatchRename { changes } => changes
+            .iter()
+            .map(|(source, _)| fs::symlink_metadata(source).ok())
+            .collect::<Option<Vec<_>>>(),
+        _ => None,
+    };
     let sources: Vec<PathBuf> = match action {
         Action::Copy { sources, .. }
         | Action::Move { sources, .. }
         | Action::Link { sources, .. } => sources.clone(),
         Action::BatchRename { changes } => {
             changes.iter().map(|(source, _)| source.clone()).collect()
+        }
+        Action::UndoBatchRename { items } => {
+            items.iter().map(|(source, _, _)| source.clone()).collect()
         }
         Action::Trash { paths } | Action::Delete { paths } => paths.clone(),
         _ => Vec::new(),
@@ -1264,10 +1305,35 @@ pub fn perform_with_report(
     } else {
         None
     };
+    let batch_rename_undo = if result.is_ok() {
+        match (action, before_batch) {
+            (Action::BatchRename { changes }, Some(before)) if before.len() == changes.len() => {
+                changes
+                    .iter()
+                    .zip(before)
+                    .map(|((source, name), original_snapshot)| {
+                        let current = source.with_file_name(name);
+                        let original_name = source.file_name()?.to_os_string();
+                        let after = fs::symlink_metadata(&current).ok()?;
+                        same_inode_and_kind(&original_snapshot, &after).then_some((
+                            current,
+                            original_name,
+                            after,
+                        ))
+                    })
+                    .collect::<Option<Vec<_>>>()
+                    .map(|items| Box::new(BatchRenameUndo { items }))
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
     OperationReport {
         result,
         items,
         rename_undo,
+        batch_rename_undo,
     }
 }
 
@@ -1461,7 +1527,18 @@ fn perform_with_progress_and_items(
             rename_without_overwrite(current, original)?;
             Ok(format!("Restored original name {}", original.display()))
         }
-        Action::BatchRename { changes } => apply_batch_rename(changes, &mut transfer, on_item),
+        Action::BatchRename { changes } => {
+            apply_batch_rename(changes, None, &mut transfer, on_item)
+        }
+        Action::UndoBatchRename { items } => {
+            let changes: Vec<_> = items
+                .iter()
+                .map(|(source, original, _)| (source.clone(), original.clone()))
+                .collect();
+            let evidence: Vec<_> = items.iter().map(|(_, _, saved)| saved.clone()).collect();
+            apply_batch_rename(&changes, Some(&evidence), &mut transfer, on_item)
+                .map(|_| format!("Restored {} original names", items.len()))
+        }
         Action::Copy { sources, .. } => {
             if sources.is_empty() {
                 return Ok("Nothing to copy".into());
@@ -5353,6 +5430,134 @@ mod tests {
         assert!(perform(&undo.action()).is_ok());
         assert_eq!(fs::read(&original).unwrap(), b"non-UTF8 source");
         assert!(!root.join("renamed.txt").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn batch_rename_undo_restores_swaps_and_preserves_both_payloads() {
+        let root = test_root();
+        let a = root.join("a");
+        let b = root.join("b");
+        fs::write(&a, b"first content").unwrap();
+        fs::write(&b, b"second content").unwrap();
+        let report = perform_with_report(
+            &Action::BatchRename {
+                changes: vec![(a.clone(), "b".into()), (b.clone(), "a".into())],
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert!(report.result.is_ok());
+        assert_eq!(fs::read(&a).unwrap(), b"second content");
+        let undo = report
+            .batch_rename_undo
+            .expect("successful batch offers Undo");
+        assert!(perform(&undo.action()).is_ok());
+        assert_eq!(fs::read(&a).unwrap(), b"first content");
+        assert_eq!(fs::read(&b).unwrap(), b"second content");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn batch_rename_undo_refuses_any_stale_inode_before_changing_names() {
+        let root = test_root();
+        let a = root.join("a");
+        let b = root.join("b");
+        let changed_a = root.join("changed-a");
+        let changed_b = root.join("changed-b");
+        fs::write(&a, b"first").unwrap();
+        fs::write(&b, b"second").unwrap();
+        let rename = || {
+            perform_with_report(
+                &Action::BatchRename {
+                    changes: vec![
+                        (a.clone(), "changed-a".into()),
+                        (b.clone(), "changed-b".into()),
+                    ],
+                },
+                &AtomicBool::new(false),
+                &mut |_| {},
+            )
+        };
+        let report = rename();
+        assert!(report.result.is_ok());
+        let undo = report.batch_rename_undo.unwrap();
+        fs::write(&changed_b, b"modified after batch").unwrap();
+        assert_eq!(
+            perform(&undo.action()).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert!(!a.exists() && !b.exists());
+        assert_eq!(fs::read(&changed_a).unwrap(), b"first");
+        assert_eq!(fs::read(&changed_b).unwrap(), b"modified after batch");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn batch_rename_undo_never_replaces_original_name_taken_by_another_writer() {
+        let root = test_root();
+        let a = root.join("a");
+        let b = root.join("b");
+        let changed_a = root.join("changed-a");
+        let changed_b = root.join("changed-b");
+        fs::write(&a, b"first").unwrap();
+        fs::write(&b, b"second").unwrap();
+        let report = perform_with_report(
+            &Action::BatchRename {
+                changes: vec![
+                    (a.clone(), "changed-a".into()),
+                    (b.clone(), "changed-b".into()),
+                ],
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert!(report.result.is_ok());
+        let undo = report.batch_rename_undo.unwrap();
+        fs::write(&b, b"another writer").unwrap();
+        assert_eq!(
+            perform(&undo.action()).unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(fs::read(&b).unwrap(), b"another writer");
+        assert_eq!(fs::read(&changed_a).unwrap(), b"first");
+        assert_eq!(fs::read(&changed_b).unwrap(), b"second");
+        assert!(!a.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn batch_undo_restores_non_utf8_names_and_selected_hardlink_aliases() {
+        use std::os::unix::ffi::OsStringExt;
+        let root = test_root();
+        let raw = OsString::from_vec(vec![b'o', 0xff, b'd']);
+        let source = root.join(&raw);
+        let alias = root.join("alias");
+        fs::write(&source, b"linked payload").unwrap();
+        fs::hard_link(&source, &alias).unwrap();
+        let report = perform_with_report(
+            &Action::BatchRename {
+                changes: vec![
+                    (source.clone(), "new".into()),
+                    (alias.clone(), "other".into()),
+                ],
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert!(report.result.is_ok());
+        let undo = report
+            .batch_rename_undo
+            .expect("batch Undo offered for hardlinks");
+        assert!(perform(&undo.action()).is_ok());
+        let first = fs::symlink_metadata(&source).unwrap();
+        let second = fs::symlink_metadata(&alias).unwrap();
+        assert!(same_inode_and_kind(&first, &second));
+        assert_eq!(fs::read(source).unwrap(), b"linked payload");
         fs::remove_dir_all(root).unwrap();
     }
 

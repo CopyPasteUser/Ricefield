@@ -76,6 +76,7 @@ pub fn describe(action: &Action) -> String {
         Action::Rename { .. } => "Rename item".into(),
         Action::UndoRename { .. } => "Undo rename".into(),
         Action::BatchRename { changes } => format!("Batch rename {} item(s)", changes.len()),
+        Action::UndoBatchRename { items } => format!("Undo batch rename {} item(s)", items.len()),
         Action::NewFolder { .. } => "New folder".into(),
         Action::NewFile { .. } => "New file".into(),
         Action::SetMode { .. } => "Change permissions".into(),

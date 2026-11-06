@@ -46,7 +46,8 @@ that cannot be preserved can make verification fail. Review every item after a
 partial batch; earlier completed items are not automatically rolled back.
 
 Trash and permanent delete require confirmation of the selected paths.
-Single completed renames can offer a guarded, session-only Undo in Transfers.
+Single completed renames and entirely successful batch renames can offer a
+guarded, session-only **Undo** in Transfers.
 For multiple names, **F2** opens a batch-rename preview with prefix/suffix,
 numbering and literal search/replace. Enable **Regular expression** to match
 names using bounded Rust regex patterns with capture replacements such as `$1`
@@ -56,7 +57,10 @@ Batch rename can exchange names belonging to the same selected set without
 discarding either entry, including cycles and hardlinks. A collision with any
 unselected destination is refused. Ordinary errors attempt a guarded rollback;
 after a crash or concurrent external edit, inspect the displayed partial names
-manually. Undoing a *completed batch* in a later session is not supported.
+manually. Undoing a *completed batch* is available only during the same
+session, and only if every post-rename object is unchanged and every original
+destination name is free or part of that same undo batch. In earlier sessions
+the restored history is read-only; a batch cannot be automatically replayed.
 
 Drag into a local folder or between panes to copy without overwriting. For
 outbound drag, the context action **Drag to another app…** uses an installed

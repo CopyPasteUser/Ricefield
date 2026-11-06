@@ -1,6 +1,6 @@
 # RiceField roadmap to 1.0
 
-**Current candidate: `1.0.0-rc.8`.** See [the scope and evidence ledger](docs/1.0-STATUS.md).
+**Current candidate: `1.0.0-rc.9`.** See [the scope and evidence ledger](docs/1.0-STATUS.md).
 This roadmap retains incomplete capabilities explicitly: a candidate version
 does not turn unchecked safety, integration or physical-device work into a pass.
 
@@ -260,10 +260,11 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   real mount/USB tests and source deletion safeguards. No automatic deletion
   is permitted based solely on a saved journal entry.
 - [ ] Cancel, safe pause/resume where possible, undo for reversible actions.
-  Individual completed Rename actions now offer a session-only Undo in
-  Transfers, guarded by the post-rename source snapshot and no-overwrite
-  semantics. Broader Undo (especially partial batches, copies, cross-device
-  moves and permanent delete) remains open and cannot rely on stale history.
+  Individual completed Rename actions and fully completed Batch Rename actions
+  now offer session-only Undo in Transfers, guarded by post-rename snapshots,
+  complete preflight and no-overwrite semantics. Broader Undo (especially
+  partial batches, copies, cross-device moves and permanent delete) remains
+  open and cannot rely on stale history.
 - [x] Implement bounded 2–256 item batch rename with a live prefix/suffix
   preview, before-start collision preflight and no-overwrite renames. Preserve
   non-UTF-8 filename bytes; test collisions and mid-batch partial failures.
@@ -273,8 +274,10 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   rollback for ordinary errors. RC.8 uses Linux atomic name exchange for
   selected-name cycles, no-overwrite moves for chains, and refuses changes to
   unrelated targets. Test cancellation, external modifications and selected
-  hardlink aliases. A crash may leave partially permuted names (without
-  dropping entries); durable batch Undo and power-loss recovery remain open.
+  hardlink aliases. RC.9 adds explicit session-only batch Undo with a complete
+  post-operation identity check, including swaps/cycles. A crash may leave
+  partially permuted names (without dropping entries); durable batch Undo and
+  power-loss recovery remain open.
 
 **Gate:** fault-injected copy/move/crash scenarios do not silently lose user
 data; transfers never block the UI. **Still open** for stable 0.3: full
