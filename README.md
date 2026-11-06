@@ -14,12 +14,12 @@ A customizable Linux file manager built with **Rust + egui**, designed to work o
 
 ![RiceField with its Windows 7-inspired layout](docs/screenshots/win7.png)
 
-> **Status: 1.0.0-rc.6 candidate.** Not a signed-off stable 1.0. Physical Linux Mint, NAS and recovery acceptance is still open. Keep your current file manager and use disposable data for testing risky operations.
+> **Status: 1.0.0-rc.7 candidate.** Not a signed-off stable 1.0. Physical Linux Mint, NAS and recovery acceptance is still open. Keep your current file manager and use disposable data for testing risky operations.
 
 ## Built for real file management
 
 - **Explore:** tabs, split panes, folder tree, bookmarks, grid/list views and session restore.
-- **Organize:** create, copy, move, rename, batch rename, trash and link files, with progress and conflict previews.
+- **Organize:** create, copy, move, rename, batch rename, trash and link files, with progress, conflict previews and read-only transfer history across restarts.
 - **Find:** filename and content search, glob/regex filters, saved searches, thumbnails and Quick Look.
 - **Open archives:** create, browse and extract supported ZIP, TAR and 7z archives.
 - **Reach your NAS:** discover and browse SMB, SFTP, WebDAV and MTP, queue bounded file/folder downloads to a chosen local location, and optionally save credentials in Secret Service.

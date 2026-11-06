@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.0-rc.7 — durable read-only transfer history (verification pending)
+
+- Preserve up to 64 completed local transfer summaries across restarts in a
+  private versioned XDG state file, with outcome, elapsed time and item counts.
+- Serialize writes through a background worker; reject symlink/special files,
+  size-limit reads, atomically publish and sync updates, and prevent competing
+  writer processes from overwriting one another's history.
+- Keep corrupt or unsupported history unchanged. Restored records cannot
+  trigger Undo, replay, deletion or recovery mutations. Add focused tests for
+  persistence, corrupted input, interprocess locking and UI conversion.
+
 ## 1.0.0-rc.6 — bounded network download queue (verification pending)
 
 - Queue up to 16 explicitly selected remote file or folder downloads, capture

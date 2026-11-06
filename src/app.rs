@@ -16,6 +16,7 @@ use crate::{
     theme::{BUILTIN_IDS, ChromeComponent, SidebarPosition, SidebarSection, Theme},
     theme_editor::{self, ThemeEditor},
     thumbnail::ThumbnailManager,
+    transfer_history,
     volume::{self, MountCredentials, VolumeAction},
 };
 use eframe::egui::{self, Align2, Color32, Key, Modifiers, Pos2, Rect, Vec2};
@@ -27,14 +28,14 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
-        mpsc::{self, Receiver, Sender},
+        mpsc::{self, Receiver, Sender, SyncSender},
     },
     thread,
     time::{Duration, Instant, SystemTime},
 };
 
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(350);
-const MAX_RECENT_OPERATIONS: usize = 64;
+const MAX_RECENT_OPERATIONS: usize = transfer_history::MAX_RECORDS;
 const CLIPBOARD_WAIT: Duration = Duration::from_secs(2);
 const MAX_CLOSED_TABS: usize = 16;
 
@@ -499,6 +500,61 @@ struct CompletedOperation {
     items: Vec<filesystem::ItemResult>,
     counts: ItemCounts,
     rename_undo: Option<Box<filesystem::RenameUndo>>,
+    from_history: bool,
+}
+
+impl CompletedOperation {
+    fn history_record(&self) -> transfer_history::Record {
+        transfer_history::Record {
+            id: self.id,
+            label: self.label.clone(),
+            summary: self.summary.clone(),
+            outcome: match self.outcome {
+                OperationOutcome::Succeeded => transfer_history::Outcome::Succeeded,
+                OperationOutcome::Cancelled => transfer_history::Outcome::Cancelled,
+                OperationOutcome::Failed => transfer_history::Outcome::Failed,
+            },
+            finished_unix_seconds: self
+                .finished_at
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            elapsed_millis: self.elapsed.as_millis().min(u128::from(u64::MAX)) as u64,
+            counts: transfer_history::Counts {
+                completed: self.counts.completed,
+                retained: self.counts.retained,
+                skipped: self.counts.skipped,
+                failed: self.counts.failed,
+                not_started: self.counts.not_started,
+            },
+        }
+        .bounded()
+    }
+
+    fn from_history(record: transfer_history::Record) -> Self {
+        Self {
+            id: record.id,
+            label: record.label,
+            summary: record.summary,
+            outcome: match record.outcome {
+                transfer_history::Outcome::Succeeded => OperationOutcome::Succeeded,
+                transfer_history::Outcome::Cancelled => OperationOutcome::Cancelled,
+                transfer_history::Outcome::Failed => OperationOutcome::Failed,
+            },
+            finished_at: std::time::UNIX_EPOCH + Duration::from_secs(record.finished_unix_seconds),
+            elapsed: Duration::from_millis(record.elapsed_millis),
+            counts: ItemCounts {
+                completed: record.counts.completed,
+                retained: record.counts.retained,
+                skipped: record.counts.skipped,
+                failed: record.counts.failed,
+                not_started: record.counts.not_started,
+            },
+            items: Vec::new(),
+            rename_undo: None,
+            from_history: true,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -929,6 +985,9 @@ pub struct Explorer {
     queue_paused: bool,
     show_operations: bool,
     recent_operations: VecDeque<CompletedOperation>,
+    history_sender: Option<SyncSender<transfer_history::Record>>,
+    history_receiver: Option<Receiver<transfer_history::Event>>,
+    history_done_receiver: Option<Receiver<()>>,
     pending_undo_origin: Option<u64>,
     recovery_sender: Sender<(u64, std::io::Result<Vec<JournalInspection>>)>,
     recovery_receiver: Receiver<(u64, std::io::Result<Vec<JournalInspection>>)>,
@@ -1048,6 +1107,12 @@ impl Explorer {
         let (recovery_comparison_sender, recovery_comparison_receiver) = mpsc::channel();
         let (clipboard_sender, clipboard_receiver) = mpsc::channel();
         let (archive_sender, archive_receiver) = mpsc::channel();
+        let (history_sender, history_receiver, history_done_receiver) = if separate_window {
+            (None, None, None)
+        } else {
+            let (sender, receiver, done) = transfer_history::spawn_worker();
+            (Some(sender), Some(receiver), Some(done))
+        };
         // Explicit CLI paths take precedence over the saved session. Restored
         // local and network locations are scanned asynchronously, never stat'ed
         // or contacted while reading preferences.
@@ -1151,6 +1216,9 @@ impl Explorer {
             queue_paused: false,
             show_operations: false,
             recent_operations: VecDeque::new(),
+            history_sender,
+            history_receiver,
+            history_done_receiver,
             pending_undo_origin: None,
             recovery_sender,
             recovery_receiver,
@@ -2351,6 +2419,39 @@ impl Explorer {
     }
 
     fn poll_background(&mut self, context: &egui::Context) {
+        if let Some(receiver) = &self.history_receiver {
+            let mut events = Vec::new();
+            while let Ok(event) = receiver.try_recv() {
+                events.push(event);
+            }
+            for event in events {
+                match event {
+                    transfer_history::Event::Loaded(Ok(records)) => {
+                        for record in records {
+                            if self.recent_operations.len() >= MAX_RECENT_OPERATIONS {
+                                break;
+                            }
+                            self.recent_operations
+                                .push_back(CompletedOperation::from_history(record));
+                        }
+                    }
+                    transfer_history::Event::Loaded(Err(error)) => {
+                        self.status = Some((
+                            format!(
+                                "Previous transfer history unavailable (preserved unchanged): {error}"
+                            ),
+                            true,
+                        ));
+                    }
+                    transfer_history::Event::SaveError(error) => {
+                        self.status = Some((
+                            format!("Transfer history could not be saved: {error}"),
+                            true,
+                        ));
+                    }
+                }
+            }
+        }
         while let Ok((generation, result)) = self.open_with_receiver.try_recv() {
             if let Some(Dialog::OpenWith {
                 generation: active,
@@ -2873,7 +2974,7 @@ impl Explorer {
                         format!("#{id}: {summary}"),
                         outcome == OperationOutcome::Failed,
                     ));
-                    self.recent_operations.push_front(CompletedOperation {
+                    let completed = CompletedOperation {
                         id,
                         label,
                         summary,
@@ -2883,7 +2984,27 @@ impl Explorer {
                         counts: ItemCounts::from_items(&report.items),
                         items: report.items,
                         rename_undo,
-                    });
+                        from_history: false,
+                    };
+                    if let Some(writer) = &self.history_sender {
+                        match writer.try_send(completed.history_record()) {
+                            Ok(()) => {}
+                            Err(mpsc::TrySendError::Full(_)) => {
+                                self.status = Some((
+                                    "Transfer completed, but the history writer is backlogged"
+                                        .into(),
+                                    true,
+                                ));
+                            }
+                            Err(mpsc::TrySendError::Disconnected(_)) => {
+                                self.status = Some((
+                                    "Transfer completed, but history persistence stopped".into(),
+                                    true,
+                                ));
+                            }
+                        }
+                    }
+                    self.recent_operations.push_front(completed);
                     if self.recent_operations.len() > MAX_RECENT_OPERATIONS {
                         self.recent_operations.pop_back();
                     }
@@ -3222,7 +3343,7 @@ impl Explorer {
                 });
                 ui.separator();
                 ui.strong(format!("Recent results ({})", self.recent_operations.len()));
-                ui.small("This session only. A failed batch may have completed earlier items.");
+                ui.small("This session has detailed item results; earlier sessions retain read-only summaries, never executable Undo or replay.");
                 egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
                     for entry in &self.recent_operations {
                         let outcome = match entry.outcome {
@@ -3231,7 +3352,11 @@ impl Explorer {
                             OperationOutcome::Failed => "Failed",
                         };
                         ui.horizontal_wrapped(|ui| {
-                            ui.strong(format!("#{} · {outcome}", entry.id));
+                            ui.strong(if entry.from_history {
+                                format!("Earlier · {outcome}")
+                            } else {
+                                format!("#{} · {outcome}", entry.id)
+                            });
                             ui.label(&entry.label);
                             ui.small(filesystem::age(Some(entry.finished_at)));
                             ui.small(format!("Took {}", elapsed_label(entry.elapsed)));
@@ -6865,6 +6990,12 @@ impl Drop for Explorer {
         self.open_with_cancel.store(true, Ordering::Relaxed);
         volume::clear_password(&mut self.volume_connect_password);
         self.discovery_cancel.store(true, Ordering::Relaxed);
+        // Drain pending completion records before exiting. A stalled XDG
+        // state mount must never trap the desktop in an unbounded close.
+        self.history_sender.take();
+        if let Some(done) = self.history_done_receiver.take() {
+            let _ = done.recv_timeout(Duration::from_secs(2));
+        }
     }
 }
 
@@ -7017,10 +7148,33 @@ mod tests {
     use crate::clipboard;
     use crate::filesystem::{ItemResult, ItemState, Progress};
     use crate::location::Location;
+    use crate::transfer_history;
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn restored_transfer_history_is_read_only_and_never_exposes_undo() {
+        let record = transfer_history::Record {
+            id: 19,
+            label: "Copy 2 items".into(),
+            summary: "1 complete, 1 failed".into(),
+            outcome: transfer_history::Outcome::Failed,
+            finished_unix_seconds: 1_784_000_000,
+            elapsed_millis: 900,
+            counts: transfer_history::Counts {
+                completed: 1,
+                failed: 1,
+                ..Default::default()
+            },
+        };
+        let history = super::CompletedOperation::from_history(record.clone());
+        assert!(history.from_history);
+        assert!(history.rename_undo.is_none());
+        assert!(history.items.is_empty());
+        assert_eq!(history.history_record(), record);
+    }
 
     #[test]
     fn shortcuts_keep_press_time_modifiers_when_a_chord_is_released_in_one_frame() {

@@ -23,6 +23,7 @@ mod shell_renderer;
 mod theme;
 mod theme_editor;
 mod thumbnail;
+mod transfer_history;
 mod volume;
 
 use std::{env, ffi::OsString, path::PathBuf};
