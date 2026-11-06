@@ -4439,18 +4439,21 @@ impl Explorer {
             .show(ui, |ui| {
                 for (index, component) in components.iter().enumerate() {
                     if theme.shell_kind() == ShellKind::Luna {
+                        if *component == ChromeComponent::Tabs && self.tabs.len() == 1 {
+                            continue;
+                        }
                         // In Luna the menu, navigation toolbar and tab strip
                         // occupy their own bands; decorations remain the WM's
                         // responsibility, not RiceField's.
                         let fill = match component {
-                            ChromeComponent::MenuBar => Color32::from_rgb(250, 249, 244),
-                            ChromeComponent::Navigation => Color32::from_rgb(237, 235, 223),
+                            ChromeComponent::MenuBar => Color32::from_rgb(246, 245, 239),
+                            ChromeComponent::Navigation => Color32::from_rgb(238, 236, 226),
                             ChromeComponent::Tabs => Color32::from_rgb(207, 222, 247),
                             ChromeComponent::CommandBar => Color32::from_rgb(250, 249, 244),
                         };
                         egui::Frame::new()
                             .fill(fill)
-                            .inner_margin(egui::Margin::symmetric(8, 5))
+                            .inner_margin(egui::Margin::symmetric(7, 4))
                             .show(ui, |ui| match component {
                                 ChromeComponent::MenuBar => self.menu_bar(ui),
                                 ChromeComponent::Tabs => self.tabs_bar(ui),
@@ -4473,7 +4476,8 @@ impl Explorer {
     }
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
-        let menu_text = if self.theme.shell_kind() == ShellKind::Luna {
+        let is_luna = self.theme.shell_kind() == ShellKind::Luna;
+        let menu_text = if is_luna {
             Color32::from_rgb(33, 48, 77)
         } else {
             Color32::WHITE
@@ -4538,7 +4542,72 @@ impl Explorer {
                     self.toggle_hidden();
                     ui.close();
                 }
+                if is_luna {
+                    ui.separator();
+                    if ui.button("Show folder tree").clicked() {
+                        shell_components::luna_toggle_panel(
+                            ui.ctx(),
+                            shell_components::LunaPanel::FolderTree,
+                        );
+                        ui.close();
+                    }
+                    if ui.button("Search in folder").clicked() {
+                        shell_components::luna_toggle_panel(
+                            ui.ctx(),
+                            shell_components::LunaPanel::Search,
+                        );
+                        ui.close();
+                    }
+                }
             });
+            if is_luna {
+                ui.menu_button(egui::RichText::new("Favorites").color(menu_text), |ui| {
+                    if ui.button("Add to Favorites").clicked() {
+                        self.toggle_bookmark();
+                        ui.close();
+                    }
+                    ui.separator();
+                    for path in self.config.bookmarks.clone() {
+                        let label = path.file_name().unwrap_or_default().to_string_lossy();
+                        if ui.button(label).clicked() {
+                            self.navigate(path);
+                            ui.close();
+                        }
+                    }
+                });
+                ui.menu_button(egui::RichText::new("Tools").color(menu_text), |ui| {
+                    let open = shell_components::luna_panel_open(
+                        ui.ctx(),
+                        shell_components::LunaPanel::Advanced,
+                    );
+                    if ui
+                        .button(if open {
+                            "Hide RiceField tools"
+                        } else {
+                            "Show RiceField tools"
+                        })
+                        .clicked()
+                    {
+                        shell_components::luna_toggle_panel(
+                            ui.ctx(),
+                            shell_components::LunaPanel::Advanced,
+                        );
+                        ui.close();
+                    }
+                    if ui.button("Discover network locations…").clicked() {
+                        self.discovery_open = true;
+                        if self.discovery_hosts.is_empty() {
+                            self.start_discovery();
+                        }
+                        ui.close();
+                    }
+                });
+                ui.menu_button(egui::RichText::new("Help").color(menu_text), |ui| {
+                    ui.strong("RiceField · XP Luna");
+                    ui.label("A Linux file manager with original XP-inspired visuals.");
+                    ui.label("Keyboard shortcuts: Ctrl+N, Ctrl+T, F3, Ctrl+F.");
+                });
+            }
         });
         if self.theme.shell_kind() != ShellKind::Luna {
             ui.separator();
@@ -4654,6 +4723,10 @@ impl Explorer {
     }
 
     fn navigation_bar(&mut self, ui: &mut egui::Ui) {
+        if self.theme.shell_kind() == ShellKind::Luna {
+            self.luna_navigation_bar(ui);
+            return;
+        }
         if ui.available_width() < 800.0 {
             // Give address/search their own row on narrow windows. Neither
             // control may push the path field or Refresh off-screen.
@@ -4667,6 +4740,88 @@ impl Explorer {
                 self.navigation_buttons(ui);
                 self.navigation_address(ui, false);
                 self.navigation_search(ui, false);
+            });
+        }
+    }
+
+    fn luna_navigation_bar(&mut self, ui: &mut egui::Ui) {
+        use shell_components::{
+            LunaPanel as Panel, LunaToolbarIcon as Icon, luna_panel_open, luna_toggle_panel,
+            luna_toolbar_button,
+        };
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            if luna_toolbar_button(ui, "Back", Icon::Back, !self.current().back.is_empty()) {
+                self.history(true);
+            }
+            if luna_toolbar_button(
+                ui,
+                "Forward",
+                Icon::Forward,
+                !self.current().forward.is_empty(),
+            ) {
+                self.history(false);
+            }
+            if luna_toolbar_button(ui, "Up", Icon::Up, true) {
+                self.parent();
+            }
+            ui.separator();
+            if luna_toolbar_button(ui, "Search", Icon::Search, true) {
+                luna_toggle_panel(ui.ctx(), Panel::Search);
+                self.focus_search = luna_panel_open(ui.ctx(), Panel::Search);
+            }
+            if luna_toolbar_button(ui, "Folders", Icon::Folders, true) {
+                luna_toggle_panel(ui.ctx(), Panel::FolderTree);
+                self.config.show_sidebar = true;
+                self.dirty_config = true;
+            }
+            ui.separator();
+            ui.menu_button("Views", |ui| {
+                for (label, view) in [("Icons", "grid"), ("Details", "list")] {
+                    if ui
+                        .selectable_label(self.config.view == view, label)
+                        .clicked()
+                    {
+                        self.config.view = view.to_owned();
+                        self.dirty_config = true;
+                        ui.close();
+                    }
+                }
+            });
+            if ui
+                .small_button("Refresh")
+                .on_hover_text("Refresh (Ctrl+R)")
+                .clicked()
+            {
+                self.scan(self.active);
+            }
+        });
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Address").size(12.0));
+            let width = (ui.available_width() - 51.0).max(90.0);
+            let address = ui.add_sized(
+                [width, 24.0],
+                egui::TextEdit::singleline(&mut self.current_mut().address)
+                    .hint_text("Location (Ctrl+L)"),
+            );
+            if self.focus_address {
+                ui.memory_mut(|memory| memory.request_focus(address.id));
+                self.focus_address = false;
+            }
+            if (address.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)))
+                || ui
+                    .button(egui::RichText::new("Go").color(Color32::from_rgb(29, 113, 36)))
+                    .clicked()
+            {
+                let value = self.current().address.clone();
+                self.navigate_address(value);
+            }
+        });
+        if luna_panel_open(ui.ctx(), Panel::Search) {
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Search");
+                self.navigation_search(ui, ui.available_width() < 800.0);
             });
         }
     }
@@ -4824,6 +4979,21 @@ impl Explorer {
             )
             .show(ui, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
+                    if theme.shell_kind() == ShellKind::Luna
+                        && shell_components::luna_panel_open(
+                            ui.ctx(),
+                            shell_components::LunaPanel::FolderTree,
+                        )
+                    {
+                        ui.label(
+                            egui::RichText::new("Folders")
+                                .strong()
+                                .color(theme.palette.accent()),
+                        );
+                        ui.separator();
+                        self.folder_tree_root(ui);
+                        return;
+                    }
                     let sections = theme.sidebar_sections();
                     for (index, section) in sections.into_iter().enumerate() {
                         if index > 0 {
@@ -4837,6 +5007,35 @@ impl Explorer {
                         let mut render_section = |ui: &mut egui::Ui| match section {
                             SidebarSection::Tasks => self.sidebar_tasks(ui),
                             SidebarSection::Places => {
+                                if theme.shell_kind() == ShellKind::Luna {
+                                    use shell_components::{LunaLinkIcon as Icon, luna_link};
+                                    for (label, path) in self.places.clone() {
+                                        let title = if path == Path::new("/") {
+                                            "My Computer"
+                                        } else {
+                                            label
+                                        };
+                                        if luna_link(
+                                            ui,
+                                            title,
+                                            true,
+                                            if path == Path::new("/") {
+                                                Icon::Computer
+                                            } else {
+                                                Icon::Folder
+                                            },
+                                        ) {
+                                            self.navigate(path);
+                                        }
+                                    }
+                                    if luna_link(ui, "Network Places", true, Icon::Computer) {
+                                        self.discovery_open = true;
+                                        if self.discovery_hosts.is_empty() {
+                                            self.start_discovery();
+                                        }
+                                    }
+                                    return;
+                                }
                                 ui.add_space(8.0);
                                 for (label, path) in self.places.clone() {
                                     if ui
@@ -4855,6 +5054,41 @@ impl Explorer {
                                 self.folder_tree_root(ui);
                             }
                             SidebarSection::Favorites => {
+                                if theme.shell_kind() == ShellKind::Luna {
+                                    use shell_components::{LunaLinkIcon as Icon, luna_link};
+                                    let selected = self.selected_paths();
+                                    if let Some(path) = selected.first() {
+                                        ui.label(
+                                            egui::RichText::new(
+                                                path.file_name()
+                                                    .unwrap_or_default()
+                                                    .to_string_lossy(),
+                                            )
+                                            .small()
+                                            .strong(),
+                                        );
+                                        ui.small("Selected item");
+                                    } else {
+                                        let count = self.current().visible.len();
+                                        ui.small(format!("{count} items in this folder"));
+                                    }
+                                    if luna_link(
+                                        ui,
+                                        "Add folder to favorites",
+                                        true,
+                                        Icon::Bookmark,
+                                    ) {
+                                        self.toggle_bookmark();
+                                    }
+                                    for path in self.config.bookmarks.clone() {
+                                        let label =
+                                            path.file_name().unwrap_or_default().to_string_lossy();
+                                        if luna_link(ui, &label, true, Icon::Folder) {
+                                            self.navigate(path);
+                                        }
+                                    }
+                                    return;
+                                }
                                 for path in self.config.bookmarks.clone() {
                                     let label =
                                         path.file_name().unwrap_or_default().to_string_lossy();
@@ -4874,19 +5108,38 @@ impl Explorer {
                                 }
                             }
                             SidebarSection::Volumes => {
-                                if ui.button("Discover NAS on network…").clicked() {
+                                let luna = theme.shell_kind() == ShellKind::Luna;
+                                let discover = if luna {
+                                    shell_components::luna_link(
+                                        ui,
+                                        "Discover network storage",
+                                        true,
+                                        shell_components::LunaLinkIcon::Drive,
+                                    )
+                                } else {
+                                    ui.button("Discover NAS on network…").clicked()
+                                };
+                                if discover {
                                     self.discovery_open = true;
                                     if self.discovery_hosts.is_empty() {
                                         self.start_discovery();
                                     }
                                 }
-                                if ui
-                                    .add_enabled(
+                                let connect = if luna {
+                                    shell_components::luna_link(
+                                        ui,
+                                        "Connect to network",
+                                        !self.volume_busy,
+                                        shell_components::LunaLinkIcon::Computer,
+                                    )
+                                } else {
+                                    ui.add_enabled(
                                         !self.volume_busy,
                                         egui::Button::new("+ Connect to network…"),
                                     )
                                     .clicked()
-                                {
+                                };
+                                if connect {
                                     self.open_network_login(String::new());
                                 }
                                 if self.volume_busy {
@@ -5140,6 +5393,31 @@ impl Explorer {
             return;
         }
         let selection = self.current().selected.len();
+        if self.theme.shell_kind() == ShellKind::Luna {
+            use shell_components::{LunaLinkIcon as Icon, luna_link};
+            if luna_link(ui, "Make a new folder", true, Icon::Folder) {
+                self.file_command(FileCommand::NewFolder);
+            }
+            if luna_link(ui, "Copy selected items", selection > 0, Icon::File) {
+                self.file_command(FileCommand::Copy);
+            }
+            if luna_link(ui, "Move selected items", selection > 0, Icon::Folder) {
+                self.file_command(FileCommand::Cut);
+            }
+            if luna_link(ui, "Paste items here", true, Icon::Folder) {
+                self.file_command(FileCommand::Paste);
+            }
+            if luna_link(ui, "Rename this item", selection > 0, Icon::File) {
+                self.file_command(FileCommand::Rename);
+            }
+            if luna_link(ui, "Move to Trash", selection > 0, Icon::File) {
+                self.file_command(FileCommand::Trash);
+            }
+            if luna_link(ui, "View properties", selection == 1, Icon::File) {
+                self.file_command(FileCommand::Properties);
+            }
+            return;
+        }
         ui.add_space(8.0);
         if ui.button("New folder").clicked() {
             self.file_command(FileCommand::NewFolder);
@@ -5306,9 +5584,18 @@ impl Explorer {
             .frame(
                 egui::Frame::new()
                     .fill(theme.palette.panel())
-                    .inner_margin(egui::Margin::same(14)),
+                    .inner_margin(egui::Margin::same(if theme.shell_kind() == ShellKind::Luna { 5 } else { 14 })),
             )
             .show(ui, |ui| {
+                // The XP shell starts with the folder view, not two rows of
+                // modern commands. Advanced tools remain available via Tools
+                // -> Show RiceField tools, without losing any functionality.
+                let show_toolbox = theme.shell_kind() != ShellKind::Luna
+                    || shell_components::luna_panel_open(
+                        ui.ctx(),
+                        shell_components::LunaPanel::Advanced,
+                    );
+                if show_toolbox {
                 ui.horizontal_wrapped(|ui| {
                     let title = self
                         .current()
@@ -5848,6 +6135,7 @@ impl Explorer {
                     });
                 });
                 ui.separator();
+                }
 
                 if let Some((left, right)) = self.split_indices() {
                     let pane_ids = [left, right];
@@ -6147,8 +6435,12 @@ impl Explorer {
         };
         let rows = visible.div_ceil(columns);
         if !grid {
-            let change_sort =
-                shell_renderer::sort_header(ui, &self.config.sort_by, self.config.descending);
+            let change_sort = shell_renderer::sort_header(
+                ui,
+                &self.theme,
+                &self.config.sort_by,
+                self.config.descending,
+            );
             if let Some(sort) = change_sort {
                 if self.config.sort_by == sort {
                     self.config.descending = !self.config.descending;
