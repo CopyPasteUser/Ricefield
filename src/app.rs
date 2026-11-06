@@ -3483,7 +3483,7 @@ impl Explorer {
         }
         if self.current().remote_uri.is_some() {
             self.status = Some((
-                "Remote file mutations are disabled until safe GIO transfers are available".into(),
+                "Remote writes are disabled: generic GIO rename cannot guarantee atomic no-overwrite publication".into(),
                 true,
             ));
             return;
