@@ -11,6 +11,9 @@
 - Keep special-file refusal tests active in restricted containers that deny
   Unix-domain sockets: use FIFO fixtures only when socket creation is denied,
   without skipping the safety checks or changing production behavior.
+- Bound a second desktop-measurement attempt to the exact transient
+  `XOpenDisplayFailed` runner condition, with visible Xvfb logs. Do not retry
+  failed GUI assertions or silently accept repeated display failures.
 - The installer is still not power-loss transactional across its three
   installed paths; unresolved code and physical acceptance gates still block
   an official stable `v1.0.0` tag.
