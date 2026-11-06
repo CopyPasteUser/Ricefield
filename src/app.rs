@@ -379,7 +379,7 @@ struct RemotePreviewResult {
 struct RefreshResult {
     folders: Vec<(u64, PathBuf, Option<SystemTime>)>,
     volumes: Vec<filesystem::MountedVolume>,
-    unmounted_volumes: Vec<crate::udisks2::UnmountedVolume>,
+    device_volumes: Vec<crate::udisks2::DeviceVolume>,
     places: Vec<(&'static str, PathBuf)>,
 }
 
@@ -1027,7 +1027,7 @@ pub struct Explorer {
     progress: Option<Progress>,
     cancel: Arc<AtomicBool>,
     volumes: Vec<filesystem::MountedVolume>,
-    unmounted_volumes: Vec<crate::udisks2::UnmountedVolume>,
+    device_volumes: Vec<crate::udisks2::DeviceVolume>,
     last_refresh_check: Instant,
     places: Vec<(&'static str, PathBuf)>,
     refresh_in_flight: bool,
@@ -1262,7 +1262,7 @@ impl Explorer {
                 path: PathBuf::from("/"),
                 network: false,
             }],
-            unmounted_volumes: Vec::new(),
+            device_volumes: Vec::new(),
             last_refresh_check: Instant::now() - Duration::from_secs(3),
             places: vec![("Home", config::home()), ("Filesystem", PathBuf::from("/"))],
             refresh_in_flight: false,
@@ -2705,7 +2705,7 @@ impl Explorer {
             self.places = result.places;
             self.refresh_in_flight = false;
             self.volumes = result.volumes;
-            self.unmounted_volumes = result.unmounted_volumes;
+            self.device_volumes = result.device_volumes;
             for (tab_id, path, modified) in result.folders {
                 if let Some(index) = self.tabs.iter().position(|tab| {
                     tab.id == tab_id && tab.path == path && tab.remote_uri.is_none()
@@ -4828,13 +4828,16 @@ impl Explorer {
                                 if self.volume_busy {
                                     ui.small("Device operation in progress…");
                                 }
-                                for volume in self.unmounted_volumes.clone() {
+                                for volume in self.device_volumes.clone() {
+                                    if !volume.mount_paths.is_empty() {
+                                        continue;
+                                    }
                                     let title = format!(
                                         "{}: {}",
                                         if volume.removable { "Removable" } else { "USB" },
                                         volume.label
                                     );
-                                    if ui
+                                    let response = ui
                                         .add_enabled(
                                             !self.volume_busy,
                                             egui::Button::new(format!("Mount {title}")),
@@ -4842,13 +4845,29 @@ impl Explorer {
                                         .on_hover_text(format!(
                                             "{} · click to mount using UDisks2/Polkit",
                                             volume.device
-                                        ))
-                                        .clicked()
-                                    {
+                                        ));
+                                    if response.clicked() {
                                         self.start_volume_action(
-                                            VolumeAction::MountDevice(volume.object_path),
+                                            VolumeAction::MountDevice(volume.object_path.clone()),
                                             false,
                                         );
+                                    }
+                                    if volume.ejectable {
+                                        response.context_menu(|ui| {
+                                            if ui
+                                                .add_enabled(
+                                                    !self.volume_busy,
+                                                    egui::Button::new("Eject drive…"),
+                                                )
+                                                .clicked()
+                                            {
+                                                self.volume_confirm =
+                                                    Some(VolumeAction::EjectDrive(
+                                                        volume.drive_path.clone(),
+                                                    ));
+                                                ui.close();
+                                            }
+                                        });
                                     }
                                 }
                                 for uri in self.config.remote_favorites.clone() {
@@ -4868,6 +4887,16 @@ impl Explorer {
                                 }
                                 for volume in self.volumes.clone() {
                                     let path = volume.path;
+                                    let device = self
+                                        .device_volumes
+                                        .iter()
+                                        .find(|device| {
+                                            device
+                                                .mount_paths
+                                                .iter()
+                                                .any(|mounted| mounted == &path)
+                                        })
+                                        .cloned();
                                     let label = if path == Path::new("/") {
                                         "System disk".to_owned()
                                     } else {
@@ -4897,7 +4926,13 @@ impl Explorer {
                                                 .clicked()
                                             {
                                                 self.volume_confirm =
-                                                    Some(VolumeAction::Unmount(path.clone()));
+                                                    Some(device.as_ref().map_or_else(
+                                                        || VolumeAction::Unmount(path.clone()),
+                                                        |device| VolumeAction::UnmountDevice {
+                                                            object_path: device.object_path.clone(),
+                                                            mount_point: path.clone(),
+                                                        },
+                                                    ));
                                                 ui.close();
                                             }
                                             if ui
@@ -4907,8 +4942,19 @@ impl Explorer {
                                                 )
                                                 .clicked()
                                             {
-                                                self.volume_confirm =
-                                                    Some(VolumeAction::Eject(path.clone()));
+                                                self.volume_confirm = Some(
+                                                    device
+                                                        .as_ref()
+                                                        .filter(|device| device.ejectable)
+                                                        .map_or_else(
+                                                            || VolumeAction::Eject(path.clone()),
+                                                            |device| {
+                                                                VolumeAction::EjectDrive(
+                                                                    device.drive_path.clone(),
+                                                                )
+                                                            },
+                                                        ),
+                                                );
                                                 ui.close();
                                             }
                                         });
@@ -7084,7 +7130,7 @@ impl eframe::App for Explorer {
                 let _ = sender.send(RefreshResult {
                     folders,
                     volumes: filesystem::mounted_volumes(),
-                    unmounted_volumes: crate::udisks2::unmounted_volumes(),
+                    device_volumes: crate::udisks2::volumes(),
                     places: {
                         let home = config::home();
                         let mut places = vec![("Home", home.clone())];

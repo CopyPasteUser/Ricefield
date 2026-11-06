@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.0-rc.11 — native removable-drive unmount/eject (verification pending)
+
+- Associate mounted removable/USB filesystems with their UDisks2 device and
+  drive objects, retaining mount paths as raw Unix bytes (including non-UTF-8).
+- Prefer native, Polkit-authorized UDisks2 unmount and eject for recognized
+  external devices; keep existing bounded GIO actions for other mounts.
+- Before a device mutation, re-query live device state, reject stale or
+  missing mount paths, and never force unmount or silently power off hardware.
+- Include disconnected/unmounted eject actions only for drives reporting
+  Ejectable. Add hostile D-Bus path and mount-point decoding tests.
+- Real Linux Mint hardware and Polkit acceptance remain pending; this is not
+  permission to enable remote uploads or publish a stable 1.0 release.
+
 ## 1.0.0-rc.10 — UDisks2 removable-volume discovery and mount (verification pending)
 
 - Discover unmounted removable/USB filesystems through the Linux UDisks2
