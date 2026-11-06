@@ -1,6 +1,6 @@
 # RiceField roadmap to 1.0
 
-**Current candidate: `1.0.0-rc.16`.** See [the scope and evidence ledger](docs/1.0-STATUS.md).
+**Current candidate: `1.0.0-rc.17`.** See [the scope and evidence ledger](docs/1.0-STATUS.md).
 This roadmap retains incomplete capabilities explicitly: a candidate version
 does not turn unchecked safety, integration or physical-device work into a pass.
 
@@ -558,6 +558,10 @@ pass. Physical Mint X11/Wayland review is deliberately scheduled *after* the
   failure, atomic binary replacement and installer rollback tests; enable
   `v1.0.*` artifact workflows without publishing a tag. Real-device update,
   uninstall and power-loss verification remain open.
+- [x] RC.17 stages desktop icon replacements on the same filesystem and
+  atomically renames only a complete image into view; a controlled slow-copy
+  regression checks that the previous icon remains readable during the copy.
+  Multi-file power-loss recovery is still outstanding.
 - [x] Format, Clippy, unit/integration/UI/security tests pass in CI (rc.3:
   [run #481](https://github.com/CopyPasteUser/Ricefield/actions/runs/42107821509),
   258 unit/regression tests, separate D-Bus test, eight GUI profiles).

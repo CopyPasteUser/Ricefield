@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.0-rc.17 — atomic desktop icon upgrades and bounded release setup (verification pending)
+
+- Publish the desktop SVG icon only after a same-directory staging copy is
+  complete. Keep the previously installed icon intact during a slow upgrade;
+  add a deterministic regression that failed before the change.
+- Apply bounded retries and mirror timeouts to the tagged GitHub release
+  build, matching the proven checks workflow so transient runner outages
+  cannot hang release preparation indefinitely.
+- Keep special-file refusal tests active in restricted containers that deny
+  Unix-domain sockets: use FIFO fixtures only when socket creation is denied,
+  without skipping the safety checks or changing production behavior.
+- The installer is still not power-loss transactional across its three
+  installed paths; unresolved code and physical acceptance gates still block
+  an official stable `v1.0.0` tag.
+
 ## 1.0.0-rc.16 — explicit safe USB drive power-off (verification pending)
 
 - Show **Safely power off USB drive** in the unmounted-removable-volume menu

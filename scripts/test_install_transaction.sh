@@ -69,6 +69,45 @@ wait "$holder"
 wait "$upgrader"
 cmp -s -- /bin/true "$binary"
 
+# The desktop icon must remain complete and readable while a replacement is
+# still being copied. Simulate a slow copier that exposes a partial output:
+# the staging path may be partial, but the published icon must stay intact.
+mock_bin="$fixture/mock-bin"
+mkdir -p -- "$mock_bin"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'set -euo pipefail' \
+  'destination="${@: -1}"' \
+  'printf partial-icon > "$destination"' \
+  'touch "$RICEFIELD_TEST_INSTALL_PAUSED"' \
+  'while [[ ! -f "$RICEFIELD_TEST_INSTALL_RESUME" ]]; do sleep 0.02; done' \
+  '/usr/bin/install "$@"' > "$mock_bin/install"
+chmod +x "$mock_bin/install"
+cp -p -- "$icon" "$fixture/complete-icon"
+export RICEFIELD_TEST_INSTALL_PAUSED="$fixture/icon-copy-paused"
+export RICEFIELD_TEST_INSTALL_RESUME="$fixture/icon-copy-resume"
+PATH="$mock_bin:$PATH" bash "$project_dir/scripts/install_desktop_entry.sh" "$project_dir" > "$fixture/icon-install.log" 2>&1 &
+icon_installer=$!
+for ((i = 0; i < 100; i++)); do
+  [[ -e "$RICEFIELD_TEST_INSTALL_PAUSED" ]] && break
+  sleep 0.02
+done
+if [[ ! -e "$RICEFIELD_TEST_INSTALL_PAUSED" ]]; then
+  touch "$RICEFIELD_TEST_INSTALL_RESUME"
+  wait "$icon_installer" || true
+  echo 'Timed out waiting for simulated in-progress icon copy' >&2
+  exit 1
+fi
+if ! cmp -s -- "$fixture/complete-icon" "$icon"; then
+  touch "$RICEFIELD_TEST_INSTALL_RESUME"
+  wait "$icon_installer" || true
+  echo 'An in-progress icon copy exposed incomplete desktop assets' >&2
+  exit 1
+fi
+touch "$RICEFIELD_TEST_INSTALL_RESUME"
+wait "$icon_installer"
+cmp -s -- "$icon" "$project_dir/assets/rice-explorer.svg"
+
 # Installation must not follow a substituted state lock symlink or accept a
 # relative XDG state root (which could target an unexpected current folder).
 mv -- "$lock_file" "$fixture/preserved-install-lock"
