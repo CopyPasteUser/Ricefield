@@ -390,6 +390,7 @@ pub enum VolumeAction {
         mount_point: PathBuf,
     },
     EjectDrive(String),
+    PowerOffDrive(String),
     Unmount(PathBuf),
     Eject(PathBuf),
 }
@@ -428,7 +429,7 @@ impl VolumeAction {
         match self {
             Self::Connect(uri) | Self::ConnectAuthenticated(uri, _) => vec![OsString::from(uri)],
             Self::MountDevice(_) => Vec::new(),
-            Self::UnmountDevice { .. } | Self::EjectDrive(_) => Vec::new(),
+            Self::UnmountDevice { .. } | Self::EjectDrive(_) | Self::PowerOffDrive(_) => Vec::new(),
             Self::Unmount(path) => vec![OsString::from("-u"), path.as_os_str().to_owned()],
             Self::Eject(path) => vec![OsString::from("-e"), path.as_os_str().to_owned()],
         }
@@ -440,6 +441,7 @@ impl VolumeAction {
             Self::MountDevice(_) => "Mount",
             Self::UnmountDevice { .. } => "Unmount",
             Self::EjectDrive(_) => "Eject",
+            Self::PowerOffDrive(_) => "Power off USB drive",
             Self::Unmount(_) => "Unmount",
             Self::Eject(_) => "Eject",
         }
@@ -461,6 +463,9 @@ pub fn execute(action: &VolumeAction) -> Result<(), String> {
     }
     if let VolumeAction::EjectDrive(drive_path) = action {
         return crate::udisks2::eject(drive_path);
+    }
+    if let VolumeAction::PowerOffDrive(drive_path) = action {
+        return crate::udisks2::power_off(drive_path);
     }
     let mut command = Command::new("gio");
     command
