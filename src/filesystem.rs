@@ -674,6 +674,12 @@ pub enum Action {
         mode: u32,
         expected: fs::Metadata,
     },
+    SetOwnership {
+        path: PathBuf,
+        uid: u32,
+        gid: u32,
+        expected: fs::Metadata,
+    },
 }
 
 pub fn valid_name(name: &str) -> bool {
@@ -753,6 +759,68 @@ fn set_mode_unreadable_inode(path: &Path, mode: u32, expected: &fs::Metadata) ->
             fd.as_raw_fd(),
             c"".as_ptr(),
             mode as libc::mode_t,
+            libc::AT_EMPTY_PATH,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+/// Change owner/group only on an inode-pinned O_PATH descriptor. Linux
+/// enforces the caller's group/UID permissions: no elevation or sudo occurs.
+#[cfg(target_os = "linux")]
+fn set_ownership_guarded(
+    path: &Path,
+    uid: u32,
+    gid: u32,
+    expected: &fs::Metadata,
+) -> io::Result<()> {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+
+    // (uid_t)-1 and (gid_t)-1 mean "leave unchanged" to the kernel. They are
+    // not valid explicit owner/group selections and must not silently succeed.
+    if uid == u32::MAX || gid == u32::MAX {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Invalid owner/group identifier",
+        ));
+    }
+
+    let name = CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Invalid filename"))?;
+    // SAFETY: NUL-terminated path; O_NOFOLLOW pins the entry without reading
+    // file contents or resolving a symlink target.
+    let raw = unsafe {
+        libc::open(
+            name.as_ptr(),
+            libc::O_PATH | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if raw < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: the fresh descriptor is owned by this File and closed on drop.
+    let file = File::from(unsafe { OwnedFd::from_raw_fd(raw) });
+    let metadata = file.metadata()?;
+    ensure_same_source_metadata(expected, &metadata)?;
+    if !metadata.is_file() && !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Owner/group changes require an ordinary file or directory",
+        ));
+    }
+    // SAFETY: AT_EMPTY_PATH directs fchownat at the pinned descriptor only;
+    // the kernel enforces ownership/group membership and never dereferences
+    // the original (potentially replaced) pathname.
+    let result = unsafe {
+        libc::fchownat(
+            file.as_raw_fd(),
+            c"".as_ptr(),
+            uid as libc::uid_t,
+            gid as libc::gid_t,
             libc::AT_EMPTY_PATH,
         )
     };
@@ -1917,6 +1985,26 @@ fn perform_with_progress_and_items(
                 Err(io::Error::new(
                     io::ErrorKind::Unsupported,
                     "Unix permissions only",
+                ))
+            }
+        }
+        Action::SetOwnership {
+            path,
+            uid,
+            gid,
+            expected,
+        } => {
+            transfer.check()?;
+            #[cfg(target_os = "linux")]
+            {
+                set_ownership_guarded(path, *uid, *gid, expected)?;
+                Ok(format!("Updated owner/group to {uid}:{gid}"))
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "Owner/group changes require Linux",
                 ))
             }
         }
@@ -6598,6 +6686,72 @@ mod tests {
                 0o600
             );
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn ownership_edits_are_inode_pinned_and_reject_invalid_ids() {
+        use std::os::unix::fs::{MetadataExt, symlink};
+
+        let root = test_root();
+        let selected = root.join("selected");
+        fs::write(&selected, b"owned file").unwrap();
+        let initial = fs::metadata(&selected).unwrap();
+        perform(&Action::SetOwnership {
+            path: selected.clone(),
+            uid: initial.uid(),
+            gid: initial.gid(),
+            expected: initial,
+        })
+        .unwrap();
+
+        let current = fs::metadata(&selected).unwrap();
+        assert_eq!(
+            set_ownership_guarded(&selected, u32::MAX, current.gid(), &current)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidInput
+        );
+        assert_eq!(
+            set_ownership_guarded(&selected, current.uid(), u32::MAX, &current)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidInput
+        );
+
+        let link = root.join("link");
+        symlink(&selected, &link).unwrap();
+        let linked = fs::symlink_metadata(&link).unwrap();
+        assert!(set_ownership_guarded(&link, current.uid(), current.gid(), &linked).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn ownership_refuses_a_replaced_file_since_properties_were_opened() {
+        use std::os::unix::fs::MetadataExt;
+
+        let root = test_root();
+        let selected = root.join("selected");
+        let old = root.join("old");
+        fs::write(&selected, b"original owner target").unwrap();
+        let expected = fs::metadata(&selected).unwrap();
+        fs::rename(&selected, &old).unwrap();
+        fs::write(&selected, b"other inode").unwrap();
+        let current = fs::metadata(&selected).unwrap();
+
+        let error = perform(&Action::SetOwnership {
+            path: selected.clone(),
+            uid: expected.uid(),
+            gid: expected.gid(),
+            expected,
+        })
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        let after = fs::metadata(&selected).unwrap();
+        assert_eq!((after.uid(), after.gid()), (current.uid(), current.gid()));
+        assert_eq!(fs::read(&old).unwrap(), b"original owner target");
         fs::remove_dir_all(root).unwrap();
     }
 

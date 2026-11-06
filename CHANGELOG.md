@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.0-rc.14 — guarded POSIX owner/group changes (verification pending)
+
+- Add editable numeric owner UID and group GID fields to the file Properties
+  dialog; buttons stay disabled for symlinks, invalid or unchanged values.
+- Apply explicitly requested owner/group changes on the inode pinned by an
+  O_PATH file descriptor using `fchownat(AT_EMPTY_PATH)`. No sudo, shell,
+  automatic privilege escalation or path-based chown is used.
+- Compare the snapshot from the Properties dialog before mutation to refuse
+  replaced/changed files. Reject reserved `-1` UID/GID sentinels and special
+  files. Display ordinary Linux permission errors rather than hiding them.
+- Add disposable tests for authorized same-owner edits, invalid identifiers,
+  symlink refusal and stale selection. Real Mint/ACL/Polkit acceptance remains.
+
 ## 1.0.0-rc.13 — stale Properties selection cannot change another file (verification pending)
 
 - Carry the original file's identity and change metadata from the Properties

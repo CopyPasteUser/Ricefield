@@ -404,6 +404,8 @@ struct PropertySnapshot {
     lines: Vec<(String, String)>,
     metadata: std::fs::Metadata,
     mode: String,
+    owner: String,
+    group: String,
     is_symlink: bool,
     is_dir: bool,
 }
@@ -431,6 +433,13 @@ fn read_property_snapshot(path: &Path) -> std::io::Result<PropertySnapshot> {
     };
     #[cfg(not(unix))]
     let mode = String::new();
+    #[cfg(unix)]
+    let (owner, group) = {
+        use std::os::unix::fs::MetadataExt;
+        (metadata.uid().to_string(), metadata.gid().to_string())
+    };
+    #[cfg(not(unix))]
+    let (owner, group) = (String::new(), String::new());
     Ok(PropertySnapshot {
         lines: {
             let mut rows = filesystem::property_lines(path)?;
@@ -438,6 +447,8 @@ fn read_property_snapshot(path: &Path) -> std::io::Result<PropertySnapshot> {
             rows
         },
         mode,
+        owner,
+        group,
         is_symlink: metadata.file_type().is_symlink(),
         is_dir: metadata.is_dir(),
         metadata,
@@ -777,8 +788,10 @@ enum Dialog {
     Properties {
         path: PathBuf,
         mode: String,
+        owner: String,
+        group: String,
         generation: u64,
-        details: Option<Result<PropertySnapshot, String>>,
+        details: Option<Result<Box<PropertySnapshot>, String>>,
         analysis: Option<Result<String, String>>,
     },
     Duplicates {
@@ -887,6 +900,8 @@ fn accept_property_result(dialog: &mut Option<Dialog>, message: PropertyResult) 
     if let Some(Dialog::Properties {
         path,
         mode,
+        owner,
+        group,
         generation,
         details,
         ..
@@ -896,8 +911,10 @@ fn accept_property_result(dialog: &mut Option<Dialog>, message: PropertyResult) 
     {
         if let Ok(snapshot) = &message.result {
             *mode = snapshot.mode.clone();
+            *owner = snapshot.owner.clone();
+            *group = snapshot.group.clone();
         }
-        *details = Some(message.result);
+        *details = Some(message.result.map(Box::new));
     }
 }
 
@@ -4319,6 +4336,8 @@ impl Explorer {
         self.dialog = Some(Dialog::Properties {
             path: path.clone(),
             mode: String::new(),
+            owner: String::new(),
+            group: String::new(),
             generation,
             details: None,
             analysis: None,
@@ -6925,6 +6944,8 @@ impl Explorer {
                 Dialog::Properties {
                     path,
                     mode,
+                    owner,
+                    group,
                     details,
                     analysis,
                     generation,
@@ -7014,6 +7035,48 @@ impl Explorer {
                                     dismiss = true;
                                 }
                             });
+                            #[cfg(target_os = "linux")]
+                            ui.horizontal_wrapped(|ui| {
+                                use std::os::unix::fs::MetadataExt;
+                                ui.label("Owner UID:");
+                                ui.add_sized([84.0, 25.0], egui::TextEdit::singleline(owner));
+                                ui.label("Group GID:");
+                                ui.add_sized([84.0, 25.0], egui::TextEdit::singleline(group));
+                                let parsed = owner
+                                    .trim()
+                                    .parse::<u32>()
+                                    .ok()
+                                    .filter(|uid| *uid != u32::MAX)
+                                    .zip(
+                                        group
+                                            .trim()
+                                            .parse::<u32>()
+                                            .ok()
+                                            .filter(|gid| *gid != u32::MAX),
+                                    );
+                                let changed = parsed.is_some_and(|(uid, gid)| {
+                                    uid != snapshot.metadata.uid() || gid != snapshot.metadata.gid()
+                                });
+                                if ui
+                                    .add_enabled(
+                                        changed && !snapshot.is_symlink,
+                                        egui::Button::new("Apply owner/group"),
+                                    )
+                                    .clicked()
+                                {
+                                    let (uid, gid) =
+                                        parsed.expect("owner/group button requires valid IDs");
+                                    action = Some(Action::SetOwnership {
+                                        path: path.clone(),
+                                        uid,
+                                        gid,
+                                        expected: snapshot.metadata.clone(),
+                                    });
+                                    dismiss = true;
+                                }
+                            });
+                            #[cfg(target_os = "linux")]
+                            ui.small("Ownership changes follow your account's Linux permissions; no sudo or privilege escalation.");
                         }
                         if ui.button("Close").clicked() {
                             dismiss = true;
@@ -7473,6 +7536,8 @@ mod tests {
         let mut dialog = Some(Dialog::Properties {
             path: path.clone(),
             mode: String::new(),
+            owner: String::new(),
+            group: String::new(),
             generation: 8,
             details: None,
             analysis: None,
@@ -7481,6 +7546,8 @@ mod tests {
             lines: vec![("Type".into(), "File".into())],
             metadata: std::fs::metadata(std::env::temp_dir()).unwrap(),
             mode: "644".into(),
+            owner: "1000".into(),
+            group: "1000".into(),
             is_symlink: false,
             is_dir: false,
         };
