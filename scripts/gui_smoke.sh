@@ -139,6 +139,26 @@ for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sideba
     xdotool mousemove --window "$window_id" 735 645 click 1
     sleep 0.25
   fi
+  # Finder's icon/list toggles and More menu must be interactive, not painted
+  # facsimiles. Capture both real states for the public screenshot gallery.
+  if [[ "$theme" == macos ]]; then
+    xdotool mousemove --window "$window_id" 1075 53 click 1
+    sleep 0.45
+    xdotool mousemove --window "$window_id" 1050 650
+    import -window "$window_id" screenshots/macos-more.png
+    require_visible_change screenshots/macos.png screenshots/macos-more.png \
+      'macOS Finder More menu' 600
+    xdotool key Escape
+    sleep 0.2
+    xdotool mousemove --window "$window_id" 921 53 click 1
+    sleep 0.5
+    xdotool mousemove --window "$window_id" 1050 650
+    import -window "$window_id" screenshots/macos-icons.png
+    require_visible_change screenshots/macos.png screenshots/macos-icons.png \
+      'macOS Finder icon view switch' 2500
+    xdotool mousemove --window "$window_id" 956 53 click 1
+    sleep 0.35
+  fi
   # Exercise the new two-pane command on every shell; a screenshot is a smoke
   # artifact, not proof of correct hit targets or system drag-and-drop.
   xdotool key F3

@@ -59,6 +59,8 @@ shared and network tabs remain read-only.
 
 | Additional view | Screenshot |
 | --- | --- |
+| Clicked icon-view mode (1120 × 720) | [macos-icons.png](macos-icons.png) |
+| Open functional More menu (1120 × 720) | [macos-more.png](macos-more.png) |
 | Two-folder split (1120 × 720) | [macos-split.png](macos-split.png) |
 | Compact window (700 × 470) | [macos-compact.png](macos-compact.png) |
 | Narrow window (380 × 650) | [macos-narrow.png](macos-narrow.png) |
