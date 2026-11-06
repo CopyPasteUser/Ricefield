@@ -1,6 +1,6 @@
 # RiceField roadmap to 1.0
 
-**Current candidate: `1.0.0-rc.6`.** See [the scope and evidence ledger](docs/1.0-STATUS.md).
+**Current candidate: `1.0.0-rc.7`.** See [the scope and evidence ledger](docs/1.0-STATUS.md).
 This roadmap retains incomplete capabilities explicitly: a candidate version
 does not turn unchecked safety, integration or physical-device work into a pass.
 
@@ -136,9 +136,12 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   Transfers dialog. Running operations are not suspended mid-file, and this
   session-only control does not imply restart replay or safe Undo.
 - [ ] Extend the queue to Move and other operations only after stale-source
-  preflight and safe confirmation are implemented; add persistent history
-  and failure recovery. Per-item results and elapsed time/rate/ETA are tracked
-  below as complete; in-memory history is not durable.
+  preflight and safe confirmation are implemented; complete failure recovery.
+  RC.7 adds bounded, private, durable **read-only result summaries** across
+  restarts via a single background writer, but waiting jobs, detailed per-item
+  results and Undo are deliberately not replayed or restored. A non-regular,
+  corrupt or unsupported history is preserved unchanged. Full crash recovery
+  and durable per-item histories remain open.
 - [x] Show elapsed wall-clock time, average transferred-byte throughput and a
   conservative approximate ETA on active transfers across all rice layouts;
   show final elapsed time in session results. Hide estimates before enough

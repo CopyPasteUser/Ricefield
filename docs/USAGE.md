@@ -31,7 +31,14 @@ or unreadable entries. Existing destinations are never silently replaced.
 time when measurable, and per-file results. Up to 32 Copy jobs can wait in the
 queue. Pause/Resume affects waiting jobs; the current transfer continues until
 completion or cancellation. Failure/cancellation pauses the queue for review.
-Queue and result history are session-only; other mutations are not silently queued.
+The queue and detailed per-item results are session-only; other mutations are
+not silently queued. The most recent 64 result **summaries** survive a restart
+in a private `transfer-history.toml` under the XDG state directory. Earlier
+summaries are labeled read-only; they cannot replay an operation or enable Undo.
+The primary window writes this ledger asynchronously. Secondary windows do not
+replace it. Corrupt, unsupported or symlinked history files are preserved, not
+silently rewritten. If another RiceField process owns the history lock, this
+instance can read but not overwrite it.
 
 A same-filesystem Move renames. A cross-filesystem Move publishes a verified
 copy and **retains the original for separate manual cleanup**. Source metadata
