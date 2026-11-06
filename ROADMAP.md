@@ -1,6 +1,6 @@
 # RiceField roadmap to 1.0
 
-**Current candidate: `1.0.0-rc.7`.** See [the scope and evidence ledger](docs/1.0-STATUS.md).
+**Current candidate: `1.0.0-rc.8`.** See [the scope and evidence ledger](docs/1.0-STATUS.md).
 This roadmap retains incomplete capabilities explicitly: a candidate version
 does not turn unchecked safety, integration or physical-device work into a pass.
 
@@ -269,10 +269,12 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   non-UTF-8 filename bytes; test collisions and mid-batch partial failures.
 - [x] Add zero-padded numbering and literal search/replace to the complete
   preview without new dependencies. Refuse search/replace of non-UTF-8 names.
-- [ ] Finish safe rename cycles, rollback/undo where possible; test hardlinks
-  and complete metadata behavior. RC.5 adds a bounded Rust regex search/
-  replace option with capture substitutions, validation, UTF-8 guardrails and
-  a complete preview; it does not alter the no-overwrite execution contract.
+- [x] Implement bounded safe batch rename cycles and best-effort guarded
+  rollback for ordinary errors. RC.8 uses Linux atomic name exchange for
+  selected-name cycles, no-overwrite moves for chains, and refuses changes to
+  unrelated targets. Test cancellation, external modifications and selected
+  hardlink aliases. A crash may leave partially permuted names (without
+  dropping entries); durable batch Undo and power-loss recovery remain open.
 
 **Gate:** fault-injected copy/move/crash scenarios do not silently lose user
 data; transfers never block the UI. **Still open** for stable 0.3: full

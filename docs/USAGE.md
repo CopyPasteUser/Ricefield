@@ -51,7 +51,12 @@ For multiple names, **F2** opens a batch-rename preview with prefix/suffix,
 numbering and literal search/replace. Enable **Regular expression** to match
 names using bounded Rust regex patterns with capture replacements such as `$1`
 or `${name}`; regex/literal matching requires UTF-8 names. Every generated name
-is validated before execution. Rename cycles and batch Undo are not implemented.
+is validated before execution. Durable batch Undo is not implemented.
+Batch rename can exchange names belonging to the same selected set without
+discarding either entry, including cycles and hardlinks. A collision with any
+unselected destination is refused. Ordinary errors attempt a guarded rollback;
+after a crash or concurrent external edit, inspect the displayed partial names
+manually. Undoing a *completed batch* in a later session is not supported.
 
 Drag into a local folder or between panes to copy without overwriting. For
 outbound drag, the context action **Drag to another app…** uses an installed

@@ -876,6 +876,306 @@ pub(crate) fn rename_without_overwrite(source: &Path, destination: &Path) -> io:
     }
 }
 
+/// Exchange two existing directory entries atomically. Unlike temporary-name
+/// staging, a crash cannot strand a selected item under a hidden name.
+#[cfg(target_os = "linux")]
+fn exchange_names(left: &Path, right: &Path) -> io::Result<()> {
+    let left = CString::new(left.as_os_str().as_bytes()).map_err(|_| invalid_name())?;
+    let right = CString::new(right.as_os_str().as_bytes()).map_err(|_| invalid_name())?;
+    // SAFETY: both pointers refer to NUL-terminated paths owned by CString.
+    if unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            left.as_ptr(),
+            libc::AT_FDCWD,
+            right.as_ptr(),
+            libc::RENAME_EXCHANGE,
+        )
+    } == 0
+    {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn exchange_names(_left: &Path, _right: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "Atomic rename cycles require Linux renameat2",
+    ))
+}
+
+enum RenameStep {
+    Moved {
+        owner: usize,
+        from: PathBuf,
+        to: PathBuf,
+    },
+    Exchanged {
+        left: usize,
+        right: usize,
+    },
+}
+
+/// A rename updates the ctime of an inode also visible through other selected
+/// hardlinks. Refresh only those aliases: accepting ctime drift is safe here
+/// only if identity, content-relevant metadata and ownership still match.
+fn refresh_selected_hardlinks(
+    positions: &[PathBuf],
+    snapshots: &mut [fs::Metadata],
+    touched: &[usize],
+) -> io::Result<()> {
+    #[cfg(unix)]
+    use std::os::unix::fs::MetadataExt;
+
+    for index in 0..positions.len() {
+        if touched.contains(&index)
+            || !touched
+                .iter()
+                .any(|&other| same_inode_and_kind(&snapshots[index], &snapshots[other]))
+        {
+            continue;
+        }
+        let current = fs::symlink_metadata(&positions[index])?;
+        if !same_inode_and_kind(&snapshots[index], &current)
+            || snapshots[index].len() != current.len()
+            || snapshots[index].modified().ok() != current.modified().ok()
+            || snapshots[index].permissions() != current.permissions()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "A selected hardlink changed unexpectedly during batch rename",
+            ));
+        }
+        #[cfg(unix)]
+        if snapshots[index].uid() != current.uid() || snapshots[index].gid() != current.gid() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Selected hardlink ownership changed during batch rename",
+            ));
+        }
+        snapshots[index] = current;
+    }
+    Ok(())
+}
+
+/// Apply a complete batch without ever replacing an unrelated entry. Moves
+/// into empty names use RENAME_NOREPLACE; cycles use RENAME_EXCHANGE. Every
+/// step preserves both entries across a crash. A normal error attempts a
+/// guarded reverse traversal; a concurrent external writer can prevent that
+/// rollback, in which case the partial positions are reported honestly.
+fn apply_batch_rename(
+    changes: &[(PathBuf, OsString)],
+    transfer: &mut Transfer<'_>,
+    on_item: &mut dyn FnMut(ItemUpdate),
+) -> io::Result<String> {
+    if changes.is_empty() || changes.len() > MAX_BATCH_RENAME {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Batch rename requires between 1 and 256 items",
+        ));
+    }
+    let parent = changes[0].0.parent();
+    let mut originals = BTreeMap::new();
+    let mut targets = BTreeSet::new();
+    let mut destinations = Vec::with_capacity(changes.len());
+    let mut snapshots = Vec::with_capacity(changes.len());
+    for (index, (source, name)) in changes.iter().enumerate() {
+        transfer.check()?;
+        let target = source.with_file_name(name);
+        if !valid_os_name(name)
+            || source == &target
+            || source.parent() != parent
+            || originals.insert(source.clone(), index).is_some()
+            || !targets.insert(target.clone())
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Batch rename has duplicate, unchanged or invalid paths",
+            ));
+        }
+        destinations.push(target);
+        snapshots.push(fs::symlink_metadata(source)?);
+    }
+    for target in &destinations {
+        if !originals.contains_key(target) && occupied(target)? {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("Batch rename target already exists: {}", target.display()),
+            ));
+        }
+    }
+
+    transfer.phase = "Renaming";
+    transfer.total = changes.len() as u64;
+    let mut positions: Vec<_> = changes.iter().map(|(source, _)| source.clone()).collect();
+    let mut owners = originals;
+    let mut completed = vec![false; changes.len()];
+    let mut steps = Vec::with_capacity(changes.len());
+    let mut count = 0usize;
+    let mut uncertain = false;
+    while count < changes.len() {
+        let candidate = (0..changes.len())
+            .find(|&index| !completed[index] && !owners.contains_key(&destinations[index]));
+        let index = candidate.unwrap_or_else(|| {
+            completed
+                .iter()
+                .position(|done| !*done)
+                .expect("unfinished batch")
+        });
+        let source = positions[index].clone();
+        let target = &destinations[index];
+        let result = (|| {
+            transfer.check()?;
+            ensure_same_source(&source, &snapshots[index])?;
+            if let Some(&other) = owners.get(target) {
+                ensure_same_source(target, &snapshots[other])?;
+                exchange_names(&source, target)?;
+                positions[index] = target.clone();
+                positions[other] = source.clone();
+                owners.insert(source.clone(), other);
+                owners.insert(target.clone(), index);
+                steps.push(RenameStep::Exchanged {
+                    left: index,
+                    right: other,
+                });
+                // Verify both original entries reached the expected paths.
+                let moved = fs::symlink_metadata(target).inspect_err(|_| {
+                    uncertain = true;
+                })?;
+                let swapped = fs::symlink_metadata(&source).inspect_err(|_| {
+                    uncertain = true;
+                })?;
+                if !same_inode_and_kind(&snapshots[index], &moved)
+                    || !same_inode_and_kind(&snapshots[other], &swapped)
+                {
+                    uncertain = true;
+                    return Err(io::Error::other(
+                        "Concurrent replacement during name exchange; inspect both entries",
+                    ));
+                }
+                snapshots[index] = moved;
+                snapshots[other] = swapped;
+                refresh_selected_hardlinks(&positions, &mut snapshots, &[index, other])
+                    .inspect_err(|_| {
+                        uncertain = true;
+                    })?;
+            } else {
+                rename_without_overwrite(&source, target)?;
+                positions[index] = target.clone();
+                owners.remove(&source);
+                owners.insert(target.clone(), index);
+                steps.push(RenameStep::Moved {
+                    owner: index,
+                    from: source,
+                    to: target.clone(),
+                });
+                let moved = fs::symlink_metadata(target).inspect_err(|_| {
+                    uncertain = true;
+                })?;
+                if !same_inode_and_kind(&snapshots[index], &moved) {
+                    uncertain = true;
+                    return Err(io::Error::other(
+                        "Concurrent replacement during rename; inspect destination",
+                    ));
+                }
+                snapshots[index] = moved;
+                refresh_selected_hardlinks(&positions, &mut snapshots, &[index]).inspect_err(
+                    |_| {
+                        uncertain = true;
+                    },
+                )?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            let mut rollback_error = uncertain
+                .then(|| io::Error::other("A changed entry prevents an automatic rollback"));
+            for step in steps.into_iter().rev() {
+                if rollback_error.is_some() {
+                    break;
+                }
+                let result = (|| {
+                    match step {
+                        RenameStep::Moved { owner, from, to } => {
+                            ensure_same_source(&to, &snapshots[owner])?;
+                            rename_without_overwrite(&to, &from)?;
+                            positions[owner] = from.clone();
+                            owners.remove(&to);
+                            owners.insert(from.clone(), owner);
+                            snapshots[owner] = fs::symlink_metadata(&from)?;
+                            refresh_selected_hardlinks(&positions, &mut snapshots, &[owner])?;
+                        }
+                        RenameStep::Exchanged { left, right } => {
+                            let at_left = positions[left].clone();
+                            let at_right = positions[right].clone();
+                            ensure_same_source(&at_left, &snapshots[left])?;
+                            ensure_same_source(&at_right, &snapshots[right])?;
+                            exchange_names(&at_left, &at_right)?;
+                            positions.swap(left, right);
+                            snapshots[left] = fs::symlink_metadata(&positions[left])?;
+                            snapshots[right] = fs::symlink_metadata(&positions[right])?;
+                            owners.insert(positions[left].clone(), left);
+                            owners.insert(positions[right].clone(), right);
+                            refresh_selected_hardlinks(&positions, &mut snapshots, &[left, right])?;
+                        }
+                    }
+                    Ok::<_, io::Error>(())
+                })();
+                if let Err(rollback) = result {
+                    rollback_error = Some(rollback);
+                    break;
+                }
+            }
+            if rollback_error.is_none() {
+                for prior in 0..changes.len() {
+                    on_item(ItemUpdate::new(prior, ItemState::NotStarted, None));
+                }
+            } else {
+                for prior in 0..changes.len() {
+                    if positions[prior] != changes[prior].0 {
+                        on_item(ItemUpdate {
+                            index: prior,
+                            target: Some(positions[prior].clone()),
+                            state: ItemState::Failed,
+                            detail: Some("Moved to this position before the operation stopped; inspect manually".into()),
+                        });
+                    }
+                }
+            }
+            on_item(ItemUpdate::error(
+                index,
+                Some(destinations[index].clone()),
+                &error,
+            ));
+            let details = if let Some(rollback) = rollback_error {
+                format!(
+                    "Batch rename stopped: {error}. Guarded rollback also stopped: {rollback}. No data was intentionally discarded; inspect the partially renamed entries before retrying"
+                )
+            } else {
+                format!("Batch rename stopped: {error}. Earlier name changes were rolled back")
+            };
+            return Err(io::Error::new(error.kind(), details));
+        }
+        for owner in 0..changes.len() {
+            if !completed[owner] && positions[owner] == destinations[owner] {
+                completed[owner] = true;
+                count += 1;
+                transfer.transferred = count as u64;
+                transfer.report(&destinations[owner]);
+                on_item(ItemUpdate::new(
+                    owner,
+                    ItemState::Completed,
+                    Some(destinations[owner].clone()),
+                ));
+            }
+        }
+    }
+    Ok(format!("Renamed {} item(s)", changes.len()))
+}
+
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn rename_without_overwrite(source: &Path, destination: &Path) -> io::Result<()> {
     if occupied(destination)? {
@@ -918,6 +1218,9 @@ pub fn perform_with_report(
         Action::Copy { sources, .. }
         | Action::Move { sources, .. }
         | Action::Link { sources, .. } => sources.clone(),
+        Action::BatchRename { changes } => {
+            changes.iter().map(|(source, _)| source.clone()).collect()
+        }
         Action::Trash { paths } | Action::Delete { paths } => paths.clone(),
         _ => Vec::new(),
     };
@@ -1158,65 +1461,7 @@ fn perform_with_progress_and_items(
             rename_without_overwrite(current, original)?;
             Ok(format!("Restored original name {}", original.display()))
         }
-        Action::BatchRename { changes } => {
-            if changes.is_empty() || changes.len() > MAX_BATCH_RENAME {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "Batch rename requires between 1 and 256 items",
-                ));
-            }
-            let parent = changes[0].0.parent();
-            let mut original_paths = BTreeSet::new();
-            let mut targets = BTreeSet::new();
-            let mut snapshots = Vec::with_capacity(changes.len());
-            // Entire batch must pass preflight before the first filesystem mutation.
-            for (source, name) in changes {
-                transfer.check()?;
-                let target = source.with_file_name(name);
-                if !valid_os_name(name)
-                    || source == &target
-                    || source.parent() != parent
-                    || !original_paths.insert(source.clone())
-                    || !targets.insert(target.clone())
-                {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "Batch rename has duplicate, unchanged or invalid paths",
-                    ));
-                }
-                if occupied(&target)? {
-                    return Err(io::Error::new(
-                        io::ErrorKind::AlreadyExists,
-                        format!("Batch rename target already exists: {}", target.display()),
-                    ));
-                }
-                snapshots.push(fs::symlink_metadata(source)?);
-            }
-            transfer.phase = "Renaming";
-            transfer.total = changes.len() as u64;
-            for (index, ((source, name), snapshot)) in
-                changes.iter().zip(snapshots.iter()).enumerate()
-            {
-                let target = source.with_file_name(name);
-                let result = (|| {
-                    transfer.check()?;
-                    ensure_same_source(source, snapshot)?;
-                    rename_without_overwrite(source, &target)
-                })();
-                if let Err(error) = result {
-                    return Err(batch_failure(
-                        "Batch rename",
-                        index,
-                        changes.len(),
-                        source,
-                        error,
-                    ));
-                }
-                transfer.transferred = (index + 1) as u64;
-                transfer.report(&target);
-            }
-            Ok(format!("Renamed {} item(s)", changes.len()))
-        }
+        Action::BatchRename { changes } => apply_batch_rename(changes, &mut transfer, on_item),
         Action::Copy { sources, .. } => {
             if sources.is_empty() {
                 return Ok("Nothing to copy".into());
@@ -5287,13 +5532,13 @@ mod tests {
     }
 
     #[test]
-    fn batch_rename_reports_partial_commit_if_target_appears_mid_batch() {
+    fn batch_rename_rolls_back_if_target_appears_mid_batch() {
         let root = test_root();
         let first = root.join("one");
         let second = root.join("two");
         fs::write(&first, b"one").unwrap();
         fs::write(&second, b"two").unwrap();
-        let changes = plan_batch_rename(&[first, second.clone()], "X-", "").unwrap();
+        let changes = plan_batch_rename(&[first.clone(), second.clone()], "X-", "").unwrap();
         let mut inserted = false;
         let result = perform_with_progress(
             &Action::BatchRename { changes },
@@ -5307,11 +5552,232 @@ mod tests {
         );
         let error = result.unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
-        assert!(error.to_string().contains("1 earlier item(s) completed"));
+        assert!(error.to_string().contains("rolled back"));
         assert!(inserted);
-        assert_eq!(fs::read(root.join("X-one")).unwrap(), b"one");
+        assert_eq!(fs::read(first).unwrap(), b"one");
         assert_eq!(fs::read(second).unwrap(), b"two");
         assert_eq!(fs::read(root.join("X-two")).unwrap(), b"external writer");
+        assert!(!root.join("X-one").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn batch_rename_atomic_exchange_swaps_files_and_preserves_hardlinks() {
+        use std::os::unix::fs::MetadataExt;
+        let root = test_root();
+        let a = root.join("ab");
+        let b = root.join("ba");
+        let hardlink = root.join("outside-hardlink");
+        fs::write(&a, b"first").unwrap();
+        fs::write(&b, b"second").unwrap();
+        fs::hard_link(&a, &hardlink).unwrap();
+        let changes = vec![
+            (a.clone(), OsString::from("ba")),
+            (b.clone(), OsString::from("ab")),
+        ];
+        let report = perform_with_report(
+            &Action::BatchRename { changes },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert!(report.result.is_ok(), "{:?}", report.result);
+        assert!(
+            report
+                .items
+                .iter()
+                .all(|item| item.state == ItemState::Completed)
+        );
+        assert_eq!(fs::read(&a).unwrap(), b"second");
+        assert_eq!(fs::read(&b).unwrap(), b"first");
+        assert_eq!(
+            fs::metadata(&hardlink).unwrap().ino(),
+            fs::metadata(&b).unwrap().ino()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn batch_rename_handles_two_selected_names_of_one_hardlinked_inode() {
+        let root = test_root();
+        let a = root.join("a");
+        let b = root.join("b");
+        let c = root.join("c");
+        fs::write(&a, b"linked").unwrap();
+        fs::write(&b, b"other").unwrap();
+        fs::hard_link(&a, &c).unwrap();
+        let result = perform(&Action::BatchRename {
+            changes: vec![
+                (a.clone(), OsString::from("b")),
+                (b.clone(), OsString::from("c")),
+                (c.clone(), OsString::from("a")),
+            ],
+        });
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(fs::read(&a).unwrap(), b"linked");
+        assert_eq!(fs::read(&b).unwrap(), b"linked");
+        assert_eq!(fs::read(&c).unwrap(), b"other");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn batch_rename_guarded_rollback_refreshes_selected_hardlink_aliases() {
+        let root = test_root();
+        fs::write(root.join("a"), b"linked").unwrap();
+        fs::hard_link(root.join("a"), root.join("c")).unwrap();
+        fs::write(root.join("b"), b"second").unwrap();
+        fs::write(root.join("d"), b"fourth").unwrap();
+        let cancelled = AtomicBool::new(false);
+        let result = perform_with_report(
+            &Action::BatchRename {
+                changes: vec![
+                    (root.join("a"), OsString::from("b")),
+                    (root.join("b"), OsString::from("c")),
+                    (root.join("c"), OsString::from("d")),
+                    (root.join("d"), OsString::from("a")),
+                ],
+            },
+            &cancelled,
+            &mut |progress| {
+                if progress.transferred == 2 {
+                    cancelled.store(true, Ordering::Relaxed);
+                }
+            },
+        );
+        let error = result.result.unwrap_err();
+        assert!(error.to_string().contains("rolled back"), "{error}");
+        assert_eq!(fs::read(root.join("a")).unwrap(), b"linked");
+        assert_eq!(fs::read(root.join("b")).unwrap(), b"second");
+        assert_eq!(fs::read(root.join("c")).unwrap(), b"linked");
+        assert_eq!(fs::read(root.join("d")).unwrap(), b"fourth");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn batch_rename_rotates_three_names_and_moves_chains_without_staging() {
+        let root = test_root();
+        for (name, content) in [("a", b"a"), ("b", b"b"), ("c", b"c"), ("d", b"d")] {
+            fs::write(root.join(name), content).unwrap();
+        }
+        perform(&Action::BatchRename {
+            changes: vec![
+                (root.join("a"), OsString::from("b")),
+                (root.join("b"), OsString::from("c")),
+                (root.join("c"), OsString::from("a")),
+            ],
+        })
+        .unwrap();
+        assert_eq!(fs::read(root.join("a")).unwrap(), b"c");
+        assert_eq!(fs::read(root.join("b")).unwrap(), b"a");
+        assert_eq!(fs::read(root.join("c")).unwrap(), b"b");
+        perform(&Action::BatchRename {
+            changes: vec![
+                (root.join("c"), OsString::from("d2")),
+                (root.join("b"), OsString::from("c")),
+                (root.join("a"), OsString::from("b")),
+            ],
+        })
+        .unwrap();
+        assert_eq!(fs::read(root.join("d2")).unwrap(), b"b");
+        assert_eq!(fs::read(root.join("c")).unwrap(), b"a");
+        assert_eq!(fs::read(root.join("b")).unwrap(), b"c");
+        assert_eq!(fs::read(root.join("d")).unwrap(), b"d");
+        assert!(!root.join("a").exists());
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 4);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn batch_rename_cycle_conflict_with_unselected_entry_never_mutates() {
+        let root = test_root();
+        for name in ["a", "b", "unselected"] {
+            fs::write(root.join(name), name.as_bytes()).unwrap();
+        }
+        let report = perform_with_report(
+            &Action::BatchRename {
+                changes: vec![
+                    (root.join("a"), OsString::from("b")),
+                    (root.join("b"), OsString::from("unselected")),
+                ],
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert_eq!(
+            report.result.unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        for name in ["a", "b", "unselected"] {
+            assert_eq!(fs::read(root.join(name)).unwrap(), name.as_bytes());
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn batch_rename_cancel_reverses_completed_exchange_steps() {
+        let root = test_root();
+        for name in ["a", "b", "c"] {
+            fs::write(root.join(name), name.as_bytes()).unwrap();
+        }
+        let cancelled = AtomicBool::new(false);
+        let result = perform_with_report(
+            &Action::BatchRename {
+                changes: vec![
+                    (root.join("a"), OsString::from("b")),
+                    (root.join("b"), OsString::from("c")),
+                    (root.join("c"), OsString::from("a")),
+                ],
+            },
+            &cancelled,
+            &mut |progress| {
+                if progress.transferred >= 1 {
+                    cancelled.store(true, Ordering::Relaxed);
+                }
+            },
+        );
+        assert_eq!(
+            result.result.unwrap_err().kind(),
+            io::ErrorKind::Interrupted
+        );
+        for name in ["a", "b", "c"] {
+            assert_eq!(fs::read(root.join(name)).unwrap(), name.as_bytes());
+        }
+        assert!(
+            result
+                .items
+                .iter()
+                .all(|item| item.state != ItemState::Completed)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn batch_rename_never_rolls_back_over_a_changed_exchanged_entry() {
+        let root = test_root();
+        for name in ["a", "b", "c"] {
+            fs::write(root.join(name), name.as_bytes()).unwrap();
+        }
+        let cancelled = AtomicBool::new(false);
+        let result = perform_with_report(
+            &Action::BatchRename {
+                changes: vec![
+                    (root.join("a"), OsString::from("b")),
+                    (root.join("b"), OsString::from("c")),
+                    (root.join("c"), OsString::from("a")),
+                ],
+            },
+            &cancelled,
+            &mut |progress| {
+                if progress.transferred == 1 {
+                    fs::write(root.join("b"), b"external change").unwrap();
+                    cancelled.store(true, Ordering::Relaxed);
+                }
+            },
+        );
+        let error = result.result.unwrap_err();
+        assert!(error.to_string().contains("rollback also stopped"));
+        assert_eq!(fs::read(root.join("b")).unwrap(), b"external change");
+        assert_eq!(fs::read(root.join("a")).unwrap(), b"b");
+        assert_eq!(fs::read(root.join("c")).unwrap(), b"c");
         fs::remove_dir_all(root).unwrap();
     }
 

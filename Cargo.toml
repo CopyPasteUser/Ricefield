@@ -1,6 +1,6 @@
 [package]
 name = "rice-explorer"
-version = "1.0.0-rc.7"
+version = "1.0.0-rc.8"
 edition = "2024"
 description = "A fast, themeable Linux file explorer built in Rust for RiceBowl"
 license = "MIT"

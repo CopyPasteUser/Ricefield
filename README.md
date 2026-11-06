@@ -14,12 +14,12 @@ A customizable Linux file manager built with **Rust + egui**, designed to work o
 
 ![RiceField with its Windows 7-inspired layout](docs/screenshots/win7.png)
 
-> **Status: 1.0.0-rc.7 candidate.** Not a signed-off stable 1.0. Physical Linux Mint, NAS and recovery acceptance is still open. Keep your current file manager and use disposable data for testing risky operations.
+> **Status: 1.0.0-rc.8 candidate.** Not a signed-off stable 1.0. Physical Linux Mint, NAS and recovery acceptance is still open. Keep your current file manager and use disposable data for testing risky operations.
 
 ## Built for real file management
 
 - **Explore:** tabs, split panes, folder tree, bookmarks, grid/list views and session restore.
-- **Organize:** create, copy, move, rename, batch rename, trash and link files, with progress, conflict previews and read-only transfer history across restarts.
+- **Organize:** create, copy, move, rename (including cycle-safe batch rename), trash and link files, with progress, conflict previews and read-only transfer history across restarts.
 - **Find:** filename and content search, glob/regex filters, saved searches, thumbnails and Quick Look.
 - **Open archives:** create, browse and extract supported ZIP, TAR and 7z archives.
 - **Reach your NAS:** discover and browse SMB, SFTP, WebDAV and MTP, queue bounded file/folder downloads to a chosen local location, and optionally save credentials in Secret Service.
@@ -58,6 +58,7 @@ rice-explorer --theme-file /path/to/my-rice.toml
 ## Important limits
 
 - Cross-filesystem **Move** leaves the source intact after a verified copy; cleanup is a separate user decision.
+- Batch rename uses atomic Linux name exchanges for selected-name cycles and attempts guarded rollback on ordinary errors. A crash or concurrent external modification can still leave *partial names* requiring manual review; no existing unselected target is overwritten.
 - Network tabs provide **read-only browsing and explicit downloads** to a configurable local folder (default `~/Downloads`, 8 GiB per download, no overwrite). Recursive downloads are limited to 4,096 entries, 512 folders, 16 levels and 20 minutes; GIO-reported symlinks/special entries cannot be downloaded. Remote uploads, rename and deletion are not implemented.
 - Recovery provides inspection and comparisons, **not automatic transaction rollback**.
 - Desktop integration does not silently take over the system's default file manager.

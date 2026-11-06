@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.0-rc.8 — atomic batch rename cycles (verification pending)
+
+- Allow safe batch renames whose destinations are other selected filenames,
+  including two-name swaps, three-name cycles and chains, while rejecting
+  collisions with unrelated files and symlinks before mutation.
+- Use Linux `RENAME_EXCHANGE` without temporary names for cycles; use atomic
+  no-overwrite moves for empty targets. A crash cannot strand a staged name.
+- Attempt reverse-order guarded rollback after ordinary failure/cancellation;
+  stop and report partial positions if an external writer changes an entry.
+- Restore per-item batch rename results in the Transfers dialog. Add regression
+  coverage for cycles, source identity, selected hardlinks and rollback.
+
 ## 1.0.0-rc.7 — durable read-only transfer history (verification pending)
 
 - Preserve up to 64 completed local transfer summaries across restarts in a
