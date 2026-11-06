@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased — Windows 10 Explorer ribbon shell
+
+- Replace the generic Windows 10 HOME strip with functional File, Home,
+  Share and View ribbon pages. Context-sensitive commands handle paste,
+  selection, new files/folders, rename, delete confirmations, properties,
+  compressing, network discovery and switching file layouts.
+- Add original flat vector ribbon/file/sidebar icons, Quick access, This PC,
+  network/device navigation, breadcrumbs and a slim status-view switcher. The ribbon
+  wraps into quick commands at smaller widths instead of clipping controls.
+- Ensure the File tab has visible blue contrast and remove the idle transfer
+  strip from this shell (active transfers and history remain accessible).
+- Keep keyboard and file safety logic shared across all seven themes; remote
+  tabs cannot trigger destructive local actions. Keep window borders and
+  decorations in the desktop/window manager, not RiceField.
+- Publish six actual, unedited GUI-smoke screenshots in the README/gallery:
+  full, split, compact, narrow, View and Share. Physical Linux Mint acceptance
+  remains open like other historical themes.
+
 ## Unreleased — Windows 7 Aero Explorer shell
 
 - Give the Aero theme a dedicated navigation row with Linux-safe, clickable

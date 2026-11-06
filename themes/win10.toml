@@ -3,24 +3,28 @@ name = "Windows 10 · Fluent"
 layout = "modern"
 schema_version = 1
 [palette]
-background = "#f3f3f3"
-chrome = "#f8f8f8"
+background = "#f5f5f5"
+chrome = "#f6f6f6"
 panel = "#ffffff"
-sidebar = "#f1f3f5"
-text = "#1c1c1c"
-muted = "#686868"
-accent = "#0078d4"
-selection = "#d9efff"
-border = "#d2d2d2"
-folder = "#ecc24b"
-file = "#7ab3d5"
+sidebar = "#fafafa"
+text = "#242424"
+muted = "#626262"
+accent = "#0078d7"
+selection = "#deecf8"
+border = "#dbdbdb"
+folder = "#e8bd5a"
+file = "#398bcc"
 [metrics]
-rounding = 2
-row_height = 33
-tile_width = 126
-sidebar_width = 205
-icon_size = 25
+rounding = 1
+row_height = 30
+tile_width = 130
+sidebar_width = 220
+icon_size = 26
 
 [shell]
 kind = "ribbon"
 top = ["tabs", "command-bar", "navigation"]
+
+[shell.sidebar]
+sections = ["favorites", "places", "volumes"]
+width = 220

@@ -240,7 +240,7 @@ impl Theme {
 
     pub fn sidebar_sections(&self) -> Vec<SidebarSection> {
         self.shell.sidebar.sections.clone().unwrap_or_else(|| {
-            if self.shell_kind() == ShellKind::Aero {
+            if matches!(self.shell_kind(), ShellKind::Aero | ShellKind::Ribbon) {
                 vec![
                     SidebarSection::Favorites,
                     SidebarSection::Places,
