@@ -384,6 +384,7 @@ fn parse_remote_listing(parent: &str, bytes: &[u8]) -> Result<Vec<RemoteEntry>, 
 pub enum VolumeAction {
     Connect(String),
     ConnectAuthenticated(String, MountCredentials),
+    MountDevice(String),
     Unmount(PathBuf),
     Eject(PathBuf),
 }
@@ -421,6 +422,7 @@ impl VolumeAction {
     fn arguments(&self) -> Vec<OsString> {
         match self {
             Self::Connect(uri) | Self::ConnectAuthenticated(uri, _) => vec![OsString::from(uri)],
+            Self::MountDevice(_) => Vec::new(),
             Self::Unmount(path) => vec![OsString::from("-u"), path.as_os_str().to_owned()],
             Self::Eject(path) => vec![OsString::from("-e"), path.as_os_str().to_owned()],
         }
@@ -429,6 +431,7 @@ impl VolumeAction {
     pub fn label(&self) -> &'static str {
         match self {
             Self::Connect(_) | Self::ConnectAuthenticated(_, _) => "Connect",
+            Self::MountDevice(_) => "Mount",
             Self::Unmount(_) => "Unmount",
             Self::Eject(_) => "Eject",
         }
@@ -438,6 +441,9 @@ impl VolumeAction {
 /// A bounded operation: offline servers and unresponsive device backends must
 /// not keep a worker alive forever. Never use a shell or forward credentials.
 pub fn execute(action: &VolumeAction) -> Result<(), String> {
+    if let VolumeAction::MountDevice(object_path) = action {
+        return crate::udisks2::mount(object_path);
+    }
     let mut command = Command::new("gio");
     command
         .arg("mount")

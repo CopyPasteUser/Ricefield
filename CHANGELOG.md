@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.0-rc.10 — UDisks2 removable-volume discovery and mount (verification pending)
+
+- Discover unmounted removable/USB filesystems through the Linux UDisks2
+  ObjectManager on a background worker, throttled to avoid continuous D-Bus
+  enumeration. Missing daemons leave existing mounts and network browsing intact.
+- Offer an explicit Mount action in the Volumes sidebar, using the device's
+  validated UDisks2 object path and system Polkit authorization (no sudo, shell,
+  automatic mounting or forced unmount).
+- Filter ignored, non-filesystem and already mounted volumes; handle incomplete
+  device metadata conservatively. Add fake D-Bus inventory and hostile-path tests.
+- Real Mint USB hardware/Polkit acceptance is still pending; encrypted-volume
+  unlocking and remote writes are **not** unlocked by this change.
+
 ## 1.0.0-rc.9 — guarded session-only batch rename Undo (verification pending)
 
 - Offer **Undo batch rename** in Transfers after a completely successful batch,
