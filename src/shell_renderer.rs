@@ -186,23 +186,47 @@ fn paint_file_cell(
             font,
             foreground,
         );
-        let label = format!(
-            "{}    {}    {}",
-            file.kind(),
-            if file.is_dir {
-                "—".into()
+        if theme.shell_kind() == ShellKind::Luna {
+            let size = if file.is_dir {
+                String::new()
             } else {
                 filesystem::human_size(file.size)
-            },
-            filesystem::age(file.modified)
-        );
-        painter.text(
-            Pos2::new(rect.left() + rect.width() * 0.61, rect.center().y),
-            Align2::LEFT_CENTER,
-            shorten(&label, ((rect.width() * 0.38) / 7.0) as usize),
-            FontId::proportional(11.5),
-            theme.palette.muted(),
-        );
+            };
+            for (offset, column_width, value) in [
+                (0.49, 0.13, size),
+                (0.62, 0.16, file.kind().to_owned()),
+                (0.78, 0.22, filesystem::age(file.modified)),
+            ] {
+                painter.text(
+                    Pos2::new(rect.left() + rect.width() * offset + 5.0, rect.center().y),
+                    Align2::LEFT_CENTER,
+                    shorten(
+                        &value,
+                        ((rect.width() * column_width - 10.0) / 6.5).max(1.0) as usize,
+                    ),
+                    FontId::proportional(11.7),
+                    theme.palette.text(),
+                );
+            }
+        } else {
+            let label = format!(
+                "{}    {}    {}",
+                file.kind(),
+                if file.is_dir {
+                    "—".into()
+                } else {
+                    filesystem::human_size(file.size)
+                },
+                filesystem::age(file.modified)
+            );
+            painter.text(
+                Pos2::new(rect.left() + rect.width() * 0.61, rect.center().y),
+                Align2::LEFT_CENTER,
+                shorten(&label, ((rect.width() * 0.38) / 7.0) as usize),
+                FontId::proportional(11.5),
+                theme.palette.muted(),
+            );
+        }
     }
 }
 

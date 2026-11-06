@@ -5,7 +5,7 @@
 //! write permissions or diverging in keyboard behavior.
 
 use crate::theme::{ShellKind, SidebarSection, SidebarSectionMode, Theme};
-use eframe::egui::{self, Align2, Color32, Pos2, Rect, Sense, Stroke, Vec2};
+use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2};
 
 #[derive(Clone, Copy)]
 pub enum LunaLinkIcon {
@@ -38,20 +38,31 @@ pub fn luna_toolbar_button(
     icon: LunaToolbarIcon,
     enabled: bool,
 ) -> bool {
-    let response = ui.add_enabled(
-        enabled,
-        egui::Button::new(
-            egui::RichText::new(format!("      {label}"))
-                .size(12.5)
-                .color(Color32::from_rgb(38, 45, 56)),
-        )
-        .min_size(Vec2::new(70.0, 35.0))
-        .fill(Color32::TRANSPARENT)
-        .stroke(Stroke::NONE),
-    );
+    let width = match icon {
+        LunaToolbarIcon::Back => 80.0,
+        LunaToolbarIcon::Forward => 100.0,
+        LunaToolbarIcon::Up => 67.0,
+        LunaToolbarIcon::Search => 93.0,
+        LunaToolbarIcon::Folders => 97.0,
+    };
+    let (_, response) = ui
+        .add_enabled_ui(enabled, |ui| {
+            ui.allocate_exact_size(Vec2::new(width, 35.0), Sense::click())
+        })
+        .inner;
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
+    let pressed = response.clicked()
+        || (enabled
+            && response.has_focus()
+            && ui.input(|input| {
+                input.key_pressed(egui::Key::Enter) || input.key_pressed(egui::Key::Space)
+            }));
     let center = Pos2::new(response.rect.left() + 17.0, response.rect.center().y);
     let alpha = if enabled { 1.0 } else { 0.4 };
     let paint = ui.painter();
+    if response.hovered() || response.has_focus() {
+        paint.rect_filled(response.rect, 3, Color32::from_rgb(218, 228, 243));
+    }
     match icon {
         LunaToolbarIcon::Back | LunaToolbarIcon::Forward => {
             paint.circle_filled(
@@ -149,7 +160,14 @@ pub fn luna_toolbar_button(
             );
         }
     }
-    response.clicked()
+    paint.text(
+        Pos2::new(response.rect.left() + 37.0, response.rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        FontId::proportional(12.5),
+        Color32::from_rgb(38, 45, 56).gamma_multiply(alpha),
+    );
+    pressed
 }
 
 impl LunaPanel {
