@@ -12,7 +12,7 @@ A customizable Linux file manager built with **Rust + egui**, designed to work o
 
 </div>
 
-![RiceField with its Windows 10 Explorer-inspired ribbon shell](docs/screenshots/win10.png)
+![RiceField with its original Frutiger Aero Blue Skies file-manager shell](docs/screenshots/frutiger-aero.png)
 
 **Windows 10 · Explorer:** [full window](docs/screenshots/win10.png) · [View](docs/screenshots/win10-view.png) · [Share](docs/screenshots/win10-share.png) · [split](docs/screenshots/win10-split.png) · [compact](docs/screenshots/win10-compact.png) · [narrow](docs/screenshots/win10-narrow.png)
 
@@ -20,7 +20,7 @@ A customizable Linux file manager built with **Rust + egui**, designed to work o
 
 **XP Luna:** [full window](docs/screenshots/xp-luna.png) · [split view](docs/screenshots/xp-luna-split.png) · [more real GUI screenshots](docs/screenshots/)
 
-**Frutiger Aero · Blue Skies:** [full window](docs/screenshots/frutiger-aero.png) · [split view](docs/screenshots/frutiger-aero-split.png) · [compact](docs/screenshots/frutiger-aero-compact.png) · [narrow](docs/screenshots/frutiger-aero-narrow.png)
+**Frutiger Aero · Blue Skies:** [full window](docs/screenshots/frutiger-aero.png) · [Tools dock](docs/screenshots/frutiger-aero-tools.png) · [split view](docs/screenshots/frutiger-aero-split.png) · [compact](docs/screenshots/frutiger-aero-compact.png) · [narrow](docs/screenshots/frutiger-aero-narrow.png)
 
 > **Status: 1.0.0-rc.17 candidate.** Not a signed-off stable 1.0. Network-write safety, complete recovery and physical Linux Mint/NAS/USB acceptance remain open. Keep your current file manager and use disposable data for testing risky operations.
 

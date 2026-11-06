@@ -18,7 +18,8 @@ performance, Linux integration, then visual polish.
 - [x] Add responsive compact/desktop dock variants, readable breadcrumb
   navigation, searchable folder view, favorites and NAS discovery.
 - [x] Keep advanced tools accessible on demand while maintaining a clean file
-  view and no idle transfer strip. Keep window decoration in RiceBowl/WM.
+  view and no idle transfer strip. Keep window decoration in RiceBowl/WM;
+  exercise the Tools dock button in native GUI smoke.
 - [ ] Verify hover, keyboard, icon readability, network mounting and real
   performance at 100%/125% scaling on the owner's Linux Mint machine.
 - [ ] Compare original artwork against licensed Frutiger Aero-era visual

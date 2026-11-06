@@ -63,6 +63,18 @@ impl AquaAction {
         Self::Tools,
     ];
 
+    fn display_label(self, state: AquaContext) -> &'static str {
+        if self == Self::Favorite && state.pinned {
+            "Unpin"
+        } else if self == Self::ToggleView && state.grid {
+            "List view"
+        } else if self == Self::ToggleView {
+            "Grid view"
+        } else {
+            self.label()
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Self::NewFolder => "New folder",
@@ -259,7 +271,7 @@ pub fn dock(ui: &mut egui::Ui, theme: &Theme, state: AquaContext) -> Option<Aqua
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing.x = 5.0;
                     for command in AquaAction::QUICK {
-                        let button = egui::Button::new(command.label())
+                        let button = egui::Button::new(command.display_label(state))
                             .selected(state.active(command))
                             .fill(Color32::from_rgb(229, 250, 249));
                         if ui.add_enabled(state.enabled(command), button).clicked() {
@@ -271,7 +283,7 @@ pub fn dock(ui: &mut egui::Ui, theme: &Theme, state: AquaContext) -> Option<Aqua
                             if ui
                                 .add_enabled(
                                     state.enabled(command),
-                                    egui::Button::new(command.label()),
+                                    egui::Button::new(command.display_label(state)),
                                 )
                                 .clicked()
                             {
@@ -299,7 +311,7 @@ pub fn dock(ui: &mut egui::Ui, theme: &Theme, state: AquaContext) -> Option<Aqua
                             if ui
                                 .add_enabled(
                                     state.enabled(command),
-                                    egui::Button::new(command.label()),
+                                    egui::Button::new(command.display_label(state)),
                                 )
                                 .clicked()
                             {
@@ -321,7 +333,9 @@ fn dock_tile(ui: &mut egui::Ui, theme: &Theme, state: AquaContext, action: AquaA
             ui.allocate_exact_size(Vec2::new(73.0, 60.0), Sense::click())
         })
         .inner;
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, action.label()));
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::Role::Button, enabled, action.display_label(state))
+    });
     let paint = ui.painter().with_clip_rect(rect);
     let color = if state.active(action) {
         Color32::from_rgb(204, 247, 235)
@@ -354,7 +368,7 @@ fn dock_tile(ui: &mut egui::Ui, theme: &Theme, state: AquaContext, action: AquaA
     paint.text(
         Pos2::new(rect.center().x, rect.bottom() - 11.0),
         Align2::CENTER_CENTER,
-        action.label(),
+        action.display_label(state),
         FontId::proportional(10.5),
         if enabled {
             theme.palette.text()
@@ -368,7 +382,7 @@ fn dock_tile(ui: &mut egui::Ui, theme: &Theme, state: AquaContext, action: AquaA
             && ui.input(|input| {
                 input.key_pressed(egui::Key::Enter) || input.key_pressed(egui::Key::Space)
             }));
-    response.on_hover_text(action.label());
+    response.on_hover_text(action.display_label(state));
     activate
 }
 
@@ -647,5 +661,28 @@ mod tests {
         }
         assert!(state.enabled(AquaAction::Discover));
         assert!(state.enabled(AquaAction::ToggleView));
+    }
+
+    #[test]
+    fn toggle_labels_and_selection_state_follow_real_context() {
+        let mut state = AquaContext {
+            local: true,
+            selected: 0,
+            pinned: false,
+            grid: false,
+            split: false,
+            advanced: false,
+        };
+        assert_eq!(AquaAction::ToggleView.display_label(state), "Grid view");
+        assert!(!state.enabled(AquaAction::Preview));
+        state.grid = true;
+        state.pinned = true;
+        state.selected = 1;
+        assert_eq!(AquaAction::ToggleView.display_label(state), "List view");
+        assert_eq!(AquaAction::Favorite.display_label(state), "Unpin");
+        assert!(state.enabled(AquaAction::Preview));
+        state.selected = 2;
+        assert!(!state.enabled(AquaAction::Preview));
+        assert!(state.enabled(AquaAction::Copy));
     }
 }

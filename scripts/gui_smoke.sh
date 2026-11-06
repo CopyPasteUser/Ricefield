@@ -126,6 +126,19 @@ for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sideba
     xdotool mousemove --window "$window_id" 81 21 click 1
     sleep 1
   fi
+  # Aqua's glass shelf must reveal actual advanced Explorer tools when clicked,
+  # not merely paint a decorative dock. This is a stable 1120x720 smoke hit
+  # target; human keyboard/focus acceptance remains a separate requirement.
+  if [[ "$theme" == frutiger-aero ]]; then
+    xdotool mousemove --window "$window_id" 735 645 click 1
+    sleep 0.6
+    xdotool mousemove --window "$window_id" 1050 650
+    import -window "$window_id" screenshots/frutiger-aero-tools.png
+    require_visible_change screenshots/frutiger-aero.png screenshots/frutiger-aero-tools.png \
+      'Frutiger Aero dock Tools action' 1500
+    xdotool mousemove --window "$window_id" 735 645 click 1
+    sleep 0.25
+  fi
   # Exercise the new two-pane command on every shell; a screenshot is a smoke
   # artifact, not proof of correct hit targets or system drag-and-drop.
   xdotool key F3

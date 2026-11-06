@@ -44,6 +44,7 @@ compact and narrow windows wrap to a smaller command set with a More menu.
 
 | Additional view | Screenshot |
 | --- | --- |
+| Interactive Tools dock (1120 × 720) | [frutiger-aero-tools.png](frutiger-aero-tools.png) |
 | Two-folder split (1120 × 720) | [frutiger-aero-split.png](frutiger-aero-split.png) |
 | Compact window (700 × 470) | [frutiger-aero-compact.png](frutiger-aero-compact.png) |
 | Narrow window (380 × 650) | [frutiger-aero-narrow.png](frutiger-aero-narrow.png) |

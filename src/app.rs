@@ -6221,7 +6221,9 @@ impl Explorer {
                                             }
                                         });
                                     }
-                                    let activated = if ribbon {
+                                    let activated = if aqua_shell {
+                                        aqua::sidebar_activated(ui, &response)
+                                    } else if ribbon {
                                         shell_components::win10_sidebar_activated(ui, &response)
                                     } else {
                                         response.clicked()

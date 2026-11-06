@@ -14,8 +14,8 @@
   but hidden by default and avoid the idle transfer strip.
 - Preserve keyboard shortcuts, file safety, TOML shell composition and
   RiceBowl/window-manager ownership of window decorations. Record real GUI
-  screenshots for full, split, compact and narrow layouts; physical Linux Mint
-  and NAS acceptance still need to be performed.
+  screenshots for full, Tools interaction, split, compact and narrow layouts;
+  physical Linux Mint and NAS acceptance still need to be performed.
 
 ## Unreleased — Windows 10 Explorer ribbon shell
 
