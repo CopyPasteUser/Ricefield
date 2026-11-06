@@ -24,7 +24,7 @@ mkdir -p "$display_dir/Documents" "$display_dir/Pictures" screenshots
 printf 'RiceField native GUI smoke test\n' > "$display_dir/Readme.txt"
 printf '# Markdown preview test\n' > "$display_dir/Documents/Example.md"
 cp assets/rice-explorer.png "$display_dir/Pictures/icon.png"
-cp themes/win7.toml "$display_dir/custom-theme.toml"
+cp themes/win7.toml "$fixture_dir/custom-theme.toml"
 # Exercise a *real structural* shell reordering rather than merely recoloring
 # the built-in Aero surface. Keep the custom file independent of bundled rice.
 sed -i 's/^top = \["tabs", "navigation", "command-bar"\]$/top = ["navigation"]\nbottom = ["tabs", "command-bar"]/' "$fixture_dir/custom-theme.toml"
