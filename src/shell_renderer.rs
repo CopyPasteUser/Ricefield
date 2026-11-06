@@ -67,6 +67,7 @@ pub fn sort_header(
     let luna = theme.shell_kind() == ShellKind::Luna;
     let widths = [0.49, 0.13, 0.16, 0.22];
     let available = ui.available_width();
+    let compact_luna = luna && available < 420.0;
     ui.horizontal(|ui| {
         if luna {
             ui.spacing_mut().item_spacing.x = 0.0;
@@ -80,6 +81,9 @@ pub fn sort_header(
         .into_iter()
         .enumerate()
         {
+            if compact_luna && index > 0 {
+                continue;
+            }
             let caption = if !luna && sort_by == key {
                 format!("{label} ({})", if descending { "desc" } else { "asc" })
             } else {
@@ -88,7 +92,14 @@ pub fn sort_header(
             let button = egui::Button::new(caption);
             let response = if luna {
                 ui.add_sized(
-                    [(available * widths[index]).max(40.0), 23.0],
+                    [
+                        if compact_luna {
+                            available
+                        } else {
+                            (available * widths[index]).max(40.0)
+                        },
+                        23.0,
+                    ],
                     button
                         .fill(Color32::from_rgb(240, 239, 233))
                         .stroke(Stroke::new(1.0, Color32::from_rgb(184, 186, 194)))
@@ -163,8 +174,11 @@ fn paint_file_cell(
     } else {
         paint_file_icon(&painter, icon_area, file, theme);
     }
+    let compact_luna = theme.shell_kind() == ShellKind::Luna && rect.width() < 420.0;
     let name = if visual.grid {
         shorten(&file.name, 22)
+    } else if compact_luna {
+        shorten(&file.name, ((rect.width() - 52.0) / 7.0).max(1.0) as usize)
     } else {
         shorten(&file.name, ((rect.width() * 0.53) / 7.3) as usize)
     };
@@ -186,7 +200,7 @@ fn paint_file_cell(
             font,
             foreground,
         );
-        if theme.shell_kind() == ShellKind::Luna {
+        if theme.shell_kind() == ShellKind::Luna && !compact_luna {
             let size = if file.is_dir {
                 String::new()
             } else {
@@ -208,7 +222,7 @@ fn paint_file_cell(
                     theme.palette.text(),
                 );
             }
-        } else {
+        } else if !compact_luna {
             let label = format!(
                 "{}    {}    {}",
                 file.kind(),

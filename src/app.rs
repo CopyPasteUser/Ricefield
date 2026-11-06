@@ -4759,57 +4759,19 @@ impl Explorer {
     }
 
     fn luna_navigation_bar(&mut self, ui: &mut egui::Ui) {
-        use shell_components::{
-            LunaPanel as Panel, LunaToolbarIcon as Icon, luna_panel_open, luna_toggle_panel,
-            luna_toolbar_button,
-        };
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
-            if luna_toolbar_button(ui, "Back", Icon::Back, !self.current().back.is_empty()) {
-                self.history(true);
-            }
-            if luna_toolbar_button(
-                ui,
-                "Forward",
-                Icon::Forward,
-                !self.current().forward.is_empty(),
-            ) {
-                self.history(false);
-            }
-            if luna_toolbar_button(ui, "Up", Icon::Up, true) {
-                self.parent();
-            }
-            ui.separator();
-            if luna_toolbar_button(ui, "Search", Icon::Search, true) {
-                luna_toggle_panel(ui.ctx(), Panel::Search);
-                self.focus_search = luna_panel_open(ui.ctx(), Panel::Search);
-            }
-            if luna_toolbar_button(ui, "Folders", Icon::Folders, true) {
-                luna_toggle_panel(ui.ctx(), Panel::FolderTree);
-                self.config.show_sidebar = true;
-                self.dirty_config = true;
-            }
-            ui.separator();
-            ui.menu_button("Views", |ui| {
-                for (label, view) in [("Icons", "grid"), ("Details", "list")] {
-                    if ui
-                        .selectable_label(self.config.view == view, label)
-                        .clicked()
-                    {
-                        self.config.view = view.to_owned();
-                        self.dirty_config = true;
-                        ui.close();
-                    }
-                }
+        use shell_components::{LunaPanel as Panel, luna_panel_open};
+        if ui.available_width() < 560.0 {
+            // Two complete rows; never leave half a toolbar icon beyond the
+            // narrow edge when egui's horizontal wrap meets a nested menu.
+            ui.horizontal(|ui| self.luna_history_buttons(ui));
+            ui.horizontal(|ui| self.luna_search_and_view_buttons(ui));
+        } else {
+            ui.horizontal(|ui| {
+                self.luna_history_buttons(ui);
+                ui.separator();
+                self.luna_search_and_view_buttons(ui);
             });
-            if ui
-                .small_button("Refresh")
-                .on_hover_text("Refresh (Ctrl+R)")
-                .clicked()
-            {
-                self.scan(self.active);
-            }
-        });
+        }
         ui.separator();
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Address").size(12.0));
@@ -4837,6 +4799,62 @@ impl Explorer {
                 ui.label("Search");
                 self.navigation_search(ui, ui.available_width() < 800.0);
             });
+        }
+    }
+
+    fn luna_history_buttons(&mut self, ui: &mut egui::Ui) {
+        use shell_components::{LunaToolbarIcon as Icon, luna_toolbar_button};
+        ui.spacing_mut().item_spacing.x = 2.0;
+        if luna_toolbar_button(ui, "Back", Icon::Back, !self.current().back.is_empty()) {
+            self.history(true);
+        }
+        if luna_toolbar_button(
+            ui,
+            "Forward",
+            Icon::Forward,
+            !self.current().forward.is_empty(),
+        ) {
+            self.history(false);
+        }
+        if luna_toolbar_button(ui, "Up", Icon::Up, true) {
+            self.parent();
+        }
+    }
+
+    fn luna_search_and_view_buttons(&mut self, ui: &mut egui::Ui) {
+        use shell_components::{
+            LunaPanel as Panel, LunaToolbarIcon as Icon, luna_panel_open, luna_toggle_panel,
+            luna_toolbar_button,
+        };
+        ui.spacing_mut().item_spacing.x = 2.0;
+        if luna_toolbar_button(ui, "Search", Icon::Search, true) {
+            luna_toggle_panel(ui.ctx(), Panel::Search);
+            self.focus_search = luna_panel_open(ui.ctx(), Panel::Search);
+        }
+        if luna_toolbar_button(ui, "Folders", Icon::Folders, true) {
+            luna_toggle_panel(ui.ctx(), Panel::FolderTree);
+            self.config.show_sidebar = true;
+            self.dirty_config = true;
+        }
+        ui.separator();
+        ui.menu_button("Views", |ui| {
+            for (label, view) in [("Icons", "grid"), ("Details", "list")] {
+                if ui
+                    .selectable_label(self.config.view == view, label)
+                    .clicked()
+                {
+                    self.config.view = view.to_owned();
+                    self.dirty_config = true;
+                    ui.close();
+                }
+            }
+        });
+        if ui
+            .small_button("Refresh")
+            .on_hover_text("Refresh (Ctrl+R)")
+            .clicked()
+        {
+            self.scan(self.active);
         }
     }
 
