@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased — Frutiger Aero · Blue Skies Aqua shell
+
+- Rebuild the former generic cyan Aqua skin into an original sky/water-themed
+  file manager with a 48-point horizon masthead, pearl-green navigation rail,
+  glass-shelf action dock, readable breadcrumb/search controls and sunlight-
+  layered vector folder/document glyphs. Runtime colors and density remain
+  customizable through `themes/frutiger-aero.toml`.
+- Make the responsive dock's New folder, Pin, Copy, Cut, Paste, Rename, Trash,
+  Preview, View, Split, Tools, Network, Refresh and Transfers actions invoke
+  real shared controllers. Selected/disabled states follow current location;
+  remote locations cannot trigger local writes. Keep advanced tools reachable
+  but hidden by default and avoid the idle transfer strip.
+- Preserve keyboard shortcuts, file safety, TOML shell composition and
+  RiceBowl/window-manager ownership of window decorations. Record real GUI
+  screenshots for full, Tools interaction, split, compact and narrow layouts;
+  physical Linux Mint and NAS acceptance still need to be performed.
+
 ## Unreleased — Windows 10 Explorer ribbon shell
 
 - Replace the generic Windows 10 HOME strip with functional File, Home,

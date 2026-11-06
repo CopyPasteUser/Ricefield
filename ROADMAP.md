@@ -9,6 +9,22 @@ Thunar for supported workflows. Keep Thunar installed until real Linux Mint
 acceptance passes. Prioritize data integrity, functionality, stability,
 performance, Linux integration, then visual polish.
 
+### Frutiger Aero · Blue Skies shell
+
+- [x] Build an original sky-and-water masthead, low-overhead glass-shelf dock,
+  pearl/mint sidebar, and glossy folder/document vectors without OS assets.
+- [x] Route all 14 dock commands through shared safety-aware file/navigation
+  controllers; preserve local-only action restrictions on network tabs.
+- [x] Add responsive compact/desktop dock variants, readable breadcrumb
+  navigation, searchable folder view, favorites and NAS discovery.
+- [x] Keep advanced tools accessible on demand while maintaining a clean file
+  view and no idle transfer strip. Keep window decoration in RiceBowl/WM;
+  exercise the Tools dock button in native GUI smoke.
+- [ ] Verify hover, keyboard, icon readability, network mounting and real
+  performance at 100%/125% scaling on the owner's Linux Mint machine.
+- [ ] Compare original artwork against licensed Frutiger Aero-era visual
+  references in person; no claim of pixel-identical reproduction.
+
 ### Windows 10 · Explorer ribbon shell
 
 - [x] Build separate File/Home/Share/View ribbon pages with stateful commands,

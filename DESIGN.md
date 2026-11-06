@@ -69,6 +69,14 @@ The renderer uses egui's bundled system-like proportional font, with a technical
   `[shell].status_bar` is optional; transfer/recovery warnings are not.
 - Frutiger Aero intentionally places its command strip below the file area,
   while Windows 10 keeps its command strip in the upper ribbon position.
+- The Aqua-specific Frutiger Aero skin uses the canonical
+  `themes/frutiger-aero.toml` palette. Its identity is sky blue, pearl green,
+  sunlight yellow and clean aqua ink: an original, painted 48-point horizon
+  masthead, resizable places rail, gentle selected-row glows and a bottom
+  glass-shelf command dock. A compact quick-action menu replaces large tiles
+  at narrow widths. No blur shaders, licensed wallpaper or proprietary icons.
+  `src/aqua.rs` only paints and emits action identifiers; `Explorer` continues
+  to own all filesystem changes, network safety and navigation history.
 - Windows 10's original-assets Explorer shell is intentionally distinct from
   Windows 7 Aero: a flat **File / Home / Share / View** ribbon, compact quick
   access navigation, a breadcrumblike path/search bar beneath the ribbon,

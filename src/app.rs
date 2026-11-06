@@ -1,4 +1,5 @@
 use crate::{
+    aqua::{self, AquaAction, AquaContext},
     archive, clipboard,
     config::{self, Config},
     desktop, discovery, duplicates,
@@ -1063,6 +1064,7 @@ pub struct Explorer {
     focus_search: bool,
     breadcrumb_edit_address: bool,
     aero_advanced_open: bool,
+    aqua_advanced_open: bool,
     win10_ribbon_page: RibbonPage,
     win10_ribbon_expanded: bool,
     win10_advanced_open: bool,
@@ -1303,6 +1305,7 @@ impl Explorer {
             focus_search: false,
             breadcrumb_edit_address: false,
             aero_advanced_open: false,
+            aqua_advanced_open: false,
             win10_ribbon_page: RibbonPage::Home,
             win10_ribbon_expanded: true,
             win10_advanced_open: false,
@@ -3266,8 +3269,10 @@ impl Explorer {
     /// Tools menu or the Windows 10 File/Share ribbon.
     fn transfer_strip(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme.clone();
-        if matches!(theme.shell_kind(), ShellKind::Luna | ShellKind::Ribbon)
-            && !self.busy
+        if matches!(
+            theme.shell_kind(),
+            ShellKind::Luna | ShellKind::Ribbon | ShellKind::Aqua
+        ) && !self.busy
             && self.operation_queue.is_empty()
             && self.active_operation.is_none()
             && !self.show_operations
@@ -4658,6 +4663,10 @@ impl Explorer {
     }
 
     fn command_bar(&mut self, ui: &mut egui::Ui, theme: &Theme) {
+        if theme.shell_kind() == ShellKind::Aqua {
+            self.aqua_command_bar(ui, theme);
+            return;
+        }
         if theme.shell_kind() == ShellKind::Aero {
             self.aero_command_bar(ui);
             return;
@@ -4678,6 +4687,61 @@ impl Explorer {
             Some(ToolbarAction::Bookmark) => self.toggle_bookmark(),
             Some(ToolbarAction::Refresh) => self.navigation_command(NavigationCommand::Refresh),
             None => {}
+        }
+    }
+
+    fn aqua_command_bar(&mut self, ui: &mut egui::Ui, theme: &Theme) {
+        let state = AquaContext {
+            local: self.current().remote_uri.is_none(),
+            selected: self.current().selected.len(),
+            pinned: self.config.bookmarks.contains(&self.current().path),
+            grid: self.config.view == "grid",
+            split: self.split_pair.is_some(),
+            advanced: self.aqua_advanced_open,
+        };
+        if let Some(action) = aqua::dock(ui, theme, state) {
+            self.aqua_command(action);
+        }
+    }
+
+    fn aqua_command(&mut self, action: AquaAction) {
+        match action {
+            AquaAction::NewFolder => self.file_command(FileCommand::NewFolder),
+            AquaAction::Favorite => self.toggle_bookmark(),
+            AquaAction::Copy => self.file_command(FileCommand::Copy),
+            AquaAction::Cut => self.file_command(FileCommand::Cut),
+            AquaAction::Paste => self.file_command(FileCommand::Paste),
+            AquaAction::Rename => self.file_command(FileCommand::Rename),
+            AquaAction::Trash => self.file_command(FileCommand::Trash),
+            AquaAction::Preview => {
+                if let Some(path) = self.selected_paths().first().cloned() {
+                    if self.preview_path.as_ref() == Some(&path) {
+                        self.preview_path = None;
+                        self.preview_content = None;
+                    } else {
+                        self.open_preview(path);
+                    }
+                }
+            }
+            AquaAction::ToggleView => {
+                self.config.view = if self.config.view == "grid" {
+                    "list"
+                } else {
+                    "grid"
+                }
+                .into();
+                self.dirty_config = true;
+            }
+            AquaAction::Split => self.navigation_command(NavigationCommand::Split),
+            AquaAction::Tools => self.aqua_advanced_open = !self.aqua_advanced_open,
+            AquaAction::Discover => {
+                self.discovery_open = true;
+                if self.discovery_hosts.is_empty() {
+                    self.start_discovery();
+                }
+            }
+            AquaAction::Refresh => self.navigation_command(NavigationCommand::Refresh),
+            AquaAction::Transfers => self.show_operations = true,
         }
     }
 
@@ -4879,6 +4943,10 @@ impl Explorer {
     }
 
     fn navigation_bar(&mut self, ui: &mut egui::Ui) {
+        if self.theme.shell_kind() == ShellKind::Aqua {
+            self.aqua_navigation_bar(ui);
+            return;
+        }
         if self.theme.shell_kind() == ShellKind::Luna {
             self.luna_navigation_bar(ui);
             return;
@@ -4905,6 +4973,53 @@ impl Explorer {
                 self.navigation_address(ui, false);
                 self.navigation_search(ui, false);
             });
+        }
+    }
+
+    fn aqua_navigation_bar(&mut self, ui: &mut egui::Ui) {
+        let label = self
+            .current()
+            .path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "My spaces".to_owned());
+        aqua::masthead(ui, &self.theme, &label, self.current().remote_uri.is_some());
+        let theme = self.theme.clone();
+        let narrow = ui.available_width() < 810.0;
+        ui.horizontal(|ui| {
+            if aqua::nav_button(
+                ui,
+                &theme,
+                "<",
+                "Back (Alt+Left)",
+                !self.current().back.is_empty(),
+            ) {
+                self.history(true);
+            }
+            if aqua::nav_button(
+                ui,
+                &theme,
+                ">",
+                "Forward (Alt+Right)",
+                !self.current().forward.is_empty(),
+            ) {
+                self.history(false);
+            }
+            if aqua::nav_button(ui, &theme, "Up", "Parent folder (Alt+Up)", true) {
+                self.parent();
+            }
+            let width = if narrow {
+                ui.available_width().max(90.0)
+            } else {
+                (ui.available_width() - 265.0).max(120.0)
+            };
+            self.breadcrumb_bar(ui, width);
+            if !narrow {
+                self.navigation_search(ui, false);
+            }
+        });
+        if narrow {
+            ui.horizontal(|ui| self.navigation_search(ui, true));
         }
     }
 
@@ -5001,17 +5116,24 @@ impl Explorer {
         }
         let remote = self.current().remote_uri.is_some();
         let win10 = self.theme.shell_kind() == ShellKind::Ribbon;
+        let aqua = self.theme.shell_kind() == ShellKind::Aqua;
         egui::Frame::new()
             .fill(Color32::WHITE)
             .stroke(egui::Stroke::new(
                 1.0,
-                if win10 {
+                if win10 || aqua {
                     self.theme.palette.border()
                 } else {
                     Color32::from_rgb(121, 161, 188)
                 },
             ))
-            .corner_radius(if win10 { 0 } else { 2 })
+            .corner_radius(if win10 {
+                0
+            } else if aqua {
+                11
+            } else {
+                2
+            })
             .inner_margin(egui::Margin::symmetric(4, 2))
             .show(ui, |ui| {
                 ui.set_width((width - 10.0).max(90.0));
@@ -5348,7 +5470,10 @@ impl Explorer {
     }
 
     fn navigation_search(&mut self, ui: &mut egui::Ui, compact: bool) {
-        let aero = matches!(self.theme.shell_kind(), ShellKind::Aero | ShellKind::Ribbon);
+        let aero = matches!(
+            self.theme.shell_kind(),
+            ShellKind::Aero | ShellKind::Ribbon | ShellKind::Aqua
+        );
         let search_width = if aero {
             if compact {
                 (ui.available_width() - 112.0).max(90.0)
@@ -5463,11 +5588,13 @@ impl Explorer {
             .frame(
                 egui::Frame::new()
                     .fill(theme.palette.sidebar())
-                    .inner_margin(if theme.shell_kind() == ShellKind::Ribbon {
-                        egui::Margin::symmetric(5, 8)
-                    } else {
-                        egui::Margin::same(10)
-                    }),
+                    .inner_margin(
+                        if matches!(theme.shell_kind(), ShellKind::Ribbon | ShellKind::Aqua) {
+                            egui::Margin::symmetric(5, 8)
+                        } else {
+                            egui::Margin::same(10)
+                        },
+                    ),
             )
             .show(ui, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
@@ -5491,7 +5618,10 @@ impl Explorer {
                         if index > 0 {
                             if matches!(
                                 theme.shell_kind(),
-                                ShellKind::Luna | ShellKind::Aero | ShellKind::Ribbon
+                                ShellKind::Luna
+                                    | ShellKind::Aero
+                                    | ShellKind::Ribbon
+                                    | ShellKind::Aqua
                             ) {
                                 ui.add_space(9.0);
                             } else {
@@ -5502,6 +5632,34 @@ impl Explorer {
                         let mut render_section = |ui: &mut egui::Ui| match section {
                             SidebarSection::Tasks => self.sidebar_tasks(ui),
                             SidebarSection::Places => {
+                                if theme.shell_kind() == ShellKind::Aqua {
+                                    for (name, path) in self.places.clone() {
+                                        let label = if path == Path::new("/") {
+                                            "Filesystem"
+                                        } else {
+                                            name
+                                        };
+                                        let icon = if path == Path::new("/") {
+                                            aqua::AquaNavIcon::Computer
+                                        } else if path == config::home() {
+                                            aqua::AquaNavIcon::Home
+                                        } else {
+                                            aqua::AquaNavIcon::Folder
+                                        };
+                                        if aqua::sidebar_link(
+                                            ui,
+                                            &theme,
+                                            label,
+                                            self.current().path == path,
+                                            icon,
+                                        ) {
+                                            self.navigate(path);
+                                        }
+                                    }
+                                    ui.add_space(5.0);
+                                    ui.collapsing("Browse folders", |ui| self.folder_tree_root(ui));
+                                    return;
+                                }
                                 if theme.shell_kind() == ShellKind::Ribbon {
                                     for (name, path) in self.places.clone() {
                                         let label = if path == Path::new("/") {
@@ -5596,6 +5754,47 @@ impl Explorer {
                                 self.folder_tree_root(ui);
                             }
                             SidebarSection::Favorites => {
+                                if theme.shell_kind() == ShellKind::Aqua {
+                                    let home = config::home();
+                                    if aqua::sidebar_link(
+                                        ui,
+                                        &theme,
+                                        "Home",
+                                        self.current().path == home,
+                                        aqua::AquaNavIcon::Home,
+                                    ) {
+                                        self.navigate(home);
+                                    }
+                                    for path in self.config.bookmarks.clone() {
+                                        let label = path
+                                            .file_name()
+                                            .unwrap_or_default()
+                                            .to_string_lossy()
+                                            .into_owned();
+                                        if aqua::sidebar_link(
+                                            ui,
+                                            &theme,
+                                            &label,
+                                            self.current().path == path,
+                                            aqua::AquaNavIcon::Favorite,
+                                        ) {
+                                            self.navigate(path);
+                                        }
+                                    }
+                                    let pinned =
+                                        self.config.bookmarks.contains(&self.current().path);
+                                    if ui
+                                        .small_button(if pinned {
+                                            "Unpin this place"
+                                        } else {
+                                            "+ Pin this place"
+                                        })
+                                        .clicked()
+                                    {
+                                        self.toggle_bookmark();
+                                    }
+                                    return;
+                                }
                                 if theme.shell_kind() == ShellKind::Ribbon {
                                     let home = config::home();
                                     if shell_components::win10_sidebar_link(
@@ -5742,7 +5941,16 @@ impl Explorer {
                                 let luna = theme.shell_kind() == ShellKind::Luna;
                                 let aero = theme.shell_kind() == ShellKind::Aero;
                                 let ribbon = theme.shell_kind() == ShellKind::Ribbon;
-                                let discover = if ribbon {
+                                let aqua_shell = theme.shell_kind() == ShellKind::Aqua;
+                                let discover = if aqua_shell {
+                                    aqua::sidebar_link(
+                                        ui,
+                                        &theme,
+                                        "Discover network",
+                                        false,
+                                        aqua::AquaNavIcon::Network,
+                                    )
+                                } else if ribbon {
                                     shell_components::win10_sidebar_link(
                                         ui,
                                         &theme,
@@ -5773,7 +5981,16 @@ impl Explorer {
                                         self.start_discovery();
                                     }
                                 }
-                                let connect = if ribbon {
+                                let connect = if aqua_shell {
+                                    !self.volume_busy
+                                        && aqua::sidebar_link(
+                                            ui,
+                                            &theme,
+                                            "Connect to NAS",
+                                            false,
+                                            aqua::AquaNavIcon::Network,
+                                        )
+                                } else if ribbon {
                                     !self.volume_busy
                                         && shell_components::win10_sidebar_link(
                                             ui,
@@ -5875,15 +6092,24 @@ impl Explorer {
                                     ) {
                                         continue;
                                     }
-                                    if ui
-                                        .button(if aero {
+                                    let remote_clicked = if aqua_shell {
+                                        aqua::sidebar_link(
+                                            ui,
+                                            &theme,
+                                            &shorten(&uri, 24),
+                                            false,
+                                            aqua::AquaNavIcon::Network,
+                                        )
+                                    } else {
+                                        ui.button(if aero {
                                             format!("    {}", shorten(&uri, 24))
                                         } else {
                                             format!("Network favorite: {}", shorten(&uri, 27))
                                         })
                                         .on_hover_text(&uri)
                                         .clicked()
-                                    {
+                                    };
+                                    if remote_clicked {
                                         self.navigate_remote(uri);
                                     }
                                 }
@@ -5908,7 +6134,21 @@ impl Explorer {
                                             path.file_name().unwrap_or_default().to_string_lossy()
                                         )
                                     };
-                                    let response = if ribbon {
+                                    let response = if aqua_shell {
+                                        aqua::sidebar_response(
+                                            ui,
+                                            &theme,
+                                            &label,
+                                            self.current().path == path,
+                                            if path == Path::new("/") {
+                                                aqua::AquaNavIcon::Computer
+                                            } else if volume.network {
+                                                aqua::AquaNavIcon::Network
+                                            } else {
+                                                aqua::AquaNavIcon::Folder
+                                            },
+                                        )
+                                    } else if ribbon {
                                         shell_components::win10_sidebar_response(
                                             ui,
                                             &theme,
@@ -5981,7 +6221,9 @@ impl Explorer {
                                             }
                                         });
                                     }
-                                    let activated = if ribbon {
+                                    let activated = if aqua_shell {
+                                        aqua::sidebar_activated(ui, &response)
+                                    } else if ribbon {
                                         shell_components::win10_sidebar_activated(ui, &response)
                                     } else {
                                         response.clicked()
@@ -6277,13 +6519,15 @@ impl Explorer {
             .frame(
                 egui::Frame::new()
                     .fill(theme.palette.panel())
-                    .inner_margin(egui::Margin::same(if matches!(theme.shell_kind(), ShellKind::Luna | ShellKind::Aero | ShellKind::Ribbon) { 5 } else { 14 })),
+                    .inner_margin(egui::Margin::same(if matches!(theme.shell_kind(), ShellKind::Luna | ShellKind::Aero | ShellKind::Ribbon | ShellKind::Aqua) { 5 } else { 14 })),
             )
             .show(ui, |ui| {
                 // The XP shell starts with the folder view, not two rows of
                 // modern commands. Advanced tools remain available via Tools
                 // -> Show RiceField tools, without losing any functionality.
-                let show_toolbox = if theme.shell_kind() == ShellKind::Ribbon {
+                let show_toolbox = if theme.shell_kind() == ShellKind::Aqua {
+                    self.aqua_advanced_open
+                } else if theme.shell_kind() == ShellKind::Ribbon {
                     self.win10_advanced_open
                 } else if theme.shell_kind() == ShellKind::Aero {
                     self.aero_advanced_open

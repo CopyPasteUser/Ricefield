@@ -1,27 +1,31 @@
 id = "frutiger-aero"
-name = "Frutiger Aero · Vista Dreams"
+name = "Frutiger Aero · Blue Skies"
 layout = "aero"
 schema_version = 1
 [palette]
-background = "#e0f5f8"
-chrome = "#75c5d7"
-panel = "#faffff"
-sidebar = "#d5f1ee"
-text = "#194b59"
-muted = "#3b7079"
-accent = "#1c9e9f"
-selection = "#b1e8e5"
-border = "#8ac7cf"
-folder = "#f7d47a"
-file = "#4cc3bb"
+background = "#EAF8FB"
+chrome = "#9BDDEB"
+panel = "#FEFFFF"
+sidebar = "#DEF5EF"
+text = "#174B60"
+muted = "#497786"
+accent = "#008D9D"
+selection = "#B6F0DC"
+border = "#8AC8CB"
+folder = "#FFD878"
+file = "#38A8C2"
 [metrics]
 rounding = 11
 row_height = 34
 tile_width = 128
-sidebar_width = 217
+sidebar_width = 225
 icon_size = 26
 
 [shell]
 kind = "aqua"
 top = ["tabs", "navigation"]
 bottom = ["command-bar"]
+
+[shell.sidebar]
+sections = ["places", "favorites", "volumes"]
+width = 225

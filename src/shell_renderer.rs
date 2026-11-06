@@ -64,7 +64,10 @@ pub fn sort_header(
     descending: bool,
 ) -> Option<&'static str> {
     let mut change_sort = None;
-    if matches!(theme.shell_kind(), ShellKind::Aero | ShellKind::Ribbon) {
+    if matches!(
+        theme.shell_kind(),
+        ShellKind::Aero | ShellKind::Ribbon | ShellKind::Aqua
+    ) {
         // Both Explorer-era shells align their sortable details columns with
         // the same virtualized rows; the skins differ only in paint tokens.
         // Below 470 points, show just Name instead of clipping tiny headers.
@@ -94,11 +97,13 @@ pub fn sort_header(
                 let response = ui.add_sized(
                     [width.max(1.0), 25.0],
                     egui::Button::new(format!("{label}{arrow}"))
-                        .fill(if theme.shell_kind() == ShellKind::Ribbon {
-                            theme.palette.panel()
-                        } else {
-                            Color32::from_rgb(247, 250, 253)
-                        })
+                        .fill(
+                            if matches!(theme.shell_kind(), ShellKind::Ribbon | ShellKind::Aqua) {
+                                theme.palette.panel()
+                            } else {
+                                Color32::from_rgb(247, 250, 253)
+                            },
+                        )
                         .stroke(Stroke::new(0.6, theme.palette.border()))
                         .corner_radius(egui::CornerRadius::ZERO),
                 );
@@ -181,25 +186,29 @@ fn paint_file_cell(
     let painter = painter.with_clip_rect(rect);
     if visual.selected || visual.hovered {
         painter.rect_filled(
-            rect.shrink(if theme.shell_kind() == ShellKind::Aero {
-                0.5
-            } else {
-                2.0
-            }),
+            rect.shrink(
+                if matches!(theme.shell_kind(), ShellKind::Aero | ShellKind::Aqua) {
+                    0.5
+                } else {
+                    2.0
+                },
+            ),
             theme.metrics.rounding,
             if visual.selected {
                 theme.palette.selection()
             } else if theme.shell_kind() == ShellKind::Aero {
                 Color32::from_rgb(232, 246, 254)
+            } else if theme.shell_kind() == ShellKind::Aqua {
+                Color32::from_rgb(237, 252, 249)
             } else {
                 theme.palette.background()
             },
         );
-        if theme.shell_kind() == ShellKind::Aero {
+        if matches!(theme.shell_kind(), ShellKind::Aero | ShellKind::Aqua) {
             painter.rect_stroke(
                 rect.shrink(1.0),
                 2,
-                Stroke::new(1.0, Color32::from_rgb(147, 199, 226)),
+                Stroke::new(1.0, theme.palette.border()),
                 egui::StrokeKind::Inside,
             );
         }
@@ -233,8 +242,10 @@ fn paint_file_cell(
     } else {
         paint_file_icon(&painter, icon_area, file, theme);
     }
-    let explorer_list =
-        matches!(theme.shell_kind(), ShellKind::Aero | ShellKind::Ribbon) && !visual.grid;
+    let explorer_list = matches!(
+        theme.shell_kind(),
+        ShellKind::Aero | ShellKind::Ribbon | ShellKind::Aqua
+    ) && !visual.grid;
     let compact_explorer = explorer_list && rect.width() < 470.0;
     let compact_luna = theme.shell_kind() == ShellKind::Luna && rect.width() < 420.0;
     let name = if visual.grid {
@@ -349,6 +360,10 @@ fn paint_file_icon(painter: &Painter, rect: Rect, file: &Entry, theme: &Theme) {
         paint_win10_file_icon(painter, rect, file, theme);
         return;
     }
+    if theme.shell_kind() == ShellKind::Aqua {
+        paint_aqua_file_icon(painter, rect, file, theme);
+        return;
+    }
     let round: u8 = if theme.layout == Layout::Classic {
         0
     } else {
@@ -393,6 +408,71 @@ fn paint_file_icon(painter: &Painter, rect: Rect, file: &Entry, theme: &Theme) {
             Align2::CENTER_CENTER,
             short,
             FontId::proportional((rect.width() * 0.29).clamp(8.0, 13.0)),
+            Color32::WHITE,
+        );
+    }
+}
+
+/// Lightweight original glass-and-sunlight file glyphs. These are vectors,
+/// not Windows, stock icon packs, web downloads or expensive blur textures.
+fn paint_aqua_file_icon(painter: &Painter, rect: Rect, file: &Entry, theme: &Theme) {
+    let size = rect.width().min(rect.height()).max(12.0);
+    let at = |x: f32, y: f32| Pos2::new(rect.left() + x * size, rect.top() + y * size);
+    let box_at = |x1: f32, y1: f32, x2: f32, y2: f32| Rect::from_min_max(at(x1, y1), at(x2, y2));
+    if file.is_dir {
+        painter.rect_filled(
+            box_at(0.08, 0.20, 0.56, 0.43),
+            2,
+            Color32::from_rgb(206, 149, 55),
+        );
+        painter.rect_filled(
+            box_at(0.06, 0.31, 0.94, 0.86),
+            3,
+            Color32::from_rgb(225, 172, 67),
+        );
+        painter.rect_filled(box_at(0.08, 0.35, 0.92, 0.84), 3, theme.palette.folder());
+        painter.rect_filled(
+            box_at(0.12, 0.38, 0.88, 0.48),
+            2,
+            Color32::WHITE.gamma_multiply(0.69),
+        );
+        painter.line_segment(
+            [at(0.14, 0.74), at(0.86, 0.74)],
+            Stroke::new(1.2, Color32::from_rgb(227, 162, 46)),
+        );
+    } else {
+        painter.rect_filled(
+            box_at(0.20, 0.07, 0.81, 0.92),
+            3,
+            Color32::from_rgb(214, 249, 251),
+        );
+        painter.rect_stroke(
+            box_at(0.20, 0.07, 0.81, 0.92),
+            3,
+            Stroke::new(1.0, Color32::from_rgb(52, 151, 174)),
+            egui::StrokeKind::Inside,
+        );
+        painter.rect_filled(
+            box_at(0.26, 0.15, 0.74, 0.29),
+            2,
+            Color32::WHITE.gamma_multiply(0.88),
+        );
+        let emblem = match file.kind() {
+            "Image" => "IMG",
+            "Audio" => "MP3",
+            "Video" => "VID",
+            "Archive" => "ZIP",
+            "PDF" => "PDF",
+            "Code" => "DEV",
+            "Link" => "URL",
+            _ => "FILE",
+        };
+        painter.rect_filled(box_at(0.23, 0.39, 0.78, 0.70), 3, theme.palette.file());
+        painter.text(
+            at(0.5, 0.55),
+            Align2::CENTER_CENTER,
+            emblem,
+            FontId::proportional((size * 0.19).clamp(7.0, 10.0)),
             Color32::WHITE,
         );
     }

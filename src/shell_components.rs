@@ -677,7 +677,14 @@ pub fn sidebar_section(
         }
         return;
     }
-    let title = if theme.shell_kind() == ShellKind::Ribbon {
+    let title = if theme.shell_kind() == ShellKind::Aqua {
+        match section {
+            SidebarSection::Tasks => "CREATIVE TOOLS",
+            SidebarSection::Places => "MY SPACES",
+            SidebarSection::Favorites => "FAVORITE PLACES",
+            SidebarSection::Volumes => "CONNECTED WORLDS",
+        }
+    } else if theme.shell_kind() == ShellKind::Ribbon {
         match section {
             SidebarSection::Tasks => "File tasks",
             SidebarSection::Places => "This PC",
@@ -708,7 +715,10 @@ pub fn sidebar_section(
         ui.label(
             egui::RichText::new(title)
                 .size(
-                    if matches!(theme.shell_kind(), ShellKind::Aero | ShellKind::Ribbon) {
+                    if matches!(
+                        theme.shell_kind(),
+                        ShellKind::Aero | ShellKind::Ribbon | ShellKind::Aqua
+                    ) {
                         12.5
                     } else {
                         10.5
@@ -716,7 +726,10 @@ pub fn sidebar_section(
                 )
                 .strong()
                 .color(
-                    if matches!(theme.shell_kind(), ShellKind::Aero | ShellKind::Ribbon) {
+                    if matches!(
+                        theme.shell_kind(),
+                        ShellKind::Aero | ShellKind::Ribbon | ShellKind::Aqua
+                    ) {
                         theme.palette.text()
                     } else {
                         theme.palette.muted()
