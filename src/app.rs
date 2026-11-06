@@ -402,6 +402,7 @@ struct PreviewResult {
 
 struct PropertySnapshot {
     lines: Vec<(String, String)>,
+    metadata: std::fs::Metadata,
     mode: String,
     is_symlink: bool,
     is_dir: bool,
@@ -439,6 +440,7 @@ fn read_property_snapshot(path: &Path) -> std::io::Result<PropertySnapshot> {
         mode,
         is_symlink: metadata.file_type().is_symlink(),
         is_dir: metadata.is_dir(),
+        metadata,
     })
 }
 
@@ -7007,6 +7009,7 @@ impl Explorer {
                                     action = Some(Action::SetMode {
                                         path: path.clone(),
                                         mode: parsed.expect("button only enabled for valid mode"),
+                                        expected: snapshot.metadata.clone(),
                                     });
                                     dismiss = true;
                                 }
@@ -7476,6 +7479,7 @@ mod tests {
         });
         let result = || PropertySnapshot {
             lines: vec![("Type".into(), "File".into())],
+            metadata: std::fs::metadata(std::env::temp_dir()).unwrap(),
             mode: "644".into(),
             is_symlink: false,
             is_dir: false,
