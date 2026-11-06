@@ -9,6 +9,22 @@ Thunar for supported workflows. Keep Thunar installed until real Linux Mint
 acceptance passes. Prioritize data integrity, functionality, stability,
 performance, Linux integration, then visual polish.
 
+### Windows 10 · Explorer ribbon shell
+
+- [x] Build separate File/Home/Share/View ribbon pages with stateful commands,
+  original vector glyphs, keyboard-accessible buttons and collapsed/compact
+  layouts. Dispatch file operations through the shared safety layer.
+- [x] Add Quick access / This PC / Network navigation, breadcrumb/search row,
+  sorter-aligned details view, flatter folder/document icons and view switches.
+- [x] Preserve custom TOML shell composition, network read-only rules and
+  RiceBowl-owned window decorations; avoid proprietary Windows artwork.
+- [ ] Inspect and publish unedited GUI smoke captures for full, split, compact
+  and narrow layouts, and verify the Rust checks workflow is green.
+- [ ] Check ribbon focus/selection/menu behavior, keyboard paths, real NAS,
+  decorations and display scaling on Linux Mint hardware.
+- [ ] Compare visual proportions against licensed Windows 10 references:
+  historical pixel-matching is not yet claimed.
+
 ### Windows 7 · Aero shell fidelity
 
 - [x] Dedicated breadcrumb address/search row, history, Ctrl+L path editing,

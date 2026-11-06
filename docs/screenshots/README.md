@@ -12,6 +12,19 @@ These are unedited screenshots captured from the **running Rust/egui application
 | Compact window (700 × 470) | [win7-compact.png](win7-compact.png) |
 | Narrow window (380 × 650) | [win7-narrow.png](win7-narrow.png) |
 
+## Windows 10 · Explorer ribbon
+
+![Windows 10-inspired Explorer shell at 1120 × 720](win10.png)
+
+| Additional view | Screenshot |
+| --- | --- |
+| Two-folder split (1120 × 720) | [win10-split.png](win10-split.png) |
+| Compact window (700 × 470) | [win10-compact.png](win10-compact.png) |
+| Narrow window (380 × 650) | [win10-narrow.png](win10-narrow.png) |
+
+The ribbon has File/Home/Share/View pages with enabled-state-aware commands;
+compact and narrow windows wrap to a smaller command set with a More menu.
+
 ## XP Luna rice
 
 ![XP Luna file manager with the classic task pane](xp-luna.png)

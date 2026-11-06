@@ -27,6 +27,7 @@ mod thumbnail;
 mod transfer_history;
 mod udisks2;
 mod volume;
+mod win10;
 
 use std::{env, ffi::OsString, path::PathBuf};
 

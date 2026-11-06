@@ -18,6 +18,8 @@ A customizable Linux file manager built with **Rust + egui**, designed to work o
 
 **XP Luna:** [full window](docs/screenshots/xp-luna.png) · [split view](docs/screenshots/xp-luna-split.png) · [more real GUI screenshots](docs/screenshots/)
 
+**Windows 10 · Explorer:** [full window](docs/screenshots/win10.png) · [split view](docs/screenshots/win10-split.png) · [compact](docs/screenshots/win10-compact.png) · [narrow](docs/screenshots/win10-narrow.png)
+
 > **Status: 1.0.0-rc.17 candidate.** Not a signed-off stable 1.0. Network-write safety, complete recovery and physical Linux Mint/NAS/USB acceptance remain open. Keep your current file manager and use disposable data for testing risky operations.
 
 ## Built for real file management
@@ -31,6 +33,8 @@ A customizable Linux file manager built with **Rust + egui**, designed to work o
 - **Rice it:** seven distinctive shells (98, XP, 7, 10, Frutiger Aero, ChromeOS and macOS) plus editable layout, colors and density.
 
 **Windows 7 · Aero:** [Explorer-style shell](docs/screenshots/win7.png) with clickable breadcrumb paths, an Organize/Share command strip, Favorites/Libraries/Computer navigation, aligned details columns and a bottom selection-details pane. File operations, network safety and window decorations remain shared with the core and desktop window manager.
+
+**Windows 10 · Explorer:** [Ribbon shell](docs/screenshots/win10.png) with File/Home/Share/View pages, responsive command groups, Quick access, This PC, breadcrumb navigation, details/icon view switching and original flat vector icons. Its controls reuse RiceField's guarded file operations; window decorations belong to RiceBowl/the window manager.
 
 File operations remain independent of the selected visual shell.
 
@@ -57,6 +61,7 @@ Prefer a bundle? Check [Releases](https://github.com/CopyPasteUser/Ricefield/rel
 
 ```bash
 rice-explorer --theme win7 ~/Downloads
+rice-explorer --theme win10 ~/Downloads
 rice-explorer --theme xp-luna ~/Documents
 rice-explorer --theme macos
 rice-explorer --theme-file /path/to/my-rice.toml

@@ -18,6 +18,7 @@ use crate::{
     thumbnail::ThumbnailManager,
     transfer_history,
     volume::{self, MountCredentials, VolumeAction},
+    win10::{self, RibbonAction, RibbonContext, RibbonPage},
 };
 use eframe::egui::{self, Align2, Color32, Key, Modifiers, Pos2, Rect, Vec2};
 use std::{
@@ -1060,8 +1061,11 @@ pub struct Explorer {
     dirty_config: bool,
     focus_address: bool,
     focus_search: bool,
-    aero_edit_address: bool,
+    breadcrumb_edit_address: bool,
     aero_advanced_open: bool,
+    win10_ribbon_page: RibbonPage,
+    win10_ribbon_expanded: bool,
+    win10_advanced_open: bool,
 }
 
 impl Explorer {
@@ -1297,8 +1301,11 @@ impl Explorer {
             dirty_config: false,
             focus_address: false,
             focus_search: false,
-            aero_edit_address: false,
+            breadcrumb_edit_address: false,
             aero_advanced_open: false,
+            win10_ribbon_page: RibbonPage::Home,
+            win10_ribbon_expanded: true,
+            win10_advanced_open: false,
         };
         if startup_locations.is_empty() {
             explorer.new_tab(config::home());
@@ -4458,6 +4465,15 @@ impl Explorer {
                     {
                         continue;
                     }
+                    // Windows 10's classic Explorer has a ribbon but no
+                    // single-folder tab row; keep RiceField's multi-tab UI
+                    // when two or more tabs are actually open.
+                    if theme.shell_kind() == ShellKind::Ribbon
+                        && *component == ChromeComponent::Tabs
+                        && self.tabs.len() == 1
+                    {
+                        continue;
+                    }
                     if theme.shell_kind() == ShellKind::Luna {
                         if *component == ChromeComponent::Tabs && self.tabs.len() == 1 {
                             continue;
@@ -4645,6 +4661,10 @@ impl Explorer {
             self.aero_command_bar(ui);
             return;
         }
+        if theme.shell_kind() == ShellKind::Ribbon {
+            self.win10_command_bar(ui, theme);
+            return;
+        }
         let has_selection = !self.current().selected.is_empty();
         match shell_components::command_bar(ui, theme, has_selection) {
             Some(ToolbarAction::NewFolder) => self.file_command(FileCommand::NewFolder),
@@ -4657,6 +4677,111 @@ impl Explorer {
             Some(ToolbarAction::Bookmark) => self.toggle_bookmark(),
             Some(ToolbarAction::Refresh) => self.navigation_command(NavigationCommand::Refresh),
             None => {}
+        }
+    }
+
+    fn win10_command_bar(&mut self, ui: &mut egui::Ui, theme: &Theme) {
+        let state = RibbonContext {
+            local: self.current().remote_uri.is_none(),
+            selected: self.current().selected.len(),
+            has_items: !self.current().visible.is_empty(),
+            show_sidebar: self.config.show_sidebar,
+            show_hidden: self.config.show_hidden,
+            split: self.split_pair.is_some(),
+            preview: self.preview_path.is_some(),
+            grid: self.config.view == "grid",
+            advanced: self.win10_advanced_open,
+            volume_busy: self.volume_busy,
+        };
+        let command = win10::ribbon(
+            ui,
+            theme,
+            &mut self.win10_ribbon_page,
+            &mut self.win10_ribbon_expanded,
+            state,
+        );
+        if let Some(command) = command {
+            self.win10_command(command, ui.ctx());
+        }
+    }
+
+    fn win10_command(&mut self, command: RibbonAction, context: &egui::Context) {
+        match command {
+            RibbonAction::NewWindow => self.navigation_command(NavigationCommand::NewWindow),
+            RibbonAction::NewTab => self.tab_command(TabCommand::New),
+            RibbonAction::NewFolder => self.file_command(FileCommand::NewFolder),
+            RibbonAction::NewFile => {
+                self.dialog = Some(Dialog::Name {
+                    mode: NameMode::File(self.current().path.clone()),
+                    value: String::new(),
+                });
+            }
+            RibbonAction::Cut => self.file_command(FileCommand::Cut),
+            RibbonAction::Copy => self.file_command(FileCommand::Copy),
+            RibbonAction::Paste => self.file_command(FileCommand::Paste),
+            RibbonAction::CopyPath => self.copy_selected_paths(context),
+            RibbonAction::Rename => self.file_command(FileCommand::Rename),
+            RibbonAction::Trash => self.file_command(FileCommand::Trash),
+            RibbonAction::Properties => self.file_command(FileCommand::Properties),
+            RibbonAction::Favorite => self.toggle_bookmark(),
+            RibbonAction::SelectAll => {
+                let paths = self
+                    .current()
+                    .visible
+                    .iter()
+                    .map(|&index| self.current().entries[index].path.clone())
+                    .collect();
+                self.current_mut().selected = paths;
+            }
+            RibbonAction::SelectNone => self.current_mut().selected.clear(),
+            RibbonAction::InvertSelection => {
+                let chosen = self.current().selected.clone();
+                let inverse = self
+                    .current()
+                    .visible
+                    .iter()
+                    .filter_map(|&index| self.current().entries.get(index))
+                    .map(|entry| entry.path.clone())
+                    .filter(|path| !chosen.contains(path))
+                    .collect();
+                self.current_mut().selected = inverse;
+            }
+            RibbonAction::Archive => self.open_archive_create(),
+            RibbonAction::FindNetwork => {
+                self.discovery_open = true;
+                if self.discovery_hosts.is_empty() {
+                    self.start_discovery();
+                }
+            }
+            RibbonAction::ConnectNetwork => self.open_network_login(String::new()),
+            RibbonAction::Transfers => self.show_operations = true,
+            RibbonAction::Details | RibbonAction::LargeIcons => {
+                self.config.view = if command == RibbonAction::Details {
+                    "list"
+                } else {
+                    "grid"
+                }
+                .into();
+                self.dirty_config = true;
+            }
+            RibbonAction::NavigationPane => {
+                self.config.show_sidebar = !self.config.show_sidebar;
+                self.dirty_config = true;
+            }
+            RibbonAction::PreviewPane => {
+                if let Some(path) = self.selected_paths().first().cloned() {
+                    if self.preview_path.as_ref() == Some(&path) {
+                        self.preview_path = None;
+                        self.preview_content = None;
+                    } else {
+                        self.open_preview(path);
+                    }
+                }
+            }
+            RibbonAction::SplitView => self.navigation_command(NavigationCommand::Split),
+            RibbonAction::HiddenItems => self.navigation_command(NavigationCommand::Hidden),
+            RibbonAction::MoreTools => self.win10_advanced_open = !self.win10_advanced_open,
+            RibbonAction::Refresh => self.navigation_command(NavigationCommand::Refresh),
         }
     }
 
@@ -4761,6 +4886,10 @@ impl Explorer {
             self.aero_navigation_bar(ui);
             return;
         }
+        if self.theme.shell_kind() == ShellKind::Ribbon {
+            self.win10_navigation_bar(ui);
+            return;
+        }
         if ui.available_width() < 800.0 {
             // Give address/search their own row on narrow windows. Neither
             // control may push the path field or Refresh off-screen.
@@ -4775,6 +4904,45 @@ impl Explorer {
                 self.navigation_address(ui, false);
                 self.navigation_search(ui, false);
             });
+        }
+    }
+
+    fn win10_navigation_bar(&mut self, ui: &mut egui::Ui) {
+        let narrow = ui.available_width() < 760.0;
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(!self.current().back.is_empty(), egui::Button::new("<"))
+                .on_hover_text("Back (Alt+Left)")
+                .clicked()
+            {
+                self.history(true);
+            }
+            if ui
+                .add_enabled(!self.current().forward.is_empty(), egui::Button::new(">"))
+                .on_hover_text("Forward (Alt+Right)")
+                .clicked()
+            {
+                self.history(false);
+            }
+            if ui
+                .small_button("Up")
+                .on_hover_text("Parent folder (Alt+Up)")
+                .clicked()
+            {
+                self.parent();
+            }
+            let width = if narrow {
+                ui.available_width().max(90.0)
+            } else {
+                (ui.available_width() - 270.0).max(120.0)
+            };
+            self.breadcrumb_bar(ui, width);
+            if !narrow {
+                self.navigation_search(ui, false);
+            }
+        });
+        if narrow {
+            ui.horizontal(|ui| self.navigation_search(ui, true));
         }
     }
 
@@ -4816,7 +4984,7 @@ impl Explorer {
             } else {
                 (ui.available_width() - 260.0).max(120.0)
             };
-            self.aero_breadcrumb_bar(ui, width);
+            self.breadcrumb_bar(ui, width);
             if !narrow {
                 self.navigation_search(ui, false);
             }
@@ -4826,20 +4994,28 @@ impl Explorer {
         }
     }
 
-    fn aero_breadcrumb_bar(&mut self, ui: &mut egui::Ui, width: f32) {
+    fn breadcrumb_bar(&mut self, ui: &mut egui::Ui, width: f32) {
         if self.focus_address {
-            self.aero_edit_address = true;
+            self.breadcrumb_edit_address = true;
         }
         let remote = self.current().remote_uri.is_some();
+        let win10 = self.theme.shell_kind() == ShellKind::Ribbon;
         egui::Frame::new()
             .fill(Color32::WHITE)
-            .stroke(egui::Stroke::new(1.0, Color32::from_rgb(121, 161, 188)))
-            .corner_radius(2)
+            .stroke(egui::Stroke::new(
+                1.0,
+                if win10 {
+                    self.theme.palette.border()
+                } else {
+                    Color32::from_rgb(121, 161, 188)
+                },
+            ))
+            .corner_radius(if win10 { 0 } else { 2 })
             .inner_margin(egui::Margin::symmetric(4, 2))
             .show(ui, |ui| {
                 ui.set_width((width - 10.0).max(90.0));
                 ui.set_min_height(24.0);
-                if self.aero_edit_address || remote {
+                if self.breadcrumb_edit_address || remote {
                     let edit = ui.add_sized(
                         [(width - 17.0).max(78.0), 23.0],
                         egui::TextEdit::singleline(&mut self.current_mut().address)
@@ -4865,7 +5041,7 @@ impl Explorer {
                                 .unwrap_or_else(|| self.current().path.display().to_string());
                             self.current_mut().address = address;
                         }
-                        self.aero_edit_address = false;
+                        self.breadcrumb_edit_address = false;
                     }
                 } else {
                     let crumbs = crate::aero::breadcrumbs(&self.current().path, &config::home());
@@ -4876,7 +5052,7 @@ impl Explorer {
                             egui::Layout::left_to_right(egui::Align::Center),
                             |ui| {
                                 egui::ScrollArea::horizontal()
-                                    .id_salt("aero-address-crumbs")
+                                    .id_salt(("address-crumbs", self.theme.id.as_str()))
                                     .show(ui, |ui| {
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing.x = 1.0;
@@ -4889,7 +5065,11 @@ impl Explorer {
                                                                 crumb.label
                                                             ))
                                                             .size(12.0)
-                                                            .color(Color32::from_rgb(39, 71, 98)),
+                                                            .color(if win10 {
+                                                                Color32::from_rgb(48, 48, 48)
+                                                            } else {
+                                                                Color32::from_rgb(39, 71, 98)
+                                                            }),
                                                         )
                                                         .frame(false),
                                                     )
@@ -4908,7 +5088,7 @@ impl Explorer {
                             .on_hover_text("Type a path (Ctrl+L)")
                             .clicked()
                         {
-                            self.aero_edit_address = true;
+                            self.breadcrumb_edit_address = true;
                             self.focus_address = true;
                         }
                     });
@@ -5167,7 +5347,7 @@ impl Explorer {
     }
 
     fn navigation_search(&mut self, ui: &mut egui::Ui, compact: bool) {
-        let aero = self.theme.shell_kind() == ShellKind::Aero;
+        let aero = matches!(self.theme.shell_kind(), ShellKind::Aero | ShellKind::Ribbon);
         let search_width = if aero {
             if compact {
                 (ui.available_width() - 112.0).max(90.0)
@@ -5282,7 +5462,11 @@ impl Explorer {
             .frame(
                 egui::Frame::new()
                     .fill(theme.palette.sidebar())
-                    .inner_margin(egui::Margin::same(10)),
+                    .inner_margin(if theme.shell_kind() == ShellKind::Ribbon {
+                        egui::Margin::symmetric(5, 8)
+                    } else {
+                        egui::Margin::same(10)
+                    }),
             )
             .show(ui, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
@@ -5304,7 +5488,10 @@ impl Explorer {
                     let sections = theme.sidebar_sections();
                     for (index, section) in sections.into_iter().enumerate() {
                         if index > 0 {
-                            if matches!(theme.shell_kind(), ShellKind::Luna | ShellKind::Aero) {
+                            if matches!(
+                                theme.shell_kind(),
+                                ShellKind::Luna | ShellKind::Aero | ShellKind::Ribbon
+                            ) {
                                 ui.add_space(9.0);
                             } else {
                                 ui.add_space(14.0);
@@ -5314,6 +5501,30 @@ impl Explorer {
                         let mut render_section = |ui: &mut egui::Ui| match section {
                             SidebarSection::Tasks => self.sidebar_tasks(ui),
                             SidebarSection::Places => {
+                                if theme.shell_kind() == ShellKind::Ribbon {
+                                    for (name, path) in self.places.clone() {
+                                        let label = if path == Path::new("/") {
+                                            "Linux filesystem"
+                                        } else {
+                                            name
+                                        };
+                                        if shell_components::win10_sidebar_link(
+                                            ui,
+                                            &theme,
+                                            label,
+                                            self.current().path == path,
+                                            if path == Path::new("/") {
+                                                shell_components::Win10NavIcon::Computer
+                                            } else {
+                                                shell_components::Win10NavIcon::Folder
+                                            },
+                                        ) {
+                                            self.navigate(path);
+                                        }
+                                    }
+                                    ui.collapsing("Folders", |ui| self.folder_tree_root(ui));
+                                    return;
+                                }
                                 if theme.shell_kind() == ShellKind::Luna {
                                     use shell_components::{LunaLinkIcon as Icon, luna_link};
                                     for (label, path) in self.places.clone() {
@@ -5384,6 +5595,52 @@ impl Explorer {
                                 self.folder_tree_root(ui);
                             }
                             SidebarSection::Favorites => {
+                                if theme.shell_kind() == ShellKind::Ribbon {
+                                    let home = config::home();
+                                    if shell_components::win10_sidebar_link(
+                                        ui,
+                                        &theme,
+                                        "Home",
+                                        self.current().path == home,
+                                        shell_components::Win10NavIcon::QuickAccess,
+                                    ) {
+                                        self.navigate(home.clone());
+                                    }
+                                    for name in ["Desktop", "Downloads", "Documents", "Pictures"] {
+                                        let path = home.join(name);
+                                        if self.places.iter().any(|(_, existing)| *existing == path)
+                                            && shell_components::win10_sidebar_link(
+                                                ui,
+                                                &theme,
+                                                name,
+                                                self.current().path == path,
+                                                shell_components::Win10NavIcon::Folder,
+                                            )
+                                        {
+                                            self.navigate(path);
+                                        }
+                                    }
+                                    for path in self.config.bookmarks.clone() {
+                                        let label = path
+                                            .file_name()
+                                            .unwrap_or_default()
+                                            .to_string_lossy()
+                                            .into_owned();
+                                        if shell_components::win10_sidebar_link(
+                                            ui,
+                                            &theme,
+                                            &label,
+                                            self.current().path == path,
+                                            shell_components::Win10NavIcon::QuickAccess,
+                                        ) {
+                                            self.navigate(path);
+                                        }
+                                    }
+                                    if ui.small_button("Pin current folder").clicked() {
+                                        self.toggle_bookmark();
+                                    }
+                                    return;
+                                }
                                 if theme.shell_kind() == ShellKind::Luna {
                                     use shell_components::{LunaLinkIcon as Icon, luna_link};
                                     let selected = self.selected_paths();
@@ -5483,7 +5740,16 @@ impl Explorer {
                             SidebarSection::Volumes => {
                                 let luna = theme.shell_kind() == ShellKind::Luna;
                                 let aero = theme.shell_kind() == ShellKind::Aero;
-                                let discover = if aero {
+                                let ribbon = theme.shell_kind() == ShellKind::Ribbon;
+                                let discover = if ribbon {
+                                    shell_components::win10_sidebar_link(
+                                        ui,
+                                        &theme,
+                                        "Discover network",
+                                        false,
+                                        shell_components::Win10NavIcon::Network,
+                                    )
+                                } else if aero {
                                     shell_components::aero_sidebar_link(
                                         ui,
                                         "Network · discover",
@@ -5506,7 +5772,16 @@ impl Explorer {
                                         self.start_discovery();
                                     }
                                 }
-                                let connect = if aero {
+                                let connect = if ribbon {
+                                    !self.volume_busy
+                                        && shell_components::win10_sidebar_link(
+                                            ui,
+                                            &theme,
+                                            "Connect to network",
+                                            false,
+                                            shell_components::Win10NavIcon::Network,
+                                        )
+                                } else if aero {
                                     shell_components::aero_sidebar_link(
                                         ui,
                                         "Connect to network…",
@@ -5981,13 +6256,15 @@ impl Explorer {
             .frame(
                 egui::Frame::new()
                     .fill(theme.palette.panel())
-                    .inner_margin(egui::Margin::same(if matches!(theme.shell_kind(), ShellKind::Luna | ShellKind::Aero) { 5 } else { 14 })),
+                    .inner_margin(egui::Margin::same(if matches!(theme.shell_kind(), ShellKind::Luna | ShellKind::Aero | ShellKind::Ribbon) { 5 } else { 14 })),
             )
             .show(ui, |ui| {
                 // The XP shell starts with the folder view, not two rows of
                 // modern commands. Advanced tools remain available via Tools
                 // -> Show RiceField tools, without losing any functionality.
-                let show_toolbox = if theme.shell_kind() == ShellKind::Aero {
+                let show_toolbox = if theme.shell_kind() == ShellKind::Ribbon {
+                    self.win10_advanced_open
+                } else if theme.shell_kind() == ShellKind::Aero {
                     self.aero_advanced_open
                 } else {
                     theme.shell_kind() != ShellKind::Luna
@@ -7166,6 +7443,29 @@ impl Explorer {
                             },
                             message,
                         );
+                    }
+                    if theme.shell_kind() == ShellKind::Ribbon && ui.available_width() > 130.0 {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui
+                                .add(
+                                    egui::Button::new("Icons").selected(self.config.view == "grid"),
+                                )
+                                .on_hover_text("Large icons")
+                                .clicked()
+                            {
+                                self.win10_command(RibbonAction::LargeIcons, ui.ctx());
+                            }
+                            if ui
+                                .add(
+                                    egui::Button::new("Details")
+                                        .selected(self.config.view == "list"),
+                                )
+                                .on_hover_text("Details list")
+                                .clicked()
+                            {
+                                self.win10_command(RibbonAction::Details, ui.ctx());
+                            }
+                        });
                     }
                 });
             });

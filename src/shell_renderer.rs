@@ -64,8 +64,9 @@ pub fn sort_header(
     descending: bool,
 ) -> Option<&'static str> {
     let mut change_sort = None;
-    if theme.shell_kind() == ShellKind::Aero {
-        // The details columns must line up with the actual row renderer.
+    if matches!(theme.shell_kind(), ShellKind::Aero | ShellKind::Ribbon) {
+        // Both Explorer-era shells align their sortable details columns with
+        // the same virtualized rows; the skins differ only in paint tokens.
         // Below 470 points, show just Name instead of clipping tiny headers.
         let available = ui.available_width();
         let compact = available < 470.0;
@@ -93,8 +94,12 @@ pub fn sort_header(
                 let response = ui.add_sized(
                     [width.max(1.0), 25.0],
                     egui::Button::new(format!("{label}{arrow}"))
-                        .fill(Color32::from_rgb(247, 250, 253))
-                        .stroke(Stroke::new(0.6, Color32::from_rgb(207, 219, 230)))
+                        .fill(if theme.shell_kind() == ShellKind::Ribbon {
+                            theme.palette.panel()
+                        } else {
+                            Color32::from_rgb(247, 250, 253)
+                        })
+                        .stroke(Stroke::new(0.6, theme.palette.border()))
                         .corner_radius(egui::CornerRadius::ZERO),
                 );
                 if response.on_hover_text(format!("Sort by {label}")).clicked() {
@@ -228,14 +233,15 @@ fn paint_file_cell(
     } else {
         paint_file_icon(&painter, icon_area, file, theme);
     }
-    let aero_list = theme.shell_kind() == ShellKind::Aero && !visual.grid;
-    let compact_aero = aero_list && rect.width() < 470.0;
+    let explorer_list =
+        matches!(theme.shell_kind(), ShellKind::Aero | ShellKind::Ribbon) && !visual.grid;
+    let compact_explorer = explorer_list && rect.width() < 470.0;
     let compact_luna = theme.shell_kind() == ShellKind::Luna && rect.width() < 420.0;
     let name = if visual.grid {
         shorten(&file.name, 22)
-    } else if compact_luna || compact_aero {
+    } else if compact_luna || compact_explorer {
         shorten(&file.name, ((rect.width() - 52.0) / 7.0).max(1.0) as usize)
-    } else if aero_list {
+    } else if explorer_list {
         shorten(
             &file.name,
             ((rect.width() * 0.50 - 51.0) / 7.0).max(1.0) as usize,
@@ -261,7 +267,7 @@ fn paint_file_cell(
             font,
             foreground,
         );
-        if aero_list && !compact_aero {
+        if explorer_list && !compact_explorer {
             for (offset, portion, value) in [
                 (0.50, 0.20, filesystem::age(file.modified)),
                 (0.70, 0.17, file.kind().to_owned()),
@@ -339,6 +345,10 @@ fn paint_file_icon(painter: &Painter, rect: Rect, file: &Entry, theme: &Theme) {
         paint_aero_file_icon(painter, rect, file);
         return;
     }
+    if theme.shell_kind() == ShellKind::Ribbon {
+        paint_win10_file_icon(painter, rect, file, theme);
+        return;
+    }
     let round: u8 = if theme.layout == Layout::Classic {
         0
     } else {
@@ -385,6 +395,75 @@ fn paint_file_icon(painter: &Painter, rect: Rect, file: &Entry, theme: &Theme) {
             FontId::proportional((rect.width() * 0.29).clamp(8.0, 13.0)),
             Color32::WHITE,
         );
+    }
+}
+
+/// Flat Explorer-era glyphs, drawn locally and independent of OS icon assets.
+fn paint_win10_file_icon(painter: &Painter, rect: Rect, file: &Entry, theme: &Theme) {
+    let s = rect.width().min(rect.height());
+    let p = |x: f32, y: f32| Pos2::new(rect.left() + x * s, rect.top() + y * s);
+    if file.is_dir {
+        painter.rect_filled(
+            Rect::from_min_max(p(0.09, 0.23), p(0.51, 0.47)),
+            1,
+            Color32::from_rgb(208, 156, 57),
+        );
+        painter.rect_filled(
+            Rect::from_min_max(p(0.11, 0.33), p(0.89, 0.76)),
+            1,
+            theme.palette.folder(),
+        );
+        painter.rect_filled(
+            Rect::from_min_max(p(0.09, 0.45), p(0.93, 0.84)),
+            1,
+            Color32::from_rgb(246, 205, 101),
+        );
+        painter.line_segment(
+            [p(0.12, 0.47), p(0.90, 0.47)],
+            Stroke::new(1.0, Color32::from_rgb(255, 238, 172)),
+        );
+    } else {
+        let paper = Rect::from_min_max(p(0.22, 0.07), p(0.79, 0.92));
+        painter.rect_filled(paper, 1, Color32::WHITE);
+        painter.rect_stroke(
+            paper,
+            1,
+            Stroke::new(1.0, theme.palette.file()),
+            egui::StrokeKind::Inside,
+        );
+        painter.add(egui::Shape::convex_polygon(
+            vec![p(0.60, 0.07), p(0.79, 0.26), p(0.60, 0.26)],
+            Color32::from_rgb(204, 230, 248),
+            Stroke::NONE,
+        ));
+        for y in [0.39, 0.49, 0.59] {
+            painter.line_segment(
+                [p(0.29, y), p(0.70, y)],
+                Stroke::new(1.1, theme.palette.file()),
+            );
+        }
+        let tag = match file.kind() {
+            "PDF" => "PDF",
+            "Archive" => "ZIP",
+            "Image" => "IMG",
+            "Audio" => "AUD",
+            "Video" => "VID",
+            _ => "",
+        };
+        if !tag.is_empty() {
+            painter.rect_filled(
+                Rect::from_min_max(p(0.20, 0.68), p(0.68, 0.86)),
+                0,
+                theme.palette.file(),
+            );
+            painter.text(
+                p(0.44, 0.77),
+                Align2::CENTER_CENTER,
+                tag,
+                FontId::proportional((s * 0.22).max(6.0)),
+                Color32::WHITE,
+            );
+        }
     }
 }
 

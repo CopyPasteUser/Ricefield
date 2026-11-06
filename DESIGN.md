@@ -69,6 +69,17 @@ The renderer uses egui's bundled system-like proportional font, with a technical
   `[shell].status_bar` is optional; transfer/recovery warnings are not.
 - Frutiger Aero intentionally places its command strip below the file area,
   while Windows 10 keeps its command strip in the upper ribbon position.
+- Windows 10's original-assets Explorer shell is intentionally distinct from
+  Windows 7 Aero: a flat **File / Home / Share / View** ribbon, compact quick
+  access navigation, a breadcrumblike path/search bar beneath the ribbon,
+  aligned details columns, and a slim view-switching status bar. Only two or
+  more open file tabs introduce a RiceField tab strip; the single-folder state
+  looks like the original Explorer. Ribbon actions dispatch through shared
+  file operations and never fake network writes or Windows-only services.
+- The Windows 10 theme in `themes/win10.toml` is the canonical source of its
+  white/near-white chrome, `#0078d7` active blue, `#deecf8` selection,
+  30-point row and 220-point quick-access rail. The frontmatter above
+  continues to describe the default **Windows 7** profile, not every rice.
 - Renderers select shared UI actions; filesystem mutations, open tabs,
   selection and running jobs never belong to a theme-specific implementation.
 - Arbitrary multi-column docking, a visual composer and user-authored Rust

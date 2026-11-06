@@ -489,6 +489,109 @@ pub fn aero_sidebar_link(
     activated
 }
 
+#[derive(Clone, Copy)]
+pub enum Win10NavIcon {
+    QuickAccess,
+    Folder,
+    Computer,
+    Network,
+}
+
+/// Compact, left-aligned navigation used by the Windows 10 Explorer shell.
+/// Icons and selection markers are drawn in egui, not borrowed from Windows.
+pub fn win10_sidebar_link(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    label: &str,
+    selected: bool,
+    icon: Win10NavIcon,
+) -> bool {
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width().max(85.0), 28.0),
+        Sense::click(),
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+    let painter = ui.painter().with_clip_rect(rect);
+    if selected || response.hovered() || response.has_focus() {
+        painter.rect_filled(
+            rect,
+            0,
+            if selected {
+                theme.palette.selection()
+            } else {
+                Color32::from_rgb(236, 242, 247)
+            },
+        );
+        if selected {
+            painter.rect_filled(
+                Rect::from_min_max(rect.left_top(), rect.left_bottom() + Vec2::new(3.0, 0.0)),
+                0,
+                theme.palette.accent(),
+            );
+        }
+    }
+    let center = Pos2::new(rect.left() + 15.0, rect.center().y);
+    let blue = theme.palette.accent();
+    match icon {
+        Win10NavIcon::QuickAccess => {
+            painter.circle_filled(center, 6.0, Color32::from_rgb(215, 167, 55));
+            painter.line_segment(
+                [center + Vec2::new(0.0, -4.0), center + Vec2::new(0.0, 4.0)],
+                Stroke::new(1.8, Color32::WHITE),
+            );
+        }
+        Win10NavIcon::Folder => {
+            painter.rect_filled(
+                Rect::from_center_size(center + Vec2::new(-3.0, -4.0), Vec2::new(13.0, 6.0)),
+                1,
+                Color32::from_rgb(225, 174, 72),
+            );
+            painter.rect_filled(
+                Rect::from_center_size(center + Vec2::new(0.0, 2.0), Vec2::new(20.0, 12.0)),
+                1,
+                Color32::from_rgb(241, 197, 89),
+            );
+        }
+        Win10NavIcon::Computer => {
+            painter.rect_stroke(
+                Rect::from_center_size(center + Vec2::new(0.0, -2.0), Vec2::new(20.0, 13.0)),
+                1,
+                Stroke::new(2.0, blue),
+                egui::StrokeKind::Inside,
+            );
+            painter.line_segment(
+                [center + Vec2::new(-6.0, 8.0), center + Vec2::new(6.0, 8.0)],
+                Stroke::new(2.2, blue),
+            );
+        }
+        Win10NavIcon::Network => {
+            for (x, y) in [(-6.0, -6.0), (6.0, -2.0), (0.0, 7.0)] {
+                painter.circle_filled(center + Vec2::new(x, y), 3.8, blue);
+            }
+            for (a, b) in [((-6.0, -6.0), (6.0, -2.0)), ((6.0, -2.0), (0.0, 7.0))] {
+                painter.line_segment(
+                    [center + Vec2::new(a.0, a.1), center + Vec2::new(b.0, b.1)],
+                    Stroke::new(1.5, blue),
+                );
+            }
+        }
+    }
+    painter.text(
+        Pos2::new(rect.left() + 31.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        FontId::proportional(12.5),
+        theme.palette.text(),
+    );
+    let activated = response.clicked()
+        || (response.has_focus()
+            && ui.input(|input| {
+                input.key_pressed(egui::Key::Enter) || input.key_pressed(egui::Key::Space)
+            }));
+    response.on_hover_text(label);
+    activated
+}
+
 pub fn sidebar_section(
     ui: &mut egui::Ui,
     theme: &Theme,
@@ -560,7 +663,14 @@ pub fn sidebar_section(
         }
         return;
     }
-    let title = if theme.shell_kind() == ShellKind::Aero {
+    let title = if theme.shell_kind() == ShellKind::Ribbon {
+        match section {
+            SidebarSection::Tasks => "File tasks",
+            SidebarSection::Places => "This PC",
+            SidebarSection::Favorites => "Quick access",
+            SidebarSection::Volumes => "Network & drives",
+        }
+    } else if theme.shell_kind() == ShellKind::Aero {
         match section {
             SidebarSection::Tasks => "File tasks",
             SidebarSection::Places => "Libraries",
@@ -583,17 +693,21 @@ pub fn sidebar_section(
     } else {
         ui.label(
             egui::RichText::new(title)
-                .size(if theme.shell_kind() == ShellKind::Aero {
-                    12.5
-                } else {
-                    10.5
-                })
+                .size(
+                    if matches!(theme.shell_kind(), ShellKind::Aero | ShellKind::Ribbon) {
+                        12.5
+                    } else {
+                        10.5
+                    },
+                )
                 .strong()
-                .color(if theme.shell_kind() == ShellKind::Aero {
-                    theme.palette.text()
-                } else {
-                    theme.palette.muted()
-                }),
+                .color(
+                    if matches!(theme.shell_kind(), ShellKind::Aero | ShellKind::Ribbon) {
+                        theme.palette.text()
+                    } else {
+                        theme.palette.muted()
+                    },
+                ),
         );
         contents(ui);
     }
