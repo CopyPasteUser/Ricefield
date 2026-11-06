@@ -679,6 +679,93 @@ pub fn valid_name(name: &str) -> bool {
     !name.is_empty() && name != "." && name != ".." && !name.contains('/') && !name.contains('\0')
 }
 
+/// chmod must operate on the opened inode, not a pathname that can be swapped
+/// for a symlink between a preflight check and the write.
+#[cfg(target_os = "linux")]
+fn apply_mode_to_open_file(file: &File, mode: u32) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() && !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Permissions can only be changed on ordinary files and directories",
+        ));
+    }
+    file.set_permissions(fs::Permissions::from_mode(mode))
+}
+
+#[cfg(target_os = "linux")]
+fn set_mode_guarded(path: &Path, mode: u32) -> io::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    if mode > 0o777 {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Invalid mode"));
+    }
+    let mut open = OpenOptions::new();
+    open.read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
+    match open.open(path) {
+        Ok(file) => apply_mode_to_open_file(&file, mode),
+        // Owners may chmod a file even when it has *no read permission*.
+        // A Linux O_PATH handle plus fchmodat2(AT_EMPTY_PATH) preserves that
+        // behavior without a pathname-based write or symlink following.
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+            set_mode_unreadable_inode(path, mode)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn set_mode_unreadable_inode(path: &Path, mode: u32) -> io::Result<()> {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+
+    let name = CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Invalid filename"))?;
+    // SAFETY: `name` is a valid NUL-terminated pointer, and O_PATH does not
+    // read or write file data. The returned descriptor is immediately owned.
+    let raw = unsafe {
+        libc::open(
+            name.as_ptr(),
+            libc::O_PATH | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if raw < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `raw` is a freshly opened descriptor owned solely by this scope.
+    let fd = unsafe { OwnedFd::from_raw_fd(raw) };
+    let mut info = std::mem::MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: `info` has enough storage for stat and `fd` stays valid.
+    if unsafe { libc::fstat(fd.as_raw_fd(), info.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: successful fstat initialized every field of `info`.
+    let info = unsafe { info.assume_init() };
+    if !matches!(info.st_mode & libc::S_IFMT, libc::S_IFREG | libc::S_IFDIR) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Permissions can only be changed on ordinary files and directories",
+        ));
+    }
+    // SAFETY: fchmodat2 with AT_EMPTY_PATH modifies only the inode held by
+    // `fd`; no attacker-controlled pathname is dereferenced for the write.
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_fchmodat2,
+            fd.as_raw_fd(),
+            c"".as_ptr(),
+            mode as libc::mode_t,
+            libc::AT_EMPTY_PATH,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
 pub const MAX_BATCH_RENAME: usize = 256;
 
 pub struct BatchRenameOptions<'a> {
@@ -1819,19 +1906,12 @@ fn perform_with_progress_and_items(
         }
         Action::SetMode { path, mode } => {
             transfer.check()?;
-            if *mode > 0o777 || fs::symlink_metadata(path)?.file_type().is_symlink() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "Invalid permissions or symlink",
-                ));
-            }
-            #[cfg(unix)]
+            #[cfg(target_os = "linux")]
             {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(path, fs::Permissions::from_mode(*mode))?;
+                set_mode_guarded(path, *mode)?;
                 Ok(format!("Updated permissions to {mode:03o}"))
             }
-            #[cfg(not(unix))]
+            #[cfg(not(target_os = "linux"))]
             {
                 Err(io::Error::new(
                     io::ErrorKind::Unsupported,
@@ -6428,6 +6508,60 @@ mod tests {
             })
             .is_err()
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn chmod_pins_the_open_inode_when_a_name_becomes_a_symlink() {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt, symlink};
+
+        let root = test_root();
+        let selected = root.join("selected");
+        let moved = root.join("moved-original");
+        let unrelated = root.join("unrelated");
+        fs::write(&selected, b"selected inode").unwrap();
+        fs::write(&unrelated, b"unrelated inode").unwrap();
+        let original_unrelated = fs::metadata(&unrelated).unwrap().permissions().mode() & 0o777;
+
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        let pinned = options.open(&selected).unwrap();
+        fs::rename(&selected, &moved).unwrap();
+        symlink(&unrelated, &selected).unwrap();
+
+        apply_mode_to_open_file(&pinned, 0o640).unwrap();
+        assert_eq!(
+            fs::metadata(&moved).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
+        assert_eq!(
+            fs::metadata(&unrelated).unwrap().permissions().mode() & 0o777,
+            original_unrelated
+        );
+        assert!(set_mode_guarded(&selected, 0o777).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn chmod_supports_unreadable_files_with_pinned_o_path_fd() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = test_root();
+        let selected = root.join("unreadable");
+        fs::write(&selected, b"content").unwrap();
+        fs::set_permissions(&selected, fs::Permissions::from_mode(0o000)).unwrap();
+        let result = set_mode_unreadable_inode(&selected, 0o600);
+        if result.as_ref().err().and_then(io::Error::raw_os_error) != Some(libc::ENOSYS) {
+            result.unwrap();
+            assert_eq!(
+                fs::metadata(&selected).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -1,6 +1,6 @@
 # RiceField roadmap to 1.0
 
-**Current candidate: `1.0.0-rc.11`.** See [the scope and evidence ledger](docs/1.0-STATUS.md).
+**Current candidate: `1.0.0-rc.12`.** See [the scope and evidence ledger](docs/1.0-STATUS.md).
 This roadmap retains incomplete capabilities explicitly: a candidate version
 does not turn unchecked safety, integration or physical-device work into a pass.
 
@@ -81,6 +81,10 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   not prove metadata completeness or production readiness.
 - [ ] Finish timestamp, ownership, ACL/xattr, privileged metadata and
   hardlink interoperability across real target filesystems before production use.
+- [x] Harden the Properties POSIX permission editor against symlink-swap races
+  with descriptor-bound chmod. For owners lacking read permission, use
+  O_PATH and Linux fchmodat2 with AT_EMPTY_PATH where supported (rc.12).
+  Full ACL/ownership editing still requires separate work.
 - [x] Refuse staged publication if a source's identity, size, modification
   time, inode change time or mode changes during the copy; open regular
   sources without following

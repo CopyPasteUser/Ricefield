@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.0-rc.12 — race-safe POSIX permission edits (verification pending)
+
+- Close the symlink time-of-check/time-of-use gap in the existing Properties
+  permission editor. `chmod` now operates on a file descriptor that has been
+  opened with no symlink following, not on the potentially replaced pathname.
+- Support changing permissions on unreadable owned files through Linux O_PATH
+  and `fchmodat2(AT_EMPTY_PATH)` where the kernel supports it; reject symlinks,
+  special files and nonstandard permission bits.
+- Add deterministic regression coverage for renaming a selected file and
+  replacing its original name with a symlink to an unrelated file after open.
+- Hardware/NAS testing and the remaining 1.0 safety scope are still open.
+
 ## 1.0.0-rc.11 — native removable-drive unmount/eject (verification pending)
 
 - Associate mounted removable/USB filesystems with their UDisks2 device and
