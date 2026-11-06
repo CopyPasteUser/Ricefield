@@ -13,8 +13,9 @@
   tools on demand so the file surface receives most of the space.
 - Preserve shared file-operation safety, read-only remote locations, TOML
   composition, keyboard controls and desktop-owned window decorations.
-  Native GUI screenshots and physical Linux Mint acceptance are separate
-  verification gates.
+  The native GUI smoke passes with real screenshots of full, icon, More, split,
+  compact and narrow states (CI `42295370012`). Physical Linux Mint and
+  hardware/NAS acceptance remain separate verification gates.
 
 ## Unreleased — Frutiger Aero · Blue Skies Aqua shell
 

@@ -21,9 +21,10 @@ performance, Linux integration, then visual polish.
   available on demand without crowding default Finder.
 - [x] Preserve Linux remote write guards and desktop/RiceBowl window
   decoration ownership. Avoid proprietary Apple artwork and fake iCloud/AirDrop.
-- [ ] Inspect native GUI smoke captures for full, icon view, More menu, split,
-  compact and narrow layouts, then publish unedited screenshots to the
-  README/gallery. The GUI smoke clicks icon view and More controls explicitly.
+- [x] Inspect and publish six unedited native GUI captures for full, icon view,
+  More menu, split, compact and narrow layouts. The GUI smoke explicitly clicks
+  the Finder icon-view and More controls; Rust checks, release build and all
+  seven-theme GUI smoke tests passed on CI run `42295370012` (`46530bb`).
 - [ ] Verify keyboard, interaction, network mounts, scaling, accessibility
   and visual fidelity on the owner's Linux Mint hardware.
 
