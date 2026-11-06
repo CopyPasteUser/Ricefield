@@ -9,6 +9,21 @@ Thunar for supported workflows. Keep Thunar installed until real Linux Mint
 acceptance passes. Prioritize data integrity, functionality, stability,
 performance, Linux integration, then visual polish.
 
+### Windows 7 · Aero shell fidelity
+
+- [x] Dedicated breadcrumb address/search row, history, Ctrl+L path editing,
+  responsive compact variant and no RiceField-owned window decoration.
+- [x] Explorer-like Organize/Share/New folder/View command bar, keyboard-safe
+  actions, Favorites, Libraries, Computer/network sidebar and bottom details.
+- [x] Native sortable Name/Date modified/Type/Size columns and original
+  layered vector icons; preserve all core file operations and custom TOML.
+- [x] Inspect actual Xvfb screenshots for full/compact/narrow/split layouts,
+  then update `docs/screenshots/win7*.png` from a successful GUI smoke run.
+- [ ] Check icon proportions, typography, focus states, scrolling, search,
+  selection and native window-decoration integration on Linux Mint in person.
+- [ ] Historical pixel-matching against a licensed visual reference: the
+  current original-assets UI is inspired by Windows 7, not a certified 1:1 copy.
+
 ## Baseline: v0.2.0 (code-level inventory)
 
 Implemented: Rust/egui application, seven bundled theme profiles, tabs,

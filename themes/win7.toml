@@ -3,23 +3,23 @@ name = "Windows 7 · Aero"
 layout = "aero"
 schema_version = 1
 [palette]
-background = "#eaf4fb"
-chrome = "#b7d8ef"
-panel = "#f8fcff"
-sidebar = "#e8f2f9"
-text = "#193147"
-muted = "#536b80"
-accent = "#176ab7"
-selection = "#c6e6fa"
-border = "#8db6d2"
-folder = "#f2c45d"
-file = "#78b1d7"
+background = "#e5edf5"
+chrome = "#c9dfed"
+panel = "#ffffff"
+sidebar = "#f3f8fc"
+text = "#202e3a"
+muted = "#607283"
+accent = "#1766a6"
+selection = "#c6e6fb"
+border = "#9fb8cd"
+folder = "#e8b94e"
+file = "#6ba7d2"
 [metrics]
-rounding = 5
-row_height = 31
+rounding = 3
+row_height = 28
 tile_width = 120
-sidebar_width = 216
-icon_size = 25
+sidebar_width = 210
+icon_size = 27
 
 [shell]
 kind = "aero"

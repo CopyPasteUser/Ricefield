@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased — Windows 7 Aero Explorer shell
+
+- Give the Aero theme a dedicated navigation row with Linux-safe, clickable
+  breadcrumb parents, editable address via Ctrl+L, navigation history, search
+  scope options and responsive narrow-window wrapping.
+- Replace the generic action strip with functional Organize, Open, Share,
+  Favorites, New folder, View and Preview controls. Keep the advanced file,
+  archive, filtering and theme tools reachable without cluttering Explorer.
+- Bring the sidebar, details-view headers, file-cell metadata, original vector
+  file/folder artwork and selection details into a coherent Windows 7-inspired
+  layout. Keep decorations owned by the window manager / RiceBowl.
+- Preserve TOML recomposition of the Aero shell and custom sidebar append
+  compatibility; test real clickable breadcrumb destinations and default
+  section ordering. Visual acceptance on physical Linux remains pending.
+- Refresh the README hero and screenshot gallery with unedited Windows 7 Aero
+  GUI smoke captures (full window, split view, compact and narrow layouts).
+- Install only required Xvfb/ImageMagick CI packages: omit optional
+  Ghostscript/font recommendations that timed out on hosted Ubuntu mirrors.
+
 ## 1.0.0-rc.17 — atomic desktop icon upgrades and bounded release setup (verification pending)
 
 - Publish the desktop SVG icon only after a same-directory staging copy is

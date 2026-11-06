@@ -37,10 +37,18 @@ click_at() {
   xdotool click 1
   sleep 0.3
 }
-click_at 660 180 # Filters
-click_at 750 330 # Custom pattern and ranges
+# The Aero shell intentionally keeps advanced tools hidden until requested.
+# Exercise that user-facing disclosure before opening the editable Filters
+# menu. The old positions assumed the now-removed generic Explorer toolbar.
+click_at 680 55  # More tools (Aero command strip)
+click_at 649 140 # Filters in the revealed tools row (above the column headings)
+import -window "$window" screenshots/filters-menu-open.png
+click_at 750 290 # Custom pattern and ranges (inside the header hitbox)
 import -window "$window" screenshots/filters-invalid-regex.png
-click_at 750 443 # Filename regex
+# The invalid-regex message is rendered below the second text field. This
+# coordinate was verified against the full 1120x720 Xvfb failure capture;
+# y=390 lands on the regex label, not in its editable area.
+click_at 750 403 # Filename regex text field
 xdotool key ctrl+a
 xdotool type --delay 20 '42'
 for ((attempt = 0; attempt < 50; attempt++)); do
@@ -51,6 +59,14 @@ for ((attempt = 0; attempt < 50; attempt++)); do
 done
 if ! grep -Fqx 'filter_name_regex = "42"' "$fixture/config/rice-explorer/config.toml"; then
   import -window "$window" screenshots/filters-edit-failed.png
+  if [[ ${CI:-} == true ]] && command -v convert >/dev/null 2>&1; then
+    # Keep a small visual diagnostic in CI logs when artifact download is
+    # unavailable; never print fixture contents or user paths.
+    echo 'FILTER_DEBUG_PNG_BEGIN'
+    convert screenshots/filters-edit-failed.png -resize 560x png:- | base64 -w 80
+    echo
+    echo 'FILTER_DEBUG_PNG_END'
+  fi
   echo 'Custom filter input did not accept and persist editing' >&2
   exit 1
 fi

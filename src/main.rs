@@ -1,3 +1,4 @@
+mod aero;
 mod app;
 mod archive;
 mod benchmark;
