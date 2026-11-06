@@ -43,9 +43,9 @@ click_at() {
 click_at 680 55  # More tools (Aero command strip)
 click_at 649 140 # Filters in the revealed tools row (above the column headings)
 import -window "$window" screenshots/filters-menu-open.png
-click_at 750 305 # Custom pattern and ranges
+click_at 750 290 # Custom pattern and ranges (inside the header hitbox)
 import -window "$window" screenshots/filters-invalid-regex.png
-click_at 750 418 # Filename regex
+click_at 750 390 # Filename regex edit box after expanding the panel
 xdotool key ctrl+a
 xdotool type --delay 20 '42'
 for ((attempt = 0; attempt < 50; attempt++)); do
