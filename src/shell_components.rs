@@ -401,6 +401,18 @@ pub fn command_bar(ui: &mut egui::Ui, theme: &Theme, has_selection: bool) -> Opt
     action
 }
 
+/// A compact navigation-tree row; selected/hover/focus states remain native
+/// egui buttons so keyboard and screen-reader behavior is preserved.
+pub fn aero_sidebar_link(ui: &mut egui::Ui, label: &str, selected: bool) -> bool {
+    ui.add_sized(
+        [ui.available_width(), 26.0],
+        egui::Button::new(egui::RichText::new(format!("    {label}")).size(12.5))
+            .selected(selected)
+            .frame(selected),
+    )
+    .clicked()
+}
+
 pub fn sidebar_section(
     ui: &mut egui::Ui,
     theme: &Theme,
@@ -472,11 +484,20 @@ pub fn sidebar_section(
         }
         return;
     }
-    let title = match section {
-        SidebarSection::Tasks => "FILE TASKS",
-        SidebarSection::Places => "PLACES",
-        SidebarSection::Favorites => "FAVORITES",
-        SidebarSection::Volumes => "VOLUMES",
+    let title = if theme.shell_kind() == ShellKind::Aero {
+        match section {
+            SidebarSection::Tasks => "File tasks",
+            SidebarSection::Places => "Libraries",
+            SidebarSection::Favorites => "Favorites",
+            SidebarSection::Volumes => "Computer & Network",
+        }
+    } else {
+        match section {
+            SidebarSection::Tasks => "FILE TASKS",
+            SidebarSection::Places => "PLACES",
+            SidebarSection::Favorites => "FAVORITES",
+            SidebarSection::Volumes => "VOLUMES",
+        }
     };
     if theme.sidebar_section_mode() == SidebarSectionMode::Collapsible {
         egui::CollapsingHeader::new(title)
@@ -486,9 +507,17 @@ pub fn sidebar_section(
     } else {
         ui.label(
             egui::RichText::new(title)
-                .small()
+                .size(if theme.shell_kind() == ShellKind::Aero {
+                    12.5
+                } else {
+                    10.5
+                })
                 .strong()
-                .color(theme.palette.muted()),
+                .color(if theme.shell_kind() == ShellKind::Aero {
+                    theme.palette.text()
+                } else {
+                    theme.palette.muted()
+                }),
         );
         contents(ui);
     }

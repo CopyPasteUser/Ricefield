@@ -28,6 +28,8 @@ A customizable Linux file manager built with **Rust + egui**, designed to work o
 - **Attach USB storage:** discover removable filesystems; explicitly mount, safely unmount, eject or power off eligible USB drives through UDisks2/Polkit.
 - **Rice it:** seven distinctive shells (98, XP, 7, 10, Frutiger Aero, ChromeOS and macOS) plus editable layout, colors and density.
 
+**Windows 7 · Aero:** [Explorer-style shell](docs/screenshots/win7.png) with clickable breadcrumb paths, an Organize/Share command strip, Favorites/Libraries/Computer navigation, aligned details columns and a bottom selection-details pane. File operations, network safety and window decorations remain shared with the core and desktop window manager.
+
 File operations remain independent of the selected visual shell.
 
 ## Install

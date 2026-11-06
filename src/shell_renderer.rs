@@ -64,6 +64,46 @@ pub fn sort_header(
     descending: bool,
 ) -> Option<&'static str> {
     let mut change_sort = None;
+    if theme.shell_kind() == ShellKind::Aero {
+        // The details columns must line up with the actual row renderer.
+        // Below 470 points, show just Name instead of clipping tiny headers.
+        let available = ui.available_width();
+        let compact = available < 470.0;
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            for (key, label, portion) in [
+                ("name", "Name", 0.50),
+                ("modified", "Date modified", 0.20),
+                ("type", "Type", 0.17),
+                ("size", "Size", 0.13),
+            ] {
+                if compact && key != "name" {
+                    continue;
+                }
+                let width = if compact {
+                    available
+                } else {
+                    available * portion
+                };
+                let arrow = if sort_by == key {
+                    if descending { " v" } else { " ^" }
+                } else {
+                    ""
+                };
+                let response = ui.add_sized(
+                    [width.max(1.0), 25.0],
+                    egui::Button::new(format!("{label}{arrow}"))
+                        .fill(Color32::from_rgb(247, 250, 253))
+                        .stroke(Stroke::new(0.6, Color32::from_rgb(207, 219, 230)))
+                        .corner_radius(egui::CornerRadius::ZERO),
+                );
+                if response.on_hover_text(format!("Sort by {label}")).clicked() {
+                    change_sort = Some(key);
+                }
+            }
+        });
+        return change_sort;
+    }
     let luna = theme.shell_kind() == ShellKind::Luna;
     let widths = [0.49, 0.13, 0.16, 0.22];
     let available = ui.available_width();
@@ -136,14 +176,28 @@ fn paint_file_cell(
     let painter = painter.with_clip_rect(rect);
     if visual.selected || visual.hovered {
         painter.rect_filled(
-            rect.shrink(2.0),
+            rect.shrink(if theme.shell_kind() == ShellKind::Aero {
+                0.5
+            } else {
+                2.0
+            }),
             theme.metrics.rounding,
             if visual.selected {
                 theme.palette.selection()
+            } else if theme.shell_kind() == ShellKind::Aero {
+                Color32::from_rgb(232, 246, 254)
             } else {
                 theme.palette.background()
             },
         );
+        if theme.shell_kind() == ShellKind::Aero {
+            painter.rect_stroke(
+                rect.shrink(1.0),
+                2,
+                Stroke::new(1.0, Color32::from_rgb(147, 199, 226)),
+                egui::StrokeKind::Inside,
+            );
+        }
     }
     let icon_size = theme.metrics.icon_size;
     let icon_area = if visual.grid {
@@ -174,11 +228,18 @@ fn paint_file_cell(
     } else {
         paint_file_icon(&painter, icon_area, file, theme);
     }
+    let aero_list = theme.shell_kind() == ShellKind::Aero && !visual.grid;
+    let compact_aero = aero_list && rect.width() < 470.0;
     let compact_luna = theme.shell_kind() == ShellKind::Luna && rect.width() < 420.0;
     let name = if visual.grid {
         shorten(&file.name, 22)
-    } else if compact_luna {
+    } else if compact_luna || compact_aero {
         shorten(&file.name, ((rect.width() - 52.0) / 7.0).max(1.0) as usize)
+    } else if aero_list {
+        shorten(
+            &file.name,
+            ((rect.width() * 0.50 - 51.0) / 7.0).max(1.0) as usize,
+        )
     } else {
         shorten(&file.name, ((rect.width() * 0.53) / 7.3) as usize)
     };
@@ -200,7 +261,32 @@ fn paint_file_cell(
             font,
             foreground,
         );
-        if theme.shell_kind() == ShellKind::Luna && !compact_luna {
+        if aero_list && !compact_aero {
+            for (offset, portion, value) in [
+                (0.50, 0.20, filesystem::age(file.modified)),
+                (0.70, 0.17, file.kind().to_owned()),
+                (
+                    0.87,
+                    0.13,
+                    if file.is_dir {
+                        String::new()
+                    } else {
+                        filesystem::human_size(file.size)
+                    },
+                ),
+            ] {
+                painter.text(
+                    Pos2::new(rect.left() + rect.width() * offset + 7.0, rect.center().y),
+                    Align2::LEFT_CENTER,
+                    shorten(
+                        &value,
+                        ((rect.width() * portion - 14.0) / 6.7).max(1.0) as usize,
+                    ),
+                    FontId::proportional(11.8),
+                    theme.palette.muted(),
+                );
+            }
+        } else if theme.shell_kind() == ShellKind::Luna && !compact_luna {
             let size = if file.is_dir {
                 String::new()
             } else {
@@ -249,6 +335,10 @@ fn paint_file_icon(painter: &Painter, rect: Rect, file: &Entry, theme: &Theme) {
         paint_luna_file_icon(painter, rect, file);
         return;
     }
+    if theme.shell_kind() == ShellKind::Aero {
+        paint_aero_file_icon(painter, rect, file);
+        return;
+    }
     let round: u8 = if theme.layout == Layout::Classic {
         0
     } else {
@@ -293,6 +383,84 @@ fn paint_file_icon(painter: &Painter, rect: Rect, file: &Entry, theme: &Theme) {
             Align2::CENTER_CENTER,
             short,
             FontId::proportional((rect.width() * 0.29).clamp(8.0, 13.0)),
+            Color32::WHITE,
+        );
+    }
+}
+
+/// Original, layered vector artwork: recognizable Aero-era depth without
+/// distributing any Windows icon assets or relying on external icon packs.
+fn paint_aero_file_icon(painter: &Painter, rect: Rect, file: &Entry) {
+    let s = rect.width().min(rect.height());
+    let p = |x: f32, y: f32| Pos2::new(rect.left() + x * s, rect.top() + y * s);
+    if file.is_dir {
+        painter.rect_filled(
+            Rect::from_min_max(p(0.10, 0.23), p(0.53, 0.45)),
+            2,
+            Color32::from_rgb(203, 147, 48),
+        );
+        painter.rect_filled(
+            Rect::from_min_max(p(0.13, 0.28), p(0.91, 0.78)),
+            2,
+            Color32::from_rgb(231, 177, 67),
+        );
+        painter.rect_filled(
+            Rect::from_min_max(p(0.17, 0.35), p(0.86, 0.66)),
+            1,
+            Color32::from_rgb(255, 238, 164),
+        );
+        painter.rect_filled(
+            Rect::from_min_max(p(0.07, 0.43), p(0.93, 0.84)),
+            2,
+            Color32::from_rgb(244, 197, 89),
+        );
+        painter.line_segment(
+            [p(0.10, 0.47), p(0.91, 0.47)],
+            Stroke::new(1.0, Color32::from_rgb(255, 241, 176)),
+        );
+        painter.line_segment(
+            [p(0.10, 0.81), p(0.91, 0.81)],
+            Stroke::new(1.0, Color32::from_rgb(190, 137, 43)),
+        );
+    } else {
+        let paper = Rect::from_min_max(p(0.20, 0.07), p(0.79, 0.91));
+        painter.rect_filled(
+            paper.translate(Vec2::new(1.0, 1.0)),
+            1,
+            Color32::from_rgb(147, 177, 193),
+        );
+        painter.rect_filled(paper, 1, Color32::WHITE);
+        painter.rect_stroke(
+            paper,
+            1,
+            Stroke::new(1.0, Color32::from_rgb(98, 142, 179)),
+            egui::StrokeKind::Inside,
+        );
+        painter.add(egui::Shape::convex_polygon(
+            vec![p(0.60, 0.07), p(0.79, 0.27), p(0.60, 0.27)],
+            Color32::from_rgb(200, 229, 249),
+            Stroke::NONE,
+        ));
+        for y in [0.39, 0.49, 0.59] {
+            painter.line_segment(
+                [p(0.28, y), p(0.71, y)],
+                Stroke::new(1.0, Color32::from_rgb(153, 186, 208)),
+            );
+        }
+        let (band, symbol) = match file.kind() {
+            "Image" => (Color32::from_rgb(65, 148, 100), "IMG"),
+            "Audio" => (Color32::from_rgb(151, 105, 181), "AUD"),
+            "Video" => (Color32::from_rgb(73, 126, 178), "VID"),
+            "Archive" => (Color32::from_rgb(196, 129, 49), "ZIP"),
+            "PDF" => (Color32::from_rgb(178, 62, 59), "PDF"),
+            _ => (Color32::from_rgb(65, 142, 197), ""),
+        };
+        painter.rect_filled(Rect::from_min_max(p(0.18, 0.70), p(0.63, 0.86)), 1, band);
+        painter.text(
+            p(0.40, 0.78),
+            Align2::CENTER_CENTER,
+            symbol,
+            FontId::proportional((s * 0.23).max(6.0)),
             Color32::WHITE,
         );
     }

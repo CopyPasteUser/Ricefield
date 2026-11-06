@@ -3,29 +3,29 @@ version: alpha
 name: "RiceExplorer"
 description: "A native file explorer whose interface shifts with the user's desktop rice while file operations stay consistent."
 colors:
-  primary: "#176ab7"
-  background: "#eaf4fb"
-  chrome: "#b7d8ef"
-  panel: "#f8fcff"
-  sidebar: "#e8f2f9"
-  text: "#193147"
-  muted: "#536b80"
-  selection: "#c6e6fa"
-  border: "#8db6d2"
-  folder: "#f2c45d"
-  file: "#78b1d7"
+  primary: "#1766a6"
+  background: "#e5edf5"
+  chrome: "#c9dfed"
+  panel: "#ffffff"
+  sidebar: "#f3f8fc"
+  text: "#202e3a"
+  muted: "#607283"
+  selection: "#c6e6fb"
+  border: "#9fb8cd"
+  folder: "#e8b94e"
+  file: "#6ba7d2"
 typography:
   sans:
     fontFamily: "system-ui, sans-serif"
   mono:
     fontFamily: "ui-monospace, monospace"
 rounded:
-  DEFAULT: "5px"
+  DEFAULT: "3px"
   square: "0px"
   modern: "12px"
 spacing:
-  list-row: "31px"
-  sidebar-width: "216px"
+  list-row: "28px"
+  sidebar-width: "210px"
 components:
   toolbar: {}
   tab: {}

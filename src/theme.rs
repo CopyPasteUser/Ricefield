@@ -240,11 +240,19 @@ impl Theme {
 
     pub fn sidebar_sections(&self) -> Vec<SidebarSection> {
         self.shell.sidebar.sections.clone().unwrap_or_else(|| {
-            vec![
-                SidebarSection::Places,
-                SidebarSection::Favorites,
-                SidebarSection::Volumes,
-            ]
+            if self.shell_kind() == ShellKind::Aero {
+                vec![
+                    SidebarSection::Favorites,
+                    SidebarSection::Places,
+                    SidebarSection::Volumes,
+                ]
+            } else {
+                vec![
+                    SidebarSection::Places,
+                    SidebarSection::Favorites,
+                    SidebarSection::Volumes,
+                ]
+            }
         })
     }
 
@@ -567,6 +575,14 @@ mod tests {
     #[test]
     fn custom_sidebar_and_status_bar_are_validated() {
         let source = include_str!("../themes/win7.toml");
+        assert_eq!(
+            Theme::builtin("win7").unwrap().sidebar_sections(),
+            vec![
+                SidebarSection::Favorites,
+                SidebarSection::Places,
+                SidebarSection::Volumes
+            ]
+        );
         let with_sidebar = format!(
             "{source}\n[shell.sidebar]\nposition = 'right'\nwidth = 280\nsections = ['volumes', 'places']\n"
         );

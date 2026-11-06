@@ -1060,6 +1060,8 @@ pub struct Explorer {
     dirty_config: bool,
     focus_address: bool,
     focus_search: bool,
+    aero_edit_address: bool,
+    aero_advanced_open: bool,
 }
 
 impl Explorer {
@@ -1295,6 +1297,8 @@ impl Explorer {
             dirty_config: false,
             focus_address: false,
             focus_search: false,
+            aero_edit_address: false,
+            aero_advanced_open: false,
         };
         if startup_locations.is_empty() {
             explorer.new_tab(config::home());
@@ -4440,12 +4444,20 @@ impl Explorer {
                     .fill(theme.palette.chrome())
                     .inner_margin(if theme.shell_kind() == ShellKind::Luna {
                         egui::Margin::ZERO
+                    } else if theme.shell_kind() == ShellKind::Aero {
+                        egui::Margin::symmetric(8, 5)
                     } else {
                         egui::Margin::same(7)
                     }),
             )
             .show(ui, |ui| {
                 for (index, component) in components.iter().enumerate() {
+                    if theme.shell_kind() == ShellKind::Aero
+                        && *component == ChromeComponent::Tabs
+                        && self.tabs.len() == 1
+                    {
+                        continue;
+                    }
                     if theme.shell_kind() == ShellKind::Luna {
                         if *component == ChromeComponent::Tabs && self.tabs.len() == 1 {
                             continue;
@@ -4470,7 +4482,7 @@ impl Explorer {
                             });
                         continue;
                     }
-                    if index != 0 {
+                    if index != 0 && theme.shell_kind() != ShellKind::Aero {
                         ui.add_space(3.0);
                     }
                     match component {
@@ -4629,6 +4641,10 @@ impl Explorer {
     }
 
     fn command_bar(&mut self, ui: &mut egui::Ui, theme: &Theme) {
+        if theme.shell_kind() == ShellKind::Aero {
+            self.aero_command_bar(ui);
+            return;
+        }
         let has_selection = !self.current().selected.is_empty();
         match shell_components::command_bar(ui, theme, has_selection) {
             Some(ToolbarAction::NewFolder) => self.file_command(FileCommand::NewFolder),
@@ -4741,6 +4757,10 @@ impl Explorer {
             self.luna_navigation_bar(ui);
             return;
         }
+        if self.theme.shell_kind() == ShellKind::Aero {
+            self.aero_navigation_bar(ui);
+            return;
+        }
         if ui.available_width() < 800.0 {
             // Give address/search their own row on narrow windows. Neither
             // control may push the path field or Refresh off-screen.
@@ -4756,6 +4776,239 @@ impl Explorer {
                 self.navigation_search(ui, false);
             });
         }
+    }
+
+    fn aero_navigation_bar(&mut self, ui: &mut egui::Ui) {
+        let narrow = ui.available_width() < 760.0;
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let back = egui::Button::new(egui::RichText::new("<").strong().size(16.0))
+                .fill(Color32::from_rgb(223, 244, 252))
+                .stroke(egui::Stroke::new(1.0, Color32::from_rgb(110, 157, 183)))
+                .corner_radius(egui::CornerRadius::same(14));
+            if ui
+                .add_enabled(!self.current().back.is_empty(), back)
+                .on_hover_text("Back (Alt+Left)")
+                .clicked()
+            {
+                self.history(true);
+            }
+            let forward = egui::Button::new(egui::RichText::new(">").strong().size(16.0))
+                .fill(Color32::from_rgb(223, 244, 252))
+                .stroke(egui::Stroke::new(1.0, Color32::from_rgb(110, 157, 183)))
+                .corner_radius(egui::CornerRadius::same(14));
+            if ui
+                .add_enabled(!self.current().forward.is_empty(), forward)
+                .on_hover_text("Forward (Alt+Right)")
+                .clicked()
+            {
+                self.history(false);
+            }
+            if ui
+                .small_button("Up")
+                .on_hover_text("Parent folder (Alt+Up)")
+                .clicked()
+            {
+                self.parent();
+            }
+            let width = if narrow {
+                ui.available_width().max(100.0)
+            } else {
+                (ui.available_width() - 260.0).max(120.0)
+            };
+            self.aero_breadcrumb_bar(ui, width);
+            if !narrow {
+                self.navigation_search(ui, false);
+            }
+        });
+        if narrow {
+            ui.horizontal(|ui| self.navigation_search(ui, true));
+        }
+    }
+
+    fn aero_breadcrumb_bar(&mut self, ui: &mut egui::Ui, width: f32) {
+        if self.focus_address {
+            self.aero_edit_address = true;
+        }
+        let remote = self.current().remote_uri.is_some();
+        egui::Frame::new()
+            .fill(Color32::WHITE)
+            .stroke(egui::Stroke::new(1.0, Color32::from_rgb(121, 161, 188)))
+            .corner_radius(2)
+            .inner_margin(egui::Margin::symmetric(4, 2))
+            .show(ui, |ui| {
+                ui.set_width((width - 10.0).max(90.0));
+                ui.set_min_height(24.0);
+                if self.aero_edit_address || remote {
+                    let edit = ui.add_sized(
+                        [(width - 17.0).max(78.0), 23.0],
+                        egui::TextEdit::singleline(&mut self.current_mut().address)
+                            .frame(egui::Frame::NONE)
+                            .hint_text("Address (Ctrl+L)"),
+                    );
+                    if self.focus_address {
+                        ui.memory_mut(|memory| memory.request_focus(edit.id));
+                        self.focus_address = false;
+                    }
+                    let enter = ui.input(|input| input.key_pressed(Key::Enter));
+                    let escape = ui.input(|input| input.key_pressed(Key::Escape));
+                    if edit.lost_focus() || escape {
+                        if enter && !escape {
+                            let address = self.current().address.clone();
+                            self.navigate_address(address);
+                        } else {
+                            // Editing the address is not navigation until Enter.
+                            let address = self
+                                .current()
+                                .remote_uri
+                                .clone()
+                                .unwrap_or_else(|| self.current().path.display().to_string());
+                            self.current_mut().address = address;
+                        }
+                        self.aero_edit_address = false;
+                    }
+                } else {
+                    let crumbs = crate::aero::breadcrumbs(&self.current().path, &config::home());
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 3.0;
+                        ui.allocate_ui_with_layout(
+                            egui::vec2((width - 52.0).max(48.0), 23.0),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                egui::ScrollArea::horizontal()
+                                    .id_salt("aero-address-crumbs")
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 1.0;
+                                            for crumb in crumbs {
+                                                if ui
+                                                    .add(
+                                                        egui::Button::new(
+                                                            egui::RichText::new(format!(
+                                                                "{}  >",
+                                                                crumb.label
+                                                            ))
+                                                            .size(12.0)
+                                                            .color(Color32::from_rgb(39, 71, 98)),
+                                                        )
+                                                        .frame(false),
+                                                    )
+                                                    .on_hover_text(crumb.path.display().to_string())
+                                                    .clicked()
+                                                {
+                                                    self.navigate(crumb.path);
+                                                }
+                                            }
+                                        });
+                                    });
+                            },
+                        );
+                        if ui
+                            .small_button("...")
+                            .on_hover_text("Type a path (Ctrl+L)")
+                            .clicked()
+                        {
+                            self.aero_edit_address = true;
+                            self.focus_address = true;
+                        }
+                    });
+                }
+            });
+    }
+
+    fn aero_command_bar(&mut self, ui: &mut egui::Ui) {
+        let local = self.current().remote_uri.is_none();
+        let has_selection = local && !self.current().selected.is_empty();
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 7.0;
+            ui.menu_button("Organize  v", |ui| {
+                if ui.add_enabled(local, egui::Button::new("New folder  Ctrl+N")).clicked() {
+                    self.file_command(FileCommand::NewFolder);
+                    ui.close();
+                }
+                ui.separator();
+                for (label, enabled, command) in [
+                    ("Cut  Ctrl+X", has_selection, FileCommand::Cut),
+                    ("Copy  Ctrl+C", has_selection, FileCommand::Copy),
+                    ("Paste  Ctrl+V", local, FileCommand::Paste),
+                    ("Rename  F2", has_selection, FileCommand::Rename),
+                    ("Move to Trash  Delete", has_selection, FileCommand::Trash),
+                    ("Properties  Alt+Enter", has_selection, FileCommand::Properties),
+                ] {
+                    if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+                        self.file_command(command);
+                        ui.close();
+                    }
+                }
+            });
+            if ui.add_enabled(has_selection, egui::Button::new("Open")).clicked()
+                && let Some(entry) = self.current().entries.iter()
+                    .find(|entry| self.current().selected.contains(&entry.path)).cloned()
+            {
+                self.activate(&entry);
+            }
+            ui.menu_button("Share  v", |ui| {
+                if ui.add_enabled(has_selection, egui::Button::new("Copy file path"))
+                    .on_hover_text("Copy the selected Linux path for sharing")
+                    .clicked()
+                {
+                    self.copy_selected_paths(ui.ctx());
+                    ui.close();
+                }
+                if ui.add_enabled(has_selection, egui::Button::new("Compress selected…"))
+                    .on_hover_text("Create a local archive without overwriting existing files")
+                    .clicked()
+                {
+                    self.open_archive_create();
+                    ui.close();
+                }
+            });
+            if ui.add_enabled(local, egui::Button::new("New folder")).clicked() {
+                self.file_command(FileCommand::NewFolder);
+            }
+            if ui.add_enabled(local, egui::Button::new("Add to favorites")).clicked() {
+                self.toggle_bookmark();
+            }
+            ui.separator();
+            ui.menu_button("Views  v", |ui| {
+                for (title, view) in [("Details", "list"), ("Large icons", "grid")] {
+                    if ui.selectable_label(self.config.view == view, title).clicked() {
+                        self.config.view = view.into();
+                        self.dirty_config = true;
+                        ui.close();
+                    }
+                }
+                ui.separator();
+                if ui.checkbox(&mut self.config.show_sidebar, "Navigation pane").changed() {
+                    self.dirty_config = true;
+                }
+                if ui.button("Toggle split view  F3").clicked() {
+                    self.toggle_split_view();
+                    ui.close();
+                }
+            });
+            if ui.add_enabled(has_selection, egui::Button::new("Preview pane")).clicked()
+                && let Some(path) = self.selected_paths().first().cloned()
+            {
+                if self.preview_path.as_ref() == Some(&path) {
+                    self.preview_path = None;
+                    self.preview_content = None;
+                } else {
+                    self.open_preview(path);
+                }
+            }
+            if ui.button(if self.aero_advanced_open { "Hide tools" } else { "More tools" })
+                .on_hover_text("Archives, filters, saved searches, session and theme settings")
+                .clicked()
+            {
+                self.aero_advanced_open = !self.aero_advanced_open;
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("?").on_hover_text("Windows 7-inspired shell · RiceField keyboard shortcuts in --help").clicked() {
+                    self.status = Some(("RiceField: Ctrl+L address · Ctrl+F search · Ctrl+T new tab · F3 split · Alt+Enter properties".into(), false));
+                }
+            });
+        });
     }
 
     fn luna_navigation_bar(&mut self, ui: &mut egui::Ui) {
@@ -4914,7 +5167,14 @@ impl Explorer {
     }
 
     fn navigation_search(&mut self, ui: &mut egui::Ui, compact: bool) {
-        let search_width = if compact {
+        let aero = self.theme.shell_kind() == ShellKind::Aero;
+        let search_width = if aero {
+            if compact {
+                (ui.available_width() - 112.0).max(90.0)
+            } else {
+                158.0
+            }
+        } else if compact {
             (ui.available_width() - 220.0).max(80.0)
         } else if ui.available_width() < 300.0 {
             90.0
@@ -4926,7 +5186,11 @@ impl Explorer {
             true,
             egui::TextEdit::singleline(&mut self.current_mut().query)
                 .desired_width(search_width)
-                .hint_text("Search here… (Ctrl+F)"),
+                .hint_text(if aero {
+                    "Search this folder"
+                } else {
+                    "Search here… (Ctrl+F)"
+                }),
         );
         if self.focus_search {
             ui.memory_mut(|memory| memory.request_focus(search.id));
@@ -4953,6 +5217,17 @@ impl Explorer {
             }
             ui.memory_mut(|memory| memory.request_focus(search.id));
         }
+        if aero {
+            ui.menu_button("Options", |ui| {
+                self.search_scope_buttons(ui);
+            });
+        } else {
+            self.search_scope_buttons(ui);
+        }
+    }
+
+    fn search_scope_buttons(&mut self, ui: &mut egui::Ui) {
+        let remote = self.current().remote_uri.is_some();
         if ui
             .add_enabled(
                 true,
@@ -5029,7 +5304,7 @@ impl Explorer {
                     let sections = theme.sidebar_sections();
                     for (index, section) in sections.into_iter().enumerate() {
                         if index > 0 {
-                            if theme.shell_kind() == ShellKind::Luna {
+                            if matches!(theme.shell_kind(), ShellKind::Luna | ShellKind::Aero) {
                                 ui.add_space(9.0);
                             } else {
                                 ui.add_space(14.0);
@@ -5066,6 +5341,28 @@ impl Explorer {
                                             self.start_discovery();
                                         }
                                     }
+                                    return;
+                                }
+                                if theme.shell_kind() == ShellKind::Aero {
+                                    for (name, path) in self.places.clone() {
+                                        if !matches!(
+                                            name,
+                                            "Documents" | "Music" | "Pictures" | "Videos"
+                                        ) {
+                                            continue;
+                                        }
+                                        if shell_components::aero_sidebar_link(
+                                            ui,
+                                            name,
+                                            self.current().path == path,
+                                        ) {
+                                            self.navigate(path);
+                                        }
+                                    }
+                                    // The folder tree stays available for directories that
+                                    // are not one of the conventional user libraries.
+                                    ui.add_space(4.0);
+                                    ui.collapsing("Folders", |ui| self.folder_tree_root(ui));
                                     return;
                                 }
                                 ui.add_space(8.0);
@@ -5121,6 +5418,46 @@ impl Explorer {
                                     }
                                     return;
                                 }
+                                if theme.shell_kind() == ShellKind::Aero {
+                                    let home = config::home();
+                                    if shell_components::aero_sidebar_link(
+                                        ui,
+                                        "Home",
+                                        self.current().path == home,
+                                    ) {
+                                        self.navigate(home.clone());
+                                    }
+                                    for name in ["Desktop", "Downloads"] {
+                                        let path = home.join(name);
+                                        if self.places.iter().any(|(_, existing)| *existing == path)
+                                            && shell_components::aero_sidebar_link(
+                                                ui,
+                                                name,
+                                                self.current().path == path,
+                                            )
+                                        {
+                                            self.navigate(path);
+                                        }
+                                    }
+                                    for path in self.config.bookmarks.clone() {
+                                        let label = path
+                                            .file_name()
+                                            .unwrap_or_default()
+                                            .to_string_lossy()
+                                            .into_owned();
+                                        if shell_components::aero_sidebar_link(
+                                            ui,
+                                            &label,
+                                            self.current().path == path,
+                                        ) {
+                                            self.navigate(path);
+                                        }
+                                    }
+                                    if ui.small_button("Add current folder").clicked() {
+                                        self.toggle_bookmark();
+                                    }
+                                    return;
+                                }
                                 for path in self.config.bookmarks.clone() {
                                     let label =
                                         path.file_name().unwrap_or_default().to_string_lossy();
@@ -5141,7 +5478,14 @@ impl Explorer {
                             }
                             SidebarSection::Volumes => {
                                 let luna = theme.shell_kind() == ShellKind::Luna;
-                                let discover = if luna {
+                                let aero = theme.shell_kind() == ShellKind::Aero;
+                                let discover = if aero {
+                                    shell_components::aero_sidebar_link(
+                                        ui,
+                                        "Network · discover",
+                                        false,
+                                    )
+                                } else if luna {
                                     shell_components::luna_link(
                                         ui,
                                         "Discover network storage",
@@ -5157,7 +5501,13 @@ impl Explorer {
                                         self.start_discovery();
                                     }
                                 }
-                                let connect = if luna {
+                                let connect = if aero {
+                                    shell_components::aero_sidebar_link(
+                                        ui,
+                                        "Connect to network…",
+                                        false,
+                                    )
+                                } else if luna {
                                     shell_components::luna_link(
                                         ui,
                                         "Connect to network",
@@ -5244,7 +5594,11 @@ impl Explorer {
                                         continue;
                                     }
                                     if ui
-                                        .button(format!("Network favorite: {}", shorten(&uri, 27)))
+                                        .button(if aero {
+                                            format!("    {}", shorten(&uri, 24))
+                                        } else {
+                                            format!("Network favorite: {}", shorten(&uri, 27))
+                                        })
                                         .on_hover_text(&uri)
                                         .clicked()
                                     {
@@ -5274,9 +5628,14 @@ impl Explorer {
                                     };
                                     let response = ui
                                         .add_sized(
-                                            [ui.available_width(), 29.0],
-                                            egui::Button::new(label)
-                                                .selected(self.current().path == path),
+                                            [ui.available_width(), if aero { 26.0 } else { 29.0 }],
+                                            egui::Button::new(if aero {
+                                                format!("    {label}")
+                                            } else {
+                                                label
+                                            })
+                                            .selected(self.current().path == path)
+                                            .frame(!aero || self.current().path == path),
                                         )
                                         .on_hover_text(format!(
                                             "{}\nRight-click for mount actions",
@@ -5616,17 +5975,21 @@ impl Explorer {
             .frame(
                 egui::Frame::new()
                     .fill(theme.palette.panel())
-                    .inner_margin(egui::Margin::same(if theme.shell_kind() == ShellKind::Luna { 5 } else { 14 })),
+                    .inner_margin(egui::Margin::same(if matches!(theme.shell_kind(), ShellKind::Luna | ShellKind::Aero) { 5 } else { 14 })),
             )
             .show(ui, |ui| {
                 // The XP shell starts with the folder view, not two rows of
                 // modern commands. Advanced tools remain available via Tools
                 // -> Show RiceField tools, without losing any functionality.
-                let show_toolbox = theme.shell_kind() != ShellKind::Luna
+                let show_toolbox = if theme.shell_kind() == ShellKind::Aero {
+                    self.aero_advanced_open
+                } else {
+                    theme.shell_kind() != ShellKind::Luna
                     || shell_components::luna_panel_open(
                         ui.ctx(),
                         shell_components::LunaPanel::Advanced,
-                    );
+                    )
+                };
                 if show_toolbox {
                 ui.horizontal_wrapped(|ui| {
                     let title = self
@@ -6682,6 +7045,74 @@ impl Explorer {
                     .inner_margin(egui::Margin::symmetric(10, 5)),
             )
             .show(ui, |ui| {
+                if theme.shell_kind() == ShellKind::Aero {
+                    let chosen = self
+                        .current()
+                        .entries
+                        .iter()
+                        .find(|entry| self.current().selected.contains(&entry.path))
+                        .cloned();
+                    ui.horizontal(|ui| {
+                        let (title, detail) = if let Some(entry) = chosen {
+                            let title = entry.name.clone();
+                            let detail = format!(
+                                "{}    {}    Modified {}",
+                                entry.kind(),
+                                if entry.is_dir {
+                                    "File folder".to_owned()
+                                } else {
+                                    filesystem::human_size(entry.size)
+                                },
+                                filesystem::age(entry.modified)
+                            );
+                            (title, detail)
+                        } else if let Some(uri) = &self.current().remote_uri {
+                            (
+                                "Network location".into(),
+                                format!(
+                                    "{} network items · Read-only browser · {uri}",
+                                    self.current().remote_entries.len()
+                                ),
+                            )
+                        } else {
+                            let title = self
+                                .current()
+                                .path
+                                .file_name()
+                                .map(|name| name.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| "Computer".into());
+                            (
+                                title,
+                                format!(
+                                    "{} items · Choose an item to see its details",
+                                    self.current().visible.len()
+                                ),
+                            )
+                        };
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(34.0, 31.0), egui::Sense::hover());
+                        ui.painter().rect_filled(
+                            rect.shrink(3.0),
+                            3,
+                            Color32::from_rgb(125, 186, 222),
+                        );
+                        ui.painter().rect_stroke(
+                            rect.shrink(3.0),
+                            3,
+                            egui::Stroke::new(1.0, Color32::from_rgb(64, 124, 170)),
+                            egui::StrokeKind::Inside,
+                        );
+                        ui.vertical(|ui| {
+                            ui.label(egui::RichText::new(shorten(&title, 60)).strong().size(12.5));
+                            ui.label(
+                                egui::RichText::new(detail)
+                                    .size(11.2)
+                                    .color(theme.palette.muted()),
+                            );
+                        });
+                    });
+                    ui.separator();
+                }
                 ui.horizontal(|ui| {
                     let tab = self.current();
                     ui.label(format!(
