@@ -1,6 +1,6 @@
 # RiceField roadmap to 1.0
 
-**Current candidate: `1.0.0-rc.8`.** See [the scope and evidence ledger](docs/1.0-STATUS.md).
+**Current candidate: `1.0.0-rc.9`.** See [the scope and evidence ledger](docs/1.0-STATUS.md).
 This roadmap retains incomplete capabilities explicitly: a candidate version
 does not turn unchecked safety, integration or physical-device work into a pass.
 
@@ -317,12 +317,19 @@ recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
   be inspected through a bounded, cancellable, read-only text preview. RC.2
   added staged local single-file downloads; rc.4 adds bounded whole-folder
   content downloads without exposing incomplete local trees. Binary preview,
-  native high-volume network transfers and remote writes remain open. RC.5
+  native high-volume network transfers and broad remote writes remain open. RC.5
   rejects symlink/special-file downloads from GIO listings, including inside
   recursively downloaded folders, instead of following untrusted links. RC.6
   introduces up to 16 explicit waiting network downloads, snapshotted target
   folders, FIFO dispatch, remove/cancel/pause/resume and pause-on-error. Waiting
   jobs are session-only and never automatically replayed after a restart.
+  RC.9 adds **explicit single-file local-to-remote uploads** using native GIO
+  no-overwrite staging and backend-native no-fallback publication. The complete
+  stage is read back and checked byte-for-byte before publication; the local
+  source is always preserved. Local backend tests cover symlink and regular
+  target collisions, competing publishers and cancellation. Remote folder
+  upload, remote rename/delete and live NAS protocol coverage remain open;
+  failures can retain a hidden remote staging file for manual inspection.
 - [ ] Connect dialog, secure credential handling, favorites and reconnect.
   A basic URI dialog, 32 validated persistent URI favorites and manual
   reconnect are implemented. Alpha.6 supplies a masked one-attempt credential
@@ -340,8 +347,9 @@ servers. Alpha.8 stores selected credentials only in the user's Linux Secret
 Service after successful connection; settings never store the password. No
 password persistence occurs by default, and no automatic login is attempted.
 Real-device, unplug, keyring, and disconnection acceptance are still open.
-Keep remote mutations disabled; do not present these untested integrations as
-stable or infer that skipping the tests satisfies the 0.4 release gate.
+Keep general remote mutations disabled. RC.9's limited, explicitly requested
+upload is a pre-acceptance candidate; do not present NAS upload as stable or
+infer that skipping device tests satisfies the 0.4 release gate.
 
 ### 0.5 — Archive management
 

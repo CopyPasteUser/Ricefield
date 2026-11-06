@@ -10,7 +10,7 @@ use crate::{
     location::Location,
     metadata, open_with,
     operation_queue::OperationQueue,
-    preview, remote_download,
+    preview, remote_download, remote_upload,
     shell_components::{self, ToolbarAction},
     shell_renderer::{self, FileCellLayout, shorten},
     theme::{BUILTIN_IDS, ChromeComponent, SidebarPosition, SidebarSection, Theme},
@@ -929,6 +929,12 @@ pub struct Explorer {
     remote_download_cancel: Arc<AtomicBool>,
     remote_download_bytes: Arc<AtomicU64>,
     remote_download_directory: String,
+    remote_upload_sender: Sender<(String, Result<String, String>)>,
+    remote_upload_receiver: Receiver<(String, Result<String, String>)>,
+    remote_upload_busy: bool,
+    remote_upload_source: String,
+    remote_upload_cancel: Arc<AtomicBool>,
+    remote_upload_bytes: Arc<AtomicU64>,
     refresh_sender: Sender<RefreshResult>,
     refresh_receiver: Receiver<RefreshResult>,
     volume_sender: Sender<Result<(String, Option<String>), String>>,
@@ -1084,6 +1090,7 @@ impl Explorer {
         let (remote_scan_sender, remote_scan_receiver) = mpsc::channel();
         let (remote_preview_sender, remote_preview_receiver) = mpsc::channel();
         let (remote_download_sender, remote_download_receiver) = mpsc::channel();
+        let (remote_upload_sender, remote_upload_receiver) = mpsc::channel();
         let remote_download_directory = config
             .remote_download_directory
             .as_ref()
@@ -1160,6 +1167,12 @@ impl Explorer {
             remote_download_cancel: Arc::new(AtomicBool::new(false)),
             remote_download_bytes: Arc::new(AtomicU64::new(0)),
             remote_download_directory,
+            remote_upload_sender,
+            remote_upload_receiver,
+            remote_upload_busy: false,
+            remote_upload_source: String::new(),
+            remote_upload_cancel: Arc::new(AtomicBool::new(false)),
+            remote_upload_bytes: Arc::new(AtomicU64::new(0)),
             refresh_sender,
             refresh_receiver,
             volume_sender,
@@ -1983,6 +1996,31 @@ impl Explorer {
         {
             self.launch_remote_download(job);
         }
+    }
+
+    fn start_remote_upload(&mut self) {
+        let Some(remote_folder) = self.current().remote_uri.clone() else {
+            return;
+        };
+        if self.remote_upload_busy || self.remote_download_busy {
+            self.status = Some(("Finish the current network operation first".into(), true));
+            return;
+        }
+        let source = PathBuf::from(self.remote_upload_source.trim());
+        if !source.is_absolute() {
+            self.status = Some(("Upload needs an absolute local file path".into(), true));
+            return;
+        }
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let bytes = Arc::new(AtomicU64::new(0));
+        self.remote_upload_cancel = Arc::clone(&cancelled);
+        self.remote_upload_bytes = Arc::clone(&bytes);
+        self.remote_upload_busy = true;
+        let sender = self.remote_upload_sender.clone();
+        thread::spawn(move || {
+            let result = remote_upload::upload(&source, &remote_folder, &cancelled, &bytes);
+            let _ = sender.send((remote_folder, result));
+        });
     }
 
     fn toggle_hidden(&mut self) {
@@ -2889,6 +2927,16 @@ impl Explorer {
                 Err(error) => (error, true),
             });
             self.start_next_remote_download();
+        }
+        while let Ok((folder, result)) = self.remote_upload_receiver.try_recv() {
+            self.remote_upload_busy = false;
+            self.status = Some(match result {
+                Ok(uri) => (format!("Uploaded and verified: {uri}"), false),
+                Err(error) => (format!("Network upload stopped: {error}"), true),
+            });
+            if self.current().remote_uri.as_deref() == Some(folder.as_str()) {
+                self.scan(self.active);
+            }
         }
         while let Ok(event) = self.op_receiver.try_recv() {
             match event {
@@ -5776,7 +5824,7 @@ impl Explorer {
             .show(ui, |ui| {
                 ui.heading("Network location");
                 ui.monospace(self.current().remote_uri.as_deref().unwrap_or_default());
-                ui.small("Remote folders are read-only. You can preview text and queue local downloads; network uploads and changes are disabled.");
+                ui.small("Browse and download network folders. Single-file uploads are explicit, source-preserving and verified before native no-overwrite publication; remote rename/delete are disabled.");
                 ui.horizontal(|ui| {
                     ui.label("Download to:");
                     let edit = ui.add(egui::TextEdit::singleline(&mut self.remote_download_directory)
@@ -5800,6 +5848,26 @@ impl Explorer {
                         }
                     });
                 }
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Upload local file:");
+                    ui.add(egui::TextEdit::singleline(&mut self.remote_upload_source)
+                        .desired_width((ui.available_width() - 210.0).max(160.0))
+                        .hint_text("Absolute local file path"));
+                    if ui.add_enabled(!self.remote_upload_busy && !self.remote_download_busy && !self.remote_upload_source.trim().is_empty(), egui::Button::new("Upload safely")).clicked() {
+                        self.start_remote_upload();
+                    }
+                });
+                if self.remote_upload_busy {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        let mib = self.remote_upload_bytes.load(Ordering::Relaxed) as f64 / (1024.0 * 1024.0);
+                        ui.label(format!("Verifying upload · {mib:.1} MiB read back (8 GiB maximum)"));
+                        if ui.button("Cancel upload").clicked() {
+                            self.remote_upload_cancel.store(true, Ordering::Relaxed);
+                        }
+                    });
+                }
+                ui.small("Upload limitations: regular local files only; a failed transfer can leave a hidden staging file on the remote server for manual cleanup. Backends without native no-overwrite moves are refused.");
                 if !self.remote_download_queue.is_empty() {
                     ui.horizontal_wrapped(|ui| {
                         ui.strong(format!("Waiting network downloads: {}", self.remote_download_queue.len()));
@@ -6990,6 +7058,7 @@ impl Drop for Explorer {
         self.open_with_cancel.store(true, Ordering::Relaxed);
         volume::clear_password(&mut self.volume_connect_password);
         self.discovery_cancel.store(true, Ordering::Relaxed);
+        self.remote_upload_cancel.store(true, Ordering::Relaxed);
         // Drain pending completion records before exiting. A stalled XDG
         // state mount must never trap the desktop in an unbounded close.
         self.history_sender.take();
@@ -7124,6 +7193,7 @@ impl eframe::App for Explorer {
             || self.folder_tree.has_pending()
             || self.thumbnails.has_pending()
             || self.remote_download_busy
+            || self.remote_upload_busy
             || self.tabs.iter().any(|tab| tab.loading)
         {
             Duration::from_millis(90)

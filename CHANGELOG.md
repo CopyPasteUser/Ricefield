@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.0-rc.9 — native GIO no-overwrite uploads (hardware verification pending)
+
+- Add an explicit, cancellable local-to-network single-file upload. The source
+  remains on disk; uploads use unpredictable private remote staging names,
+  native GIO no-overwrite copy, byte-for-byte read-back verification and a
+  native no-fallback, no-overwrite publication rename.
+- Reject symlink sources, oversize files, occupied remote names and cancelled
+  jobs. Local GIO backend tests cover ordinary collisions, symlink collisions
+  and two concurrent publishers racing for the same target name, plus
+  corruption/truncation discovered during staged content verification.
+- Keep failed/uncertain remote staging files for manual investigation instead
+  of deleting unverified remote data. General remote rename/delete and folder
+  uploads remain disabled; live NAS protocol and disconnect acceptance is open.
+
 ## 1.0.0-rc.8 — atomic batch rename cycles (verification pending)
 
 - Allow safe batch renames whose destinations are other selected filenames,

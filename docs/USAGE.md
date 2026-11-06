@@ -134,9 +134,22 @@ including within a downloaded folder. A server-side type change during
 transfer is not yet protected by a source-identity snapshot.
 Folder downloads preserve filenames and file bytes, not remote ownership,
 ACLs, extended attributes or server-side modification times; they are not
-lossless NAS backups. Remote uploads, rename, deletion, full file opening
-and binary previews are not implemented. Real NAS/offline/keyring/download
-acceptance remains open.
+lossless NAS backups.
+
+**Upload safely** accepts one absolute path to a local regular file while a
+network directory is open. It refuses local symlinks, limits files to 8 GiB
+and applies a 20-minute deadline. The upload creates a random hidden staging
+file in the remote destination folder using native GIO without overwrite.
+It then downloads the staged bytes into a comparison stream, verifies the
+entire contents against the opened local file, and publishes the remote
+filename using GIO's backend-native move with both copy fallback and
+overwrite prohibited. Existing files and symlinks must remain untouched;
+the source file is **never** removed. Cancellation is available in the
+Network panel. A failed upload can leave `.ricefield-upload-*` on the remote
+server. Do not delete such files before checking their contents and origin.
+There is no remote batch/folder upload queue or automatic retry. Remotely
+renaming/deleting files, full remote file opening and binary previews are not
+implemented. Real NAS/offline/keyring/upload/download acceptance remains open.
 
 ## Archives and previews
 
