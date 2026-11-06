@@ -299,6 +299,11 @@ recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
   `gio` commands currently run in background child processes with their own
   GLib contexts, limits and timeouts. In-process native GIO integration and
   robust cancellation are still open.
+  **P0 write safety:** CLI `gio move` can replace existing targets, and native
+  `g_file_move` without overwrite flags exhibited a concurrent publish race.
+  See [the remote write safety decision](docs/REMOTE-WRITE-SAFETY.md) and
+  closed, unmerged [PR #71](https://github.com/CopyPasteUser/Ricefield/pull/71).
+  Never enable uploads based on GIO's flags alone.
 - [ ] Discover drives/volumes/mounts and their capabilities dynamically.
   Existing background mountinfo enumeration now labels detected network mounts
   separately in the Volumes sidebar. Device capabilities and unmounted drives

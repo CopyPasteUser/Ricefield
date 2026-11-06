@@ -59,7 +59,7 @@ rice-explorer --theme-file /path/to/my-rice.toml
 
 - Cross-filesystem **Move** leaves the source intact after a verified copy; cleanup is a separate user decision.
 - Batch rename uses atomic Linux name exchanges for selected-name cycles and attempts guarded rollback on ordinary errors. Completed batches offer session-only, identity-checked Undo; crash recovery and Undo after restart are unavailable. A crash or concurrent external modification can leave *partial names* requiring manual review; unrelated targets are never intentionally overwritten.
-- Network tabs provide **read-only browsing and explicit downloads** to a configurable local folder (default `~/Downloads`, 8 GiB per download, no overwrite). Recursive downloads are limited to 4,096 entries, 512 folders, 16 levels and 20 minutes; GIO-reported symlinks/special entries cannot be downloaded. Remote uploads, rename and deletion are not implemented.
+- Network tabs provide **read-only browsing and explicit downloads** to a configurable local folder (default `~/Downloads`, 8 GiB per download, no overwrite). Recursive downloads are limited to 4,096 entries, 512 folders, 16 levels and 20 minutes; GIO-reported symlinks/special entries cannot be downloaded. Remote uploads, rename and deletion remain disabled due to [an atomicity blocker](docs/REMOTE-WRITE-SAFETY.md).
 - Recovery provides inspection and comparisons, **not automatic transaction rollback**.
 - Desktop integration does not silently take over the system's default file manager.
 
