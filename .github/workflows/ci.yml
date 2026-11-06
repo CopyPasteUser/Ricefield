@@ -32,7 +32,10 @@ jobs:
           # and retry a transient failure without leaving the CI job stuck.
           for attempt in 1 2; do
             if timeout 150s sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update &&
-               timeout 180s sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libgl1-mesa-dev libarchive13t64 xvfb xauth xdotool imagemagick libgl1-mesa-dri libxkbcommon-x11-0; then
+               # No recommended Ghostscript/font bundles: ImageMagick's `import`
+               # captures Xvfb windows without them. Hosted mirror downloads of
+               # the optional 11 MB font bundle have repeatedly timed out.
+               timeout 180s sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libgl1-mesa-dev libarchive13t64 xvfb xauth xdotool imagemagick libgl1-mesa-dri libxkbcommon-x11-0; then
               exit 0
             fi
             echo "Graphics dependencies failed on attempt $attempt; retrying if possible" >&2

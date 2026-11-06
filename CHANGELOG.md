@@ -16,6 +16,8 @@
   section ordering. Visual acceptance on physical Linux remains pending.
 - Refresh the README hero and screenshot gallery with unedited Windows 7 Aero
   GUI smoke captures (full window, split view, compact and narrow layouts).
+- Install only required Xvfb/ImageMagick CI packages: omit optional
+  Ghostscript/font recommendations that timed out on hosted Ubuntu mirrors.
 
 ## 1.0.0-rc.17 — atomic desktop icon upgrades and bounded release setup (verification pending)
 
