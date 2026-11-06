@@ -672,6 +672,7 @@ pub enum Action {
     SetMode {
         path: PathBuf,
         mode: u32,
+        expected: fs::Metadata,
     },
 }
 
@@ -682,9 +683,10 @@ pub fn valid_name(name: &str) -> bool {
 /// chmod must operate on the opened inode, not a pathname that can be swapped
 /// for a symlink between a preflight check and the write.
 #[cfg(target_os = "linux")]
-fn apply_mode_to_open_file(file: &File, mode: u32) -> io::Result<()> {
+fn apply_mode_to_open_file(file: &File, mode: u32, expected: &fs::Metadata) -> io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let metadata = file.metadata()?;
+    ensure_same_source_metadata(expected, &metadata)?;
     if !metadata.is_file() && !metadata.is_dir() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -695,7 +697,7 @@ fn apply_mode_to_open_file(file: &File, mode: u32) -> io::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-fn set_mode_guarded(path: &Path, mode: u32) -> io::Result<()> {
+fn set_mode_guarded(path: &Path, mode: u32, expected: &fs::Metadata) -> io::Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
 
     if mode > 0o777 {
@@ -705,19 +707,19 @@ fn set_mode_guarded(path: &Path, mode: u32) -> io::Result<()> {
     open.read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
     match open.open(path) {
-        Ok(file) => apply_mode_to_open_file(&file, mode),
+        Ok(file) => apply_mode_to_open_file(&file, mode, expected),
         // Owners may chmod a file even when it has *no read permission*.
         // A Linux O_PATH handle plus fchmodat2(AT_EMPTY_PATH) preserves that
         // behavior without a pathname-based write or symlink following.
         Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
-            set_mode_unreadable_inode(path, mode)
+            set_mode_unreadable_inode(path, mode, expected)
         }
         Err(error) => Err(error),
     }
 }
 
 #[cfg(target_os = "linux")]
-fn set_mode_unreadable_inode(path: &Path, mode: u32) -> io::Result<()> {
+fn set_mode_unreadable_inode(path: &Path, mode: u32, expected: &fs::Metadata) -> io::Result<()> {
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 
     let name = CString::new(path.as_os_str().as_bytes())
@@ -734,15 +736,10 @@ fn set_mode_unreadable_inode(path: &Path, mode: u32) -> io::Result<()> {
         return Err(io::Error::last_os_error());
     }
     // SAFETY: `raw` is a freshly opened descriptor owned solely by this scope.
-    let fd = unsafe { OwnedFd::from_raw_fd(raw) };
-    let mut info = std::mem::MaybeUninit::<libc::stat>::uninit();
-    // SAFETY: `info` has enough storage for stat and `fd` stays valid.
-    if unsafe { libc::fstat(fd.as_raw_fd(), info.as_mut_ptr()) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: successful fstat initialized every field of `info`.
-    let info = unsafe { info.assume_init() };
-    if !matches!(info.st_mode & libc::S_IFMT, libc::S_IFREG | libc::S_IFDIR) {
+    let fd = File::from(unsafe { OwnedFd::from_raw_fd(raw) });
+    let metadata = fd.metadata()?;
+    ensure_same_source_metadata(expected, &metadata)?;
+    if !metadata.is_file() && !metadata.is_dir() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "Permissions can only be changed on ordinary files and directories",
@@ -1904,11 +1901,15 @@ fn perform_with_progress_and_items(
             }
             Ok(format!("Created {} link(s)", sources.len()))
         }
-        Action::SetMode { path, mode } => {
+        Action::SetMode {
+            path,
+            mode,
+            expected,
+        } => {
             transfer.check()?;
             #[cfg(target_os = "linux")]
             {
-                set_mode_guarded(path, *mode)?;
+                set_mode_guarded(path, *mode, expected)?;
                 Ok(format!("Updated permissions to {mode:03o}"))
             }
             #[cfg(not(target_os = "linux"))]
@@ -6493,6 +6494,7 @@ mod tests {
         perform(&Action::SetMode {
             path: item.clone(),
             mode: 0o640,
+            expected: fs::metadata(&item).unwrap(),
         })
         .unwrap();
         assert_eq!(
@@ -6503,8 +6505,9 @@ mod tests {
         symlink(&item, &link).unwrap();
         assert!(
             perform(&Action::SetMode {
+                expected: fs::symlink_metadata(&link).unwrap(),
                 path: link,
-                mode: 0o777
+                mode: 0o777,
             })
             .is_err()
         );
@@ -6532,7 +6535,8 @@ mod tests {
         fs::rename(&selected, &moved).unwrap();
         symlink(&unrelated, &selected).unwrap();
 
-        apply_mode_to_open_file(&pinned, 0o640).unwrap();
+        let expected_pinned = pinned.metadata().unwrap();
+        apply_mode_to_open_file(&pinned, 0o640, &expected_pinned).unwrap();
         assert_eq!(
             fs::metadata(&moved).unwrap().permissions().mode() & 0o777,
             0o640
@@ -6541,7 +6545,38 @@ mod tests {
             fs::metadata(&unrelated).unwrap().permissions().mode() & 0o777,
             original_unrelated
         );
-        assert!(set_mode_guarded(&selected, 0o777).is_err());
+        assert!(
+            set_mode_guarded(&selected, 0o777, &fs::symlink_metadata(&selected).unwrap()).is_err()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn chmod_refuses_a_replaced_file_since_properties_were_opened() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = test_root();
+        let selected = root.join("selected");
+        let renamed = root.join("old-selected");
+        fs::write(&selected, b"file seen in properties").unwrap();
+        let snapshot = fs::metadata(&selected).unwrap();
+        fs::rename(&selected, &renamed).unwrap();
+        fs::write(&selected, b"a different file").unwrap();
+        let replacement_mode = fs::metadata(&selected).unwrap().permissions().mode() & 0o777;
+
+        let error = perform(&Action::SetMode {
+            path: selected.clone(),
+            mode: 0o777,
+            expected: snapshot,
+        })
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            fs::metadata(&selected).unwrap().permissions().mode() & 0o777,
+            replacement_mode
+        );
+        assert_eq!(fs::read(&renamed).unwrap(), b"file seen in properties");
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -6554,7 +6589,8 @@ mod tests {
         let selected = root.join("unreadable");
         fs::write(&selected, b"content").unwrap();
         fs::set_permissions(&selected, fs::Permissions::from_mode(0o000)).unwrap();
-        let result = set_mode_unreadable_inode(&selected, 0o600);
+        let expected = fs::metadata(&selected).unwrap();
+        let result = set_mode_unreadable_inode(&selected, 0o600, &expected);
         if result.as_ref().err().and_then(io::Error::raw_os_error) != Some(libc::ENOSYS) {
             result.unwrap();
             assert_eq!(

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.0-rc.13 — stale Properties selection cannot change another file (verification pending)
+
+- Carry the original file's identity and change metadata from the Properties
+  background snapshot into the user's explicit permission-change action.
+- Compare that snapshot against the pinned file descriptor immediately before
+  chmod, rejecting files that were replaced, renamed or modified while the
+  dialog was open. Preserve Linux non-UTF-8 paths and no-follow handling.
+- Add regression coverage for an unrelated file replacing the selected path
+  before Apply; the replacement mode and old file contents remain unchanged.
+- Real Mint acceptance and the other incomplete 1.0 subsystems remain open.
+
 ## 1.0.0-rc.12 — race-safe POSIX permission edits (verification pending)
 
 - Close the symlink time-of-check/time-of-use gap in the existing Properties

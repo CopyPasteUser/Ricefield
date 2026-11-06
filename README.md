@@ -14,7 +14,7 @@ A customizable Linux file manager built with **Rust + egui**, designed to work o
 
 ![RiceField with its Windows 7-inspired layout](docs/screenshots/win7.png)
 
-> **Status: 1.0.0-rc.12 candidate.** Not a signed-off stable 1.0. Physical Linux Mint, NAS and recovery acceptance is still open. Keep your current file manager and use disposable data for testing risky operations.
+> **Status: 1.0.0-rc.13 candidate.** Not a signed-off stable 1.0. Physical Linux Mint, NAS and recovery acceptance is still open. Keep your current file manager and use disposable data for testing risky operations.
 
 ## Built for real file management
 
