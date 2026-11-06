@@ -41,7 +41,8 @@ click_at() {
 # Exercise that user-facing disclosure before opening the editable Filters
 # menu. The old positions assumed the now-removed generic Explorer toolbar.
 click_at 680 55  # More tools (Aero command strip)
-click_at 660 155 # Filters in the revealed tools row
+click_at 649 140 # Filters in the revealed tools row (above the column headings)
+import -window "$window" screenshots/filters-menu-open.png
 click_at 750 305 # Custom pattern and ranges
 import -window "$window" screenshots/filters-invalid-regex.png
 click_at 750 418 # Filename regex

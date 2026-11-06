@@ -5355,6 +5355,7 @@ impl Explorer {
                                             ui,
                                             name,
                                             self.current().path == path,
+                                            shell_components::AeroNavIcon::Library,
                                         ) {
                                             self.navigate(path);
                                         }
@@ -5424,6 +5425,7 @@ impl Explorer {
                                         ui,
                                         "Home",
                                         self.current().path == home,
+                                        shell_components::AeroNavIcon::Favorite,
                                     ) {
                                         self.navigate(home.clone());
                                     }
@@ -5434,6 +5436,7 @@ impl Explorer {
                                                 ui,
                                                 name,
                                                 self.current().path == path,
+                                                shell_components::AeroNavIcon::Favorite,
                                             )
                                         {
                                             self.navigate(path);
@@ -5449,6 +5452,7 @@ impl Explorer {
                                             ui,
                                             &label,
                                             self.current().path == path,
+                                            shell_components::AeroNavIcon::Favorite,
                                         ) {
                                             self.navigate(path);
                                         }
@@ -5484,6 +5488,7 @@ impl Explorer {
                                         ui,
                                         "Network · discover",
                                         false,
+                                        shell_components::AeroNavIcon::Network,
                                     )
                                 } else if luna {
                                     shell_components::luna_link(
@@ -5506,6 +5511,7 @@ impl Explorer {
                                         ui,
                                         "Connect to network…",
                                         false,
+                                        shell_components::AeroNavIcon::Network,
                                     )
                                 } else if luna {
                                     shell_components::luna_link(

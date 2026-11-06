@@ -401,16 +401,92 @@ pub fn command_bar(ui: &mut egui::Ui, theme: &Theme, has_selection: bool) -> Opt
     action
 }
 
-/// A compact navigation-tree row; selected/hover/focus states remain native
-/// egui buttons so keyboard and screen-reader behavior is preserved.
-pub fn aero_sidebar_link(ui: &mut egui::Ui, label: &str, selected: bool) -> bool {
-    ui.add_sized(
-        [ui.available_width(), 26.0],
-        egui::Button::new(egui::RichText::new(format!("    {label}")).size(12.5))
-            .selected(selected)
-            .frame(selected),
-    )
-    .clicked()
+#[derive(Clone, Copy)]
+pub enum AeroNavIcon {
+    Favorite,
+    Library,
+    Network,
+}
+
+/// Explorer tree rows are full-width, left-aligned and keyboard-activatable.
+/// Their original vector markers avoid OS-owned assets and font glyph gaps.
+pub fn aero_sidebar_link(
+    ui: &mut egui::Ui,
+    label: &str,
+    selected: bool,
+    icon: AeroNavIcon,
+) -> bool {
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width().max(80.0), 26.0),
+        Sense::click(),
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+    let painter = ui.painter().with_clip_rect(rect);
+    if selected || response.hovered() || response.has_focus() {
+        painter.rect_filled(
+            rect.shrink(1.0),
+            2,
+            if selected {
+                Color32::from_rgb(196, 229, 249)
+            } else {
+                Color32::from_rgb(227, 241, 251)
+            },
+        );
+        painter.rect_stroke(
+            rect.shrink(1.0),
+            2,
+            Stroke::new(1.0, Color32::from_rgb(142, 189, 215)),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let point = |x: f32, y: f32| Pos2::new(rect.left() + x, rect.top() + y);
+    match icon {
+        AeroNavIcon::Favorite => {
+            painter.circle_filled(point(14.0, 13.0), 6.5, Color32::from_rgb(228, 171, 49));
+            painter.circle_filled(point(12.5, 11.0), 2.5, Color32::from_rgb(255, 239, 155));
+        }
+        AeroNavIcon::Library => {
+            for (x, color) in [
+                (8.0, Color32::from_rgb(73, 135, 197)),
+                (12.0, Color32::from_rgb(99, 162, 100)),
+                (16.0, Color32::from_rgb(221, 174, 72)),
+            ] {
+                painter.rect_filled(
+                    Rect::from_min_max(point(x, 7.0), point(x + 4.0, 20.0)),
+                    1,
+                    color,
+                );
+                painter.line_segment(
+                    [point(x + 1.0, 10.0), point(x + 3.0, 10.0)],
+                    Stroke::new(1.0, Color32::WHITE),
+                );
+            }
+        }
+        AeroNavIcon::Network => {
+            painter.line_segment(
+                [point(11.0, 9.0), point(19.0, 14.0)],
+                Stroke::new(2.0, Color32::from_rgb(78, 139, 180)),
+            );
+            for (x, y) in [(10.0, 9.0), (20.0, 14.0), (10.0, 19.0)] {
+                painter.circle_filled(point(x, y), 3.4, Color32::from_rgb(86, 158, 198));
+                painter.circle_stroke(point(x, y), 3.4, Stroke::new(1.0, Color32::WHITE));
+            }
+        }
+    }
+    painter.text(
+        point(29.0, 13.0),
+        Align2::LEFT_CENTER,
+        label,
+        FontId::proportional(12.5),
+        Color32::from_rgb(36, 55, 72),
+    );
+    let activated = response.clicked()
+        || (response.has_focus()
+            && ui.input(|input| {
+                input.key_pressed(egui::Key::Enter) || input.key_pressed(egui::Key::Space)
+            }));
+    response.on_hover_text(label);
+    activated
 }
 
 pub fn sidebar_section(
