@@ -13,7 +13,7 @@ use crate::{
     preview, remote_download,
     shell_components::{self, ToolbarAction},
     shell_renderer::{self, FileCellLayout, shorten},
-    theme::{BUILTIN_IDS, ChromeComponent, SidebarPosition, SidebarSection, Theme},
+    theme::{BUILTIN_IDS, ChromeComponent, ShellKind, SidebarPosition, SidebarSection, Theme},
     theme_editor::{self, ThemeEditor},
     thumbnail::ThumbnailManager,
     transfer_history,
@@ -4430,10 +4430,35 @@ impl Explorer {
             .frame(
                 egui::Frame::new()
                     .fill(theme.palette.chrome())
-                    .inner_margin(egui::Margin::same(7)),
+                    .inner_margin(if theme.shell_kind() == ShellKind::Luna {
+                        egui::Margin::ZERO
+                    } else {
+                        egui::Margin::same(7)
+                    }),
             )
             .show(ui, |ui| {
                 for (index, component) in components.iter().enumerate() {
+                    if theme.shell_kind() == ShellKind::Luna {
+                        // In Luna the menu, navigation toolbar and tab strip
+                        // occupy their own bands; decorations remain the WM's
+                        // responsibility, not RiceField's.
+                        let fill = match component {
+                            ChromeComponent::MenuBar => Color32::from_rgb(250, 249, 244),
+                            ChromeComponent::Navigation => Color32::from_rgb(237, 235, 223),
+                            ChromeComponent::Tabs => Color32::from_rgb(207, 222, 247),
+                            ChromeComponent::CommandBar => Color32::from_rgb(250, 249, 244),
+                        };
+                        egui::Frame::new()
+                            .fill(fill)
+                            .inner_margin(egui::Margin::symmetric(8, 5))
+                            .show(ui, |ui| match component {
+                                ChromeComponent::MenuBar => self.menu_bar(ui),
+                                ChromeComponent::Tabs => self.tabs_bar(ui),
+                                ChromeComponent::Navigation => self.navigation_bar(ui),
+                                ChromeComponent::CommandBar => self.command_bar(ui, &theme),
+                            });
+                        continue;
+                    }
                     if index != 0 {
                         ui.add_space(3.0);
                     }
@@ -4448,14 +4473,15 @@ impl Explorer {
     }
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
+        let menu_text = if self.theme.shell_kind() == ShellKind::Luna {
+            Color32::from_rgb(33, 48, 77)
+        } else {
+            Color32::WHITE
+        };
         ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("RiceField")
-                    .color(Color32::WHITE)
-                    .strong(),
-            );
+            ui.label(egui::RichText::new("RiceField").color(menu_text).strong());
             ui.separator();
-            ui.menu_button(egui::RichText::new("File").color(Color32::WHITE), |ui| {
+            ui.menu_button(egui::RichText::new("File").color(menu_text), |ui| {
                 if ui.button("New folder  Ctrl+N").clicked() {
                     self.dialog = Some(Dialog::Name {
                         mode: NameMode::Folder(self.current().path.clone()),
@@ -4475,7 +4501,7 @@ impl Explorer {
                     ui.close();
                 }
             });
-            ui.menu_button(egui::RichText::new("Edit").color(Color32::WHITE), |ui| {
+            ui.menu_button(egui::RichText::new("Edit").color(menu_text), |ui| {
                 if ui.button("Copy  Ctrl+C").clicked() {
                     self.copy_selection(false);
                     ui.close();
@@ -4497,7 +4523,7 @@ impl Explorer {
                     ui.close();
                 }
             });
-            ui.menu_button(egui::RichText::new("View").color(Color32::WHITE), |ui| {
+            ui.menu_button(egui::RichText::new("View").color(menu_text), |ui| {
                 if ui.button("List").clicked() {
                     self.config.view = "list".into();
                     self.dirty_config = true;
@@ -4514,7 +4540,9 @@ impl Explorer {
                 }
             });
         });
-        ui.separator();
+        if self.theme.shell_kind() != ShellKind::Luna {
+            ui.separator();
+        }
     }
 
     fn command_bar(&mut self, ui: &mut egui::Ui, theme: &Theme) {
@@ -4780,8 +4808,15 @@ impl Explorer {
         };
         panel
             .resizable(true)
-            .default_size(theme.sidebar_width())
+            .default_size(
+                theme
+                    .sidebar_width()
+                    .min((ui.available_width() * 0.36).max(126.0)),
+            )
             .min_size(120.0)
+            // `default_size` only affects the initial frame. Cap an already
+            // open/resized sidebar as the application window shrinks, too.
+            .max_size((ui.available_width() * 0.42).max(120.0))
             .frame(
                 egui::Frame::new()
                     .fill(theme.palette.sidebar())
@@ -4792,8 +4827,12 @@ impl Explorer {
                     let sections = theme.sidebar_sections();
                     for (index, section) in sections.into_iter().enumerate() {
                         if index > 0 {
-                            ui.add_space(14.0);
-                            ui.separator();
+                            if theme.shell_kind() == ShellKind::Luna {
+                                ui.add_space(9.0);
+                            } else {
+                                ui.add_space(14.0);
+                                ui.separator();
+                            }
                         }
                         let mut render_section = |ui: &mut egui::Ui| match section {
                             SidebarSection::Tasks => self.sidebar_tasks(ui),
@@ -5270,7 +5309,7 @@ impl Explorer {
                     .inner_margin(egui::Margin::same(14)),
             )
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     let title = self
                         .current()
                         .path
@@ -5326,7 +5365,7 @@ impl Explorer {
                     });
                 });
                 ui.add_space(8.0);
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.menu_button("New", |ui| {
                         if ui.button("New folder  Ctrl+N").clicked() {
                             self.dialog = Some(Dialog::Name {

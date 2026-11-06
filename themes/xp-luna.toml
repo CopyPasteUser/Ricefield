@@ -3,22 +3,22 @@ name = "Windows XP · Luna"
 layout = "classic"
 schema_version = 1
 [palette]
-background = "#f0eee3"
-chrome = "#245edb"
+background = "#f1efe4"
+chrome = "#e9e7d9"
 panel = "#ffffff"
-sidebar = "#d6e5fb"
-text = "#233050"
-muted = "#5a7095"
-accent = "#236bdf"
-selection = "#b1d1ff"
-border = "#7f9dcb"
-folder = "#ffc650"
-file = "#78b3ec"
+sidebar = "#d6e4fc"
+text = "#243451"
+muted = "#586b8d"
+accent = "#205db3"
+selection = "#bed5f8"
+border = "#92abd5"
+folder = "#f6c14c"
+file = "#69a8e7"
 [metrics]
 rounding = 6
 row_height = 30
 tile_width = 115
-sidebar_width = 218
+sidebar_width = 234
 icon_size = 25
 
 [shell]
