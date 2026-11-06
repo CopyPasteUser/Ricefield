@@ -1,4 +1,5 @@
 name: Rust checks
+# Linux runner network faults and Xvfb server exits must remain observable.
 on:
   push:
   pull_request:
