@@ -3,6 +3,7 @@ set -euo pipefail
 
 # Run under xvfb-run. Smoke-test all bundled RiceBowl layouts without touching the host desktop.
 fixture_dir="$(mktemp -d)"
+display_dir="$fixture_dir/My Documents"
 app_pid=''
 extra_window_id=''
 cleanup() {
@@ -19,11 +20,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p "$fixture_dir/Documents" "$fixture_dir/Pictures" screenshots
-printf 'RiceField native GUI smoke test\n' > "$fixture_dir/Readme.txt"
-printf '# Markdown preview test\n' > "$fixture_dir/Documents/Example.md"
-cp assets/rice-explorer.png "$fixture_dir/Pictures/icon.png"
-cp themes/win7.toml "$fixture_dir/custom-theme.toml"
+mkdir -p "$display_dir/Documents" "$display_dir/Pictures" screenshots
+printf 'RiceField native GUI smoke test\n' > "$display_dir/Readme.txt"
+printf '# Markdown preview test\n' > "$display_dir/Documents/Example.md"
+cp assets/rice-explorer.png "$display_dir/Pictures/icon.png"
+cp themes/win7.toml "$display_dir/custom-theme.toml"
 # Exercise a *real structural* shell reordering rather than merely recoloring
 # the built-in Aero surface. Keep the custom file independent of bundled rice.
 sed -i 's/^top = \["tabs", "navigation", "command-bar"\]$/top = ["navigation"]\nbottom = ["tabs", "command-bar"]/' "$fixture_dir/custom-theme.toml"
@@ -63,9 +64,9 @@ require_visible_change() {
 
 for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sidebar; do
   if [[ "$theme" == custom-sidebar ]]; then
-    ./target/release/rice-explorer --theme-file "$fixture_dir/custom-theme.toml" "$fixture_dir" > "$fixture_dir/app.log" 2>&1 &
+    ./target/release/rice-explorer --theme-file "$fixture_dir/custom-theme.toml" "$display_dir" > "$fixture_dir/app.log" 2>&1 &
   else
-    ./target/release/rice-explorer --theme "$theme" "$fixture_dir" > "$fixture_dir/app.log" 2>&1 &
+    ./target/release/rice-explorer --theme "$theme" "$display_dir" > "$fixture_dir/app.log" 2>&1 &
   fi
   app_pid=$!
   # Xvfb/Mesa can take longer to initialize on a cold CI runner. Poll for the
