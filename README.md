@@ -14,7 +14,7 @@ A customizable Linux file manager built with **Rust + egui**, designed to work o
 
 ![RiceField with its Windows 7-inspired layout](docs/screenshots/win7.png)
 
-> **Status: 1.0.0-rc.8 candidate.** Not a signed-off stable 1.0. Physical Linux Mint, NAS and recovery acceptance is still open. Keep your current file manager and use disposable data for testing risky operations.
+> **Status: 1.0.0-rc.9 candidate.** Not a signed-off stable 1.0. Physical Linux Mint, NAS and recovery acceptance is still open. Keep your current file manager and use disposable data for testing risky operations.
 
 ## Built for real file management
 
@@ -58,7 +58,7 @@ rice-explorer --theme-file /path/to/my-rice.toml
 ## Important limits
 
 - Cross-filesystem **Move** leaves the source intact after a verified copy; cleanup is a separate user decision.
-- Batch rename uses atomic Linux name exchanges for selected-name cycles and attempts guarded rollback on ordinary errors. A crash or concurrent external modification can still leave *partial names* requiring manual review; no existing unselected target is overwritten.
+- Batch rename uses atomic Linux name exchanges for selected-name cycles and attempts guarded rollback on ordinary errors. Completed batches offer session-only, identity-checked Undo; crash recovery and Undo after restart are unavailable. A crash or concurrent external modification can leave *partial names* requiring manual review; unrelated targets are never intentionally overwritten.
 - Network tabs provide **read-only browsing and explicit downloads** to a configurable local folder (default `~/Downloads`, 8 GiB per download, no overwrite). Recursive downloads are limited to 4,096 entries, 512 folders, 16 levels and 20 minutes; GIO-reported symlinks/special entries cannot be downloaded. Remote uploads, rename and deletion are not implemented.
 - Recovery provides inspection and comparisons, **not automatic transaction rollback**.
 - Desktop integration does not silently take over the system's default file manager.

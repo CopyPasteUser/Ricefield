@@ -500,6 +500,7 @@ struct CompletedOperation {
     items: Vec<filesystem::ItemResult>,
     counts: ItemCounts,
     rename_undo: Option<Box<filesystem::RenameUndo>>,
+    batch_rename_undo: Option<Box<filesystem::BatchRenameUndo>>,
     from_history: bool,
 }
 
@@ -552,6 +553,7 @@ impl CompletedOperation {
             },
             items: Vec::new(),
             rename_undo: None,
+            batch_rename_undo: None,
             from_history: true,
         }
     }
@@ -2901,6 +2903,7 @@ impl Explorer {
                     } = message;
                     let undo_succeeded = report.result.is_ok();
                     let rename_undo = report.rename_undo;
+                    let batch_rename_undo = report.batch_rename_undo;
                     if let Some(origin_id) = self.pending_undo_origin.take()
                         && undo_succeeded
                         && let Some(entry) = self
@@ -2909,6 +2912,7 @@ impl Explorer {
                             .find(|entry| entry.id == origin_id)
                     {
                         entry.rename_undo = None;
+                        entry.batch_rename_undo = None;
                     }
                     self.busy = false;
                     let label = self
@@ -2984,6 +2988,7 @@ impl Explorer {
                         counts: ItemCounts::from_items(&report.items),
                         items: report.items,
                         rename_undo,
+                        batch_rename_undo,
                         from_history: false,
                     };
                     if let Some(writer) = &self.history_sender {
@@ -3369,6 +3374,19 @@ impl Explorer {
                                         egui::Button::new("Undo rename"),
                                     )
                                     .on_hover_text("Restore the previous name if this entry is unchanged and the original name is still free. Never overwrites another file; available only in this session.")
+                                    .clicked()
+                            {
+                                undo_request = Some((entry.id, candidate.action()));
+                            }
+                            if let Some(candidate) = &entry.batch_rename_undo
+                                && ui
+                                    .add_enabled(
+                                        !self.busy
+                                            && !self.queue_paused
+                                            && self.operation_queue.is_empty(),
+                                        egui::Button::new("Undo batch rename"),
+                                    )
+                                    .on_hover_text("Restore every original filename in this completed batch only if all renamed entries still match their post-rename snapshots. Never overwrite unrelated entries; session-only.")
                                     .clicked()
                             {
                                 undo_request = Some((entry.id, candidate.action()));
@@ -7172,6 +7190,7 @@ mod tests {
         let history = super::CompletedOperation::from_history(record.clone());
         assert!(history.from_history);
         assert!(history.rename_undo.is_none());
+        assert!(history.batch_rename_undo.is_none());
         assert!(history.items.is_empty());
         assert_eq!(history.history_record(), record);
     }
