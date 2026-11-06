@@ -790,6 +790,8 @@ enum Dialog {
         mode: String,
         owner: String,
         group: String,
+        attribute_name: String,
+        attribute_value: String,
         generation: u64,
         details: Option<Result<Box<PropertySnapshot>, String>>,
         analysis: Option<Result<String, String>>,
@@ -4338,6 +4340,8 @@ impl Explorer {
             mode: String::new(),
             owner: String::new(),
             group: String::new(),
+            attribute_name: "user.".into(),
+            attribute_value: String::new(),
             generation,
             details: None,
             analysis: None,
@@ -6946,6 +6950,8 @@ impl Explorer {
                     mode,
                     owner,
                     group,
+                    attribute_name,
+                    attribute_value,
                     details,
                     analysis,
                     generation,
@@ -7077,6 +7083,33 @@ impl Explorer {
                             });
                             #[cfg(target_os = "linux")]
                             ui.small("Ownership changes follow your account's Linux permissions; no sudo or privilege escalation.");
+                            #[cfg(target_os = "linux")]
+                            ui.vertical(|ui| {
+                                ui.separator();
+                                ui.label("Add an extended attribute (existing values are never overwritten):");
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label("Name:");
+                                    ui.add_sized([170.0, 25.0], egui::TextEdit::singleline(attribute_name));
+                                    ui.label("Text value:");
+                                    ui.add_sized([170.0, 25.0], egui::TextEdit::singleline(attribute_value));
+                                });
+                                let valid = attribute_name.starts_with("user.")
+                                    && attribute_name.len() > 5
+                                    && attribute_name.len() <= 255
+                                    && !attribute_name.as_bytes().contains(&0)
+                                    && attribute_value.len() <= 4096
+                                    && !snapshot.is_symlink;
+                                if ui.add_enabled(valid, egui::Button::new("Create attribute")).clicked() {
+                                    action = Some(Action::CreateUserAttribute {
+                                        path: path.clone(),
+                                        name: attribute_name.clone(),
+                                        value: attribute_value.clone(),
+                                        expected: snapshot.metadata.clone(),
+                                    });
+                                    dismiss = true;
+                                }
+                                ui.small("Only user.* names and up to 4 KiB of UTF-8 text. A conflicting attribute is left untouched.");
+                            });
                         }
                         if ui.button("Close").clicked() {
                             dismiss = true;
@@ -7538,6 +7571,8 @@ mod tests {
             mode: String::new(),
             owner: String::new(),
             group: String::new(),
+            attribute_name: "user.".into(),
+            attribute_value: String::new(),
             generation: 8,
             details: None,
             analysis: None,

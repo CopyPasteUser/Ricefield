@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.0-rc.15 — no-overwrite Linux extended attributes (verification pending)
+
+- Add `user.*` text attribute creation (max 4 KiB) in the file Properties
+  dialog. Existing attribute values are never modified or erased.
+- Use a no-symlink-follow file descriptor and compare inode metadata against
+  the Properties snapshot before the change. Kernel `XATTR_CREATE` prevents
+  concurrent writers from silently replacing an attribute.
+- Add tests for existing-attribute collisions, invalid namespaces and
+  oversized values, symbolic links and changed/replaced selected files.
+- Complex ACL edits, privileged attributes, replacement and removal remain
+  deliberately unsupported pending robust safety semantics and device tests.
+
 ## 1.0.0-rc.14 — guarded POSIX owner/group changes (verification pending)
 
 - Add editable numeric owner UID and group GID fields to the file Properties

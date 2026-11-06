@@ -81,6 +81,7 @@ pub fn describe(action: &Action) -> String {
         Action::NewFile { .. } => "New file".into(),
         Action::SetMode { .. } => "Change permissions".into(),
         Action::SetOwnership { .. } => "Change owner/group".into(),
+        Action::CreateUserAttribute { .. } => "Create extended attribute".into(),
     }
 }
 
