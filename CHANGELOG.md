@@ -45,6 +45,15 @@
 - Physical Linux Mint/NAS acceptance remains a separate gate; window
   decorations stay with the desktop window manager.
 
+## Unreleased — Bounded local binary preview
+
+- Show a read-only hex/printable-ASCII dump of the first 256 bytes of unknown
+  binary files in the existing monospace Quick Look / Preview UI. Invalid
+  UTF-8 and control characters render as byte values, never terminal escape
+  sequences or replacement text. No new dependency or external decoder.
+- Test oversized data, non-UTF-8 bytes, control sequences and unchanged file
+  contents. Network URI binary preview remains a separate unimplemented gate.
+
 ## Unreleased — macOS Finder-inspired shell
 
 - Replace the generic macOS skin with a distinctive Finder-like chrome,

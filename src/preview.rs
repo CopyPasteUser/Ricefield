@@ -1,5 +1,6 @@
 //! Bounded, off-thread previews. Never decode arbitrarily large images in the UI thread.
 use std::{
+    fmt::Write as _,
     fs,
     io::{self, Cursor, Read},
     path::Path,
@@ -13,6 +14,7 @@ const MAX_IMAGE_PIXELS: u64 = 16_000_000;
 const MAX_THUMBNAIL_BYTES: u64 = 12 * 1024 * 1024;
 const MAX_PDF_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_MEDIA_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+const MAX_HEX_PREVIEW_BYTES: usize = 256;
 
 pub struct Thumbnail {
     pub rgba: Vec<u8>,
@@ -190,6 +192,39 @@ fn archive_preview(path: &Path) -> io::Result<Preview> {
     )))
 }
 
+/// Inspect only a small prefix. Untrusted binary content is never interpreted
+/// as markup or escape sequences and cannot make the UI allocate unbounded text.
+fn binary_preview(bytes: &[u8], size: u64) -> Preview {
+    let sample = &bytes[..bytes.len().min(MAX_HEX_PREVIEW_BYTES)];
+    let mut output = format!(
+        "Binary file · first {} of {size} bytes (hex + ASCII, read-only)\n\n",
+        sample.len()
+    );
+    for (row, chunk) in sample.chunks(16).enumerate() {
+        write!(&mut output, "{:08x}  ", row * 16).unwrap();
+        for column in 0..16 {
+            if let Some(byte) = chunk.get(column) {
+                write!(&mut output, "{byte:02x} ").unwrap();
+            } else {
+                output.push_str("   ");
+            }
+        }
+        output.push(' ');
+        for byte in chunk {
+            output.push(if (0x20..=0x7e).contains(byte) {
+                char::from(*byte)
+            } else {
+                '.'
+            });
+        }
+        output.push('\n');
+    }
+    if size > sample.len() as u64 {
+        output.push_str("\nPreview truncated; use a hex editor for the full file.");
+    }
+    Preview::Text(output)
+}
+
 pub fn load(path: &Path) -> io::Result<Preview> {
     // Follow links for *target* size/type checks. lstat reports only the
     // symlink's tiny path length and could bypass the image byte limit.
@@ -282,16 +317,15 @@ pub fn load(path: &Path) -> io::Result<Preview> {
     let mut bytes = vec![0u8; 32 * 1024];
     let count = file.read(&mut bytes)?;
     bytes.truncate(count);
-    if bytes.contains(&0)
+    if std::str::from_utf8(&bytes).is_err()
+        || bytes.contains(&0)
         || bytes
             .iter()
             .any(|b| (*b < 0x20 && !matches!(*b, b'\n' | b'\r' | b'\t')) || *b == 0x7f)
     {
-        return Ok(Preview::Info(
-            "Binary file — open it in its associated application".into(),
-        ));
+        return Ok(binary_preview(&bytes, opened.len()));
     }
-    let text = String::from_utf8_lossy(&bytes).into_owned();
+    let text = String::from_utf8(bytes).expect("validated UTF-8");
     if text.is_empty() {
         Ok(Preview::Info("Empty file".into()))
     } else {
@@ -340,7 +374,26 @@ mod tests {
         assert!(matches!(load(&text).unwrap(), Preview::Text(ref value) if value == "hello world"));
         let binary = root.join("binary.dat");
         fs::write(&binary, [0, 1, 2, 3]).unwrap();
-        assert!(matches!(load(&binary).unwrap(), Preview::Info(_)));
+        assert!(matches!(load(&binary).unwrap(), Preview::Text(ref text)
+            if text.contains("00 01 02 03") && text.contains("00000000")));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn binary_hex_preview_is_bounded_and_never_renders_control_sequences() {
+        let root = test_root();
+        let path = root.join("untrusted.bin");
+        let mut bytes = vec![0x80; 1024];
+        bytes[..8].copy_from_slice(b"\x1b[31m\0\xff\x80");
+        fs::write(&path, &bytes).unwrap();
+        let Preview::Text(text) = load(&path).unwrap() else {
+            panic!("binary bytes must receive a hex preview");
+        };
+        assert!(text.contains("1b 5b 33 31 6d 00 ff 80"));
+        assert!(text.contains("first 256 of 1024 bytes"));
+        assert!(!text.contains('\x1b'));
+        assert!(text.len() < 2000);
+        assert_eq!(fs::read(&path).unwrap(), bytes);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -416,7 +469,8 @@ mod tests {
         let root = test_root();
         let path = root.join("escape.txt");
         fs::write(&path, b"hi\x1b[31m").unwrap();
-        assert!(matches!(load(&path).unwrap(), Preview::Info(_)));
+        assert!(matches!(load(&path).unwrap(), Preview::Text(ref text)
+            if text.contains("68 69 1b 5b 33 31 6d") && !text.contains('\x1b')));
         fs::remove_dir_all(root).unwrap();
     }
 

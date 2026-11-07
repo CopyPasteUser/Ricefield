@@ -591,6 +591,9 @@ need the real Mint session. The stable 0.6 gate remains **not approved**.
 - [x] Space-to-toggle Quick Look and bounded read-only image/PDF/text/code/
   audio/video/archive preview; PDF and media metadata use optional system
   tools with timeouts. Native video/audio playback is delegated to Open.
+- [x] Offer a bounded local binary hex/ASCII preview (256-byte maximum)
+  for control-bearing or invalid UTF-8 data, escaped before display and
+  read through the existing background preview worker.
 - [x] Read-only metadata, on-demand bounded folder size and SHA-256, and
   Linux extended-attribute names / POSIX ACL presence (not ACL editing).
 
