@@ -170,7 +170,7 @@ pub fn toolbar(ui: &mut egui::Ui, state: ClassicContext) -> Option<ClassicAction
                 ) {
                     chosen = Some(ClassicAction::NewFolder);
                 }
-                ui.menu_button("Tools ▾", |ui| {
+                ui.menu_button("Views", |ui| {
                     ui.set_min_width(170.0);
                     for group in [
                         &[

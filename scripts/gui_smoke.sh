@@ -133,7 +133,7 @@ for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sideba
   # The 1990s menu bar is interactive and exposes the real shared file tools,
   # including safe network and local operations.
   if [[ "$theme" == win98 ]]; then
-    xdotool mousemove --window "$window_id" 255 18 click 1
+    xdotool mousemove --window "$window_id" 290 18 click 1
     sleep 0.45
     xdotool mousemove --window "$window_id" 950 650
     import -window "$window_id" screenshots/win98-tools.png
