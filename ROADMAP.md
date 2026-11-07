@@ -277,6 +277,11 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   provider gets a two-second UI deadline and cannot issue a late mutation;
   a tab/folder change also cancels the pending paste. Properties and remaining
   filesystem/network UI calls still require a separate responsiveness audit.
+- [x] Give desktop clipboard subprocesses a three-second process deadline on
+  both read and write. Anonymous bounded Linux memory files replace pipes,
+  avoiding a blocked writer/reader or an unbounded output allocation. A hung
+  helper is killed and the in-app clipboard remains available; X11/Wayland
+  helper compatibility still requires real-session acceptance.
 - [x] Load file properties and Unix permission metadata in a bounded
   background worker, not on each render frame. Keep only the latest requested
   dialog when a slow mount stalls an earlier query; reject stale results and
