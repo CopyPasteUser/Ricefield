@@ -13,9 +13,9 @@ use crate::{
     journal::{self, Inspection as JournalInspection, State as JournalState},
     keyring,
     location::Location,
-    metadata, open_with, portal,
+    metadata, open_with,
     operation_queue::OperationQueue,
-    preview, remote_download, remote_upload, remote_upload_journal,
+    portal, preview, remote_download, remote_upload, remote_upload_journal,
     shell_components::{self, ToolbarAction},
     shell_renderer::{self, FileCellLayout, shorten},
     theme::{BUILTIN_IDS, ChromeComponent, ShellKind, SidebarPosition, SidebarSection, Theme},
@@ -3166,7 +3166,11 @@ impl Explorer {
         }
         while let Ok(result) = self.portal_receiver.try_recv() {
             self.status = Some(match result {
-                Ok(()) => ("System app chooser requested; select an application in the desktop dialog".into(), false),
+                Ok(()) => (
+                    "System app chooser requested; select an application in the desktop dialog"
+                        .into(),
+                    false,
+                ),
                 Err(error) => (format!("System app chooser unavailable: {error}"), true),
             });
         }
@@ -9964,7 +9968,10 @@ impl Explorer {
                                     });
                             }
                         }
-                        if ui.button("Choose another app with system dialog…").clicked() {
+                        if ui
+                            .button("Choose another app with system dialog…")
+                            .clicked()
+                        {
                             open_with_portal = Some(path.clone());
                             dismiss = true;
                         }

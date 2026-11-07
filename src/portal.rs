@@ -73,16 +73,20 @@ mod tests {
         let file = temp.path().join("file.txt");
         std::fs::write(&file, b"portal data").unwrap();
         assert!(local_target(&file).unwrap().metadata().unwrap().is_file());
-        assert!(local_target(temp.path()).unwrap().metadata().unwrap().is_dir());
+        assert!(
+            local_target(temp.path())
+                .unwrap()
+                .metadata()
+                .unwrap()
+                .is_dir()
+        );
         assert!(local_target(Path::new("relative.txt")).is_err());
         let socket = temp.path().join("socket");
         let _listener = UnixListener::bind(&socket).unwrap();
         assert!(local_target(&socket).is_err());
         let fifo = temp.path().join("pipe");
-        let name = std::ffi::CString::new(
-            std::os::unix::ffi::OsStrExt::as_bytes(fifo.as_os_str()),
-        )
-        .unwrap();
+        let name = std::ffi::CString::new(std::os::unix::ffi::OsStrExt::as_bytes(fifo.as_os_str()))
+            .unwrap();
         // SAFETY: `name` is a NUL-terminated pathname within our temp dir.
         assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
         assert!(local_target(&fifo).is_err());
