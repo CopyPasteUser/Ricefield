@@ -972,7 +972,11 @@ mod tests {
             .unwrap();
         let interfaces = objects.get_mut(&block).unwrap();
         interfaces.remove(FS_INTERFACE);
-        insert_prop(interfaces.get_mut(BLOCK_INTERFACE).unwrap(), "IdUsage", "crypto");
+        insert_prop(
+            interfaces.get_mut(BLOCK_INTERFACE).unwrap(),
+            "IdUsage",
+            "crypto",
+        );
         assert!(!can_power_off_safely(&objects, drive));
 
         let mut encrypted = HashMap::new();
