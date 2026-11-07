@@ -62,9 +62,20 @@ session, and only if every post-rename object is unchanged and every original
 destination name is free or part of that same undo batch. In earlier sessions
 the restored history is read-only; a batch cannot be automatically replayed.
 
-Drag into a local folder or between panes to copy without overwriting. For
-outbound drag, the context action **Drag to another app…** uses an installed
-`ripdrag` or `dragon` helper. Direct tile-to-other-app dragging is unavailable.
+Select one or more local files/folders, then drag them onto another folder,
+breadcrumb, folder-tree entry, local tab, or split pane. Dragging **copies**;
+hold **Shift** while releasing to **move** (same-volume rename, guarded
+cross-volume copy with the original retained). The destination gets a colored
+outline and an operation hint. Dropping onto the original directory does
+nothing. Conflicts use new names rather than overwriting existing files.
+Press **Esc** to cancel. Dragging files **into** RiceField from another app
+copies them to the local folder under the pointer, or the focused folder if
+the desktop does not report a pointer position. Drops onto non-folder controls
+are ignored. Remote tabs remain read-only.
+
+To drag **out** to another application, the context action **Drag to another
+app…** still needs an installed `ripdrag` or `dragon` helper. Direct native
+drag-out is not yet supported by this version of eframe/winit.
 
 ## Search, filters and duplicate candidates
 

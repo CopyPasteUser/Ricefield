@@ -510,6 +510,42 @@ struct DropArea {
     folder: bool,
 }
 
+// A drop is a copy unless Shift is held. Never turn a drag onto the source
+// directory into a duplicate, and never copy a folder into its own subtree.
+fn drop_action(
+    paths: &[PathBuf],
+    destination: &Path,
+    move_requested: bool,
+) -> Result<Option<Action>, &'static str> {
+    if paths.is_empty() || paths.iter().any(|path| !path.is_absolute()) {
+        return Err("Drag requires local files or folders with absolute paths");
+    }
+    if paths.iter().any(|path| destination.starts_with(path)) {
+        return Err("Cannot drop a folder into itself or a descendant");
+    }
+    let sources: Vec<_> = paths
+        .iter()
+        .filter(|path| path.parent() != Some(destination))
+        .cloned()
+        .collect();
+    if sources.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(if move_requested {
+        Action::Move {
+            sources,
+            destination: destination.to_path_buf(),
+            conflict: ConflictPolicy::KeepBoth,
+        }
+    } else {
+        Action::Copy {
+            sources,
+            destination: destination.to_path_buf(),
+            conflict: ConflictPolicy::KeepBoth,
+        }
+    }))
+}
+
 fn active_after_swap(active: usize, first: usize, second: usize) -> usize {
     if active == first {
         second
@@ -2124,6 +2160,10 @@ impl Explorer {
     }
 
     fn finish_drag(&mut self, context: &egui::Context) {
+        if context.input(|input| input.key_pressed(Key::Escape) || !input.focused) {
+            self.drag_files = None;
+            return;
+        }
         if !context.input(|input| input.pointer.any_released()) {
             return;
         }
@@ -2140,34 +2180,86 @@ impl Explorer {
         if source.source_tab == tab_id && !folder {
             return;
         }
-        if source
-            .paths
-            .iter()
-            .any(|path| destination.starts_with(path))
-        {
-            self.status = Some((
-                "Cannot copy a folder into itself or a descendant".into(),
-                true,
-            ));
-            return;
-        }
+        let action = match drop_action(
+            &source.paths,
+            &destination,
+            context.input(|input| input.modifiers.shift),
+        ) {
+            Ok(Some(action)) => action,
+            Ok(None) => return,
+            Err(error) => {
+                self.status = Some((error.into(), true));
+                return;
+            }
+        };
         if let Some(index) = self.tabs.iter().position(|tab| tab.id == tab_id) {
             self.tab_command(TabCommand::Activate(index));
         }
-        self.run_action(Action::Copy {
-            sources: source.paths,
-            destination,
-            conflict: ConflictPolicy::KeepBoth,
-        });
+        self.run_action(action);
     }
 
-    fn drop_destination(&self, position: Pos2) -> Option<(u64, PathBuf, bool)> {
+    fn drop_area_at(&self, position: Pos2) -> Option<&DropArea> {
         self.drop_areas
             .iter()
             .rev()
             .filter(|area| area.rect.contains(position))
             .max_by_key(|area| area.folder)
+    }
+
+    fn drop_destination(&self, position: Pos2) -> Option<(u64, PathBuf, bool)> {
+        self.drop_area_at(position)
             .map(|area| (area.tab_id, area.destination.clone(), area.folder))
+    }
+
+    fn paint_drag_feedback(&self, context: &egui::Context) {
+        let Some(source) = self.drag_files.as_ref() else {
+            return;
+        };
+        let Some(position) = context.input(|input| input.pointer.latest_pos()) else {
+            return;
+        };
+        let moving = context.input(|input| input.modifiers.shift);
+        let painter = context.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::unique("file_drag_feedback"),
+        ));
+        let (label, color) = if let Some(target) = self.drop_area_at(position) {
+            let valid = drop_action(&source.paths, &target.destination, moving);
+            let (text, color) = match valid {
+                Ok(Some(_)) => (
+                    format!(
+                        "{} {} item(s) here · Shift = move",
+                        if moving { "Move" } else { "Copy" },
+                        source.paths.len()
+                    ),
+                    Color32::from_rgb(39, 117, 72),
+                ),
+                Ok(None) => ("Already in this folder".into(), Color32::from_gray(98)),
+                Err(error) => (error.into(), Color32::from_rgb(165, 52, 49)),
+            };
+            painter.rect_stroke(
+                target.rect.shrink(1.0),
+                4.0,
+                egui::Stroke::new(2.0, color),
+                egui::StrokeKind::Inside,
+            );
+            (text, color)
+        } else {
+            (
+                "Drop onto a folder, tab or pane".into(),
+                Color32::from_gray(88),
+            )
+        };
+        let width = (label.chars().count() as f32 * 7.1 + 20.0).clamp(170.0, 440.0);
+        let rect = Rect::from_min_size(position + egui::vec2(16.0, 16.0), egui::vec2(width, 29.0));
+        painter.rect_filled(rect, 5.0, color);
+        painter.text(
+            rect.left_center() + egui::vec2(10.0, 0.0),
+            Align2::LEFT_CENTER,
+            label,
+            egui::FontId::proportional(12.0),
+            Color32::WHITE,
+        );
     }
 
     fn accept_external_drop(&mut self, context: &egui::Context) {
@@ -2189,29 +2281,29 @@ impl Explorer {
             ));
             return;
         }
-        let target = context
-            .input(|input| input.pointer.latest_pos())
-            .and_then(|position| self.drop_destination(position));
+        let position = context.input(|input| input.pointer.latest_pos());
+        let target = position.and_then(|position| self.drop_destination(position));
+        if position.is_some() && target.is_none() {
+            self.status = Some(("Drop onto a local folder, tab or file pane".into(), true));
+            return;
+        }
         let destination = target
             .as_ref()
             .map_or_else(|| self.current().path.clone(), |(_, path, _)| path.clone());
-        if files.iter().any(|path| destination.starts_with(path)) {
-            self.status = Some((
-                "Cannot copy a folder into itself or a descendant".into(),
-                true,
-            ));
-            return;
-        }
+        let action = match drop_action(&files, &destination, false) {
+            Ok(Some(action)) => action,
+            Ok(None) => return,
+            Err(error) => {
+                self.status = Some((error.into(), true));
+                return;
+            }
+        };
         if let Some((id, _, _)) = target
             && let Some(index) = self.tabs.iter().position(|tab| tab.id == id)
         {
             self.tab_command(TabCommand::Activate(index));
         }
-        self.run_action(Action::Copy {
-            sources: files,
-            destination,
-            conflict: ConflictPolicy::KeepBoth,
-        });
+        self.run_action(action);
     }
 
     fn spawn_window(&mut self) {
@@ -5968,6 +6060,14 @@ impl Explorer {
                 let response = ui
                     .add(egui::Button::new(label).selected(selected))
                     .on_hover_text(format!("{path_hint}\nRight-click for tab actions"));
+                if tab.remote_uri.is_none() {
+                    self.drop_areas.push(DropArea {
+                        tab_id: tab.id,
+                        destination: tab.path.clone(),
+                        rect: response.rect,
+                        folder: true,
+                    });
+                }
                 if response.clicked() {
                     action = Some(TabCommand::Activate(index));
                 }
@@ -6583,7 +6683,7 @@ impl Explorer {
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing.x = 1.0;
                                             for crumb in crumbs {
-                                                if ui
+                                                let response = ui
                                                     .add(
                                                         egui::Button::new(
                                                             egui::RichText::new(format!(
@@ -6599,9 +6699,16 @@ impl Explorer {
                                                         )
                                                         .frame(false),
                                                     )
-                                                    .on_hover_text(crumb.path.display().to_string())
-                                                    .clicked()
-                                                {
+                                                    .on_hover_text(
+                                                        crumb.path.display().to_string(),
+                                                    );
+                                                self.drop_areas.push(DropArea {
+                                                    tab_id: self.current().id,
+                                                    destination: crumb.path.clone(),
+                                                    rect: response.rect,
+                                                    folder: true,
+                                                });
+                                                if response.clicked() {
                                                     self.navigate(crumb.path);
                                                 }
                                             }
@@ -8064,7 +8171,14 @@ impl Explorer {
             }
             let label = ui
                 .add(egui::Button::new(shorten(&title, 22)).selected(self.current().path == path));
-            if label.on_hover_text(path.display().to_string()).clicked() {
+            let label = label.on_hover_text(path.display().to_string());
+            self.drop_areas.push(DropArea {
+                tab_id: self.current().id,
+                destination: path.clone(),
+                rect: label.rect,
+                folder: true,
+            });
+            if label.clicked() {
                 self.navigate(path.clone());
             }
         });
@@ -10732,6 +10846,9 @@ impl eframe::App for Explorer {
         {
             self.keyboard(&context);
         }
+        // Start registration before tabs, breadcrumbs and the sidebar paint.
+        // Clearing here used to discard all those targets before hit testing.
+        self.drop_areas.clear();
         self.chrome_region(ui, true);
         self.recovery_banner(ui);
         self.transfer_strip(ui);
@@ -10741,10 +10858,10 @@ impl eframe::App for Explorer {
         self.chrome_region(ui, false);
         self.sidebar(ui);
         self.preview_panel(ui);
-        self.drop_areas.clear();
         self.main_panel(ui);
         self.thumbnails.dispatch();
         self.quick_look_window(&context);
+        self.paint_drag_feedback(&context);
         self.finish_drag(&context);
         self.accept_external_drop(&context);
         self.dialogs(&context);
@@ -10801,20 +10918,65 @@ mod tests {
     use super::{
         Action, CLIPBOARD_WAIT, Clipboard, Dialog, ItemCounts, NameMode, PasteMode, PendingPaste,
         PropertyResult, PropertySnapshot, Tab, TabSnapshot, accept_property_result,
-        active_after_swap, choose_paste_clipboard, elapsed_label, next_search_repaint_delay,
-        read_property_snapshot, remaining_cut_paths, resolve_split_tabs, retain_visible_selection,
-        transfer_progress_details,
+        active_after_swap, choose_paste_clipboard, drop_action, elapsed_label,
+        next_search_repaint_delay, read_property_snapshot, remaining_cut_paths, resolve_split_tabs,
+        retain_visible_selection, transfer_progress_details,
     };
     use crate::clipboard;
     use crate::filesystem::{ItemResult, ItemState, Progress};
     use crate::location::Location;
     use crate::transfer_history;
     use crate::volume::RemoteEntry;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
 
+    #[test]
+    fn drag_drop_copies_by_default_and_moves_only_on_request() {
+        let files = vec![PathBuf::from("/source/report.txt")];
+        let destination = Path::new("/target");
+        assert!(matches!(
+            drop_action(&files, destination, false),
+            Ok(Some(Action::Copy { sources, destination, .. }))
+                if sources == files && destination == Path::new("/target")
+        ));
+        assert!(matches!(
+            drop_action(&files, destination, true),
+            Ok(Some(Action::Move { sources, destination, .. }))
+                if sources == files && destination == Path::new("/target")
+        ));
+    }
+
+    #[test]
+    fn drag_drop_cannot_recurse_or_relocate_into_same_directory() {
+        assert!(
+            drop_action(
+                &[PathBuf::from("/home/photos")],
+                Path::new("/home/photos/child"),
+                false
+            )
+            .is_err()
+        );
+        assert!(drop_action(&[PathBuf::from("relative")], Path::new("/tmp"), false).is_err());
+        assert!(
+            drop_action(
+                &[PathBuf::from("/home/report.txt")],
+                Path::new("/home"),
+                true
+            )
+            .unwrap()
+            .is_none()
+        );
+        let mixed = [
+            PathBuf::from("/home/already.txt"),
+            PathBuf::from("/other/new.txt"),
+        ];
+        assert!(matches!(
+            drop_action(&mixed, Path::new("/home"), false),
+            Ok(Some(Action::Copy { sources, .. })) if sources == [PathBuf::from("/other/new.txt")]
+        ));
+    }
     fn remote_entry(name: &str, directory: bool, size: Option<u64>) -> RemoteEntry {
         RemoteEntry {
             uri: format!("smb://host/share/{name}"),
