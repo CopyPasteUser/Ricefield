@@ -849,7 +849,10 @@ mod tests {
             upload(request(file.clone(), &server), &AtomicBool::new(false)).unwrap_err();
         assert!(collision.contains("HTTP 412"), "{collision}");
         assert!(
-            collision.contains(&format!("{}/.ricefield-upload-", server.url)),
+            collision.contains(&format!(
+                "{}/.ricefield-upload-",
+                webdav_url(&server.url).unwrap()
+            )),
             "{collision}"
         );
         assert!(
