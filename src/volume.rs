@@ -451,6 +451,8 @@ pub enum VolumeAction {
     Connect(String),
     ConnectAuthenticated(String, MountCredentials),
     MountDevice(String),
+    UnlockDevice(String, MountCredentials),
+    LockEncrypted(String),
     UnmountDevice {
         object_path: String,
         mount_point: PathBuf,
@@ -494,7 +496,7 @@ impl VolumeAction {
     fn arguments(&self) -> Vec<OsString> {
         match self {
             Self::Connect(uri) | Self::ConnectAuthenticated(uri, _) => vec![OsString::from(uri)],
-            Self::MountDevice(_) => Vec::new(),
+            Self::MountDevice(_) | Self::UnlockDevice(_, _) | Self::LockEncrypted(_) => Vec::new(),
             Self::UnmountDevice { .. } | Self::EjectDrive(_) | Self::PowerOffDrive(_) => Vec::new(),
             Self::Unmount(path) => vec![OsString::from("-u"), path.as_os_str().to_owned()],
             Self::Eject(path) => vec![OsString::from("-e"), path.as_os_str().to_owned()],
@@ -505,6 +507,8 @@ impl VolumeAction {
         match self {
             Self::Connect(_) | Self::ConnectAuthenticated(_, _) => "Connect",
             Self::MountDevice(_) => "Mount",
+            Self::UnlockDevice(_, _) => "Unlock encrypted drive",
+            Self::LockEncrypted(_) => "Lock encrypted drive",
             Self::UnmountDevice { .. } => "Unmount",
             Self::EjectDrive(_) => "Eject",
             Self::PowerOffDrive(_) => "Power off USB drive",
@@ -519,6 +523,12 @@ impl VolumeAction {
 pub fn execute(action: &VolumeAction) -> Result<(), String> {
     if let VolumeAction::MountDevice(object_path) = action {
         return crate::udisks2::mount(object_path);
+    }
+    if let VolumeAction::UnlockDevice(object_path, credentials) = action {
+        return crate::udisks2::unlock(object_path, &credentials.password);
+    }
+    if let VolumeAction::LockEncrypted(object_path) = action {
+        return crate::udisks2::lock(object_path);
     }
     if let VolumeAction::UnmountDevice {
         object_path,
@@ -707,6 +717,21 @@ mod tests {
         );
         assert_eq!(auth.arguments(), vec![OsString::from("smb://host/share")]);
         assert!(!format!("{auth:?}").contains("secret123"));
+        let luks = VolumeAction::UnlockDevice(
+            "/org/freedesktop/UDisks2/block_devices/sdc1".into(),
+            MountCredentials {
+                username: String::new(),
+                domain: String::new(),
+                password: "volume-secret987".into(),
+            },
+        );
+        assert!(luks.arguments().is_empty());
+        assert_eq!(luks.label(), "Unlock encrypted drive");
+        assert!(!format!("{luks:?}").contains("volume-secret987"));
+        let lock =
+            VolumeAction::LockEncrypted("/org/freedesktop/UDisks2/block_devices/sdc1".into());
+        assert!(lock.arguments().is_empty());
+        assert_eq!(lock.label(), "Lock encrypted drive");
     }
 
     #[test]

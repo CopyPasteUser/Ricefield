@@ -26,6 +26,7 @@ const BLOCK_PREFIX: &str = "/org/freedesktop/UDisks2/block_devices/";
 const DRIVE_PREFIX: &str = "/org/freedesktop/UDisks2/drives/";
 const BLOCK_INTERFACE: &str = "org.freedesktop.UDisks2.Block";
 const FS_INTERFACE: &str = "org.freedesktop.UDisks2.Filesystem";
+const ENCRYPTED_INTERFACE: &str = "org.freedesktop.UDisks2.Encrypted";
 const DRIVE_INTERFACE: &str = "org.freedesktop.UDisks2.Drive";
 const MAX_DEVICE_COUNT: usize = 256;
 const CACHE_LIFETIME: Duration = Duration::from_secs(15);
@@ -39,6 +40,8 @@ pub struct DeviceVolume {
     pub removable: bool,
     pub ejectable: bool,
     pub can_power_off: bool,
+    pub encrypted: bool,
+    pub unlocked: bool,
     pub mount_paths: Vec<PathBuf>,
 }
 
@@ -125,6 +128,41 @@ fn parse_mount_path(bytes: &[u8]) -> Option<PathBuf> {
     Some(PathBuf::from(OsStr::from_bytes(raw)))
 }
 
+/// A decrypted dm block may expose Drive="/". Associate only a mapping
+/// explicitly identified by another block's Encrypted.CleartextDevice with
+/// that removable parent; never guess by /dev name or label.
+fn encrypted_backing_drive(
+    objects: &ManagedObjects,
+    cleartext_path: &str,
+) -> Option<zbus::zvariant::OwnedObjectPath> {
+    for (path, interfaces) in objects {
+        if !block_path_is_valid(path.as_str()) {
+            continue;
+        }
+        let (Some(block), Some(encrypted)) = (
+            interfaces.get(BLOCK_INTERFACE),
+            interfaces.get(ENCRYPTED_INTERFACE),
+        ) else {
+            continue;
+        };
+        if property::<bool>(block, "HintIgnore").unwrap_or(true)
+            || property::<String>(block, "IdUsage").as_deref() != Some("crypto")
+            || property::<zbus::zvariant::OwnedObjectPath>(encrypted, "CleartextDevice")
+                .as_ref()
+                .map(|path| path.as_str())
+                != Some(cleartext_path)
+        {
+            continue;
+        }
+        if let Some(drive) = property::<zbus::zvariant::OwnedObjectPath>(block, "Drive")
+            && drive_path_is_valid(drive.as_str())
+        {
+            return Some(drive);
+        }
+    }
+    None
+}
+
 fn project_volumes(objects: &ManagedObjects) -> Vec<DeviceVolume> {
     if objects.len() > MAX_DEVICE_COUNT {
         return Vec::new();
@@ -141,39 +179,57 @@ fn project_volumes(objects: &ManagedObjects) -> Vec<DeviceVolume> {
         else {
             continue;
         };
-        let Some(filesystem) = interfaces
-            .iter()
-            .find(|(name, _)| name.as_str() == FS_INTERFACE)
-            .map(|(_, values)| values)
-        else {
-            continue;
-        };
-        if property::<bool>(block, "HintIgnore").unwrap_or(true)
-            || property::<String>(block, "IdUsage").as_deref() != Some("filesystem")
-        {
+        if property::<bool>(block, "HintIgnore").unwrap_or(true) {
             continue;
         }
-        // Preserve raw Unix mount-point bytes. An invalid byte-array must not
-        // cause a mounted partition to be displayed as an unmounted target.
-        let Some(points) = property::<Vec<Vec<u8>>>(filesystem, "MountPoints") else {
-            continue;
-        };
-        let mount_paths: Option<Vec<_>> = points.iter().map(|p| parse_mount_path(p)).collect();
-        let Some(mount_paths) = mount_paths else {
-            continue;
-        };
+        let (encrypted, unlocked, mount_paths) =
+            match property::<String>(block, "IdUsage").as_deref() {
+                Some("filesystem") => {
+                    let Some(filesystem) = interfaces.get(FS_INTERFACE) else {
+                        continue;
+                    };
+                    // Preserve raw Unix mount-point bytes. An invalid byte
+                    // array must not hide the fact that a partition is used.
+                    let Some(points) = property::<Vec<Vec<u8>>>(filesystem, "MountPoints") else {
+                        continue;
+                    };
+                    let Some(mount_paths) = points
+                        .iter()
+                        .map(|path| parse_mount_path(path))
+                        .collect::<Option<Vec<_>>>()
+                    else {
+                        continue;
+                    };
+                    (false, false, mount_paths)
+                }
+                Some("crypto") => {
+                    let Some(encrypted) = interfaces.get(ENCRYPTED_INTERFACE) else {
+                        continue;
+                    };
+                    let Some(cleartext) =
+                        property::<zbus::zvariant::OwnedObjectPath>(encrypted, "CleartextDevice")
+                    else {
+                        continue;
+                    };
+                    if cleartext.as_str() != "/" && !block_path_is_valid(cleartext.as_str()) {
+                        continue;
+                    }
+                    (true, cleartext.as_str() != "/", Vec::new())
+                }
+                _ => continue,
+            };
         if mount_paths
             .iter()
             .any(|path| path == std::path::Path::new("/"))
         {
             continue;
         }
-        let Some(drive_path) = property::<zbus::zvariant::OwnedObjectPath>(block, "Drive") else {
+        let Some(drive_path) = property::<zbus::zvariant::OwnedObjectPath>(block, "Drive")
+            .filter(|drive| drive_path_is_valid(drive.as_str()))
+            .or_else(|| encrypted_backing_drive(objects, path.as_str()))
+        else {
             continue;
         };
-        if !drive_path_is_valid(drive_path.as_str()) {
-            continue;
-        }
         let Some(drive) = objects.get(&drive_path).and_then(|interfaces| {
             interfaces
                 .iter()
@@ -212,6 +268,8 @@ fn project_volumes(objects: &ManagedObjects) -> Vec<DeviceVolume> {
             removable,
             ejectable,
             can_power_off,
+            encrypted,
+            unlocked,
             mount_paths,
         });
     }
@@ -220,9 +278,15 @@ fn project_volumes(objects: &ManagedObjects) -> Vec<DeviceVolume> {
 }
 
 fn is_current_unmounted(volumes: &[DeviceVolume], object_path: &str) -> bool {
-    volumes
-        .iter()
-        .any(|volume| volume.object_path == object_path && volume.mount_paths.is_empty())
+    volumes.iter().any(|volume| {
+        volume.object_path == object_path && !volume.encrypted && volume.mount_paths.is_empty()
+    })
+}
+
+fn has_encrypted_state(volumes: &[DeviceVolume], object_path: &str, unlocked: bool) -> bool {
+    volumes.iter().any(|volume| {
+        volume.object_path == object_path && volume.encrypted && volume.unlocked == unlocked
+    })
 }
 
 fn is_current_mount(volumes: &[DeviceVolume], object_path: &str, expected_mount: &Path) -> bool {
@@ -310,6 +374,58 @@ pub fn mount(object_path: &str) -> Result<(), String> {
     let _: String = proxy
         .call("Mount", &(options,))
         .map_err(|error| format!("Cannot mount volume: {error}"))?;
+    invalidate_cache();
+    Ok(())
+}
+
+/// Only removable locked crypto blocks are eligible. Never invoke cryptsetup,
+/// construct privileged commands or load a passphrase from configuration.
+/// The ordinary UDisks2/Polkit path owns unlock policy and mapping creation.
+pub fn unlock(object_path: &str, passphrase: &str) -> Result<(), String> {
+    if !block_path_is_valid(object_path) {
+        return Err("Invalid UDisks2 block-device identifier".into());
+    }
+    if passphrase.is_empty() || passphrase.len() > 4096 || passphrase.contains('\0') {
+        return Err("Enter a valid encrypted-volume passphrase (maximum 4096 bytes)".into());
+    }
+    let current = discover().map_err(|error| format!("Cannot verify volume state: {error}"))?;
+    if !has_encrypted_state(&current, object_path, false) {
+        return Err("Encrypted device changed or is already unlocked; refresh volumes".into());
+    }
+    let connection =
+        Connection::system().map_err(|error| format!("System bus unavailable: {error}"))?;
+    let proxy = Proxy::new(&connection, SERVICE, object_path, ENCRYPTED_INTERFACE)
+        .map_err(|error| format!("Cannot contact encrypted volume: {error}"))?;
+    let options = HashMap::<&str, Value<'_>>::new();
+    let cleartext: zbus::zvariant::OwnedObjectPath =
+        proxy.call("Unlock", &(passphrase, options)).map_err(|_| {
+            "Unlock failed. Check the passphrase and Polkit authorization".to_owned()
+        })?;
+    invalidate_cache();
+    if !block_path_is_valid(cleartext.as_str()) {
+        return Err("Unlock returned an unexpected mapped-device identifier; inspect volumes before retrying".into());
+    }
+    Ok(())
+}
+
+/// A lock never forcibly unmounts or closes a busy mapping. Refresh the live
+/// daemon state and let UDisks2 refuse active users of the cleartext device.
+pub fn lock(object_path: &str) -> Result<(), String> {
+    if !block_path_is_valid(object_path) {
+        return Err("Invalid UDisks2 block-device identifier".into());
+    }
+    let current = discover().map_err(|error| format!("Cannot verify volume state: {error}"))?;
+    if !has_encrypted_state(&current, object_path, true) {
+        return Err("Encrypted device changed or is already locked; refresh volumes".into());
+    }
+    let connection =
+        Connection::system().map_err(|error| format!("System bus unavailable: {error}"))?;
+    let proxy = Proxy::new(&connection, SERVICE, object_path, ENCRYPTED_INTERFACE)
+        .map_err(|error| format!("Cannot contact encrypted volume: {error}"))?;
+    let options = HashMap::<&str, Value<'_>>::new();
+    let _: () = proxy.call("Lock", &(options,)).map_err(|error| {
+        format!("Cannot lock volume: {error}. Unmount all cleartext filesystems first")
+    })?;
     invalidate_cache();
     Ok(())
 }
@@ -457,6 +573,14 @@ mod tests {
                 unmount(path, Path::new("/media/test")).unwrap_err(),
                 "Invalid UDisks2 block-device identifier"
             );
+            assert_eq!(
+                unlock(path, "secret").unwrap_err(),
+                "Invalid UDisks2 block-device identifier"
+            );
+            assert_eq!(
+                lock(path).unwrap_err(),
+                "Invalid UDisks2 block-device identifier"
+            );
         }
         assert!(block_path_is_valid(
             "/org/freedesktop/UDisks2/block_devices/sdb1"
@@ -518,6 +642,8 @@ mod tests {
                 removable: true,
                 ejectable: false,
                 can_power_off: true,
+                encrypted: false,
+                unlocked: false,
                 mount_paths: Vec::new(),
             }]
         );
@@ -613,6 +739,138 @@ mod tests {
         volumes.clear();
         assert!(!is_current_mount(&volumes, block, Path::new("/media/USB")));
         assert!(!is_current_ejectable(&volumes, drive));
+    }
+
+    #[test]
+    fn encrypted_removable_discovery_only_unlocks_a_verified_locked_block() {
+        let mut objects = removable_fixture();
+        let disk: OwnedObjectPath = "/org/freedesktop/UDisks2/block_devices/sdc1"
+            .try_into()
+            .unwrap();
+        let block = objects.get_mut(&disk).unwrap();
+        block.remove(FS_INTERFACE);
+        insert_prop(block.get_mut(BLOCK_INTERFACE).unwrap(), "IdUsage", "crypto");
+        let mut encrypted = HashMap::new();
+        insert_prop(
+            &mut encrypted,
+            "CleartextDevice",
+            OwnedObjectPath::try_from("/").unwrap(),
+        );
+        block.insert(ENCRYPTED_INTERFACE.try_into().unwrap(), encrypted);
+
+        let locked = project_volumes(&objects);
+        assert_eq!(locked.len(), 1);
+        assert!(locked[0].encrypted);
+        assert!(!locked[0].unlocked);
+        assert!(locked[0].mount_paths.is_empty());
+        assert!(!is_current_unmounted(&locked, disk.as_str()));
+        assert!(has_encrypted_state(&locked, disk.as_str(), false));
+        assert!(!has_encrypted_state(&locked, disk.as_str(), true));
+
+        let encrypted = objects
+            .get_mut(&disk)
+            .unwrap()
+            .get_mut(ENCRYPTED_INTERFACE)
+            .unwrap();
+        insert_prop(
+            encrypted,
+            "CleartextDevice",
+            OwnedObjectPath::try_from("/org/freedesktop/UDisks2/block_devices/dm_0").unwrap(),
+        );
+        let unlocked = project_volumes(&objects);
+        assert_eq!(unlocked.len(), 1);
+        assert!(unlocked[0].unlocked);
+        assert!(has_encrypted_state(&unlocked, disk.as_str(), true));
+        assert!(!has_encrypted_state(&unlocked, disk.as_str(), false));
+
+        // A device mapper has no direct Drive property. Only the exact
+        // CleartextDevice link authorizes inheriting the USB drive metadata.
+        let cleartext: OwnedObjectPath = "/org/freedesktop/UDisks2/block_devices/dm_0"
+            .try_into()
+            .unwrap();
+        let mut mapped_block = HashMap::new();
+        insert_prop(&mut mapped_block, "IdUsage", "filesystem");
+        insert_prop(&mut mapped_block, "HintIgnore", false);
+        insert_prop(
+            &mut mapped_block,
+            "Drive",
+            OwnedObjectPath::try_from("/").unwrap(),
+        );
+        insert_prop(&mut mapped_block, "IdLabel", "Decrypted files");
+        insert_prop(
+            &mut mapped_block,
+            "PreferredDevice",
+            b"/dev/mapper/test\0".to_vec(),
+        );
+        let mut mapped_fs = HashMap::new();
+        insert_prop(&mut mapped_fs, "MountPoints", Vec::<Vec<u8>>::new());
+        objects.insert(
+            cleartext.clone(),
+            HashMap::from([
+                (BLOCK_INTERFACE.try_into().unwrap(), mapped_block),
+                (FS_INTERFACE.try_into().unwrap(), mapped_fs),
+            ]),
+        );
+        let with_mapping = project_volumes(&objects);
+        assert_eq!(with_mapping.len(), 2);
+        let mapped = with_mapping
+            .iter()
+            .find(|volume| volume.object_path == cleartext.as_str())
+            .unwrap();
+        assert!(!mapped.encrypted);
+        assert!(is_current_unmounted(&with_mapping, cleartext.as_str()));
+        assert_eq!(
+            mapped.drive_path,
+            "/org/freedesktop/UDisks2/drives/usb_drive"
+        );
+
+        // A forged or unrelated mapping must not inherit removable-drive
+        // permissions from the encrypted parent.
+        insert_prop(
+            objects
+                .get_mut(&disk)
+                .unwrap()
+                .get_mut(ENCRYPTED_INTERFACE)
+                .unwrap(),
+            "CleartextDevice",
+            OwnedObjectPath::try_from("/").unwrap(),
+        );
+        assert!(
+            project_volumes(&objects)
+                .iter()
+                .all(|volume| volume.object_path != cleartext.as_str())
+        );
+
+        insert_prop(
+            objects
+                .get_mut(&disk)
+                .unwrap()
+                .get_mut(ENCRYPTED_INTERFACE)
+                .unwrap(),
+            "CleartextDevice",
+            OwnedObjectPath::try_from("/org/freedesktop/UDisks2/drives/no").unwrap(),
+        );
+        assert!(project_volumes(&objects).is_empty());
+
+        objects.get_mut(&disk).unwrap().remove(ENCRYPTED_INTERFACE);
+        assert!(project_volumes(&objects).is_empty());
+    }
+
+    #[test]
+    fn encrypted_passphrase_validation_runs_before_system_bus_access() {
+        let path = "/org/freedesktop/UDisks2/block_devices/sdc1";
+        for invalid in ["", "abc\0def"] {
+            assert!(
+                unlock(path, invalid)
+                    .unwrap_err()
+                    .contains("valid encrypted-volume")
+            );
+        }
+        assert!(
+            unlock(path, &"z".repeat(4097))
+                .unwrap_err()
+                .contains("maximum 4096")
+        );
     }
 
     #[test]

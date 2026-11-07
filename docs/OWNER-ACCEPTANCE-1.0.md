@@ -163,9 +163,17 @@ later development build.
 - [ ] **E04 Filesystems:** test at least ext4 and exFAT where available;
   record FAT/NTFS/NFS/SMB behavior separately. Unsupported ACL/xattr behavior
   must be reported, not hidden or emulated unsafely.
-- [ ] **E05 Encrypted media:** unlocking via RiceField is **not implemented**;
-  mount an already-unlocked volume through the OS if needed. Do not mark
-  native LUKS unlock passed.
+- [ ] **E05 Encrypted media:** on a **disposable** LUKS-formatted USB drive,
+  verify RiceField detects the locked volume, masks its passphrase input,
+  rejects an incorrect password without exposing its text in history/logs,
+  and unlocks via UDisks2/Polkit with the correct password. Confirm that the
+  decrypted device-mapper filesystem appears as a mountable removable volume,
+  can be mounted/browsed, and cannot be locked while busy/mounted. Unmount it,
+  then explicitly Lock; re-open and verify data. Cancel the password dialog,
+  disconnect the drive mid-operation, deny Polkit and verify clear errors and
+  no accidental mutations. Unencrypted and internal fixed drives must never
+  acquire an Unlock button. Unit fixtures exist, but **native LUKS hardware
+  acceptance has not passed**.
 
 ## F. Crash recovery and data integrity
 
