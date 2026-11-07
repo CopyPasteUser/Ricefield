@@ -800,11 +800,7 @@ pub fn publish_verified_stage(id: &str, cancelled: &AtomicBool) -> io::Result<()
 }
 
 #[cfg(target_os = "linux")]
-fn publish_verified_stage_in(
-    directory: &Path,
-    id: &str,
-    cancelled: &AtomicBool,
-) -> io::Result<()> {
+fn publish_verified_stage_in(directory: &Path, id: &str, cancelled: &AtomicBool) -> io::Result<()> {
     use std::{
         ffi::CString,
         os::{
@@ -852,7 +848,10 @@ fn publish_verified_stage_in(
         ));
     }
     if cancelled.load(Ordering::Relaxed) {
-        return Err(io::Error::new(io::ErrorKind::Interrupted, "Recovery cancelled"));
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "Recovery cancelled",
+        ));
     }
     if !matches!(
         compare_for_recovery(&record.source, &staging.join("payload"), cancelled),
@@ -871,7 +870,10 @@ fn publish_verified_stage_in(
         return Err(invalid_data("Recovery record changed during verification"));
     }
     if cancelled.load(Ordering::Relaxed) {
-        return Err(io::Error::new(io::ErrorKind::Interrupted, "Recovery cancelled"));
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "Recovery cancelled",
+        ));
     }
     if !matches!(
         inspect_identity(&record.source, record.source_identity.as_ref()),
@@ -880,7 +882,9 @@ fn publish_verified_stage_in(
         inspect_identity(&staging.join("payload"), record.staged_identity.as_ref()),
         IdentityStatus::SameSnapshot
     ) {
-        return Err(invalid_data("Source or staged copy changed during verification"));
+        return Err(invalid_data(
+            "Source or staged copy changed during verification",
+        ));
     }
     let mut options = OpenOptions::new();
     options
@@ -903,9 +907,7 @@ fn publish_verified_stage_in(
     let stage_fd = unsafe { File::from_raw_fd(fd) };
     let stage_meta = stage_fd.metadata()?;
     use std::os::unix::fs::MetadataExt;
-    if stage_meta.uid() != unsafe { libc::geteuid() }
-        || stage_meta.mode() & 0o077 != 0
-    {
+    if stage_meta.uid() != unsafe { libc::geteuid() } || stage_meta.mode() & 0o077 != 0 {
         return Err(invalid_data("Staging directory is not owned and private"));
     }
     let saved_stage = record
@@ -928,7 +930,10 @@ fn publish_verified_stage_in(
         return Err(invalid_data("Staged inode was replaced before publication"));
     }
     if cancelled.load(Ordering::Relaxed) {
-        return Err(io::Error::new(io::ErrorKind::Interrupted, "Recovery cancelled"));
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "Recovery cancelled",
+        ));
     }
     let name = CString::new(
         record
@@ -976,11 +981,7 @@ fn publish_verified_stage_in(
     // permissions. Verify once more after the no-overwrite rename; never
     // mark a mutated payload as a successful recovery.
     if !matches!(
-        compare_for_recovery(
-            &record.source,
-            &record.destination,
-            &AtomicBool::new(false),
-        ),
+        compare_for_recovery(&record.source, &record.destination, &AtomicBool::new(false),),
         Comparison::Identical { .. }
     ) {
         return Err(invalid_data(
@@ -1576,7 +1577,10 @@ mod tests {
         fs::set_permissions(&staging, fs::Permissions::from_mode(0o700)).unwrap();
         journal.set_staging(&staging).unwrap();
         fs::write(staging.join("payload"), b"verified original").unwrap();
-        File::open(staging.join("payload")).unwrap().sync_all().unwrap();
+        File::open(staging.join("payload"))
+            .unwrap()
+            .sync_all()
+            .unwrap();
         File::open(&staging).unwrap().sync_all().unwrap();
         journal.advance(State::StagedVerified).unwrap();
         journal
@@ -1590,11 +1594,21 @@ mod tests {
         let id = journal.record().id.clone();
         assert!(inspect_record(journal.record().clone()).can_offer_stage_publication());
         publish_verified_stage_in(&directory, &id, &AtomicBool::new(false)).unwrap();
-        assert_eq!(fs::read(directory.join("source")).unwrap(), b"verified original");
-        assert_eq!(fs::read(directory.join("destination")).unwrap(), b"verified original");
+        assert_eq!(
+            fs::read(directory.join("source")).unwrap(),
+            b"verified original"
+        );
+        assert_eq!(
+            fs::read(directory.join("destination")).unwrap(),
+            b"verified original"
+        );
         assert!(scan_incomplete_in(&directory).unwrap().is_empty());
         assert!(!directory.join(format!("{id}.toml")).exists());
-        assert!(!directory.join(".ricefield-staging-recovery-fixture").exists());
+        assert!(
+            !directory
+                .join(".ricefield-staging-recovery-fixture")
+                .exists()
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -1605,15 +1619,18 @@ mod tests {
         let journal = verified_unpublished_fixture(&directory);
         fs::write(directory.join("destination"), b"other writer").unwrap();
         assert!(!inspect_record(journal.record().clone()).can_offer_stage_publication());
-        let error = publish_verified_stage_in(
-            &directory,
-            &journal.record().id,
-            &AtomicBool::new(false),
-        )
-        .unwrap_err();
+        let error =
+            publish_verified_stage_in(&directory, &journal.record().id, &AtomicBool::new(false))
+                .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
-        assert_eq!(fs::read(directory.join("destination")).unwrap(), b"other writer");
-        assert_eq!(fs::read(directory.join("source")).unwrap(), b"verified original");
+        assert_eq!(
+            fs::read(directory.join("destination")).unwrap(),
+            b"other writer"
+        );
+        assert_eq!(
+            fs::read(directory.join("source")).unwrap(),
+            b"verified original"
+        );
         assert_eq!(
             fs::read(directory.join(".ricefield-staging-recovery-fixture/payload")).unwrap(),
             b"verified original"
@@ -1648,12 +1665,10 @@ mod tests {
             b"changed staging!",
         )
         .unwrap();
-        assert!(publish_verified_stage_in(
-            &directory,
-            &journal.record().id,
-            &AtomicBool::new(false),
-        )
-        .is_err());
+        assert!(
+            publish_verified_stage_in(&directory, &journal.record().id, &AtomicBool::new(false),)
+                .is_err()
+        );
         assert!(!directory.join("destination").exists());
         assert_eq!(scan_incomplete_in(&directory).unwrap().len(), 1);
         fs::remove_dir_all(directory).unwrap();
@@ -1679,7 +1694,10 @@ mod tests {
 
         publish_verified_stage_in(&directory, &journal.record().id, &AtomicBool::new(false))
             .unwrap();
-        assert_eq!(fs::read_link(&source).unwrap(), Path::new("unrelated-target"));
+        assert_eq!(
+            fs::read_link(&source).unwrap(),
+            Path::new("unrelated-target")
+        );
         assert_eq!(
             fs::read_link(&destination).unwrap(),
             Path::new("unrelated-target")
