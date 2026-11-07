@@ -5,8 +5,79 @@ use std::{
     fs::OpenOptions,
     io::{self, Write},
     path::{Path, PathBuf},
+    sync::{
+        Arc, Mutex,
+        mpsc::{self, Receiver, SyncSender, TrySendError},
+    },
+    thread,
+    time::Duration,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+/// Coalesce preference changes without doing filesystem I/O on the GUI thread.
+/// One writer owns the output sequence, so an older snapshot cannot publish
+/// after a newer one. The pending slot holds at most one complete snapshot.
+pub struct SaveWorker {
+    pending: Arc<Mutex<Option<Config>>>,
+    wakeup: Option<SyncSender<()>>,
+    errors: Receiver<String>,
+    finished: Receiver<()>,
+}
+
+impl SaveWorker {
+    pub fn spawn() -> Self {
+        Self::spawn_with_write(|config| config.save())
+    }
+
+    fn spawn_with_write(write: impl Fn(Config) -> io::Result<()> + Send + 'static) -> Self {
+        let pending = Arc::new(Mutex::new(None));
+        let worker_pending = Arc::clone(&pending);
+        let (wakeup, requests) = mpsc::sync_channel(1);
+        let (error_sender, errors) = mpsc::channel();
+        let (finished_sender, finished) = mpsc::channel();
+        thread::spawn(move || {
+            while requests.recv().is_ok() {
+                let config = worker_pending.lock().ok().and_then(|mut slot| slot.take());
+                if let Some(config) = config
+                    && let Err(error) = write(config)
+                {
+                    let _ = error_sender.send(error.to_string());
+                }
+            }
+            let _ = finished_sender.send(());
+        });
+        Self {
+            pending,
+            wakeup: Some(wakeup),
+            errors,
+            finished,
+        }
+    }
+
+    pub fn request(&self, config: &Config) -> Result<(), String> {
+        let mut slot = self.pending.lock().map_err(|error| error.to_string())?;
+        *slot = Some(config.clone());
+        drop(slot);
+        let Some(wakeup) = &self.wakeup else {
+            return Err("Preference writer has stopped".into());
+        };
+        match wakeup.try_send(()) {
+            Ok(()) | Err(TrySendError::Full(())) => Ok(()),
+            Err(TrySendError::Disconnected(())) => Err("Preference writer disconnected".into()),
+        }
+    }
+
+    pub fn next_error(&self) -> Option<String> {
+        self.errors.try_recv().ok()
+    }
+
+    /// Give the final snapshot a bounded chance to finish on normal exit.
+    /// A stalled config mount must not indefinitely block app shutdown.
+    pub fn finish(&mut self) {
+        self.wakeup.take();
+        let _ = self.finished.recv_timeout(Duration::from_secs(2));
+    }
+}
 
 pub const MAX_SAVED_TABS: usize = 32;
 pub const MAX_SAVED_HISTORY: usize = 40;
@@ -427,6 +498,55 @@ fn decode_history(history: &[String]) -> Vec<Location> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn background_preference_writer_is_bounded_and_keeps_the_latest_snapshot() {
+        let (entered_sender, entered_receiver) = mpsc::channel();
+        let (release_sender, release_receiver) = mpsc::channel();
+        let (saved_sender, saved_receiver) = mpsc::channel();
+        let mut writer = SaveWorker::spawn_with_write(move |config| {
+            if config.theme == "first" {
+                entered_sender.send(()).unwrap();
+                release_receiver.recv().unwrap();
+            }
+            saved_sender.send(config.theme).unwrap();
+            Ok(())
+        });
+        writer
+            .request(&Config {
+                theme: "first".into(),
+                ..Config::default()
+            })
+            .unwrap();
+        entered_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        // These requests complete immediately even while the writer is stalled.
+        // They replace one pending slot instead of creating an unbounded queue.
+        for n in 0..100 {
+            writer
+                .request(&Config {
+                    theme: format!("revision-{n}"),
+                    ..Config::default()
+                })
+                .unwrap();
+        }
+        release_sender.send(()).unwrap();
+        writer.finish();
+        assert_eq!(
+            saved_receiver.try_iter().collect::<Vec<_>>(),
+            ["first", "revision-99"]
+        );
+    }
+
+    #[test]
+    fn background_preference_writer_reports_storage_failures() {
+        let mut writer =
+            SaveWorker::spawn_with_write(|_| Err(io::Error::other("disk unavailable")));
+        writer.request(&Config::default()).unwrap();
+        writer.finish();
+        assert_eq!(writer.next_error().as_deref(), Some("disk unavailable"));
+    }
 
     #[test]
     fn older_preferences_default_to_session_restore_without_requiring_new_keys() {
