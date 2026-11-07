@@ -82,6 +82,7 @@ pub fn describe(action: &Action) -> String {
         Action::SetMode { .. } => "Change permissions".into(),
         Action::SetOwnership { .. } => "Change owner/group".into(),
         Action::CreateUserAttribute { .. } => "Create extended attribute".into(),
+        Action::CreateNamedUserAcl { .. } => "Create POSIX ACL entry".into(),
     }
 }
 
