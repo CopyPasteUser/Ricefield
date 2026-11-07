@@ -82,7 +82,11 @@ impl PendingUpload {
         Self::begin_in(&journal_directory()?, stage_uri, destination_uri)
     }
 
-    pub(crate) fn begin_in(directory: &Path, stage_uri: &str, destination_uri: &str) -> io::Result<Self> {
+    pub(crate) fn begin_in(
+        directory: &Path,
+        stage_uri: &str,
+        destination_uri: &str,
+    ) -> io::Result<Self> {
         let id = stage_uri
             .rsplit_once("/.ricefield-upload-")
             .map(|(_, suffix)| suffix.to_owned())
@@ -223,7 +227,9 @@ fn read_record(path: &Path) -> io::Result<Record> {
         || before.mode() & 0o077 != 0
         || before.uid() != unsafe { libc::geteuid() }
     {
-        return Err(invalid_data("WebDAV journal file is not private and regular"));
+        return Err(invalid_data(
+            "WebDAV journal file is not private and regular",
+        ));
     }
     let mut file = OpenOptions::new()
         .read(true)
@@ -307,7 +313,9 @@ fn check_private_directory(directory: &Path) -> io::Result<()> {
         || metadata.uid() != unsafe { libc::geteuid() }
         || metadata.mode() & 0o077 != 0
     {
-        return Err(invalid_data("WebDAV journal directory must be owned and private"));
+        return Err(invalid_data(
+            "WebDAV journal directory must be owned and private",
+        ));
     }
     Ok(())
 }
@@ -326,7 +334,9 @@ fn lock_directory(directory: &Path) -> io::Result<File> {
         || metadata.uid() != unsafe { libc::geteuid() }
         || metadata.mode() & 0o077 != 0
     {
-        return Err(invalid_data("WebDAV journal lock is not private and regular"));
+        return Err(invalid_data(
+            "WebDAV journal lock is not private and regular",
+        ));
     }
     if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
         return Err(io::Error::last_os_error());
@@ -403,12 +413,14 @@ mod tests {
 
         let directory = isolated_directory();
         let (stage, destination) = urls();
-        assert!(PendingUpload::begin_in(
-            &directory,
-            &stage.replace("https://", "http://name:password@"),
-            &destination.replace("https://", "http://name:password@"),
-        )
-        .is_err());
+        assert!(
+            PendingUpload::begin_in(
+                &directory,
+                &stage.replace("https://", "http://name:password@"),
+                &destination.replace("https://", "http://name:password@"),
+            )
+            .is_err()
+        );
         assert!(!directory.exists());
     }
 }

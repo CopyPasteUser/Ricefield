@@ -967,12 +967,14 @@ mod tests {
         .unwrap_err();
         assert!(error.contains("Cannot durably record"), "{error}");
         assert!(server.path("unwritten.txt").is_empty());
-        assert!(!server
-            .state
-            .lock()
-            .unwrap()
-            .keys()
-            .any(|path| path.contains(".ricefield-upload-")));
+        assert!(
+            !server
+                .state
+                .lock()
+                .unwrap()
+                .keys()
+                .any(|path| path.contains(".ricefield-upload-"))
+        );
         fs::remove_file(not_a_directory).unwrap();
         fs::remove_file(file).unwrap();
         fs::remove_dir(folder).unwrap();
