@@ -136,6 +136,13 @@ two-client collisions), compares full staged bytes and requests the server
 to publish without overwrite. Incompatible servers and SMB/SFTP/MTP remain
 write-disabled; no generic GIO fallback, remote rename or delete is allowed.
 Unsuccessful uploads can leave private server-side stages for manual review.
+Before the first PUT, the uploader durably publishes a private, bounded,
+credential-free evidence journal of the random stage URI and final destination.
+If that fails, no staging PUT occurs. A successful HTTP 201 MOVE retires the
+evidence. Crash/timeout records appear in a background-loaded recovery review
+with copyable URIs and an optional two-step confirmation that discards **only
+the local record** after separate server-side verification. No automatic
+server queries, retries or DELETE requests run during recovery.
 Remote preview reads only a bounded first-32-KiB prefix on a cancellable worker;
 larger text is explicitly marked incomplete, and binary/control-bearing bytes
 use the shared escaped 256-byte hex preview. The preview does not imply a

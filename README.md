@@ -71,7 +71,7 @@ ricefield --theme-file /path/to/custom-rice.toml
 
 ## Safety and known limits
 
-- Remote browsing is **read-only by default**, with explicit bounded no-overwrite downloads. WebDAV single-file upload is available only after a live conditional-MOVE safety probe, private stage and full byte verification. Failure reports the private stage URI for manual review; no automatic remote cleanup or retries occur. SMB, SFTP, MTP uploads, remote rename and deletion remain disabled pending [backend-specific atomicity guarantees](docs/REMOTE-WRITE-SAFETY.md); the 1.0 network-write gate is still open.
+- Remote browsing is **read-only by default**, with explicit bounded no-overwrite downloads. WebDAV single-file upload is available only after a live conditional-MOVE safety probe, private stage and full byte verification. Before its first staging PUT a private credential-free journal durably saves the stage and final target; uncertain attempts can be reviewed after restart under **Review safely…**. Remote cleanup and retries never run automatically. SMB, SFTP, MTP uploads, remote rename and deletion remain disabled pending [backend-specific atomicity guarantees](docs/REMOTE-WRITE-SAFETY.md); the 1.0 network-write gate is still open.
 - Cross-device moves preserve their sources after verified copies; cleanup requires a separate decision.
 - Batch rename has guarded session-only Undo, not full crash recovery. Inspect any interrupted batch.
 - USB mount, unmount and eject rely on UDisks2/Polkit; real-hardware acceptance and encrypted-volume unlock remain open.
