@@ -194,10 +194,14 @@ fn archive_preview(path: &Path) -> io::Result<Preview> {
 
 /// Inspect only a small prefix. Untrusted binary content is never interpreted
 /// as markup or escape sequences and cannot make the UI allocate unbounded text.
-fn binary_preview(bytes: &[u8], size: u64) -> Preview {
+pub(crate) fn binary_hex_text(bytes: &[u8], total_size: Option<u64>) -> String {
     let sample = &bytes[..bytes.len().min(MAX_HEX_PREVIEW_BYTES)];
+    let total = total_size.map_or_else(
+        || "unknown total size".into(),
+        |size| format!("{size} bytes"),
+    );
     let mut output = format!(
-        "Binary file · first {} of {size} bytes (hex + ASCII, read-only)\n\n",
+        "Binary file · first {} of {total} (hex + ASCII, read-only)\n\n",
         sample.len()
     );
     for (row, chunk) in sample.chunks(16).enumerate() {
@@ -219,10 +223,14 @@ fn binary_preview(bytes: &[u8], size: u64) -> Preview {
         }
         output.push('\n');
     }
-    if size > sample.len() as u64 {
+    if total_size.is_none_or(|size| size > sample.len() as u64) {
         output.push_str("\nPreview truncated; use a hex editor for the full file.");
     }
-    Preview::Text(output)
+    output
+}
+
+fn binary_preview(bytes: &[u8], size: u64) -> Preview {
+    Preview::Text(binary_hex_text(bytes, Some(size)))
 }
 
 pub fn load(path: &Path) -> io::Result<Preview> {

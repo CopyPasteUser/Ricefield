@@ -119,6 +119,10 @@ read-only GIO tabs; an unsupported scheme fails without navigating or
 mutating the current local tab. The desktop launcher accepts URIs via `%U`.
 URI credentials are rejected rather than retained in status messages or tab
 history. Remote mutations remain disabled pending independent recovery gates.
+Remote preview reads only a bounded first-32-KiB prefix on a cancellable worker;
+larger text is explicitly marked incomplete, and binary/control-bearing bytes
+use the shared escaped 256-byte hex preview. The preview does not imply a
+complete or verified remote download and never authorizes mutation.
 
 Copy and Move failures identify the failing source's position in the batch and
 the number of earlier completed items. The error is not a transaction rollback:

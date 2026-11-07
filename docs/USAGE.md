@@ -111,7 +111,10 @@ Service after a successful mount. **Use saved login** retrieves them on demand;
 login. An unavailable/locked keyring or desktop session can prevent the operation.
 
 Connected shares open as read-only tabs with history, refresh, bounded filename
-search and small UTF-8 text previews. Click **Download** beside a remote file
+search and text/binary prefix previews. Only the first 32 KiB are streamed for
+preview; large text is marked truncated, and binary bytes appear as a safe
+256-byte hex/ASCII sample. These previews are not source-integrity checks.
+Click **Download** beside a remote file
 or **Download folder** beside a directory to save its contents to the configured
 local target directory (default `~/Downloads`).
 Edit the **Download to** field using an absolute local folder path; valid
@@ -138,8 +141,8 @@ including within a downloaded folder. A server-side type change during
 transfer is not yet protected by a source-identity snapshot.
 Folder downloads preserve filenames and file bytes, not remote ownership,
 ACLs, extended attributes or server-side modification times; they are not
-lossless NAS backups. Remote uploads, rename, deletion, full file opening
-and binary previews are not implemented. Real NAS/offline/keyring/download
+lossless NAS backups. Remote uploads, rename, deletion and full file opening
+are not implemented. Real NAS/offline/keyring/download
 acceptance remains open.
 
 ## Archives and previews

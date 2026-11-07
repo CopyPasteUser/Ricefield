@@ -8196,7 +8196,7 @@ impl Explorer {
                     ui.separator();
                     let mut close = false;
                     ui.horizontal(|ui| {
-                        ui.strong("Read-only text preview (32 KiB max)");
+                        ui.strong("Read-only network preview (32 KiB prefix)");
                         close = ui.small_button("Close preview").clicked();
                     });
                     if close {
@@ -8212,7 +8212,7 @@ impl Explorer {
                                 ui.colored_label(Color32::LIGHT_RED, error);
                             }
                             Some(Ok(content)) if content.is_empty() => {
-                                ui.label("The text file is empty.");
+                                ui.label("The remote file is empty.");
                             }
                             Some(Ok(content)) => {
                                 egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
