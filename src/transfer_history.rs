@@ -21,6 +21,10 @@ pub const MAX_RECORDS: usize = 64;
 const MAX_BYTES: u64 = 256 * 1024;
 const MAX_LABEL_BYTES: usize = 200;
 const MAX_SUMMARY_BYTES: usize = 2048;
+const MAX_PATH_BYTES: usize = 160;
+const MAX_ITEM_DETAIL_BYTES: usize = 200;
+/// Only a diagnostic sample survives restart; failures take priority.
+pub const MAX_ITEMS_PER_RECORD: usize = 24;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -39,6 +43,55 @@ pub struct Counts {
     pub not_started: usize,
 }
 
+/// Saved evidence must never be used to authorize file operations or Undo.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ItemOutcome {
+    NotStarted,
+    Completed,
+    CopiedSourceRetained,
+    Skipped,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ItemSummary {
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    pub state: ItemOutcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+impl ItemSummary {
+    fn bounded(&mut self) {
+        self.source = truncate_utf8(&self.source, MAX_PATH_BYTES);
+        self.target = self
+            .target
+            .as_deref()
+            .map(|target| truncate_utf8(target, MAX_PATH_BYTES));
+        self.detail = self
+            .detail
+            .as_deref()
+            .map(|detail| truncate_utf8(detail, MAX_ITEM_DETAIL_BYTES));
+    }
+
+    fn valid(&self) -> bool {
+        !self.source.is_empty()
+            && self.source.len() <= MAX_PATH_BYTES
+            && self
+                .target
+                .as_ref()
+                .is_none_or(|value| value.len() <= MAX_PATH_BYTES)
+            && self
+                .detail
+                .as_ref()
+                .is_none_or(|value| value.len() <= MAX_ITEM_DETAIL_BYTES)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Record {
     pub id: u64,
@@ -48,6 +101,9 @@ pub struct Record {
     pub finished_unix_seconds: u64,
     pub elapsed_millis: u64,
     pub counts: Counts,
+    /// Backwards-compatible with v1 summary-only history files.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<ItemSummary>,
 }
 
 impl Record {
@@ -59,6 +115,8 @@ impl Record {
             && self.finished_unix_seconds > 0
             && self.finished_unix_seconds <= 32_503_680_000
             && self.elapsed_millis <= 31_536_000_000
+            && self.items.len() <= MAX_ITEMS_PER_RECORD
+            && self.items.iter().all(ItemSummary::valid)
     }
 
     /// Messages can contain filenames and external errors. Bound their size
@@ -66,6 +124,10 @@ impl Record {
     pub fn bounded(mut self) -> Self {
         self.label = truncate_utf8(&self.label, MAX_LABEL_BYTES);
         self.summary = truncate_utf8(&self.summary, MAX_SUMMARY_BYTES);
+        self.items.truncate(MAX_ITEMS_PER_RECORD);
+        for item in &mut self.items {
+            item.bounded();
+        }
         self
     }
 }
@@ -85,6 +147,12 @@ fn truncate_utf8(text: &str, maximum: usize) -> String {
 struct Ledger {
     version: u32,
     records: Vec<Record>,
+}
+
+#[derive(Serialize)]
+struct LedgerView<'a> {
+    version: u32,
+    records: &'a [Record],
 }
 
 fn state_file() -> io::Result<PathBuf> {
@@ -185,9 +253,9 @@ fn save_to(path: &Path, records: &[Record]) -> io::Result<()> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(error),
     }
-    let encoded = toml::to_string(&Ledger {
+    let encoded = toml::to_string(&LedgerView {
         version: VERSION,
-        records: records.to_vec(),
+        records,
     })
     .map_err(io::Error::other)?;
     if encoded.len() as u64 > MAX_BYTES {
@@ -230,6 +298,28 @@ fn save_to(path: &Path, records: &[Record]) -> io::Result<()> {
         io::ErrorKind::AlreadyExists,
         "Cannot allocate private history staging file",
     ))
+}
+
+/// Keep the newest evidence when rich per-item details fill the private file.
+/// This runs only in the history worker, never on the UI render thread.
+fn fit_records_to_budget(records: &mut Vec<Record>) -> io::Result<()> {
+    loop {
+        let encoded = toml::to_string(&LedgerView {
+            version: VERSION,
+            records,
+        })
+        .map_err(io::Error::other)?;
+        if encoded.len() as u64 <= MAX_BYTES {
+            return Ok(());
+        }
+        if records.len() <= 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "One transfer-history record exceeds the private history size limit",
+            ));
+        }
+        records.pop();
+    }
 }
 
 fn prepare_private_folder(folder: &Path) -> io::Result<()> {
@@ -329,6 +419,10 @@ fn spawn_worker_with_path(
             if !writable {
                 continue;
             }
+            if let Err(error) = fit_records_to_budget(&mut records) {
+                let _ = event_sender.send(Event::SaveError(error.to_string()));
+                continue;
+            }
             let saved = path.as_ref().map_err(|error| error.to_string()).and_then(|file| {
                 let current = load_from(file).map_err(|error| error.to_string())?;
                 if current != last_persisted {
@@ -380,6 +474,7 @@ mod tests {
                 completed: 2,
                 ..Counts::default()
             },
+            items: Vec::new(),
         }
     }
 
@@ -395,6 +490,73 @@ mod tests {
             0o600
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn old_summary_only_history_remains_readable() {
+        let root = fixture();
+        let path = root.join("transfer-history.toml");
+        let old = "version = 1\n[[records]]\nid = 7\nlabel = 'Copy 2 items'\nsummary = '2 completed'\noutcome = 'succeeded'\nfinished_unix_seconds = 1784000000\nelapsed_millis = 456\n[records.counts]\ncompleted = 2\nretained = 0\nskipped = 0\nfailed = 0\nnot_started = 0\n";
+        fs::write(&path, old).unwrap();
+        assert_eq!(load_from(&path).unwrap(), vec![sample()]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bounded_per_file_evidence_survives_restart_without_execution_data() {
+        let root = fixture();
+        let path = root.join("transfer-history.toml");
+        let mut record = sample();
+        record.items = (0..100)
+            .map(|index| ItemSummary {
+                source: format!("/test/{}-file", "ö".repeat(200)),
+                target: Some(format!("/target/{index}")),
+                state: if index % 5 == 0 {
+                    ItemOutcome::Failed
+                } else {
+                    ItemOutcome::Completed
+                },
+                detail: Some("bad read ".repeat(200)),
+            })
+            .collect();
+        let bounded = record.bounded();
+        assert_eq!(bounded.items.len(), MAX_ITEMS_PER_RECORD);
+        assert!(bounded.valid());
+        save_to(&path, std::slice::from_ref(&bounded)).unwrap();
+        assert_eq!(load_from(&path).unwrap(), vec![bounded]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn history_keeps_newest_records_when_per_file_details_fill_storage_budget() {
+        let mut items = Vec::new();
+        for index in 0..MAX_ITEMS_PER_RECORD {
+            items.push(ItemSummary {
+                source: format!("/{index}-{}", "s".repeat(120)),
+                target: Some(format!("/{index}-{}", "t".repeat(120))),
+                state: ItemOutcome::Failed,
+                detail: Some("d".repeat(MAX_ITEM_DETAIL_BYTES)),
+            });
+        }
+        let mut records: Vec<_> = (1..=MAX_RECORDS as u64)
+            .map(|id| Record {
+                id,
+                items: items.clone(),
+                ..sample()
+            })
+            .collect();
+        fit_records_to_budget(&mut records).unwrap();
+        assert!(records.len() < MAX_RECORDS);
+        assert_eq!(records.first().unwrap().id, 1);
+        assert!(
+            toml::to_string(&Ledger {
+                version: VERSION,
+                records,
+            })
+            .unwrap()
+            .len() as u64
+                <= MAX_BYTES
+        );
     }
 
     #[test]

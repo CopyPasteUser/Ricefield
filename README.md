@@ -32,6 +32,7 @@ The details are intentional: 98 has a dense gray menu and tree, XP a blue tasks 
 
 - **Browse:** tabs, split panes, bookmarks, folder tree, list/grid views and session restore.
 - **Organize:** copy, move, rename, cycle-safe batch rename, trash, file permissions, progress and conflict previews.
+- **Review transfers:** inspect per-file outcomes during a session; after restart, private read-only history keeps up to 24 file-specific diagnostics per operation (failures first), without replay or destructive Undo.
 - **Find and inspect:** search, saved filters, file-type vector icons, thumbnails, Quick Look, safe binary/text fallback, optional PDF/media previews and ZIP/TAR/7z handling.
 - **Reach storage:** SMB, SFTP, WebDAV and MTP discovery/browsing with folders opening in the current or a new tab, navigable breadcrumbs, selectable/sortable file rows, previews, queued downloads and optional credential storage. WebDAV additionally offers a guarded **single-file upload** after a live server collision-safety probe; USB actions use UDisks2/Polkit.
 - **Customize:** seven built-in rices plus user TOML files for palettes, spacing, navigation and layout.

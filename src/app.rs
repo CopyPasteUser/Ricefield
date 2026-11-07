@@ -728,6 +728,7 @@ impl CompletedOperation {
                 failed: self.counts.failed,
                 not_started: self.counts.not_started,
             },
+            items: history_items(&self.items),
         }
         .bounded()
     }
@@ -751,12 +752,79 @@ impl CompletedOperation {
                 failed: record.counts.failed,
                 not_started: record.counts.not_started,
             },
-            items: Vec::new(),
+            items: record
+                .items
+                .into_iter()
+                .map(|item| filesystem::ItemResult {
+                    source: PathBuf::from(item.source),
+                    target: item.target.map(PathBuf::from),
+                    state: match item.state {
+                        transfer_history::ItemOutcome::NotStarted => {
+                            filesystem::ItemState::NotStarted
+                        }
+                        transfer_history::ItemOutcome::Completed => {
+                            filesystem::ItemState::Completed
+                        }
+                        transfer_history::ItemOutcome::CopiedSourceRetained => {
+                            filesystem::ItemState::CopiedSourceRetained
+                        }
+                        transfer_history::ItemOutcome::Skipped => filesystem::ItemState::Skipped,
+                        transfer_history::ItemOutcome::Failed => filesystem::ItemState::Failed,
+                        transfer_history::ItemOutcome::Cancelled => {
+                            filesystem::ItemState::Cancelled
+                        }
+                    },
+                    detail: item.detail,
+                })
+                .collect(),
             rename_undo: None,
             batch_rename_undo: None,
             from_history: true,
         }
     }
+}
+
+/// Retain bounded diagnostics, never capabilities to replay historical actions.
+/// Prioritize failed/incomplete files when a large batch exceeds the detail cap.
+fn history_items(items: &[filesystem::ItemResult]) -> Vec<transfer_history::ItemSummary> {
+    let mut saved = Vec::with_capacity(items.len().min(transfer_history::MAX_ITEMS_PER_RECORD));
+    for priority in [
+        filesystem::ItemState::Failed,
+        filesystem::ItemState::Cancelled,
+        filesystem::ItemState::NotStarted,
+        filesystem::ItemState::Skipped,
+        filesystem::ItemState::CopiedSourceRetained,
+        filesystem::ItemState::Completed,
+    ] {
+        for item in items {
+            if item.state != priority {
+                continue;
+            }
+            let state = match item.state {
+                filesystem::ItemState::NotStarted => transfer_history::ItemOutcome::NotStarted,
+                filesystem::ItemState::Completed => transfer_history::ItemOutcome::Completed,
+                filesystem::ItemState::CopiedSourceRetained => {
+                    transfer_history::ItemOutcome::CopiedSourceRetained
+                }
+                filesystem::ItemState::Skipped => transfer_history::ItemOutcome::Skipped,
+                filesystem::ItemState::Failed => transfer_history::ItemOutcome::Failed,
+                filesystem::ItemState::Cancelled => transfer_history::ItemOutcome::Cancelled,
+            };
+            saved.push(transfer_history::ItemSummary {
+                source: item.source.to_string_lossy().into_owned(),
+                target: item
+                    .target
+                    .as_ref()
+                    .map(|target| target.to_string_lossy().into_owned()),
+                state,
+                detail: item.detail.clone(),
+            });
+            if saved.len() == transfer_history::MAX_ITEMS_PER_RECORD {
+                return saved;
+            }
+        }
+    }
+    saved
 }
 
 #[derive(Clone, Copy, Default)]
@@ -3859,7 +3927,7 @@ impl Explorer {
                 });
                 ui.separator();
                 ui.strong(format!("Recent results ({})", self.recent_operations.len()));
-                ui.small("This session has detailed item results; earlier sessions retain read-only summaries, never executable Undo or replay.");
+                ui.small("Earlier sessions keep up to 24 read-only per-file results per operation (errors first). History never enables Undo or replay.");
                 egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
                     for entry in &self.recent_operations {
                         let outcome = match entry.outcome {
@@ -3921,6 +3989,20 @@ impl Explorer {
                                     "Per-file results: {completed} done · {retained} copied (source kept) · {skipped} skipped · {failed} errors · {not_started} not started"
                                 ),
                                 |ui| {
+                                    if entry.from_history {
+                                        let total = completed
+                                            .saturating_add(retained)
+                                            .saturating_add(skipped)
+                                            .saturating_add(failed)
+                                            .saturating_add(not_started);
+                                        if total > entry.items.len() {
+                                            ui.small(format!(
+                                                "Showing {} of {total} items; failed or unfinished entries are retained first.",
+                                                entry.items.len()
+                                            ));
+                                        }
+                                        ui.small("Historical entries are display-only, not recovery or file-operation targets.");
+                                    }
                                     egui::ScrollArea::vertical()
                                         .max_height(190.0)
                                         .show_rows(ui, 25.0, entry.items.len(), |ui, range| {
@@ -10438,6 +10520,7 @@ mod tests {
                 failed: 1,
                 ..Default::default()
             },
+            items: Vec::new(),
         };
         let history = super::CompletedOperation::from_history(record.clone());
         assert!(history.from_history);
@@ -10445,6 +10528,50 @@ mod tests {
         assert!(history.batch_rename_undo.is_none());
         assert!(history.items.is_empty());
         assert_eq!(history.history_record(), record);
+    }
+
+    #[test]
+    fn transfer_history_prioritizes_failures_and_restores_only_read_only_evidence() {
+        let items: Vec<_> = (0..42)
+            .map(|index| ItemResult {
+                source: PathBuf::from(format!("/tmp/source-{index}")),
+                target: Some(PathBuf::from(format!("/tmp/target-{index}"))),
+                state: if index == 41 {
+                    ItemState::Failed
+                } else {
+                    ItemState::Completed
+                },
+                detail: (index == 41).then(|| "Permission denied".into()),
+            })
+            .collect();
+        let captured = super::history_items(&items);
+        assert_eq!(captured.len(), transfer_history::MAX_ITEMS_PER_RECORD);
+        assert_eq!(captured[0].state, transfer_history::ItemOutcome::Failed);
+        assert_eq!(captured[0].source, "/tmp/source-41");
+        let record = transfer_history::Record {
+            id: 42,
+            label: "Copy 42 items".into(),
+            summary: "41 complete, 1 failed".into(),
+            outcome: transfer_history::Outcome::Failed,
+            finished_unix_seconds: 1_784_000_000,
+            elapsed_millis: 300,
+            counts: transfer_history::Counts {
+                completed: 41,
+                failed: 1,
+                ..Default::default()
+            },
+            items: captured,
+        };
+        let restored = super::CompletedOperation::from_history(record);
+        assert!(restored.from_history);
+        assert!(restored.rename_undo.is_none());
+        assert!(restored.batch_rename_undo.is_none());
+        assert_eq!(restored.items.len(), transfer_history::MAX_ITEMS_PER_RECORD);
+        assert_eq!(restored.items[0].state, ItemState::Failed);
+        assert_eq!(
+            restored.items[0].detail.as_deref(),
+            Some("Permission denied")
+        );
     }
 
     #[test]
