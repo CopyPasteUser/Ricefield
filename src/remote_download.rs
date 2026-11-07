@@ -663,6 +663,7 @@ mod tests {
             name: name.into(),
             is_directory,
             is_regular_file: !is_directory,
+            reported_size: None,
         }
     }
 
@@ -901,6 +902,7 @@ mod tests {
                     name: "link".into(),
                     is_directory: false,
                     is_regular_file: false,
+                    reported_size: None,
                 }])
             },
             |_, _, _, _, _| panic!("Must not follow remote symlinks or special files"),

@@ -18,6 +18,8 @@ performance, Linux integration, then visual polish.
   storage as real navigation links. Do not simulate unsupported cloud accounts.
 - [x] Draw distinct light-blue solid folder/document vectors, compact modern
   detail headers and narrow-window command layout without asset copying.
+- [x] Differentiate the content surface with roomy rounded two-line file rows
+  instead of reusing Explorer-era dense details tables.
 - [x] Route every toolbar/menu command through shared file actions and local
   write guards; keep settings, previews and transfer history accessible.
 - [x] Capture and inspect actual CI GUI screenshots for default, grid, More,
@@ -52,6 +54,8 @@ performance, Linux integration, then visual polish.
   sortable Name/Date modified/Kind/Size detail columns.
 - [x] Wire icon/list toggling, Quick Look, New Folder, More menu, favorites,
   tabs, mounted volumes and network discovery into shared RiceField actions.
+- [x] Give the Finder details area an alternating-row presentation, distinct
+  from ChromeOS cards and Classic Explorer lines.
 - [x] Use narrow two-row toolbar and dedicated search row; retain the safe
   command strip for custom TOML shell configurations. Keep advanced tools
   available on demand without crowding default Finder.
@@ -72,6 +76,8 @@ performance, Linux integration, then visual polish.
   controllers; preserve local-only action restrictions on network tabs.
 - [x] Add responsive compact/desktop dock variants, readable breadcrumb
   navigation, searchable folder view, favorites and NAS discovery.
+- [x] Render wider, two-line aqua-tinted file rows and a calmer large-row
+  density instead of the ordinary Explorer details renderer.
 - [x] Keep advanced tools accessible on demand while maintaining a clean file
   view and no idle transfer strip. Keep window decoration in RiceBowl/WM;
   exercise the Tools dock button in native GUI smoke.
@@ -140,6 +146,7 @@ At baseline commit `214e585`, `main` and
 | P0 | Operation recovery | Journal and restart tests distinguish pending, committed and failed transfers |
 | P1 | Transfer UX | Queue, bounded concurrency, progress/rate/ETA, conflict dialog, undo when safe, batch rename preview |
 | P1 | Storage and network | GIO/GVfs SMB/SFTP/WebDAV, system NFS, UDisks2/Polkit mount/eject, secrets, reconnect and offline errors |
+| P0 | Network writes before 1.0 | Server-enforced atomic no-overwrite publication for each promised backend, private staging and byte verification, adversarial two-client races, abort/offline/crash recovery; fail closed when unsupported |
 | P1 | Archives | ZIP, TAR variants, 7z and optional RAR with traversal, symlink and bomb protection |
 | P1 | Explorer functions | Split view, session restore, drag-out, folder tree, context actions and robust keyboard interaction |
 | P1 | Preview and search | Bounded thumbnails, PDF/media/code/archive preview, metadata, filters and cancellable search |

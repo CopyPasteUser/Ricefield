@@ -16,7 +16,7 @@ folder = "#459DEB"
 file = "#A8B8CE"
 [metrics]
 rounding = 6
-row_height = 31
+row_height = 29
 tile_width = 122
 sidebar_width = 221
 icon_size = 27
