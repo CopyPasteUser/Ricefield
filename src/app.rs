@@ -1809,6 +1809,20 @@ impl Explorer {
 
     #[cfg(unix)]
     fn resolve_recovery_record(&mut self, id: String) {
+        self.run_recovery_action(id, journal::resolve_verified_copy);
+    }
+
+    #[cfg(target_os = "linux")]
+    fn publish_recovery_stage(&mut self, id: String) {
+        self.run_recovery_action(id, journal::publish_verified_stage);
+    }
+
+    #[cfg(unix)]
+    fn run_recovery_action(
+        &mut self,
+        id: String,
+        action: fn(&str, &AtomicBool) -> std::io::Result<()>,
+    ) {
         if self.recovery_loading || self.recovery_comparison_active.is_some() {
             return;
         }
@@ -1822,7 +1836,7 @@ impl Explorer {
         self.recovery_comparison_cancel = Arc::clone(&cancelled);
         let sender = self.recovery_sender.clone();
         thread::spawn(move || {
-            let result = match journal::resolve_verified_copy(&id, &cancelled) {
+            let result = match action(&id, &cancelled) {
                 Ok(()) => journal::inspect_incomplete(),
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
                     journal::inspect_incomplete()
@@ -3694,6 +3708,8 @@ impl Explorer {
         let mut prepare_copy = None;
         #[cfg(unix)]
         let mut resolve = None;
+        #[cfg(target_os = "linux")]
+        let mut publish_staged = None;
         #[cfg(unix)]
         let mut confirm_resolution = self.recovery_resolution_confirm.clone();
         egui::Window::new("Unfinished cross-device moves")
@@ -3702,7 +3718,7 @@ impl Explorer {
             .default_height(340.0)
             .resizable(true)
             .show(context, |ui| {
-                ui.label("Recovery never deletes, resumes or overwrites files automatically. A confirmed resolution only retires a private journal record after fresh verification; both copies remain.");
+                ui.label("Recovery never deletes original files or overwrites destinations. An explicit confirmed action can publish a verified staged copy to a free destination or retire a verified publication journal. No action runs automatically.");
                 ui.label("Compare file contents on demand (maximum 512 MiB and 10,000 entries). A match is only a snapshot, never authorization to delete a source.");
                 ui.small("If the original source identity still matches, you can separately prepare a new Copy with a full preview. This does not complete the interrupted Move or clear its journal.");
                 if let Some(error) = &self.recovery_error {
@@ -3832,6 +3848,29 @@ impl Explorer {
                                     journal::Comparison::Inconclusive(_) => Color32::LIGHT_YELLOW,
                                 };
                                 ui.colored_label(color, result.label());
+                                #[cfg(target_os = "linux")]
+                                if *staged
+                                    && matches!(result, journal::Comparison::Identical { .. })
+                                    && inspection.can_offer_stage_publication()
+                                    && !self.recovery_loading
+                                    && self.recovery_comparison_active.is_none()
+                                {
+                                    let confirmation = format!("publish:{}", record.id);
+                                    if confirm_resolution.as_deref() == Some(confirmation.as_str()) {
+                                        ui.colored_label(Color32::LIGHT_YELLOW, "Publish this verified staged copy to the currently vacant destination? The original remains untouched. The operation will recheck source, stage and target and refuse a collision; an interrupted publication may require another recovery review.");
+                                        ui.horizontal(|ui| {
+                                            if ui.button("Confirm safe publication").clicked() {
+                                                publish_staged = Some(record.id.clone());
+                                                confirm_resolution = None;
+                                            }
+                                            if ui.button("Cancel").clicked() {
+                                                confirm_resolution = None;
+                                            }
+                                        });
+                                    } else if ui.button("Publish verified staged copy…").clicked() {
+                                        confirm_resolution = Some(confirmation);
+                                    }
+                                }
                                 #[cfg(unix)]
                                 if !*staged
                                     && matches!(result, journal::Comparison::Identical { .. })
@@ -3871,6 +3910,10 @@ impl Explorer {
             if let Some(id) = resolve {
                 self.resolve_recovery_record(id);
             }
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(id) = publish_staged {
+            self.publish_recovery_stage(id);
         }
         if !open {
             self.recovery_comparison_cancel

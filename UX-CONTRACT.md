@@ -103,10 +103,15 @@ Cross-device Copy journals save the verified staged object's inode before
 publication. If publishing races with another writer, is cancelled or fails
 after verification, RiceField retains that verified staging data for review;
 unverified/partial staging is disposable on ordinary errors. Recovery can
-compare the original with the staged payload separately from the destination,
-but a match never authorizes automatic replay, rollback, cleanup or source
-deletion. Older journal versions without staged inode evidence remain
-inspectable and explicitly marked as unproven.
+compare the original with the staged payload separately from the destination.
+On Linux, an explicitly confirmed, still-identical regular-file or symlink
+stage may be published only to an unoccupied target with descriptor-relative
+atomic `RENAME_NOREPLACE`, durable directory sync and a second bounded byte
+comparison. The original stays untouched, and stale, changed, colliding or
+unverifiable cases fail closed. A successful publication retires the journal;
+no directory replay, automatic recovery, source deletion or overwrite exists.
+Older journal versions without staged inode evidence remain inspectable and
+explicitly marked as unproven.
 
 Copy/cut immediately updates the internal file clipboard and synchronizes
 the desktop clipboard in a worker. Outstanding desktop writes coalesce to the
@@ -192,9 +197,10 @@ not silently rolled back; cancelled/unstarted entries remain explicit.
   tooltip. Errors must remain visible even in themes without a bottom bar.
 - **Unfinished cross-device moves:** `journal::scan_incomplete` runs on a
   background thread; `Explorer::recovery_banner` remains visible regardless
-  of theme/status-bar settings. The review window is inspection-only: journal
-  states do not authorize automatic deletion, resume or overwriting. Show source
-  and destination saved-inode evidence independently, with clear missing,
+  of theme/status-bar settings. Journal states do not authorize automatic
+  deletion, resume or overwriting; verified unpublished file/link publication
+  requires a staged-content comparison, fresh checks and two-step confirmation.
+  Show source and destination saved-inode evidence independently, with clear missing,
   changed and replaced states. Source/destination browse buttons navigate to
   their parent folders; a verified directory staging path may be opened
   directly for read-only inspection, but never through a symlink. The staged
