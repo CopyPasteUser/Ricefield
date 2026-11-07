@@ -18,12 +18,15 @@ const MAX_HASH_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// Never interpret trailing or malformed entries as valid permissions.
 #[cfg(target_os = "linux")]
 fn posix_acl_summary(data: &[u8]) -> Option<String> {
-    if data.len() < 12 || (data.len() - 4) % 8 != 0 || data.get(..4)? != 2_u32.to_le_bytes() {
+    if data.len() < 12
+        || !(data.len() - 4).is_multiple_of(8)
+        || data.get(..4)? != 2_u32.to_le_bytes()
+    {
         return None;
     }
     let total = (data.len() - 4) / 8;
     let mut parts = Vec::with_capacity(total.min(12) + 1);
-    for entry in data[4..].chunks_exact(8) {
+    for entry in data[4..].as_chunks::<8>().0 {
         let tag = u16::from_le_bytes([entry[0], entry[1]]);
         let perms = u16::from_le_bytes([entry[2], entry[3]]);
         let id = u32::from_le_bytes(entry[4..8].try_into().ok()?);
