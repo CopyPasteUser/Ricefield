@@ -462,6 +462,9 @@ recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
   introduces up to 16 explicit waiting network downloads, snapshotted target
   folders, FIFO dispatch, remove/cancel/pause/resume and pause-on-error. Waiting
   jobs are session-only and never automatically replayed after a restart.
+  A subsequent read-only, explicitly requested staging inspection can list
+  private abandoned download directories without deleting or resuming them;
+  it is not a verified restore protocol or replacement for crash testing.
 - [ ] Connect dialog, secure credential handling, favorites and reconnect.
   A basic URI dialog, 32 validated persistent URI favorites and manual
   reconnect are implemented. Alpha.6 supplies a masked one-attempt credential

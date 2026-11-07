@@ -239,6 +239,18 @@ items. Remote item selection/properties fail explicitly.
 **Actions → Open With…** discovers registered local MIME handlers through GIO
 and launches the selected desktop application. Portal integration remains open.
 
+## Interrupted network downloads
+
+In a remote tab, select the local **Download to** directory and click
+**Inspect interrupted downloads**. RiceField scans that folder on a worker
+thread for up to 64 private `.ricefield-download-*` staging directories and
+offers **Inspect folder** for manual review. It does not read their contents,
+remove them or resume a download. A matching folder may belong to a download
+still running in another RiceField instance. No result authorizes deleting or
+overwriting either the local or remote source. If the folder contains more
+than 8,192 entries, inspection stops with an error rather than presenting an
+incomplete scan as exhaustive. The normal file operation journal is separate.
+
 ## Keyboard reference
 
 | Shortcut | Action |
