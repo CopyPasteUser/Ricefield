@@ -15,7 +15,7 @@ use crate::{
     location::Location,
     metadata, open_with,
     operation_queue::OperationQueue,
-    preview, remote_download,
+    preview, remote_download, remote_upload,
     shell_components::{self, ToolbarAction},
     shell_renderer::{self, FileCellLayout, shorten},
     theme::{BUILTIN_IDS, ChromeComponent, ShellKind, SidebarPosition, SidebarSection, Theme},
@@ -1099,6 +1099,17 @@ pub struct Explorer {
     remote_download_cancel: Arc<AtomicBool>,
     remote_download_bytes: Arc<AtomicU64>,
     remote_download_directory: String,
+    remote_upload_sender: Sender<Result<remote_upload::UploadResult, String>>,
+    remote_upload_receiver: Receiver<Result<remote_upload::UploadResult, String>>,
+    remote_upload_busy: bool,
+    remote_upload_cancel: Arc<AtomicBool>,
+    remote_upload_open: bool,
+    remote_upload_target: String,
+    remote_upload_source: String,
+    remote_upload_username: String,
+    remote_upload_domain: String,
+    remote_upload_password: String,
+    remote_upload_allow_http: bool,
     remote_staging_sender: Sender<(PathBuf, Result<remote_download::StagingInspection, String>)>,
     remote_staging_receiver:
         Receiver<(PathBuf, Result<remote_download::StagingInspection, String>)>,
@@ -1270,6 +1281,7 @@ impl Explorer {
         let (remote_scan_sender, remote_scan_receiver) = mpsc::channel();
         let (remote_preview_sender, remote_preview_receiver) = mpsc::channel();
         let (remote_download_sender, remote_download_receiver) = mpsc::channel();
+        let (remote_upload_sender, remote_upload_receiver) = mpsc::channel();
         let (remote_staging_sender, remote_staging_receiver) = mpsc::channel();
         let remote_download_directory = config
             .remote_download_directory
@@ -1352,6 +1364,17 @@ impl Explorer {
             remote_download_cancel: Arc::new(AtomicBool::new(false)),
             remote_download_bytes: Arc::new(AtomicU64::new(0)),
             remote_download_directory,
+            remote_upload_sender,
+            remote_upload_receiver,
+            remote_upload_busy: false,
+            remote_upload_cancel: Arc::new(AtomicBool::new(false)),
+            remote_upload_open: false,
+            remote_upload_target: String::new(),
+            remote_upload_source: String::new(),
+            remote_upload_username: String::new(),
+            remote_upload_domain: String::new(),
+            remote_upload_password: String::new(),
+            remote_upload_allow_http: false,
             remote_staging_sender,
             remote_staging_receiver,
             remote_staging_result: None,
@@ -2209,6 +2232,100 @@ impl Explorer {
             && let Some(job) = self.remote_download_queue.dequeue()
         {
             self.launch_remote_download(job);
+        }
+    }
+
+    fn open_remote_upload(&mut self) {
+        let Some(target) = self.current().remote_uri.clone() else {
+            return;
+        };
+        if !matches!(Location::parse(target.clone().into()),
+            Ok(Location::Remote(location)) if matches!(location.scheme,
+                crate::location::RemoteScheme::Dav | crate::location::RemoteScheme::Davs))
+        {
+            self.status = Some(("This backend cannot prove an atomic no-replace publish; network writes stay disabled".into(), true));
+            return;
+        }
+        self.remote_upload_target = target;
+        self.remote_upload_source = self
+            .tabs
+            .iter()
+            .find(|tab| tab.remote_uri.is_none() && tab.selected.len() == 1)
+            .and_then(|tab| tab.selected.iter().next())
+            .map(|path| path.display().to_string())
+            .unwrap_or_default();
+        self.remote_upload_username.clear();
+        self.remote_upload_domain.clear();
+        volume::clear_password(&mut self.remote_upload_password);
+        self.remote_upload_allow_http = false;
+        self.remote_upload_open = true;
+    }
+
+    fn remote_upload_dialog(&mut self, context: &egui::Context) {
+        if !self.remote_upload_open {
+            return;
+        }
+        let mut open = true;
+        let mut upload = false;
+        egui::Window::new("Upload to WebDAV · safe publication")
+            .open(&mut open)
+            .collapsible(false)
+            .default_width(490.0)
+            .show(context, |ui| {
+                ui.label("Destination directory:");
+                ui.monospace(&self.remote_upload_target);
+                ui.label("Local regular file (absolute path):");
+                ui.add(egui::TextEdit::singleline(&mut self.remote_upload_source)
+                    .desired_width(f32::INFINITY).hint_text("/home/user/Documents/file.txt"));
+                ui.label("Username and password (or leave blank to try a saved login):");
+                ui.add(egui::TextEdit::singleline(&mut self.remote_upload_username)
+                    .desired_width(f32::INFINITY).hint_text("WebDAV username"));
+                ui.add(egui::TextEdit::singleline(&mut self.remote_upload_domain)
+                    .desired_width(f32::INFINITY).hint_text("Domain (optional)"));
+                ui.add(egui::TextEdit::singleline(&mut self.remote_upload_password)
+                    .password(true).desired_width(f32::INFINITY).hint_text("Password"));
+                if self.remote_upload_target.starts_with("dav://") {
+                    ui.checkbox(&mut self.remote_upload_allow_http,
+                        "Allow unencrypted HTTP for this upload")
+                        .on_hover_text("HTTP may expose credentials and file contents on the network. Prefer davs:// with a trusted certificate.");
+                }
+                ui.separator();
+                ui.small("Before any file is published, RiceField tests the server's overwrite protection using disposable internal files, uploads a private stage, and compares every byte. The server must accept Overwrite:F; existing destinations are never intentionally replaced. Unsuccessful remote stages are left for manual inspection.");
+                upload = ui.add_enabled(!self.remote_upload_busy,
+                    egui::Button::new("Verify server and upload")).clicked();
+            });
+        if upload {
+            let source = PathBuf::from(self.remote_upload_source.trim());
+            if !source.is_absolute() || self.remote_upload_source.trim().is_empty() {
+                self.status = Some((
+                    "Select a regular file using an absolute local path".into(),
+                    true,
+                ));
+                return;
+            }
+            let request = remote_upload::UploadRequest {
+                source,
+                remote_directory: self.remote_upload_target.clone(),
+                allow_insecure_http: self.remote_upload_allow_http,
+                credentials: MountCredentials {
+                    username: std::mem::take(&mut self.remote_upload_username),
+                    domain: std::mem::take(&mut self.remote_upload_domain),
+                    password: std::mem::take(&mut self.remote_upload_password),
+                },
+            };
+            let cancelled = Arc::new(AtomicBool::new(false));
+            self.remote_upload_cancel = Arc::clone(&cancelled);
+            self.remote_upload_busy = true;
+            let sender = self.remote_upload_sender.clone();
+            thread::spawn(move || {
+                let result = remote_upload::upload(request, &cancelled);
+                let _ = sender.send(result);
+            });
+            self.remote_upload_open = false;
+            self.remote_upload_source.clear();
+        } else if !open {
+            volume::clear_password(&mut self.remote_upload_password);
+            self.remote_upload_open = false;
         }
     }
 
@@ -3156,6 +3273,31 @@ impl Explorer {
                 Err(error) => (error, true),
             });
             self.start_next_remote_download();
+        }
+        while let Ok(result) = self.remote_upload_receiver.try_recv() {
+            self.remote_upload_busy = false;
+            self.status = Some(match result {
+                Ok(report) => {
+                    if self.current().remote_uri.as_deref()
+                        == report.uri.rsplit_once('/').map(|p| p.0)
+                    {
+                        self.scan(self.active);
+                    }
+                    (
+                        format!(
+                            "Published {} ({} bytes) without replacing an existing file",
+                            report.uri, report.bytes
+                        ),
+                        false,
+                    )
+                }
+                Err(error) => (
+                    format!(
+                        "WebDAV upload not published: {error}. Inspect private server staging if a transfer was interrupted."
+                    ),
+                    true,
+                ),
+            });
         }
         while let Ok(result) = self.remote_staging_receiver.try_recv() {
             self.remote_staging_busy = false;
@@ -8232,6 +8374,11 @@ impl Explorer {
 
     fn remote_panel(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme.clone();
+        let remote_webdav = self.current().remote_uri.as_ref().is_some_and(|uri| {
+            matches!(Location::parse(uri.clone().into()),
+                Ok(Location::Remote(location)) if matches!(location.scheme,
+                    crate::location::RemoteScheme::Dav | crate::location::RemoteScheme::Davs))
+        });
         let title = match theme.shell_kind() {
             ShellKind::Classic => "Network Neighborhood",
             ShellKind::Luna => "My Network Places",
@@ -8258,7 +8405,11 @@ impl Explorer {
                         ui.horizontal_wrapped(|ui| {
                             ui.heading(title);
                             ui.label(
-                                egui::RichText::new("READ ONLY")
+                                egui::RichText::new(if remote_webdav {
+                                    "READ-ONLY BROWSE · CONDITIONAL UPLOAD"
+                                } else {
+                                    "READ ONLY"
+                                })
                                     .color(theme.palette.muted())
                                     .small(),
                             )
@@ -8312,6 +8463,16 @@ impl Explorer {
                         self.remote_download_queue.len(),
                         if self.remote_download_queue_paused { " (paused)" } else { "" },
                     ));
+                }
+                if self.remote_upload_busy {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spinner();
+                        ui.strong("Verifying WebDAV server and staging upload…");
+                        if ui.button("Request cancellation").clicked() {
+                            self.remote_upload_cancel.store(true, Ordering::Relaxed);
+                        }
+                        ui.small("An already-started publish cannot safely be cancelled.");
+                    });
                 }
                 ui.collapsing(format!(
                     "Downloads & transfers{}",
@@ -8455,6 +8616,15 @@ impl Explorer {
                 }).cloned();
                 let mut selected_action = None;
                 ui.horizontal_wrapped(|ui| {
+                    if ui.add_enabled(remote_webdav && !self.remote_upload_busy,
+                        egui::Button::new("Upload file…"))
+                        .on_hover_text(if remote_webdav {
+                            "Check server collision safety, then upload a pinned local file"
+                        } else {
+                            "This backend cannot guarantee an atomic no-replace publish yet"
+                        }).clicked() {
+                        self.open_remote_upload();
+                    }
                     if ui.add_enabled(selected.as_ref().is_some_and(|entry| entry.is_directory),
                         egui::Button::new("Open folder")).clicked() {
                         selected_action = selected.as_ref().map(|entry| (entry.uri.clone(), true));
@@ -9804,6 +9974,8 @@ impl Drop for Explorer {
         self.duplicate_cancel.store(true, Ordering::Relaxed);
         self.open_with_cancel.store(true, Ordering::Relaxed);
         volume::clear_password(&mut self.volume_connect_password);
+        volume::clear_password(&mut self.remote_upload_password);
+        self.remote_upload_cancel.store(true, Ordering::Relaxed);
         self.discovery_cancel.store(true, Ordering::Relaxed);
         // Drain pending completion records before exiting. A stalled XDG
         // state mount must never trap the desktop in an unbounded close.
@@ -9885,6 +10057,7 @@ impl eframe::App for Explorer {
         if self.dialog.is_none()
             && self.archive_dialog.is_none()
             && !self.volume_connect_open
+            && !self.remote_upload_open
             && self.volume_confirm.is_none()
             && !self.discovery_open
             && !self.recovery_open
@@ -9909,6 +10082,7 @@ impl eframe::App for Explorer {
         self.dialogs(&context);
         self.archive_window(&context);
         self.volume_dialog(&context);
+        self.remote_upload_dialog(&context);
         self.network_browser(&context);
         self.recovery_dialog(&context);
         self.transfer_dialog(&context);
