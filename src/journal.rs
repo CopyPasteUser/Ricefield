@@ -743,12 +743,17 @@ impl Journal {
     fn persist(&mut self, updated: Record) -> io::Result<()> {
         // A recovery finalizer and an active copy worker must never publish
         // divergent states from stale in-memory copies of the same journal.
-        let directory = self.path.parent().ok_or_else(|| invalid_input("Invalid journal path"))?;
+        let directory = self
+            .path
+            .parent()
+            .ok_or_else(|| invalid_input("Invalid journal path"))?;
         #[cfg(unix)]
         let _lock = lock_journal_directory(directory)?;
         let (current, _) = read_record(&self.path)?;
         if current != self.record {
-            return Err(invalid_data("Journal record changed since the last transition"));
+            return Err(invalid_data(
+                "Journal record changed since the last transition",
+            ));
         }
         write_record(&self.path, &updated, false)?;
         self.record = updated;
@@ -774,14 +779,22 @@ fn resolve_verified_copy_in(directory: &Path, id: &str, cancelled: &AtomicBool) 
     let (record, _) = read_record(&path)?;
     verify_resolvable_publication(&record)?;
     if cancelled.load(Ordering::Relaxed) {
-        return Err(io::Error::new(io::ErrorKind::Interrupted, "Recovery verification cancelled"));
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "Recovery verification cancelled",
+        ));
     }
     let comparison = compare_for_recovery(&record.source, &record.destination, cancelled);
     if cancelled.load(Ordering::Relaxed) {
-        return Err(io::Error::new(io::ErrorKind::Interrupted, "Recovery verification cancelled"));
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "Recovery verification cancelled",
+        ));
     }
     if !matches!(comparison, Comparison::Identical { .. }) {
-        return Err(invalid_data("Source and destination contents are not verified identical"));
+        return Err(invalid_data(
+            "Source and destination contents are not verified identical",
+        ));
     }
 
     // File comparisons can be expensive. Lock only the final journal update,
@@ -793,7 +806,10 @@ fn resolve_verified_copy_in(directory: &Path, id: &str, cancelled: &AtomicBool) 
     }
     verify_resolvable_publication(&current)?;
     if cancelled.load(Ordering::Relaxed) {
-        return Err(io::Error::new(io::ErrorKind::Interrupted, "Recovery verification cancelled"));
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "Recovery verification cancelled",
+        ));
     }
 
     let mut completed = current.clone();
@@ -819,7 +835,9 @@ fn verify_resolvable_publication(record: &Record) -> io::Result<()> {
     // of nested entries. Keep their journals available for manual inspection.
     let source_meta = fs::symlink_metadata(&record.source)?;
     if source_meta.is_dir() || !(source_meta.is_file() || source_meta.file_type().is_symlink()) {
-        return Err(invalid_data("Directory and special-file recovery require manual inspection"));
+        return Err(invalid_data(
+            "Directory and special-file recovery require manual inspection",
+        ));
     }
     let destination = identity_of(&fs::symlink_metadata(&record.destination)?);
     let staged = record
@@ -835,15 +853,25 @@ fn verify_resolvable_publication(record: &Record) -> io::Result<()> {
         || destination.mtime != staged.mtime
         || destination.mtime_nsec != staged.mtime_nsec
     {
-        return Err(invalid_data("Published file metadata differs from verified staging"));
+        return Err(invalid_data(
+            "Published file metadata differs from verified staging",
+        ));
     }
     if !matches!(record.state, State::Published | State::StagedVerified)
-        || !matches!(inspect_identity(&record.source, record.source_identity.as_ref()), IdentityStatus::SameSnapshot)
+        || !matches!(
+            inspect_identity(&record.source, record.source_identity.as_ref()),
+            IdentityStatus::SameSnapshot
+        )
         || !matches!(inspect_publication(record), PublicationEvidence::SameInode)
         || (record.state == State::Published
-            && !matches!(inspect_identity(&record.destination, record.destination_identity.as_ref()), IdentityStatus::SameSnapshot))
+            && !matches!(
+                inspect_identity(&record.destination, record.destination_identity.as_ref()),
+                IdentityStatus::SameSnapshot
+            ))
     {
-        return Err(invalid_data("Publication cannot be safely resolved from recorded evidence"));
+        return Err(invalid_data(
+            "Publication cannot be safely resolved from recorded evidence",
+        ));
     }
     Ok(())
 }
@@ -1454,7 +1482,10 @@ mod tests {
         journal.advance(State::StagedVerified).unwrap();
         fs::rename(staging.join("payload"), &destination).unwrap();
         journal.advance(State::Published).unwrap();
-        assert!(resolve_verified_copy_in(&directory, &journal.record().id, &AtomicBool::new(false)).is_err());
+        assert!(
+            resolve_verified_copy_in(&directory, &journal.record().id, &AtomicBool::new(false))
+                .is_err()
+        );
         assert_eq!(scan_incomplete_in(&directory).unwrap().len(), 1);
         assert_eq!(fs::read(destination.join("child")).unwrap(), b"contents");
         fs::remove_dir_all(directory).unwrap();
