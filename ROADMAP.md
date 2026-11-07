@@ -433,7 +433,14 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
 - [x] Retain a fully verified staging payload on later journaled publication
   failure, preserving original and competing destinations. Provide independent
   read-only source/staging comparison in recovery review; incomplete stages
-  remain disposable. Verified staging still needs explicit manual resolution.
+  remain disposable. Publication of eligible staged files/links now has an
+  explicit guarded workflow; all other cases still require manual resolution.
+- [x] Permit explicit, two-step Linux restart publication of a fully verified
+  staged regular file/symlink only after fresh bounded source/stage comparison,
+  private-stage inode checks and atomic no-overwrite rename; sync and verify
+  the published result, retain the source and fail closed on any uncertainty.
+  Directory resume, rollback, power-loss and larger copy verification remain
+  outstanding.
 - [ ] Complete durable content provenance and safe restart resume/rollback
   for legacy Move journals; a matching read-only scan is insufficient.
   New cross-volume transfers do not automatically delete the original.

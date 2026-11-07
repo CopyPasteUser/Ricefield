@@ -2,8 +2,9 @@
 //!
 //! Each transition atomically replaces a private TOML file and syncs both the
 //! file and its containing directory. Recovery is explicitly user-initiated:
-//! an already published copy can be confirmed and its journal retired after
-//! fresh checks. A record never authorizes deletion of source or staging data.
+//! an already published copy can be confirmed and its journal retired, or a
+//! verified unpublished regular file/symlink can be published without replacing
+//! a destination. No recovery action deletes its original source.
 
 use serde::{Deserialize, Serialize};
 use std::{
@@ -247,6 +248,18 @@ impl Inspection {
             self.source,
             PathStatus::File | PathStatus::Directory | PathStatus::Symlink
         ) && matches!(self.source_identity, IdentityStatus::SameSnapshot)
+    }
+
+    /// Display-only eligibility from the asynchronous recovery scan. The
+    /// worker must repeat all identity and content checks before mutation.
+    #[cfg(target_os = "linux")]
+    pub fn can_offer_stage_publication(&self) -> bool {
+        self.record.state == State::StagedVerified
+            && self.record.staged_identity.is_some()
+            && matches!(self.source, PathStatus::File | PathStatus::Symlink)
+            && matches!(self.source_identity, IdentityStatus::SameSnapshot)
+            && matches!(self.destination, PathStatus::Missing)
+            && matches!(self.staging, Some(PathStatus::Directory))
     }
 
     /// Conservative triage only: metadata presence cannot authorize an undo,
@@ -774,6 +787,219 @@ impl Journal {
 #[cfg(unix)]
 pub fn resolve_verified_copy(id: &str, cancelled: &AtomicBool) -> io::Result<()> {
     resolve_verified_copy_in(&journal_directory()?, id, cancelled)
+}
+
+/// Complete publication of a verified, still-private regular file or symlink.
+/// Unlike a fresh Copy, this reuses exactly the staged inode saved in the
+/// journal, never replaces a destination, and always retains the original.
+/// Cancellation is honored before atomic publication, not during durability
+/// barriers or journal retirement.
+#[cfg(target_os = "linux")]
+pub fn publish_verified_stage(id: &str, cancelled: &AtomicBool) -> io::Result<()> {
+    publish_verified_stage_in(&journal_directory()?, id, cancelled)
+}
+
+#[cfg(target_os = "linux")]
+fn publish_verified_stage_in(
+    directory: &Path,
+    id: &str,
+    cancelled: &AtomicBool,
+) -> io::Result<()> {
+    use std::{
+        ffi::CString,
+        os::{
+            fd::{AsRawFd, FromRawFd},
+            unix::{ffi::OsStrExt, fs::OpenOptionsExt},
+        },
+    };
+
+    if !valid_id(id) {
+        return Err(invalid_input("Invalid recovery record ID"));
+    }
+    check_private_directory(&fs::symlink_metadata(directory)?)?;
+    let path = directory.join(format!("{id}.toml"));
+    let (record, _) = read_record(&path)?;
+    let staging = record
+        .staging
+        .as_ref()
+        .ok_or_else(|| invalid_data("Missing recorded staging directory"))?;
+    let parent = record
+        .destination
+        .parent()
+        .ok_or_else(|| invalid_data("Missing destination parent"))?;
+    if record.state != State::StagedVerified
+        || staging.parent() != Some(parent)
+        || !staging
+            .file_name()
+            .is_some_and(|name| name.as_bytes().starts_with(b".ricefield-staging-"))
+        || !matches!(
+            inspect_identity(&record.source, record.source_identity.as_ref()),
+            IdentityStatus::SameSnapshot
+        )
+        || !matches!(
+            inspect_identity(&staging.join("payload"), record.staged_identity.as_ref()),
+            IdentityStatus::SameSnapshot
+        )
+    {
+        return Err(invalid_data(
+            "Staged copy cannot be published from recorded evidence",
+        ));
+    }
+    let original = fs::symlink_metadata(&record.source)?;
+    if !(original.is_file() || original.file_type().is_symlink()) {
+        return Err(invalid_data(
+            "Directory and special-file recovery require manual inspection",
+        ));
+    }
+    if cancelled.load(Ordering::Relaxed) {
+        return Err(io::Error::new(io::ErrorKind::Interrupted, "Recovery cancelled"));
+    }
+    if !matches!(
+        compare_for_recovery(&record.source, &staging.join("payload"), cancelled),
+        Comparison::Identical { .. }
+    ) {
+        return Err(invalid_data(
+            "Original and staged copy could not be verified identical",
+        ));
+    }
+
+    // The journal lock excludes cooperating active workers and recovery
+    // finalizers. Keep the destination parent and staging directory pinned
+    // by descriptors: path substitution must not redirect the rename.
+    let _lock = lock_journal_directory(directory)?;
+    if read_record(&path)?.0 != record {
+        return Err(invalid_data("Recovery record changed during verification"));
+    }
+    if cancelled.load(Ordering::Relaxed) {
+        return Err(io::Error::new(io::ErrorKind::Interrupted, "Recovery cancelled"));
+    }
+    if !matches!(
+        inspect_identity(&record.source, record.source_identity.as_ref()),
+        IdentityStatus::SameSnapshot
+    ) || !matches!(
+        inspect_identity(&staging.join("payload"), record.staged_identity.as_ref()),
+        IdentityStatus::SameSnapshot
+    ) {
+        return Err(invalid_data("Source or staged copy changed during verification"));
+    }
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    let parent_fd = options.open(parent)?;
+    let stage_name = CString::new(staging.file_name().unwrap().as_bytes())
+        .map_err(|_| invalid_data("Invalid staging directory name"))?;
+    let fd = unsafe {
+        libc::openat(
+            parent_fd.as_raw_fd(),
+            stage_name.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: openat returned a unique owned file descriptor.
+    let stage_fd = unsafe { File::from_raw_fd(fd) };
+    let stage_meta = stage_fd.metadata()?;
+    use std::os::unix::fs::MetadataExt;
+    if stage_meta.uid() != unsafe { libc::geteuid() }
+        || stage_meta.mode() & 0o077 != 0
+    {
+        return Err(invalid_data("Staging directory is not owned and private"));
+    }
+    let saved_stage = record
+        .staged_identity
+        .as_ref()
+        .ok_or_else(|| invalid_data("No verified staged inode recorded"))?;
+    let payload_fd = unsafe {
+        libc::openat(
+            stage_fd.as_raw_fd(),
+            c"payload".as_ptr(),
+            libc::O_PATH | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if payload_fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: openat returned a unique owned file descriptor.
+    let payload = unsafe { File::from_raw_fd(payload_fd) };
+    if &identity_of(&payload.metadata()?) != saved_stage {
+        return Err(invalid_data("Staged inode was replaced before publication"));
+    }
+    if cancelled.load(Ordering::Relaxed) {
+        return Err(io::Error::new(io::ErrorKind::Interrupted, "Recovery cancelled"));
+    }
+    let name = CString::new(
+        record
+            .destination
+            .file_name()
+            .ok_or_else(|| invalid_data("Invalid destination filename"))?
+            .as_bytes(),
+    )
+    .map_err(|_| invalid_data("Invalid destination filename"))?;
+    if unsafe {
+        libc::renameat2(
+            stage_fd.as_raw_fd(),
+            c"payload".as_ptr(),
+            parent_fd.as_raw_fd(),
+            name.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    } != 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    parent_fd.sync_all().map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!("Copy published but destination sync failed: {error}; original retained"),
+        )
+    })?;
+    let published_meta = fs::symlink_metadata(&record.destination)?;
+    let published_identity = identity_of(&published_meta);
+    if published_identity.dev != saved_stage.dev
+        || published_identity.ino != saved_stage.ino
+        || published_identity.mode & libc::S_IFMT != saved_stage.mode & libc::S_IFMT
+        || published_identity.mode != saved_stage.mode
+        || published_identity.uid != saved_stage.uid
+        || published_identity.gid != saved_stage.gid
+        || published_identity.len != saved_stage.len
+        || published_identity.mtime != saved_stage.mtime
+        || published_identity.mtime_nsec != saved_stage.mtime_nsec
+    {
+        return Err(invalid_data(
+            "Published inode or metadata differs from verified stage; inspect both copies",
+        ));
+    }
+    // A same-user process can change a staged file despite private-directory
+    // permissions. Verify once more after the no-overwrite rename; never
+    // mark a mutated payload as a successful recovery.
+    if !matches!(
+        compare_for_recovery(
+            &record.source,
+            &record.destination,
+            &AtomicBool::new(false),
+        ),
+        Comparison::Identical { .. }
+    ) {
+        return Err(invalid_data(
+            "Copy was published but final byte verification failed; inspect both copies",
+        ));
+    }
+    let mut completed = record.clone();
+    completed.state = State::Published;
+    completed.destination_identity = Some(published_identity);
+    write_record(&path, &completed, false)?;
+    completed.state = State::Completed;
+    write_record(&path, &completed, false)?;
+    if let Err(error) = fs::remove_file(&path).and_then(|()| File::open(directory)?.sync_all()) {
+        eprintln!("RiceField: resumed copy journal retirement failed: {error}");
+    }
+    if let Err(error) = fs::remove_dir(staging) {
+        eprintln!("RiceField: recovered copy left an empty staging directory: {error}");
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -1335,6 +1561,132 @@ mod tests {
         journal.advance(State::StagedVerified).unwrap();
         fs::rename(payload, destination).unwrap();
         journal.advance(State::Published).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    fn verified_unpublished_fixture(directory: &Path) -> Journal {
+        use std::os::unix::fs::PermissionsExt;
+
+        let source = directory.join("source");
+        let destination = directory.join("destination");
+        fs::write(&source, b"verified original").unwrap();
+        let mut journal = Journal::begin_in(directory, &source, &destination).unwrap();
+        let staging = directory.join(".ricefield-staging-recovery-fixture");
+        fs::create_dir(&staging).unwrap();
+        fs::set_permissions(&staging, fs::Permissions::from_mode(0o700)).unwrap();
+        journal.set_staging(&staging).unwrap();
+        fs::write(staging.join("payload"), b"verified original").unwrap();
+        File::open(staging.join("payload")).unwrap().sync_all().unwrap();
+        File::open(&staging).unwrap().sync_all().unwrap();
+        journal.advance(State::StagedVerified).unwrap();
+        journal
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn verified_stage_can_be_published_explicitly_without_deleting_original() {
+        let directory = test_directory();
+        let journal = verified_unpublished_fixture(&directory);
+        let id = journal.record().id.clone();
+        assert!(inspect_record(journal.record().clone()).can_offer_stage_publication());
+        publish_verified_stage_in(&directory, &id, &AtomicBool::new(false)).unwrap();
+        assert_eq!(fs::read(directory.join("source")).unwrap(), b"verified original");
+        assert_eq!(fs::read(directory.join("destination")).unwrap(), b"verified original");
+        assert!(scan_incomplete_in(&directory).unwrap().is_empty());
+        assert!(!directory.join(format!("{id}.toml")).exists());
+        assert!(!directory.join(".ricefield-staging-recovery-fixture").exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn stage_resume_refuses_existing_destination_and_preserves_stage() {
+        let directory = test_directory();
+        let journal = verified_unpublished_fixture(&directory);
+        fs::write(directory.join("destination"), b"other writer").unwrap();
+        assert!(!inspect_record(journal.record().clone()).can_offer_stage_publication());
+        let error = publish_verified_stage_in(
+            &directory,
+            &journal.record().id,
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(directory.join("destination")).unwrap(), b"other writer");
+        assert_eq!(fs::read(directory.join("source")).unwrap(), b"verified original");
+        assert_eq!(
+            fs::read(directory.join(".ricefield-staging-recovery-fixture/payload")).unwrap(),
+            b"verified original"
+        );
+        assert_eq!(scan_incomplete_in(&directory).unwrap().len(), 1);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn stage_resume_refuses_changed_source_stage_and_cancellation() {
+        let directory = test_directory();
+        let journal = verified_unpublished_fixture(&directory);
+        let id = journal.record().id.clone();
+        let cancelled = AtomicBool::new(true);
+        assert_eq!(
+            publish_verified_stage_in(&directory, &id, &cancelled)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Interrupted
+        );
+        fs::write(directory.join("source"), b"changed original").unwrap();
+        assert!(publish_verified_stage_in(&directory, &id, &AtomicBool::new(false)).is_err());
+        assert!(!directory.join("destination").exists());
+        assert_eq!(scan_incomplete_in(&directory).unwrap().len(), 1);
+        fs::remove_dir_all(directory).unwrap();
+
+        let directory = test_directory();
+        let journal = verified_unpublished_fixture(&directory);
+        fs::write(
+            directory.join(".ricefield-staging-recovery-fixture/payload"),
+            b"changed staging!",
+        )
+        .unwrap();
+        assert!(publish_verified_stage_in(
+            &directory,
+            &journal.record().id,
+            &AtomicBool::new(false),
+        )
+        .is_err());
+        assert!(!directory.join("destination").exists());
+        assert_eq!(scan_incomplete_in(&directory).unwrap().len(), 1);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn stage_resume_supports_symlinks_without_following_their_targets() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let directory = test_directory();
+        let source = directory.join("source-link");
+        let destination = directory.join("destination-link");
+        symlink("unrelated-target", &source).unwrap();
+        let mut journal = Journal::begin_in(&directory, &source, &destination).unwrap();
+        let staging = directory.join(".ricefield-staging-link");
+        fs::create_dir(&staging).unwrap();
+        fs::set_permissions(&staging, fs::Permissions::from_mode(0o700)).unwrap();
+        journal.set_staging(&staging).unwrap();
+        symlink("unrelated-target", staging.join("payload")).unwrap();
+        File::open(&staging).unwrap().sync_all().unwrap();
+        journal.advance(State::StagedVerified).unwrap();
+
+        publish_verified_stage_in(&directory, &journal.record().id, &AtomicBool::new(false))
+            .unwrap();
+        assert_eq!(fs::read_link(&source).unwrap(), Path::new("unrelated-target"));
+        assert_eq!(
+            fs::read_link(&destination).unwrap(),
+            Path::new("unrelated-target")
+        );
+        assert!(!directory.join("unrelated-target").exists());
+        assert!(scan_incomplete_in(&directory).unwrap().is_empty());
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

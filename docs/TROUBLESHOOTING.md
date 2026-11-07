@@ -96,6 +96,13 @@ In **Unfinished cross-device moves**, choose **Browse staging folder** and
 significant disk space. Do not remove or retry it blindly: a destination may
 have been published even if its final acknowledgement was interrupted.
 
+On Linux, an identical, unchanged staged regular file or symlink can now be
+published with **Publish verified staged copy…** and a second confirmation.
+This rechecks the original, staging and target and atomically refuses occupied
+destinations; the original is kept. If a check, sync or final acknowledgement
+fails, preserve the journal and examine both paths before retrying. Directory
+transfers and unverified or changed stages still require manual recovery.
+
 Recovery inspection and bounded byte comparison are read-only. Matching inode
 metadata or bytes does not authorize deletion or prove that paths cannot change.
 An offered fresh Copy is a separate confirmed operation, not restart resume or
