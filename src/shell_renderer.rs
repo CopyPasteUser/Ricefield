@@ -17,6 +17,7 @@ pub struct FileCellLayout {
     pub width: f32,
     pub height: f32,
     pub grid: bool,
+    pub row_index: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -24,6 +25,7 @@ struct FileCellVisual {
     selected: bool,
     hovered: bool,
     grid: bool,
+    row_index: usize,
 }
 
 /// Draw a file cell and return its response so the controller can decide
@@ -50,11 +52,186 @@ pub fn file_cell(
             selected,
             hovered: response.hovered(),
             grid: layout.grid,
+            row_index: layout.row_index,
         },
         thumbnail,
     );
     let response = response.on_hover_text(file.path.display().to_string());
     (rect, response)
+}
+
+/// Remote entries deliberately have no POSIX path or inode. Render the same
+/// visual file language without manufacturing a local `filesystem::Entry`.
+/// The controller keeps the real URI as the sole action target.
+pub struct RemoteRowVisual<'a> {
+    pub name: &'a str,
+    pub is_directory: bool,
+    pub is_regular_file: bool,
+    pub reported_size: Option<u64>,
+    pub selected: bool,
+}
+
+pub fn remote_row(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    visual: RemoteRowVisual<'_>,
+    height: f32,
+) -> Response {
+    let width = ui.available_width();
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(width.max(80.0), height.max(26.0)), Sense::click());
+    let painter = ui.painter();
+    let shell = theme.shell_kind();
+    let rounding = match shell {
+        ShellKind::Chromeos => 8,
+        ShellKind::Finder | ShellKind::Aqua => 5,
+        ShellKind::Classic
+        | ShellKind::Luna
+        | ShellKind::Aero
+        | ShellKind::Ribbon
+        | ShellKind::Modern => 0,
+    };
+    if visual.selected {
+        painter.rect_filled(
+            rect.shrink2(Vec2::new(1.0, 0.0)),
+            rounding,
+            theme.palette.selection(),
+        );
+    } else if response.hovered() {
+        painter.rect_filled(
+            rect.shrink2(Vec2::new(1.0, 0.0)),
+            rounding,
+            theme.palette.chrome().gamma_multiply(0.55),
+        );
+    }
+    if shell == ShellKind::Classic {
+        painter.line_segment(
+            [rect.left_bottom(), rect.right_bottom()],
+            Stroke::new(0.4, theme.palette.border()),
+        );
+    }
+    let icon_color = if visual.is_directory {
+        theme.palette.folder()
+    } else {
+        theme.palette.file()
+    };
+    let x = rect.left() + 9.0;
+    let y = rect.center().y - 8.0;
+    if visual.is_directory {
+        let tab = Rect::from_min_size(Pos2::new(x + 1.0, y + 2.0), Vec2::new(11.0, 5.0));
+        let body = Rect::from_min_size(Pos2::new(x, y + 6.0), Vec2::new(23.0, 13.0));
+        let corner = if shell == ShellKind::Classic { 0 } else { 3 };
+        painter.rect_filled(tab, corner, icon_color);
+        painter.rect_filled(body, corner, icon_color);
+        if shell == ShellKind::Classic {
+            painter.rect_stroke(
+                body,
+                0,
+                Stroke::new(0.8, Color32::from_rgb(112, 85, 17)),
+                egui::StrokeKind::Inside,
+            );
+        }
+    } else {
+        let body = Rect::from_min_size(Pos2::new(x + 3.0, y), Vec2::new(17.0, 20.0));
+        painter.rect_filled(
+            body,
+            if shell == ShellKind::Classic { 0 } else { 2 },
+            icon_color,
+        );
+        for offset in [7.0, 11.0, 15.0] {
+            painter.line_segment(
+                [
+                    Pos2::new(x + 6.0, y + offset),
+                    Pos2::new(x + 17.0, y + offset),
+                ],
+                Stroke::new(1.0, Color32::WHITE.gamma_multiply(0.8)),
+            );
+        }
+    }
+    if matches!(shell, ShellKind::Chromeos | ShellKind::Aqua) {
+        let left = rect.left() + 43.0;
+        painter.text(
+            Pos2::new(left, rect.center().y - 8.0),
+            Align2::LEFT_CENTER,
+            shorten(
+                visual.name,
+                ((rect.width() * 0.63 - 45.0) / 7.5).max(4.0) as usize,
+            ),
+            FontId::proportional(if shell == ShellKind::Aqua { 14.5 } else { 14.0 }),
+            theme.palette.text(),
+        );
+        painter.text(
+            Pos2::new(left, rect.center().y + 10.0),
+            Align2::LEFT_CENTER,
+            if visual.is_directory {
+                "Network folder"
+            } else if visual.is_regular_file {
+                "Network file"
+            } else {
+                "Network item"
+            },
+            FontId::proportional(11.2),
+            theme.palette.muted(),
+        );
+        if visual.is_regular_file && rect.width() >= 425.0 {
+            painter.text(
+                Pos2::new(rect.left() + rect.width() * 0.85 + 7.0, rect.center().y),
+                Align2::LEFT_CENTER,
+                visual
+                    .reported_size
+                    .map(filesystem::human_size)
+                    .unwrap_or_else(|| "—".into()),
+                FontId::proportional(12.0),
+                theme.palette.muted(),
+            );
+        }
+        return response;
+    }
+    let compact = rect.width() < 425.0;
+    let name_width = if compact {
+        rect.width() - 49.0
+    } else {
+        rect.width() * 0.65 - 49.0
+    };
+    painter.text(
+        Pos2::new(rect.left() + 40.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        shorten(visual.name, (name_width.max(20.0) / 7.0) as usize),
+        FontId::proportional(if shell == ShellKind::Classic {
+            12.5
+        } else {
+            13.0
+        }),
+        theme.palette.text(),
+    );
+    if !compact {
+        painter.text(
+            Pos2::new(rect.left() + rect.width() * 0.65 + 7.0, rect.center().y),
+            Align2::LEFT_CENTER,
+            if visual.is_directory {
+                "Folder"
+            } else if visual.is_regular_file {
+                "File"
+            } else {
+                "Special"
+            },
+            FontId::proportional(11.7),
+            theme.palette.muted(),
+        );
+        if visual.is_regular_file {
+            painter.text(
+                Pos2::new(rect.left() + rect.width() * 0.85 + 7.0, rect.center().y),
+                Align2::LEFT_CENTER,
+                visual
+                    .reported_size
+                    .map(filesystem::human_size)
+                    .unwrap_or_else(|| "—".into()),
+                FontId::proportional(11.7),
+                theme.palette.muted(),
+            );
+        }
+    }
+    response
 }
 
 pub fn sort_header(
@@ -64,13 +241,36 @@ pub fn sort_header(
     descending: bool,
 ) -> Option<&'static str> {
     let mut change_sort = None;
+    if matches!(theme.shell_kind(), ShellKind::Chromeos | ShellKind::Aqua) {
+        let available = ui.available_width();
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            for (key, label, fraction) in [("name", "Name", 0.80), ("size", "Size", 0.20)] {
+                let arrow = if sort_by == key {
+                    if descending { " ↓" } else { " ↑" }
+                } else {
+                    ""
+                };
+                let button = egui::Button::new(format!("{label}{arrow}"))
+                    .fill(theme.palette.panel())
+                    .stroke(Stroke::NONE)
+                    .corner_radius(egui::CornerRadius::same(
+                        if theme.shell_kind() == ShellKind::Chromeos {
+                            9
+                        } else {
+                            5
+                        },
+                    ));
+                if ui.add_sized([available * fraction, 27.0], button).clicked() {
+                    change_sort = Some(key);
+                }
+            }
+        });
+        return change_sort;
+    }
     if matches!(
         theme.shell_kind(),
-        ShellKind::Aero
-            | ShellKind::Ribbon
-            | ShellKind::Aqua
-            | ShellKind::Finder
-            | ShellKind::Chromeos
+        ShellKind::Aero | ShellKind::Ribbon | ShellKind::Finder
     ) {
         // Both Explorer-era shells align their sortable details columns with
         // the same virtualized rows; the skins differ only in paint tokens.
@@ -211,16 +411,65 @@ fn paint_file_cell(
     thumbnail: Option<(egui::TextureId, Vec2)>,
 ) {
     let painter = painter.with_clip_rect(rect);
+    let shell = theme.shell_kind();
+    if !visual.grid {
+        match shell {
+            ShellKind::Classic => {
+                painter.line_segment(
+                    [rect.left_bottom(), rect.right_bottom()],
+                    Stroke::new(0.5, Color32::from_rgb(200, 200, 200)),
+                );
+            }
+            ShellKind::Luna if visual.row_index % 2 == 1 => {
+                painter.rect_filled(rect, 0, Color32::from_rgb(249, 250, 255));
+            }
+            ShellKind::Finder if visual.row_index % 2 == 1 => {
+                painter.rect_filled(rect, 0, Color32::from_rgb(247, 248, 251));
+            }
+            ShellKind::Ribbon if visual.row_index % 2 == 1 => {
+                painter.rect_filled(rect, 0, Color32::from_rgb(250, 252, 255));
+            }
+            ShellKind::Chromeos => {
+                painter.rect_filled(
+                    rect.shrink2(Vec2::new(5.0, 2.0)),
+                    9,
+                    if visual.row_index % 2 == 1 {
+                        Color32::from_rgb(248, 250, 254)
+                    } else {
+                        theme.palette.panel()
+                    },
+                );
+            }
+            ShellKind::Aqua => {
+                if visual.row_index % 2 == 1 {
+                    painter.rect_filled(
+                        rect.shrink2(Vec2::new(2.0, 1.0)),
+                        5,
+                        Color32::from_rgb(238, 251, 253),
+                    );
+                }
+                painter.line_segment(
+                    [rect.left_bottom(), rect.right_bottom()],
+                    Stroke::new(0.6, Color32::from_rgb(191, 232, 232)),
+                );
+            }
+            _ => {}
+        }
+    }
     if visual.selected || visual.hovered {
+        let radius = match shell {
+            ShellKind::Classic | ShellKind::Luna | ShellKind::Ribbon => 0,
+            ShellKind::Chromeos => 9,
+            ShellKind::Finder => 4,
+            _ => theme.metrics.rounding,
+        };
         painter.rect_filled(
-            rect.shrink(
-                if matches!(theme.shell_kind(), ShellKind::Aero | ShellKind::Aqua) {
-                    0.5
-                } else {
-                    2.0
-                },
-            ),
-            theme.metrics.rounding,
+            rect.shrink(if matches!(shell, ShellKind::Aero | ShellKind::Aqua) {
+                0.5
+            } else {
+                2.0
+            }),
+            radius,
             if visual.selected {
                 theme.palette.selection()
             } else if theme.shell_kind() == ShellKind::Aero {
@@ -233,11 +482,25 @@ fn paint_file_cell(
                 theme.palette.background()
             },
         );
-        if matches!(theme.shell_kind(), ShellKind::Aero | ShellKind::Aqua) {
+        if matches!(shell, ShellKind::Aero | ShellKind::Aqua) {
             painter.rect_stroke(
                 rect.shrink(1.0),
                 2,
                 Stroke::new(1.0, theme.palette.border()),
+                egui::StrokeKind::Inside,
+            );
+        }
+        if shell == ShellKind::Aqua && visual.selected {
+            painter.line_segment(
+                [rect.left_top(), rect.left_bottom()],
+                Stroke::new(3.0, Color32::from_rgb(0, 142, 176)),
+            );
+        }
+        if shell == ShellKind::Luna && visual.selected {
+            painter.rect_stroke(
+                rect.shrink(1.0),
+                0,
+                Stroke::new(1.0, Color32::from_rgb(64, 104, 185)),
                 egui::StrokeKind::Inside,
             );
         }
@@ -270,6 +533,40 @@ fn paint_file_cell(
         );
     } else {
         paint_file_icon(&painter, icon_area, file, theme);
+    }
+    if !visual.grid && matches!(shell, ShellKind::Chromeos | ShellKind::Aqua) {
+        let name = shorten(
+            &file.name,
+            ((rect.width() * 0.75 - 56.0) / 7.5).max(4.0) as usize,
+        );
+        painter.text(
+            Pos2::new(rect.left() + 49.0, rect.center().y - 8.0),
+            Align2::LEFT_CENTER,
+            name,
+            FontId::proportional(if shell == ShellKind::Aqua { 14.5 } else { 14.0 }),
+            theme.palette.text(),
+        );
+        painter.text(
+            Pos2::new(rect.left() + 49.0, rect.center().y + 10.0),
+            Align2::LEFT_CENTER,
+            if file.is_dir {
+                "Folder".to_string()
+            } else {
+                format!("{} · {}", file.kind(), filesystem::age(file.modified))
+            },
+            FontId::proportional(11.2),
+            theme.palette.muted(),
+        );
+        if !file.is_dir && rect.width() > 330.0 {
+            painter.text(
+                Pos2::new(rect.left() + rect.width() * 0.80 + 7.0, rect.center().y),
+                Align2::LEFT_CENTER,
+                filesystem::human_size(file.size),
+                FontId::proportional(12.0),
+                theme.palette.muted(),
+            );
+        }
+        return;
     }
     let explorer_list = matches!(
         theme.shell_kind(),

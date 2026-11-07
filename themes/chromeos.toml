@@ -16,7 +16,7 @@ folder = "#6d9eed"
 file = "#8daedb"
 [metrics]
 rounding = 14
-row_height = 36
+row_height = 48
 tile_width = 132
 sidebar_width = 228
 icon_size = 28

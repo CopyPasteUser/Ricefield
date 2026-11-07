@@ -45,6 +45,119 @@ const MAX_RECENT_OPERATIONS: usize = transfer_history::MAX_RECORDS;
 const CLIPBOARD_WAIT: Duration = Duration::from_secs(2);
 const MAX_CLOSED_TABS: usize = 16;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RemoteSort {
+    Name,
+    Kind,
+    Size,
+}
+
+impl RemoteSort {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Name => "Name",
+            Self::Kind => "Kind",
+            Self::Size => "Size",
+        }
+    }
+}
+
+fn sort_remote_entries(entries: &mut [volume::RemoteEntry], by: RemoteSort, descending: bool) {
+    entries.sort_by(|left, right| {
+        // Folder grouping is invariant even when reversing a selected column.
+        right.is_directory.cmp(&left.is_directory).then_with(|| {
+            let order = match by {
+                RemoteSort::Name => file_view::natural_cmp(
+                    &volume::display_remote_name(&left.name),
+                    &volume::display_remote_name(&right.name),
+                ),
+                RemoteSort::Kind => left.is_regular_file.cmp(&right.is_regular_file).reverse(),
+                RemoteSort::Size => left.reported_size.cmp(&right.reported_size),
+            };
+            let order = if descending { order.reverse() } else { order };
+            order.then_with(|| file_view::natural_cmp(&left.name, &right.name))
+        })
+    });
+}
+
+fn remote_sort_header(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    selected: RemoteSort,
+    descending: bool,
+) -> Option<RemoteSort> {
+    let available = ui.available_width();
+    let compact = available < 425.0;
+    let mut change = None;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        for (field, proportion) in [
+            (RemoteSort::Name, 0.65),
+            (RemoteSort::Kind, 0.20),
+            (RemoteSort::Size, 0.15),
+        ] {
+            if compact && field != RemoteSort::Name {
+                continue;
+            }
+            let width = if compact {
+                available
+            } else {
+                available * proportion
+            };
+            let arrow = if selected == field {
+                if descending { " v" } else { " ^" }
+            } else {
+                ""
+            };
+            if ui
+                .add_sized(
+                    [width.max(1.0), 25.0],
+                    egui::Button::new(format!("{}{arrow}", field.label()))
+                        .fill(theme.palette.chrome())
+                        .stroke(egui::Stroke::new(0.6, theme.palette.border()))
+                        .corner_radius(if theme.shell_kind() == ShellKind::Chromeos {
+                            egui::CornerRadius::same(6)
+                        } else {
+                            egui::CornerRadius::ZERO
+                        }),
+                )
+                .clicked()
+            {
+                change = Some(field);
+            }
+        }
+    });
+    change
+}
+
+/// Keep navigation targets as validated, encoded URIs. Decoding is for labels
+/// only: percent-encoded slash characters must never become path separators.
+fn remote_breadcrumbs(uri: &str) -> Vec<(String, String)> {
+    if !matches!(Location::parse(uri.into()), Ok(Location::Remote(_))) {
+        return Vec::new();
+    }
+    let Some((scheme, remainder)) = uri.split_once("://") else {
+        return Vec::new();
+    };
+    let mut pieces = remainder.split('/').filter(|piece| !piece.is_empty());
+    let Some(host) = pieces.next() else {
+        return Vec::new();
+    };
+    let mut current = format!("{scheme}://{host}");
+    let mut crumbs = vec![(host.to_owned(), current.clone())];
+    for piece in pieces.take(20) {
+        current.push('/');
+        current.push_str(piece);
+        if matches!(
+            Location::parse(current.clone().into()),
+            Ok(Location::Remote(_))
+        ) {
+            crumbs.push((volume::display_remote_name(piece), current.clone()));
+        }
+    }
+    crumbs
+}
+
 /// Key events retain the modifiers at press time even if the whole chord is
 /// pressed and released between frames. The frame's final modifiers do not.
 fn pressed_keys(context: &egui::Context) -> Vec<(Key, Modifiers)> {
@@ -71,6 +184,9 @@ struct Tab {
     address: String,
     remote_uri: Option<String>,
     remote_entries: Vec<volume::RemoteEntry>,
+    remote_selected_uri: Option<String>,
+    remote_sort: RemoteSort,
+    remote_sort_descending: bool,
     remote_preview_uri: Option<String>,
     remote_preview_result: Option<Result<String, String>>,
     remote_preview_generation: u64,
@@ -103,6 +219,9 @@ impl Tab {
             path,
             remote_uri: None,
             remote_entries: Vec::new(),
+            remote_selected_uri: None,
+            remote_sort: RemoteSort::Name,
+            remote_sort_descending: false,
             remote_preview_uri: None,
             remote_preview_result: None,
             remote_preview_generation: 0,
@@ -188,6 +307,7 @@ impl Tab {
             }
         }
         self.remote_entries.clear();
+        self.remote_selected_uri = None;
         self.entries.clear();
         self.folded_names.clear();
         self.visible.clear();
@@ -2993,11 +3113,22 @@ impl Explorer {
                 match message.result {
                     Ok(report) => {
                         tab.remote_entries = report.entries;
+                        sort_remote_entries(
+                            &mut tab.remote_entries,
+                            tab.remote_sort,
+                            tab.remote_sort_descending,
+                        );
+                        if tab.remote_selected_uri.as_ref().is_some_and(|uri| {
+                            !tab.remote_entries.iter().any(|entry| &entry.uri == uri)
+                        }) {
+                            tab.remote_selected_uri = None;
+                        }
                         tab.scan_warning = report.notice;
                         tab.error = None;
                     }
                     Err(error) => {
                         tab.remote_entries.clear();
+                        tab.remote_selected_uri = None;
                         tab.scan_warning = None;
                         tab.error = Some(error);
                     }
@@ -4210,6 +4341,7 @@ impl Explorer {
         let left = key == Key::ArrowLeft;
         let right = key == Key::ArrowRight;
         let up = key == Key::ArrowUp;
+        let down = key == Key::ArrowDown;
         let a = key == Key::A;
         let d = key == Key::D;
         let enter = key == Key::Enter;
@@ -4269,10 +4401,46 @@ impl Explorer {
         // Text inputs must keep their normal copy/cut/paste shortcuts.
         let typing = context.egui_wants_keyboard_input() || self.focus_address || self.focus_search;
         if !typing {
+            if self.current().remote_uri.is_some() && !ctrl && !alt {
+                if (up || down) && !self.current().remote_entries.is_empty() {
+                    let tab = self.current_mut();
+                    let current = tab.remote_selected_uri.as_ref().and_then(|uri| {
+                        tab.remote_entries
+                            .iter()
+                            .position(|entry| &entry.uri == uri)
+                    });
+                    let next = match (current, down) {
+                        (None, true) => 0,
+                        (None, false) => tab.remote_entries.len() - 1,
+                        (Some(index), true) => (index + 1).min(tab.remote_entries.len() - 1),
+                        (Some(index), false) => index.saturating_sub(1),
+                    };
+                    tab.remote_selected_uri = Some(tab.remote_entries[next].uri.clone());
+                }
+                if enter
+                    && let Some(uri) = self.current().remote_selected_uri.clone()
+                    && let Some(entry) = self
+                        .current()
+                        .remote_entries
+                        .iter()
+                        .find(|entry| entry.uri == uri)
+                        .cloned()
+                {
+                    if entry.is_directory {
+                        self.navigate_remote(uri);
+                    } else if entry.is_regular_file {
+                        self.start_remote_preview(uri);
+                    }
+                }
+            }
             if key == Key::Escape {
                 self.preview_quick_look = false;
                 self.preview_path = None;
                 self.preview_content = None;
+                if self.current().remote_uri.is_some() {
+                    self.current_mut().remote_selected_uri = None;
+                    self.current_mut().clear_remote_preview();
+                }
             }
             if ctrl && a {
                 let paths: Vec<_> = self
@@ -8064,6 +8232,16 @@ impl Explorer {
 
     fn remote_panel(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme.clone();
+        let title = match theme.shell_kind() {
+            ShellKind::Classic => "Network Neighborhood",
+            ShellKind::Luna => "My Network Places",
+            ShellKind::Aero => "Network",
+            ShellKind::Ribbon => "Network location",
+            ShellKind::Aqua => "Connected world",
+            ShellKind::Chromeos => "Network storage",
+            ShellKind::Finder => "Shared",
+            ShellKind::Modern => "Network files",
+        };
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::new()
@@ -8071,9 +8249,78 @@ impl Explorer {
                     .inner_margin(egui::Margin::same(14)),
             )
             .show(ui, |ui| {
-                ui.heading("Network location");
-                ui.monospace(self.current().remote_uri.as_deref().unwrap_or_default());
-                ui.small("Remote folders are read-only. You can preview text and queue local downloads; network uploads and changes are disabled.");
+                egui::Frame::new()
+                    .fill(theme.palette.chrome())
+                    .stroke(egui::Stroke::new(1.0, theme.palette.border()))
+                    .corner_radius(theme.metrics.rounding)
+                    .inner_margin(egui::Margin::symmetric(10, 8))
+                    .show(ui, |ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.heading(title);
+                            ui.label(
+                                egui::RichText::new("READ ONLY")
+                                    .color(theme.palette.muted())
+                                    .small(),
+                            )
+                        });
+                        ui.label(
+                            egui::RichText::new(
+                                self.current().remote_uri.as_deref().unwrap_or_default(),
+                            )
+                            .monospace()
+                            .color(theme.palette.text()),
+                        );
+                    });
+                ui.add_space(5.0);
+                let mut jump = None;
+                let breadcrumbs = remote_breadcrumbs(
+                    self.current().remote_uri.as_deref().unwrap_or_default(),
+                );
+                ui.horizontal_wrapped(|ui| {
+                    for (index, (label, target)) in breadcrumbs.iter().enumerate() {
+                        if index != 0 {
+                            ui.label("›");
+                        }
+                        let active = index + 1 == breadcrumbs.len();
+                        if ui
+                            .add_enabled(!active, egui::Button::new(shorten(label, 24)))
+                            .on_hover_text(target)
+                            .clicked()
+                        {
+                            jump = Some(target.clone());
+                        }
+                    }
+                });
+                if let Some(uri) = jump {
+                    self.navigate_remote(uri);
+                    return;
+                }
+                if self.remote_download_busy {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spinner();
+                        let mib = self.remote_download_bytes.load(Ordering::Relaxed) as f64
+                            / (1024.0 * 1024.0);
+                        ui.strong(format!("Downloading · {mib:.1} MiB received"));
+                        ui.small("8 GiB maximum per transfer");
+                        if ui.button("Cancel download").clicked() {
+                            self.remote_download_cancel.store(true, Ordering::Relaxed);
+                        }
+                    });
+                } else if !self.remote_download_queue.is_empty() {
+                    ui.small(format!(
+                        "{} downloads queued{} — expand Downloads & transfers to manage them",
+                        self.remote_download_queue.len(),
+                        if self.remote_download_queue_paused { " (paused)" } else { "" },
+                    ));
+                }
+                ui.collapsing(format!(
+                    "Downloads & transfers{}",
+                    if self.remote_download_queue.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({})", self.remote_download_queue.len())
+                    }
+                ), |ui| {
                 ui.horizontal(|ui| {
                     ui.label("Download to:");
                     let edit = ui.add(egui::TextEdit::singleline(&mut self.remote_download_directory)
@@ -8130,16 +8377,6 @@ impl Explorer {
                 if let Some(path) = open_staging {
                     self.navigate(path);
                 }
-                if self.remote_download_busy {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        let mib = self.remote_download_bytes.load(Ordering::Relaxed) as f64 / (1024.0 * 1024.0);
-                        ui.label(format!("Downloading · {mib:.1} MiB received (8 GiB maximum)"));
-                        if ui.button("Cancel download").clicked() {
-                            self.remote_download_cancel.store(true, Ordering::Relaxed);
-                        }
-                    });
-                }
                 if !self.remote_download_queue.is_empty() {
                     ui.horizontal_wrapped(|ui| {
                         ui.strong(format!("Waiting network downloads: {}", self.remote_download_queue.len()));
@@ -8171,6 +8408,7 @@ impl Explorer {
                         }
                     }
                 }
+                });
                 ui.horizontal(|ui| {
                     if ui.button("Parent").clicked() {
                         self.parent();
@@ -8209,52 +8447,118 @@ impl Explorer {
                     }
                 });
                 ui.separator();
+                let selected = self.current().remote_selected_uri.as_ref().and_then(|uri| {
+                    self.current()
+                        .remote_entries
+                        .iter()
+                        .find(|entry| &entry.uri == uri)
+                }).cloned();
+                let mut selected_action = None;
+                ui.horizontal_wrapped(|ui| {
+                    if ui.add_enabled(selected.as_ref().is_some_and(|entry| entry.is_directory),
+                        egui::Button::new("Open folder")).clicked() {
+                        selected_action = selected.as_ref().map(|entry| (entry.uri.clone(), true));
+                    }
+                    if ui.add_enabled(selected.as_ref().is_some_and(|entry| entry.is_regular_file),
+                        egui::Button::new("Preview")).clicked()
+                        && let Some(entry) = &selected {
+                        self.start_remote_preview(entry.uri.clone());
+                    }
+                    if ui.add_enabled(selected.as_ref().is_some_and(|entry| entry.is_directory || entry.is_regular_file),
+                        egui::Button::new("Download selected")).clicked()
+                        && let Some(entry) = &selected {
+                        self.start_remote_download(entry.uri.clone(), entry.name.clone(), entry.is_directory);
+                    }
+                    ui.separator();
+                    ui.small(format!("{} items · {}",
+                        self.current().remote_entries.len(),
+                        if selected.is_some() { "1 selected" } else { "Select a row for actions" }));
+                });
+                if let Some((uri, true)) = selected_action {
+                    self.navigate_remote(uri);
+                    return;
+                }
                 if self.current().loading {
                     ui.spinner();
                     ui.label("Loading network directory…");
                 } else if let Some(error) = &self.current().error {
                     ui.colored_label(Color32::LIGHT_RED, error);
+                    if ui.button("Retry connection").clicked() {
+                        self.scan(self.active);
+                    }
                 } else {
                     if let Some(warning) = &self.current().scan_warning {
                         ui.colored_label(Color32::YELLOW, warning);
                     }
                     if self.current().remote_entries.is_empty() {
-                        ui.label(if self.current().query.is_empty() { "No entries." } else { "No matching network filenames." });
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(40.0);
+                            ui.heading(if self.current().query.is_empty() { "This network folder is empty" } else { "No matching filenames" });
+                            ui.small("Navigate to another folder, or refresh the network listing.");
+                        });
                     } else {
+                    let current_sort = self.current().remote_sort;
+                    let descending = self.current().remote_sort_descending;
+                    if let Some(sort) = remote_sort_header(ui, &theme, current_sort, descending) {
+                        let tab = self.current_mut();
+                        if tab.remote_sort == sort {
+                            tab.remote_sort_descending = !tab.remote_sort_descending;
+                        } else {
+                            tab.remote_sort = sort;
+                            tab.remote_sort_descending = false;
+                        }
+                        sort_remote_entries(&mut tab.remote_entries, tab.remote_sort, tab.remote_sort_descending);
+                    }
                     let mut open = None;
                     let mut preview = None;
                     let mut download = None;
+                    let mut choose = None;
+                    let active_uri = self.current().remote_selected_uri.clone();
                     let entries = &self.current().remote_entries;
                     let list_height = if self.current().remote_preview_uri.is_some() {
                         (ui.available_height() * 0.45).max(120.0)
                     } else {
                         ui.available_height().max(120.0)
                     };
-                    egui::ScrollArea::vertical().max_height(list_height).show_rows(ui, 26.0, entries.len(), |ui, rows| {
+                    let row_height = theme.metrics.row_height.max(28.0);
+                    egui::ScrollArea::vertical().max_height(list_height).show_rows(ui, row_height, entries.len(), |ui, rows| {
                         for entry in &entries[rows] {
-                            ui.horizontal(|ui| {
-                                if entry.is_directory {
-                                    if ui.button(format!("Folder  {}", volume::display_remote_name(&entry.name))).on_hover_text(&entry.uri).clicked() {
-                                        open = Some(entry.uri.clone());
-                                    }
-                                    if ui.button("Download folder")
-                                        .on_hover_text("Download all files and subfolders to the selected local folder (bounded and no-overwrite)")
-                                        .clicked() {
-                                        download = Some((entry.uri.clone(), entry.name.clone(), true));
-                                    }
-                                } else {
-                                    if ui.add_enabled(entry.is_regular_file, egui::Button::new(format!("Text preview  {}", volume::display_remote_name(&entry.name)))).on_hover_text(&entry.uri).clicked() {
-                                        preview = Some(entry.uri.clone());
-                                    }
-                                    if ui.add_enabled(entry.is_regular_file, egui::Button::new("Download"))
-                                        .on_hover_text("Save to the selected local folder without overwriting an existing file")
-                                        .clicked() {
-                                        download = Some((entry.uri.clone(), entry.name.clone(), false));
-                                    }
+                            let display_name = volume::display_remote_name(&entry.name);
+                            let response = shell_renderer::remote_row(
+                                ui, &theme, shell_renderer::RemoteRowVisual {
+                                    name: &display_name,
+                                    is_directory: entry.is_directory,
+                                    is_regular_file: entry.is_regular_file,
+                                    reported_size: entry.reported_size,
+                                    selected: active_uri.as_deref() == Some(entry.uri.as_str()),
+                                }, row_height,
+                            ).on_hover_text(&entry.uri);
+                            if response.clicked() {
+                                choose = Some(entry.uri.clone());
+                            }
+                            if response.double_clicked() {
+                                if entry.is_directory { open = Some(entry.uri.clone()); }
+                                else if entry.is_regular_file { preview = Some(entry.uri.clone()); }
+                            }
+                            response.context_menu(|ui| {
+                                if entry.is_directory && ui.button("Open folder").clicked() {
+                                    open = Some(entry.uri.clone());
+                                    ui.close();
+                                }
+                                if entry.is_regular_file && ui.button("Preview file").clicked() {
+                                    preview = Some(entry.uri.clone());
+                                    ui.close();
+                                }
+                                if (entry.is_directory || entry.is_regular_file) && ui.button("Download to local folder").clicked() {
+                                    download = Some((entry.uri.clone(), entry.name.clone(), entry.is_directory));
+                                    ui.close();
                                 }
                             });
                         }
                     });
+                    if let Some(uri) = choose {
+                        self.current_mut().remote_selected_uri = Some(uri);
+                    }
                     if let Some(uri) = open {
                         self.navigate_remote(uri);
                     } else if let Some(uri) = preview {
@@ -8359,6 +8663,7 @@ impl Explorer {
                                         width: if grid { tile } else { width },
                                         height: row_height,
                                         grid,
+                                        row_index: visible_index,
                                     },
                                 );
                             }
@@ -9662,10 +9967,86 @@ mod tests {
     use crate::filesystem::{ItemResult, ItemState, Progress};
     use crate::location::Location;
     use crate::transfer_history;
+    use crate::volume::RemoteEntry;
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
+
+    fn remote_entry(name: &str, directory: bool, size: Option<u64>) -> RemoteEntry {
+        RemoteEntry {
+            uri: format!("smb://host/share/{name}"),
+            name: name.to_owned(),
+            is_directory: directory,
+            is_regular_file: !directory,
+            reported_size: size,
+        }
+    }
+
+    #[test]
+    fn remote_breadcrumbs_keep_encoded_path_segments_and_reject_local_paths() {
+        let crumbs = super::remote_breadcrumbs("smb://nas.local/share/My%20Docs/a%2Fb");
+        assert_eq!(crumbs.len(), 4);
+        assert_eq!(crumbs[0], ("nas.local".into(), "smb://nas.local".into()));
+        assert_eq!(
+            crumbs[2],
+            ("My Docs".into(), "smb://nas.local/share/My%20Docs".into())
+        );
+        assert_eq!(crumbs[3].1, "smb://nas.local/share/My%20Docs/a%2Fb");
+        assert!(super::remote_breadcrumbs("/home/user").is_empty());
+    }
+
+    #[test]
+    fn remote_sort_groups_folders_and_naturally_orders_filenames() {
+        let mut entries = vec![
+            remote_entry("file10.txt", false, Some(10)),
+            remote_entry("Folder2", true, None),
+            remote_entry("file2.txt", false, Some(2)),
+            remote_entry("Folder10", true, None),
+        ];
+        super::sort_remote_entries(&mut entries, super::RemoteSort::Name, false);
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Folder2", "Folder10", "file2.txt", "file10.txt"]
+        );
+        super::sort_remote_entries(&mut entries, super::RemoteSort::Name, true);
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Folder10", "Folder2", "file10.txt", "file2.txt"]
+        );
+    }
+
+    #[test]
+    fn remote_size_sort_retains_folder_group_and_unknown_size() {
+        let mut entries = vec![
+            remote_entry("largest", false, Some(500)),
+            remote_entry("folder", true, None),
+            remote_entry("unknown", false, None),
+            remote_entry("smallest", false, Some(1)),
+        ];
+        super::sort_remote_entries(&mut entries, super::RemoteSort::Size, false);
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            ["folder", "unknown", "smallest", "largest"]
+        );
+        super::sort_remote_entries(&mut entries, super::RemoteSort::Size, true);
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            ["folder", "largest", "smallest", "unknown"]
+        );
+    }
 
     #[test]
     fn a_late_external_theme_result_cannot_replace_a_newer_theme_selection() {

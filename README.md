@@ -26,14 +26,14 @@ Each rice changes the navigation, toolbar, density, color, icons and workflow—
 | **macOS · Finder** | **Interactive views** |
 | [![macOS Finder-inspired shell](docs/screenshots/macos.png)](docs/screenshots/macos.png) | [ChromeOS grid + More](docs/screenshots/README.md#chromeos--files-rice) · [Windows 98 Tools](docs/screenshots/README.md#windows-98--classic-explorer) · [All compact and split views](docs/screenshots/) |
 
-The details are intentional: 98 has a gray menu and tree, XP a blue tasks pane, 7 an Aero command bar, 10 a Ribbon, Frutiger a glass shelf, ChromeOS a Files toolbar and macOS a Finder toolbar. Original vectors replace proprietary icons and logos. **Window decorations are controlled by RiceBowl or your Linux window manager**, not these file-manager themes.
+The details are intentional: 98 has a dense gray menu and tree, XP a blue tasks pane, 7 an Aero command bar, 10 a Ribbon, Frutiger a spacious two-line aqua file view and glass shelf, ChromeOS rounded two-line file rows and a Files toolbar, and macOS a striped Finder detail view. Original vectors replace proprietary icons and logos. **Window decorations are controlled by RiceBowl or your Linux window manager**, not these file-manager themes.
 
 ## File management
 
 - **Browse:** tabs, split panes, bookmarks, folder tree, list/grid views and session restore.
 - **Organize:** copy, move, rename, cycle-safe batch rename, trash, file permissions, progress and conflict previews.
 - **Find and inspect:** search, saved filters, thumbnails, Quick Look and ZIP/TAR/7z handling.
-- **Reach storage:** SMB, SFTP, WebDAV and MTP discovery/browsing; optional credential storage; removable USB volume actions using UDisks2/Polkit.
+- **Reach storage:** SMB, SFTP, WebDAV and MTP discovery/browsing with navigable breadcrumbs, selectable/sortable file rows, previews, queued downloads and optional credential storage; removable USB volume actions using UDisks2/Polkit.
 - **Customize:** seven built-in rices plus user TOML files for palettes, spacing, navigation and layout.
 
 **Release status: `1.0.0-rc.17` candidate.** Automated Rust tests and native Linux GUI screenshots pass, but the final physical Linux Mint/NAS/USB acceptance is still open. Keep your existing file manager installed.
