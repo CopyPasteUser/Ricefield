@@ -15,6 +15,19 @@
   narrow screenshots (CI run `42339732861`). Physical scaling, NAS and USB
   acceptance remain explicit gates.
 
+## Unreleased — Windows 98 Classic Explorer shell
+
+- Give the classic rice real Explorer-era gray menu/toolbar bands, original
+  bevel-like icon buttons, history/address/Go/search controls and functional
+  File/Edit/View/Go/Favorites/Tools/Help menus.
+- Replace generic Places/Favorites/Volumes card-like buttons with a tree-style
+  folder/drive/network rail and tight file list. Paint original 1990s-inspired
+  yellow folders and white paper file icons without any Microsoft artwork.
+- Hide the modern toolbox by default, retain it via Tools, and route every
+  action through shared filesystem and remote write safety controllers.
+- Scripted GUI smoke and physical Linux Mint/NAS acceptance remain separate
+  gates; window decorations stay with the desktop window manager.
+
 ## Unreleased — macOS Finder-inspired shell
 
 - Replace the generic macOS skin with a distinctive Finder-like chrome,

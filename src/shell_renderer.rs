@@ -381,6 +381,10 @@ fn paint_file_cell(
 }
 
 fn paint_file_icon(painter: &Painter, rect: Rect, file: &Entry, theme: &Theme) {
+    if theme.shell_kind() == ShellKind::Classic {
+        paint_classic98_file_icon(painter, rect, file);
+        return;
+    }
     if theme.shell_kind() == ShellKind::Luna {
         paint_luna_file_icon(painter, rect, file);
         return;
@@ -451,6 +455,64 @@ fn paint_file_icon(painter: &Painter, rect: Rect, file: &Entry, theme: &Theme) {
             FontId::proportional((rect.width() * 0.29).clamp(8.0, 13.0)),
             Color32::WHITE,
         );
+    }
+}
+
+/// Original bevel-and-outline file glyphs evoking the Windows 98 era.
+fn paint_classic98_file_icon(painter: &Painter, rect: Rect, file: &Entry) {
+    let s = rect.width().min(rect.height()).max(13.0);
+    let p = |x: f32, y: f32| Pos2::new(rect.left() + x * s, rect.top() + y * s);
+    let box_at = |x1: f32, y1: f32, x2: f32, y2: f32| Rect::from_min_max(p(x1, y1), p(x2, y2));
+    if file.is_dir {
+        painter.rect_filled(
+            box_at(0.10, 0.18, 0.55, 0.37),
+            0,
+            Color32::from_rgb(247, 220, 94),
+        );
+        painter.rect_stroke(
+            box_at(0.10, 0.18, 0.55, 0.37),
+            0,
+            Stroke::new(0.8, Color32::from_rgb(133, 108, 27)),
+            egui::StrokeKind::Inside,
+        );
+        painter.rect_filled(
+            box_at(0.06, 0.34, 0.94, 0.83),
+            0,
+            Color32::from_rgb(205, 153, 31),
+        );
+        painter.rect_filled(
+            box_at(0.10, 0.40, 0.91, 0.76),
+            0,
+            Color32::from_rgb(247, 201, 66),
+        );
+        painter.line_segment(
+            [p(0.10, 0.41), p(0.90, 0.41)],
+            Stroke::new(1.2, Color32::WHITE),
+        );
+        painter.line_segment(
+            [p(0.92, 0.40), p(0.92, 0.80)],
+            Stroke::new(1.0, Color32::from_rgb(122, 91, 21)),
+        );
+    } else {
+        let paper = box_at(0.15, 0.05, 0.85, 0.93);
+        painter.rect_filled(paper, 0, Color32::WHITE);
+        painter.rect_stroke(
+            paper,
+            0,
+            Stroke::new(1.0, Color32::from_gray(86)),
+            egui::StrokeKind::Inside,
+        );
+        painter.rect_filled(
+            box_at(0.19, 0.12, 0.75, 0.29),
+            0,
+            Color32::from_rgb(42, 82, 168),
+        );
+        for y in [0.43, 0.57, 0.71] {
+            painter.line_segment(
+                [p(0.24, y), p(0.74, y)],
+                Stroke::new(1.2, Color32::from_rgb(104, 141, 182)),
+            );
+        }
     }
 }
 

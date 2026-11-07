@@ -677,7 +677,14 @@ pub fn sidebar_section(
         }
         return;
     }
-    let title = if theme.shell_kind() == ShellKind::Chromeos {
+    let title = if theme.shell_kind() == ShellKind::Classic {
+        match section {
+            SidebarSection::Tasks => "File Tasks",
+            SidebarSection::Places => "Folders",
+            SidebarSection::Favorites => "Favorites",
+            SidebarSection::Volumes => "Drives and Network",
+        }
+    } else if theme.shell_kind() == ShellKind::Chromeos {
         match section {
             SidebarSection::Tasks => "Tools",
             SidebarSection::Places => "My files",

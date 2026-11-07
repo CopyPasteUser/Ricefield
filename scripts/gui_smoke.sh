@@ -130,6 +130,18 @@ for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sideba
     xdotool mousemove --window "$window_id" 81 21 click 1
     sleep 1
   fi
+  # The 1990s menu bar is interactive and exposes the real shared file tools,
+  # including safe network and local operations.
+  if [[ "$theme" == win98 ]]; then
+    xdotool mousemove --window "$window_id" 255 18 click 1
+    sleep 0.45
+    xdotool mousemove --window "$window_id" 950 650
+    import -window "$window_id" screenshots/win98-tools.png
+    require_visible_change screenshots/win98.png screenshots/win98-tools.png \
+      'Windows 98 Tools menu' 600
+    xdotool key Escape
+    sleep 0.2
+  fi
   # Aqua's glass shelf must reveal actual advanced Explorer tools when clicked,
   # not merely paint a decorative dock. This is a stable 1120x720 smoke hit
   # target; human keyboard/focus acceptance remains a separate requirement.
@@ -271,4 +283,15 @@ require_visible_change "screenshots/win98.png" "screenshots/win7.png" "Win98 vs 
 require_visible_change "screenshots/win7.png" "screenshots/macos.png" "Win7 vs macOS rice identity" 12000
 require_visible_change "screenshots/win98.png" "screenshots/macos.png" "Win98 vs macOS rice identity" 12000
 require_visible_change "screenshots/win7.png" "screenshots/custom-sidebar.png" "Custom shell recomposition" 12000
-echo 'Native GUI smoke checks passed for seven themes and one structurally recomposed custom rice (including pairwise visual difference checks; not physical acceptance).'
+# An accidental theme alias, copied toolbar or regression to generic chrome
+# must not silently collapse *any* pair of the seven historically distinct
+# shells. This is pixel evidence only; human design review is still required.
+rice_themes=(win98 xp-luna win7 win10 frutiger-aero chromeos macos)
+for ((i = 0; i < ${#rice_themes[@]}; i++)); do
+  for ((j = i + 1; j < ${#rice_themes[@]}; j++)); do
+    require_visible_change "screenshots/${rice_themes[i]}.png" \
+      "screenshots/${rice_themes[j]}.png" \
+      "Distinct rice: ${rice_themes[i]} vs ${rice_themes[j]}" 12000
+  done
+done
+echo 'Native GUI smoke checks passed for seven themes, every pairwise visual distinction and one structurally recomposed custom rice (not physical acceptance).'

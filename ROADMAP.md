@@ -26,6 +26,22 @@ performance, Linux integration, then visual polish.
 - [ ] Validate on the owner's Linux Mint desktop (scale, keyboard, network,
   mounted USB, theme transitions and pointer interactions).
 
+### Windows 98 · Classic Explorer identity
+
+- [x] Replace the unrelated navy toolbar with a gray, beveled File/Edit/View/
+  Go/Favorites/Tools/Help menu and labeled classic navigation/actions toolbar.
+- [x] Keep real address entry with a Go button, history navigation, search,
+  original yellow folder/white document vectors and dense sortable details.
+- [x] Replace generic stacked buttons with a tree-style Folders rail and real
+  local, mounted and network storage. Keep file operations and icon/list views
+  under shared safety controls, with advanced tools on demand.
+- [x] Preserve narrow-window accessibility, custom TOML composition and
+  RiceBowl/window-manager ownership of window decorations. Use no MS assets.
+- [ ] Inspect and publish native CI screenshots for full, View/menu actions,
+  split, compact and narrow layouts; compare against era-appropriate references.
+- [ ] Check physical Linux Mint scaling, mouse/keyboard focus and NAS/USB
+  interactions before considering visual acceptance complete.
+
 ### macOS · Finder-inspired shell
 
 - [x] Replace the generic theme with a Finder-like toolbar, address/search
