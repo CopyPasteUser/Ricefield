@@ -1871,7 +1871,13 @@ fn perform_with_progress_and_items(
                                 &mut transfer,
                             )?;
                             ensure_hardlink_scope_preserved(&source_manifest)?;
-                            stage_and_publish(source, &planned.target, true, &mut transfer)?;
+                            let mut journal = Journal::begin(source, &planned.target)?;
+                            publish_cross_device_copy_with_journal(
+                                source,
+                                &planned.target,
+                                &mut transfer,
+                                &mut journal,
+                            )?;
                             retained_item = true;
                             retained += 1;
                             transfer.phase = "Copying";
@@ -2791,6 +2797,25 @@ fn stage_and_publish_with_journal(
         journal,
         &mut sync_directory,
     )
+}
+
+/// A cross-device Move publishes a verified, independent copy. Its source is
+/// always retained; the private journal makes mid-copy/crash state inspectable
+/// without granting authority to replay or delete either path.
+fn publish_cross_device_copy_with_journal(
+    source: &Path,
+    destination: &Path,
+    transfer: &mut Transfer<'_>,
+    journal: &mut Journal,
+) -> io::Result<()> {
+    stage_and_publish_with_journal(source, destination, true, transfer, Some(journal))?;
+    if let Err(error) = journal.advance(State::Completed) {
+        // The copy has already been published, verified and synced. Do not
+        // relabel it as failed merely because its diagnostic record could not
+        // be retired. The incomplete record remains available for inspection.
+        eprintln!("RiceField: published copy, but cannot retire move journal: {error}");
+    }
+    Ok(())
 }
 
 fn sync_directory(path: &Path) -> io::Result<()> {
@@ -3799,6 +3824,77 @@ mod tests {
         fs::remove_file(&source).unwrap();
         journal.advance(State::Completed).unwrap();
         assert_eq!(journal.record().state, State::Completed);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn completed_cross_device_copy_keeps_source_and_retires_journal() {
+        let root = test_root();
+        let source = root.join("source.txt");
+        let destination = root.join("target.txt");
+        fs::write(&source, b"verified retained source").unwrap();
+        let mut journal = Journal::begin_in(&root.join("journal"), &source, &destination).unwrap();
+        let id = journal.record().id.clone();
+        let cancelled = AtomicBool::new(false);
+        let mut notify = |_: Progress| {};
+        let mut transfer = Transfer {
+            cancelled: &cancelled,
+            notify: &mut notify,
+            transferred: 0,
+            total: 24,
+            last_report: Instant::now(),
+            last_reported_bytes: 0,
+            phase: "Copying",
+        };
+        publish_cross_device_copy_with_journal(
+            &source,
+            &destination,
+            &mut transfer,
+            &mut journal,
+        )
+        .unwrap();
+        assert_eq!(journal.record().state, State::Completed);
+        assert!(!root.join("journal").join(format!("{id}.toml")).exists());
+        assert_eq!(fs::read(&source).unwrap(), b"verified retained source");
+        assert_eq!(fs::read(&destination).unwrap(), b"verified retained source");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_cross_device_copy_preserves_destination_and_inspectable_journal() {
+        let root = test_root();
+        let source = root.join("source.txt");
+        let destination = root.join("target.txt");
+        fs::write(&source, b"original source").unwrap();
+        fs::write(&destination, b"unrelated destination").unwrap();
+        let mut journal = Journal::begin_in(&root.join("journal"), &source, &destination).unwrap();
+        let cancelled = AtomicBool::new(false);
+        let mut notify = |_: Progress| {};
+        let mut transfer = Transfer {
+            cancelled: &cancelled,
+            notify: &mut notify,
+            transferred: 0,
+            total: 15,
+            last_report: Instant::now(),
+            last_reported_bytes: 0,
+            phase: "Copying",
+        };
+        let error = publish_cross_device_copy_with_journal(
+            &source,
+            &destination,
+            &mut transfer,
+            &mut journal,
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&source).unwrap(), b"original source");
+        assert_eq!(fs::read(&destination).unwrap(), b"unrelated destination");
+        let saved = fs::read_to_string(
+            root.join("journal")
+                .join(format!("{}.toml", journal.record().id)),
+        )
+        .unwrap();
+        assert!(saved.contains("state = \"staged_verified\""));
         fs::remove_dir_all(root).unwrap();
     }
 
