@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — explicit encrypted removable-volume controls
+
+- Add native UDisks2/Polkit LUKS Unlock/Lock controls for verified removable
+  encrypted blocks. Prompt for a masked session-only passphrase, do not persist
+  it, redact action debug output and perform fresh device/state checks before
+  each operation. The daemon refuses a busy Lock; no auto-unlock or force is
+  available.
+- Associate an unlocked device-mapper filesystem with its removable parent
+  only when UDisks2 exposes the exact `Encrypted.CleartextDevice` relationship.
+  Cover locked, unlocked, missing/forged metadata and invalid passphrases in
+  isolated tests. Actual USB/LUKS/Polkit acceptance is still required.
+
 ## 1.0.0-rc.19 — Owner test protocol prepared
 
 - Bump the development candidate from `rc.18` to `rc.19` after the durable

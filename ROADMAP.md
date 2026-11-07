@@ -507,21 +507,26 @@ recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
   Existing background mountinfo enumeration now labels detected network mounts
   separately in the Volumes sidebar. RC.10 adds throttled UDisks2 ObjectManager
   discovery of unmounted external/removable filesystems, with strict filtering
-  and fallback when the system bus is unavailable. Rich device capabilities,
-  LUKS and internal fixed drives still require further integration.
+  and fallback when the system bus is unavailable. Explicit encrypted USB
+  Unlock/Lock and exact dm-to-parent discovery are now implemented; richer
+  device capabilities and deliberately excluded internal drives remain open.
 - [ ] Mount/unmount/eject/unlock through OS APIs and Polkit.
   The Volumes sidebar can now invoke bounded background GIO unmount/eject
   commands after confirmation. RC.10 adds explicit native UDisks2 mounting of
   discovered removable filesystems through system Polkit authorization. RC.11
   binds mounted USB paths to discovered device objects, adds native UDisks2
   unmount/eject with fresh-state checks, and retains GIO for other mounts.
-  Encrypted drive unlocking, portal integration and real-hardware acceptance
-  remain open. No forced unmount is offered.
+  Explicit encrypted USB Unlock/Lock through the UDisks2 Encrypted interface
+  is now available with masked in-memory credentials and fresh-state guards;
+  portal integration and real-hardware acceptance remain open. No forced
+  unmount is offered.
 - [x] RC.16 adds opt-in UDisks2 USB PowerOff when explicitly advertised. The
   backend re-queries all sibling filesystems, including ignored/hidden block
   objects, and refuses if any are mounted or metadata is incomplete. UDisks2
   handles Polkit, final busy checks and flushing. LUKS and physical USB/power
-  safety acceptance remain open; other buses cannot be powered off here.
+  safety acceptance remain open; encrypted drives still fail closed on PowerOff
+  until their full mapping/usage safety is verified. Other buses cannot be
+  powered off here.
 - [ ] Connect SMB/SFTP/WebDAV, browse system NFS and supported MTP devices.
   Initial non-blocking `gio mount` connection attempts are supported without
   URI credentials. Read-only remote listing works in normal tabs; native remote

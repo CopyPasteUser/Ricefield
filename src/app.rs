@@ -1278,6 +1278,8 @@ pub struct Explorer {
     volume_connect_domain: String,
     volume_connect_password: String,
     volume_connect_remember: bool,
+    volume_unlock_target: Option<(String, String)>,
+    volume_unlock_password: String,
     keyring_loaded_uri: Option<String>,
     keyring_sender: Sender<KeyringEvent>,
     keyring_receiver: Receiver<KeyringEvent>,
@@ -1543,6 +1545,8 @@ impl Explorer {
             volume_connect_domain: String::new(),
             volume_connect_password: String::new(),
             volume_connect_remember: false,
+            volume_unlock_target: None,
+            volume_unlock_password: String::new(),
             keyring_loaded_uri: None,
             keyring_sender,
             keyring_receiver,
@@ -1724,6 +1728,7 @@ impl Explorer {
         if self.dialog.is_some()
             || self.archive_dialog.is_some()
             || self.volume_connect_open
+            || self.volume_unlock_target.is_some()
             || self.volume_confirm.is_some()
             || self.discovery_open
             || self.recovery_open
@@ -2877,6 +2882,41 @@ impl Explorer {
                 self.volume_connect_open = false;
             }
         }
+        if let Some((object_path, label)) = self.volume_unlock_target.clone() {
+            let mut open = true;
+            let mut approve = false;
+            egui::Window::new("Unlock encrypted removable volume")
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .show(context, |ui| {
+                    ui.strong(label);
+                    ui.label("Enter the volume passphrase. UDisks2 and Polkit handle authorization; RiceField never saves this password.");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.volume_unlock_password)
+                            .password(true)
+                            .hint_text("Volume passphrase"),
+                    );
+                    approve = ui
+                        .add_enabled(
+                            !self.volume_busy && !self.volume_unlock_password.is_empty(),
+                            egui::Button::new("Unlock volume"),
+                        )
+                        .clicked();
+                });
+            if approve {
+                let credentials = MountCredentials {
+                    username: String::new(),
+                    domain: String::new(),
+                    password: std::mem::take(&mut self.volume_unlock_password),
+                };
+                self.volume_unlock_target = None;
+                self.start_volume_action(VolumeAction::UnlockDevice(object_path, credentials), false);
+            } else if !open {
+                volume::clear_password(&mut self.volume_unlock_password);
+                self.volume_unlock_target = None;
+            }
+        }
         if let Some(action) = self.volume_confirm.clone() {
             let mut approve = false;
             let mut dismiss = false;
@@ -2884,10 +2924,15 @@ impl Explorer {
                 .collapsible(false)
                 .resizable(false)
                 .show(context, |ui| {
-                    ui.label(
-                        "Open files or transfers on this volume may fail after disconnecting it.",
-                    );
-                    ui.label("Make sure writes are complete before continuing.");
+                    if matches!(action, VolumeAction::LockEncrypted(_)) {
+                        ui.label("Unmount all decrypted filesystems before locking this volume.");
+                        ui.label("UDisks2 will refuse to lock a busy encrypted mapping.");
+                    } else {
+                        ui.label(
+                            "Open files or transfers on this volume may fail after disconnecting it.",
+                        );
+                        ui.label("Make sure writes are complete before continuing.");
+                    }
                     ui.horizontal(|ui| {
                         approve = ui
                             .add_enabled(!self.volume_busy, egui::Button::new(action.label()))
@@ -4932,7 +4977,11 @@ impl Explorer {
         for (key, modifiers) in pressed_keys(context) {
             self.keyboard_event(context, key, modifiers);
             // A preceding event may open a confirmation in the same frame.
-            if self.dialog.is_some() || self.volume_connect_open || self.volume_confirm.is_some() {
+            if self.dialog.is_some()
+                || self.volume_connect_open
+                || self.volume_unlock_target.is_some()
+                || self.volume_confirm.is_some()
+            {
                 break;
             }
         }
@@ -7640,20 +7689,43 @@ impl Explorer {
                                         if volume.removable { "Removable" } else { "USB" },
                                         volume.label
                                     );
+                                    let action_label = if volume.encrypted {
+                                        if volume.unlocked {
+                                            format!("Lock {title}…")
+                                        } else {
+                                            format!("Unlock {title}…")
+                                        }
+                                    } else {
+                                        format!("Mount {title}")
+                                    };
                                     let response = ui
                                         .add_enabled(
                                             !self.volume_busy,
-                                            egui::Button::new(format!("Mount {title}")),
+                                            egui::Button::new(action_label),
                                         )
                                         .on_hover_text(format!(
-                                            "{} · click to mount using UDisks2/Polkit",
+                                            "{} · UDisks2/Polkit removable-device operation",
                                             volume.device
                                         ));
                                     if response.clicked() {
-                                        self.start_volume_action(
-                                            VolumeAction::MountDevice(volume.object_path.clone()),
-                                            false,
-                                        );
+                                        if volume.encrypted {
+                                            if volume.unlocked {
+                                                self.volume_confirm = Some(VolumeAction::LockEncrypted(
+                                                    volume.object_path.clone(),
+                                                ));
+                                            } else {
+                                                volume::clear_password(&mut self.volume_unlock_password);
+                                                self.volume_unlock_target = Some((
+                                                    volume.object_path.clone(),
+                                                    title.clone(),
+                                                ));
+                                            }
+                                        } else {
+                                            self.start_volume_action(
+                                                VolumeAction::MountDevice(volume.object_path.clone()),
+                                                false,
+                                            );
+                                        }
                                     }
                                     if volume.ejectable || volume.can_power_off {
                                         response.context_menu(|ui| {
@@ -10487,6 +10559,7 @@ impl Drop for Explorer {
         self.duplicate_cancel.store(true, Ordering::Relaxed);
         self.open_with_cancel.store(true, Ordering::Relaxed);
         volume::clear_password(&mut self.volume_connect_password);
+        volume::clear_password(&mut self.volume_unlock_password);
         volume::clear_password(&mut self.remote_upload_password);
         self.remote_upload_cancel.store(true, Ordering::Relaxed);
         self.discovery_cancel.store(true, Ordering::Relaxed);
@@ -10570,6 +10643,7 @@ impl eframe::App for Explorer {
         if self.dialog.is_none()
             && self.archive_dialog.is_none()
             && !self.volume_connect_open
+            && self.volume_unlock_target.is_none()
             && !self.remote_upload_open
             && self.volume_confirm.is_none()
             && !self.discovery_open
