@@ -69,6 +69,14 @@ The renderer uses egui's bundled system-like proportional font, with a technical
   `[shell].status_bar` is optional; transfer/recovery warnings are not.
 - Frutiger Aero intentionally places its command strip below the file area,
   while Windows 10 keeps its command strip in the upper ribbon position.
+- ChromeOS Files uses `themes/chromeos.toml` as its canonical token source.
+  Its original pill toolbar, Google-Files-like My files hierarchy, local
+  shortcuts and storage areas, rounded folder vectors, contextual menu and
+  restrained details headers intentionally differ from Finder/Windows-era
+  chrome. `src/chromeos.rs` emits semantic actions; it cannot bypass the
+  Explorer controller's remote read-only or destructive-operation safeguards.
+  The sidebar enumerates real local folders, mounts and network connections,
+  never fake Google Drive accounts or inactive cloud buttons.
 - The Finder-inspired macOS profile owns only the application chrome, not
   native title bars. `themes/macos.toml` is its canonical palette and density
   source: quiet silver chrome, a pale Favorites/Locations rail, blue original
@@ -112,7 +120,7 @@ Primary hierarchy comes from contrast between shell, sidebar and content—not d
 
 ## Shapes
 
-All major corners use the selected `metrics.rounding` value. Built-in radii span 0px (Windows 98) to 12px (ChromeOS), with dense list rows from 27px to 37px. File icons are painted vector primitives and take theme folder/file colors; the application logo is a scalable SVG with an abstract opened folder and blue explorer stripe.
+All major corners use the selected `metrics.rounding` value. Built-in radii span 0px (Windows 98) to 14px (ChromeOS), with dense list rows from 27px to 37px. File icons are painted vector primitives and take theme folder/file colors; the application logo is a scalable SVG with an abstract opened folder and blue explorer stripe.
 
 ## Components
 

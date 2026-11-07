@@ -66,7 +66,11 @@ pub fn sort_header(
     let mut change_sort = None;
     if matches!(
         theme.shell_kind(),
-        ShellKind::Aero | ShellKind::Ribbon | ShellKind::Aqua | ShellKind::Finder
+        ShellKind::Aero
+            | ShellKind::Ribbon
+            | ShellKind::Aqua
+            | ShellKind::Finder
+            | ShellKind::Chromeos
     ) {
         // Both Explorer-era shells align their sortable details columns with
         // the same virtualized rows; the skins differ only in paint tokens.
@@ -107,15 +111,28 @@ pub fn sort_header(
                     .fill(
                         if matches!(
                             theme.shell_kind(),
-                            ShellKind::Ribbon | ShellKind::Aqua | ShellKind::Finder
+                            ShellKind::Ribbon
+                                | ShellKind::Aqua
+                                | ShellKind::Finder
+                                | ShellKind::Chromeos
                         ) {
                             theme.palette.panel()
                         } else {
                             Color32::from_rgb(247, 250, 253)
                         },
                     )
-                    .stroke(Stroke::new(0.6, theme.palette.border()))
-                    .corner_radius(egui::CornerRadius::ZERO),
+                    .stroke(if theme.shell_kind() == ShellKind::Chromeos {
+                        Stroke::NONE
+                    } else {
+                        Stroke::new(0.6, theme.palette.border())
+                    })
+                    .corner_radius(
+                        if theme.shell_kind() == ShellKind::Chromeos {
+                            egui::CornerRadius::same(6)
+                        } else {
+                            egui::CornerRadius::ZERO
+                        },
+                    ),
                 );
                 if response.on_hover_text(format!("Sort by {label}")).clicked() {
                     change_sort = Some(key);
@@ -210,7 +227,7 @@ fn paint_file_cell(
                 Color32::from_rgb(232, 246, 254)
             } else if theme.shell_kind() == ShellKind::Aqua {
                 Color32::from_rgb(237, 252, 249)
-            } else if theme.shell_kind() == ShellKind::Finder {
+            } else if matches!(theme.shell_kind(), ShellKind::Finder | ShellKind::Chromeos) {
                 Color32::from_rgb(244, 247, 252)
             } else {
                 theme.palette.background()
@@ -256,7 +273,11 @@ fn paint_file_cell(
     }
     let explorer_list = matches!(
         theme.shell_kind(),
-        ShellKind::Aero | ShellKind::Ribbon | ShellKind::Aqua | ShellKind::Finder
+        ShellKind::Aero
+            | ShellKind::Ribbon
+            | ShellKind::Aqua
+            | ShellKind::Finder
+            | ShellKind::Chromeos
     ) && !visual.grid;
     let compact_explorer = explorer_list && rect.width() < 470.0;
     let compact_luna = theme.shell_kind() == ShellKind::Luna && rect.width() < 420.0;
@@ -380,6 +401,10 @@ fn paint_file_icon(painter: &Painter, rect: Rect, file: &Entry, theme: &Theme) {
         paint_finder_file_icon(painter, rect, file, theme);
         return;
     }
+    if theme.shell_kind() == ShellKind::Chromeos {
+        paint_chromeos_file_icon(painter, rect, file, theme);
+        return;
+    }
     let round: u8 = if theme.layout == Layout::Classic {
         0
     } else {
@@ -426,6 +451,42 @@ fn paint_file_icon(painter: &Painter, rect: Rect, file: &Entry, theme: &Theme) {
             FontId::proportional((rect.width() * 0.29).clamp(8.0, 13.0)),
             Color32::WHITE,
         );
+    }
+}
+
+/// Clean solid-color ChromeOS-inspired folders with original document symbols.
+fn paint_chromeos_file_icon(painter: &Painter, rect: Rect, file: &Entry, theme: &Theme) {
+    let s = rect.width().min(rect.height()).max(12.0);
+    let p = |x: f32, y: f32| Pos2::new(rect.left() + x * s, rect.top() + y * s);
+    let box_at = |x1: f32, y1: f32, x2: f32, y2: f32| Rect::from_min_max(p(x1, y1), p(x2, y2));
+    if file.is_dir {
+        painter.rect_filled(
+            box_at(0.10, 0.24, 0.48, 0.38),
+            2,
+            Color32::from_rgb(109, 158, 237),
+        );
+        painter.rect_filled(box_at(0.05, 0.34, 0.95, 0.82), 4, theme.palette.folder());
+        painter.rect_filled(
+            box_at(0.07, 0.42, 0.93, 0.78),
+            3,
+            Color32::from_rgb(125, 176, 248),
+        );
+    } else {
+        let paper = box_at(0.20, 0.07, 0.81, 0.93);
+        painter.rect_filled(paper, 3, Color32::from_rgb(251, 253, 255));
+        painter.rect_stroke(
+            paper,
+            3,
+            Stroke::new(1.3, theme.palette.file()),
+            egui::StrokeKind::Inside,
+        );
+        painter.rect_filled(box_at(0.25, 0.20, 0.76, 0.34), 1, theme.palette.file());
+        for y in [0.46, 0.59, 0.72] {
+            painter.line_segment(
+                [p(0.28, y), p(0.72, y)],
+                Stroke::new(1.4, theme.palette.file()),
+            );
+        }
     }
 }
 

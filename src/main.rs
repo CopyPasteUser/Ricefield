@@ -3,6 +3,7 @@ mod app;
 mod aqua;
 mod archive;
 mod benchmark;
+mod chromeos;
 mod clipboard;
 mod config;
 mod desktop;

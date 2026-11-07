@@ -3,24 +3,28 @@ name = "ChromeOS · Files"
 layout = "modern"
 schema_version = 1
 [palette]
-background = "#f7f9fc"
-chrome = "#eef2f8"
+background = "#f9fbff"
+chrome = "#f6f8fc"
 panel = "#ffffff"
-sidebar = "#f1f5fb"
-text = "#263445"
-muted = "#64748b"
-accent = "#2368c9"
-selection = "#d9e8fc"
-border = "#e0e7ef"
-folder = "#7eaceb"
-file = "#7fa3c9"
+sidebar = "#f0f4fb"
+text = "#202938"
+muted = "#6c788b"
+accent = "#1a73e8"
+selection = "#dbeafe"
+border = "#d9e3ef"
+folder = "#6d9eed"
+file = "#8daedb"
 [metrics]
-rounding = 12
-row_height = 37
+rounding = 14
+row_height = 36
 tile_width = 132
-sidebar_width = 218
+sidebar_width = 228
 icon_size = 28
 
 [shell]
 kind = "chromeos"
 top = ["navigation", "tabs"]
+
+[shell.sidebar]
+sections = ["places", "favorites", "volumes"]
+width = 228

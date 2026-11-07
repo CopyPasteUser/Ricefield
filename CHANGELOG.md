@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — ChromeOS Files shell
+
+- Give ChromeOS a distinct Files-like app toolbar, touch-friendly view pills,
+  a real contextual overflow menu and a minimal search/address row instead
+  of the generic multi-line editor toolbar.
+- Add original monochrome navigation symbols and blue rounded folder/file
+  artwork, My files and actual local storage locations, real shortcuts,
+  network discovery, and mounted volumes with existing safety actions.
+- Keep the full advanced file-manager toolbox accessible on demand. Preserve
+  read-only remote locations, keyboard shortcuts, user TOML composition,
+  native window decorations and shared filesystem operations.
+- GUI smoke, physical scaling, NAS and USB acceptance remain explicit gates.
+
 ## Unreleased — macOS Finder-inspired shell
 
 - Replace the generic macOS skin with a distinctive Finder-like chrome,
