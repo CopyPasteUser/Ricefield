@@ -21,6 +21,7 @@ mod location;
 mod metadata;
 mod open_with;
 mod operation_queue;
+mod portal;
 mod preview;
 mod remote_download;
 mod remote_upload;
