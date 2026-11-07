@@ -1739,11 +1739,17 @@ impl Explorer {
         }
     }
 
-    fn new_tab(&mut self, path: PathBuf) {
+    fn new_tab_at(&mut self, location: Location) {
         let previous = self.tabs.get(self.active).map(|tab| tab.id);
         let id = self.next_tab;
         self.next_tab += 1;
-        self.tabs.push(Tab::new(id, path));
+        let fallback = match &location {
+            Location::Local(path) => path.clone(),
+            Location::Remote(_) => self.current().path.clone(),
+        };
+        let mut tab = Tab::new(id, fallback);
+        tab.set_location(location);
+        self.tabs.push(tab);
         if let Some(previous) = previous {
             self.assign_split_tab(previous, id);
         }
@@ -1752,16 +1758,19 @@ impl Explorer {
         self.remember_session();
     }
 
-    fn new_tab_like_current(&mut self) {
-        let uri = self.current().remote_uri.clone();
-        let path = self.current().path.clone();
-        self.new_tab(path);
-        if let Some(uri) = uri {
-            self.navigate_remote(uri);
-            // Duplicating a tab should not invent a visit to its last local
-            // fallback folder.
-            self.current_mut().back.clear();
+    fn new_tab(&mut self, path: PathBuf) {
+        self.new_tab_at(Location::Local(path));
+    }
+
+    fn new_remote_tab(&mut self, uri: String) {
+        match Location::parse(uri.into()) {
+            Ok(remote @ Location::Remote(_)) => self.new_tab_at(remote),
+            _ => self.status = Some(("Invalid network folder address".into(), true)),
         }
+    }
+
+    fn new_tab_like_current(&mut self) {
+        self.new_tab_at(self.current().location());
     }
 
     fn assign_split_tab(&mut self, previous: u64, replacement: u64) {
@@ -2492,6 +2501,7 @@ impl Explorer {
         let mut retry = false;
         let mut connect = None;
         let mut browse = None;
+        let mut browse_new_tab = None;
         egui::Window::new("Discover network computers")
             .open(&mut open)
             .resizable(true)
@@ -2530,6 +2540,15 @@ impl Explorer {
                                 {
                                     browse = Some(host.uri.clone());
                                 }
+                                if ui
+                                    .button("New tab")
+                                    .on_hover_text(
+                                        "Browse this server without replacing the current folder",
+                                    )
+                                    .clicked()
+                                {
+                                    browse_new_tab = Some(host.uri.clone());
+                                }
                                 if ui.button("Sign in").clicked() {
                                     connect = Some(host.uri.clone());
                                 }
@@ -2541,7 +2560,11 @@ impl Explorer {
         if retry {
             self.start_discovery();
         }
-        if let Some(uri) = browse {
+        if let Some(uri) = browse_new_tab {
+            self.discovery_cancel.store(true, Ordering::Relaxed);
+            self.discovery_open = false;
+            self.new_remote_tab(uri);
+        } else if let Some(uri) = browse {
             self.discovery_cancel.store(true, Ordering::Relaxed);
             self.discovery_open = false;
             self.navigate_remote(uri);
@@ -4808,7 +4831,13 @@ impl Explorer {
         let [path] = selected.as_slice() else {
             return;
         };
-        let path = path.clone();
+        self.choose_open_with_path(path.clone());
+    }
+
+    fn choose_open_with_path(&mut self, path: PathBuf) {
+        if self.current().remote_uri.is_some() || !path.is_absolute() {
+            return;
+        }
         self.open_with_cancel.store(true, Ordering::Relaxed);
         self.open_with_cancel = Arc::new(AtomicBool::new(false));
         self.open_with_generation = self.open_with_generation.wrapping_add(1);
@@ -7702,6 +7731,18 @@ impl Explorer {
                         self.status = Some((format!("Cannot open previewed file: {error}"), true));
                     }
                 }
+                if ui
+                    .add_enabled(
+                        self.current()
+                            .entries
+                            .iter()
+                            .any(|entry| entry.path == path && !entry.is_dir),
+                        egui::Button::new("Open With…"),
+                    )
+                    .clicked()
+                {
+                    self.choose_open_with_path(path.clone());
+                }
             });
     }
 
@@ -8685,6 +8726,10 @@ impl Explorer {
                     }
                     if ui.add_enabled(selected.as_ref().is_some_and(|entry| entry.is_directory),
                         egui::Button::new("Open folder")).clicked() {
+                        selected_action = selected.as_ref().map(|entry| (entry.uri.clone(), false));
+                    }
+                    if ui.add_enabled(selected.as_ref().is_some_and(|entry| entry.is_directory),
+                        egui::Button::new("Open in new tab")).clicked() {
                         selected_action = selected.as_ref().map(|entry| (entry.uri.clone(), true));
                     }
                     if ui.add_enabled(selected.as_ref().is_some_and(|entry| entry.is_regular_file),
@@ -8702,8 +8747,8 @@ impl Explorer {
                         shown_count, self.current().remote_entries.len(),
                         if selected.is_some() { "1 selected" } else { "Select a row for actions" }));
                 });
-                if let Some((uri, true)) = selected_action {
-                    self.navigate_remote(uri);
+                if let Some((uri, new_tab)) = selected_action {
+                    if new_tab { self.new_remote_tab(uri); } else { self.navigate_remote(uri); }
                     return;
                 }
                 if self.current().loading {
@@ -8746,6 +8791,7 @@ impl Explorer {
                         sort_remote_entries(&mut tab.remote_entries, tab.remote_sort, tab.remote_sort_descending);
                     }
                     let mut open = None;
+                    let mut open_new_tab = None;
                     let mut preview = None;
                     let mut download = None;
                     let mut choose = None;
@@ -8783,6 +8829,10 @@ impl Explorer {
                                     open = Some(entry.uri.clone());
                                     ui.close();
                                 }
+                                if entry.is_directory && ui.button("Open in new tab").clicked() {
+                                    open_new_tab = Some(entry.uri.clone());
+                                    ui.close();
+                                }
                                 if entry.is_regular_file && ui.button("Preview file").clicked() {
                                     preview = Some(entry.uri.clone());
                                     ui.close();
@@ -8797,7 +8847,9 @@ impl Explorer {
                     if let Some(uri) = choose {
                         self.current_mut().remote_selected_uri = Some(uri);
                     }
-                    if let Some(uri) = open {
+                    if let Some(uri) = open_new_tab {
+                        self.new_remote_tab(uri);
+                    } else if let Some(uri) = open {
                         self.navigate_remote(uri);
                     } else if let Some(uri) = preview {
                         self.start_remote_preview(uri);
@@ -8962,6 +9014,10 @@ impl Explorer {
         response.context_menu(|ui| {
             if ui.button("Open").clicked() {
                 self.activate(entry);
+                ui.close();
+            }
+            if !entry.is_dir && ui.button("Open With…").clicked() {
+                self.choose_open_with_path(entry.path.clone());
                 ui.close();
             }
             if ui.button("Preview").clicked() {
@@ -10553,6 +10609,18 @@ mod tests {
         tab.visit(Location::Local("/another".into()));
         assert!(second.load(Ordering::Relaxed));
         assert!(tab.remote_preview_uri.is_none());
+    }
+
+    #[test]
+    fn a_new_network_tab_does_not_inherit_local_history_or_selection() {
+        let mut tab = Tab::new(42, PathBuf::from("/local-fallback"));
+        tab.set_location(Location::parse("smb://nas/share/Documents".into()).unwrap());
+        assert_eq!(tab.remote_uri.as_deref(), Some("smb://nas/share/Documents"));
+        assert!(tab.back.is_empty());
+        assert!(tab.forward.is_empty());
+        assert!(tab.selected.is_empty());
+        assert!(tab.entries.is_empty());
+        assert_eq!(tab.path, PathBuf::from("/local-fallback"));
     }
 
     #[test]

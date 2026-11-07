@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — Previews, network tabs, Open With and file icons
+
+- Offer bounded BMP/ICO previews and readable fallbacks when optional PDF,
+  media or archive decoders cannot process a file. Unknown binary formats
+  continue to show their safe hexadecimal prefix.
+- Open remote folders in a new tab from the network toolbar, row context menu
+  or discovery browser without replacing the current location.
+- Expose **Open With** from local file context menus and previews, and include
+  recommended desktop MIME handlers in the existing safe chooser.
+- Draw small original vector file-type pictograms across all seven rices;
+  recognize common document, spreadsheet and presentation extensions without
+  borrowing proprietary application icons.
+
 ## Unreleased — Complete RiceField naming
 
 - Rename the Cargo package, binary, desktop entry, icon assets, user-local
