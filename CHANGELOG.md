@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — native system app chooser portal
+
+- Add an optional Open With system chooser backed by XDG Desktop Portal
+  OpenURI v3 `OpenFile(ask=true)`. Pass a verified local file/directory via
+  a pinned read-only file descriptor, refuse FIFOs and device nodes, and
+  dispatch the request on a worker without freezing the file manager.
+- Keep MIME application associations unchanged. Report absent/old portals
+  clearly and leave the general portal/clipboard/drag acceptance gate open.
+
 ## 1.0.0-rc.20 — encrypted removable-volume candidate
 
 - Bump the development candidate after adding external LUKS Unlock/Lock and
