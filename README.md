@@ -37,7 +37,7 @@ The details are intentional: 98 has a dense gray menu and tree, XP a blue tasks 
 - **Reach storage:** SMB, SFTP, WebDAV and MTP discovery/browsing with folders opening in the current or a new tab, navigable breadcrumbs, selectable/sortable file rows, previews, queued downloads and optional credential storage. WebDAV additionally offers a guarded **single-file upload** after a live server collision-safety probe; removable USB and encrypted-volume actions use UDisks2/Polkit.
 - **Customize:** seven built-in rices plus user TOML files for palettes, spacing, navigation and layout.
 
-**Release status: `1.0.0-rc.19` development candidate.** Automated Rust checks and native Linux GUI smoke tests pass. The 1.0 network-write/recovery code gates **and** physical Linux Mint/NAS/USB acceptance are still open. Keep your existing file manager installed. [Owner acceptance checklist](docs/OWNER-ACCEPTANCE-1.0.md).
+**Release status: `1.0.0-rc.20` development candidate.** Automated Rust checks and native Linux GUI smoke tests pass. The 1.0 network-write/recovery code gates **and** physical Linux Mint/NAS/USB acceptance are still open. Keep your existing file manager installed. [Owner acceptance checklist](docs/OWNER-ACCEPTANCE-1.0.md).
 
 ## Install
 
@@ -74,7 +74,7 @@ ricefield --theme-file /path/to/custom-rice.toml
 - Remote browsing is **read-only by default**, with explicit bounded no-overwrite downloads. WebDAV single-file upload is available only after a live conditional-MOVE safety probe, private stage and full byte verification. Before its first staging PUT a private credential-free journal durably saves the stage and final target; uncertain attempts can be reviewed after restart under **Review safely…**. Remote cleanup and retries never run automatically. SMB, SFTP, MTP uploads, remote rename and deletion remain disabled pending [backend-specific atomicity guarantees](docs/REMOTE-WRITE-SAFETY.md); the 1.0 network-write gate is still open.
 - Cross-device moves preserve their sources after verified copies; cleanup requires a separate decision.
 - Batch rename has guarded session-only Undo, not full crash recovery. Inspect any interrupted batch.
-- USB mount, unmount, eject and explicit LUKS Unlock/Lock rely on UDisks2/Polkit. Lock requires the decrypted filesystem to be unmounted. Real-device/Polkit acceptance is still open; encrypted/internal drives are deliberately ineligible for unsafe PowerOff.
+- USB mount, unmount, eject and explicit LUKS Unlock/Lock rely on UDisks2/Polkit. Lock requires the decrypted filesystem to be unmounted; PowerOff accepts a verified locked LUKS USB container but rejects open/malformed mappings and mounted siblings. Real-device/Polkit acceptance is still open.
 - Cross-device Move creates a verified copy and **keeps the source**. Its private crash journal supports read-only inspection, explicitly confirmed resolution of already-published copies, and guarded no-overwrite publication of a verified, unchanged staged file, symlink or bounded directory on Linux. Nested metadata and hardlinks must match exactly; oversized or uncertain trees still require manual review. There is no automatic rollback, broad replay or source deletion. Test risky operations with disposable files.
 
 [Detailed 1.0 status](docs/1.0-STATUS.md) · [Owner acceptance tests](docs/OWNER-ACCEPTANCE-1.0.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md)
