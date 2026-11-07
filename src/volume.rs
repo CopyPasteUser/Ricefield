@@ -728,7 +728,8 @@ mod tests {
         assert!(luks.arguments().is_empty());
         assert_eq!(luks.label(), "Unlock encrypted drive");
         assert!(!format!("{luks:?}").contains("volume-secret987"));
-        let lock = VolumeAction::LockEncrypted("/org/freedesktop/UDisks2/block_devices/sdc1".into());
+        let lock =
+            VolumeAction::LockEncrypted("/org/freedesktop/UDisks2/block_devices/sdc1".into());
         assert!(lock.arguments().is_empty());
         assert_eq!(lock.label(), "Lock encrypted drive");
     }

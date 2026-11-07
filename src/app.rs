@@ -2911,7 +2911,10 @@ impl Explorer {
                     password: std::mem::take(&mut self.volume_unlock_password),
                 };
                 self.volume_unlock_target = None;
-                self.start_volume_action(VolumeAction::UnlockDevice(object_path, credentials), false);
+                self.start_volume_action(
+                    VolumeAction::UnlockDevice(object_path, credentials),
+                    false,
+                );
             } else if !open {
                 volume::clear_password(&mut self.volume_unlock_password);
                 self.volume_unlock_target = None;
@@ -7710,11 +7713,14 @@ impl Explorer {
                                     if response.clicked() {
                                         if volume.encrypted {
                                             if volume.unlocked {
-                                                self.volume_confirm = Some(VolumeAction::LockEncrypted(
-                                                    volume.object_path.clone(),
-                                                ));
+                                                self.volume_confirm =
+                                                    Some(VolumeAction::LockEncrypted(
+                                                        volume.object_path.clone(),
+                                                    ));
                                             } else {
-                                                volume::clear_password(&mut self.volume_unlock_password);
+                                                volume::clear_password(
+                                                    &mut self.volume_unlock_password,
+                                                );
                                                 self.volume_unlock_target = Some((
                                                     volume.object_path.clone(),
                                                     title.clone(),
@@ -7722,7 +7728,9 @@ impl Explorer {
                                             }
                                         } else {
                                             self.start_volume_action(
-                                                VolumeAction::MountDevice(volume.object_path.clone()),
+                                                VolumeAction::MountDevice(
+                                                    volume.object_path.clone(),
+                                                ),
                                                 false,
                                             );
                                         }
