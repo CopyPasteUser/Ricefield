@@ -20,8 +20,9 @@ performance, Linux integration, then visual polish.
   detail headers and narrow-window command layout without asset copying.
 - [x] Route every toolbar/menu command through shared file actions and local
   write guards; keep settings, previews and transfer history accessible.
-- [ ] Capture and inspect actual CI GUI screenshots for default, grid, More,
-  split, compact and narrow views; publish selected images to the gallery.
+- [x] Capture and inspect actual CI GUI screenshots for default, grid, More,
+  split, compact and narrow views; publish selected images to the gallery
+  (native smoke run `42339732861`).
 - [ ] Validate on the owner's Linux Mint desktop (scale, keyboard, network,
   mounted USB, theme transitions and pointer interactions).
 

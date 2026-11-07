@@ -11,7 +11,9 @@
 - Keep the full advanced file-manager toolbox accessible on demand. Preserve
   read-only remote locations, keyboard shortcuts, user TOML composition,
   native window decorations and shared filesystem operations.
-- GUI smoke, physical scaling, NAS and USB acceptance remain explicit gates.
+- Native GUI smoke passed with clicked More/grid views, split, compact and
+  narrow screenshots (CI run `42339732861`). Physical scaling, NAS and USB
+  acceptance remain explicit gates.
 
 ## Unreleased — macOS Finder-inspired shell
 

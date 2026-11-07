@@ -226,6 +226,8 @@ fn toggle(ui: &mut egui::Ui, theme: &Theme, state: FilesContext, action: FilesAc
                 theme.palette.chrome()
             }),
     );
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, state.label(action)));
     let ink = theme.palette.text();
     let center = response.rect.center();
     let painter = ui.painter();
