@@ -69,26 +69,35 @@ mod tests {
 
     #[test]
     fn chooser_only_accepts_pinned_local_regular_files_and_directories() {
-        let temp = tempfile::tempdir().unwrap();
-        let file = temp.path().join("file.txt");
+        let root = std::env::temp_dir().join(format!(
+            "ricefield-portal-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let file = root.join("file.txt");
         std::fs::write(&file, b"portal data").unwrap();
         assert!(local_target(&file).unwrap().metadata().unwrap().is_file());
         assert!(
-            local_target(temp.path())
+            local_target(&root)
                 .unwrap()
                 .metadata()
                 .unwrap()
                 .is_dir()
         );
         assert!(local_target(Path::new("relative.txt")).is_err());
-        let socket = temp.path().join("socket");
+        let socket = root.join("socket");
         let _listener = UnixListener::bind(&socket).unwrap();
         assert!(local_target(&socket).is_err());
-        let fifo = temp.path().join("pipe");
+        let fifo = root.join("pipe");
         let name = std::ffi::CString::new(std::os::unix::ffi::OsStrExt::as_bytes(fifo.as_os_str()))
             .unwrap();
         // SAFETY: `name` is a NUL-terminated pathname within our temp dir.
         assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
         assert!(local_target(&fifo).is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
