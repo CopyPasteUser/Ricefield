@@ -91,12 +91,25 @@ fn remote_matches_query(entry: &volume::RemoteEntry, query: &str) -> bool {
             .contains(&query.to_lowercase())
 }
 
-fn visible_remote_indices(entries: &[volume::RemoteEntry], query: &str) -> Vec<usize> {
-    entries
-        .iter()
-        .enumerate()
-        .filter_map(|(index, entry)| remote_matches_query(entry, query).then_some(index))
-        .collect()
+/// None means every entry is visible: avoid allocating an index vector on
+/// every frame for large unfiltered network folders.
+fn visible_remote_indices(entries: &[volume::RemoteEntry], query: &str) -> Option<Vec<usize>> {
+    let needle = query.trim().to_lowercase();
+    if needle.is_empty() {
+        return None;
+    }
+    Some(
+        entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| {
+                volume::display_remote_name(&entry.name)
+                    .to_lowercase()
+                    .contains(&needle)
+                    .then_some(index)
+            })
+            .collect(),
+    )
 }
 
 fn next_remote_selection(
@@ -106,18 +119,21 @@ fn next_remote_selection(
     down: bool,
 ) -> Option<String> {
     let visible = visible_remote_indices(entries, query);
-    if visible.is_empty() {
+    let count = visible.as_ref().map_or(entries.len(), Vec::len);
+    if count == 0 {
         return None;
     }
-    let current =
-        current_uri.and_then(|uri| visible.iter().position(|&index| entries[index].uri == uri));
+    let current = current_uri.and_then(|uri| match &visible {
+        Some(indices) => indices.iter().position(|&index| entries[index].uri == uri),
+        None => entries.iter().position(|entry| entry.uri == uri),
+    });
     let next = match (current, down) {
         (None, true) => 0,
-        (None, false) => visible.len() - 1,
-        (Some(index), true) => (index + 1).min(visible.len() - 1),
+        (None, false) => count - 1,
+        (Some(index), true) => (index + 1).min(count - 1),
         (Some(index), false) => index.saturating_sub(1),
     };
-    Some(entries[visible[next]].uri.clone())
+    Some(entries[visible.as_ref().map_or(next, |indices| indices[next])].uri.clone())
 }
 
 fn remote_sort_header(
@@ -8645,6 +8661,7 @@ impl Explorer {
                 });
                 ui.separator();
                 let visible = visible_remote_indices(&self.current().remote_entries, &self.current().query);
+                let shown_count = visible.as_ref().map_or(self.current().remote_entries.len(), Vec::len);
                 let selected = self.current().remote_selected_uri.as_ref().and_then(|uri| {
                     self.current()
                         .remote_entries
@@ -8678,7 +8695,7 @@ impl Explorer {
                     }
                     ui.separator();
                     ui.small(format!("{} shown / {} total · {}",
-                        visible.len(), self.current().remote_entries.len(),
+                        shown_count, self.current().remote_entries.len(),
                         if selected.is_some() { "1 selected" } else { "Select a row for actions" }));
                 });
                 if let Some((uri, true)) = selected_action {
@@ -8697,7 +8714,7 @@ impl Explorer {
                     if let Some(warning) = &self.current().scan_warning {
                         ui.colored_label(Color32::YELLOW, warning);
                     }
-                    if visible.is_empty() {
+                    if shown_count == 0 {
                         ui.vertical_centered(|ui| {
                             ui.add_space(40.0);
                             ui.heading(if self.current().query.is_empty() { "This network folder is empty" } else { "No matching filenames" });
@@ -8736,8 +8753,9 @@ impl Explorer {
                         ui.available_height().max(120.0)
                     };
                     let row_height = theme.metrics.row_height.max(28.0);
-                    egui::ScrollArea::vertical().max_height(list_height).show_rows(ui, row_height, visible.len(), |ui, rows| {
-                        for &index in &visible[rows] {
+                    egui::ScrollArea::vertical().max_height(list_height).show_rows(ui, row_height, shown_count, |ui, rows| {
+                        for row in rows {
+                            let index = visible.as_ref().map_or(row, |indices| indices[row]);
                             let entry = &entries[index];
                             let display_name = volume::display_remote_name(&entry.name);
                             let response = shell_renderer::remote_row(
@@ -10275,15 +10293,15 @@ mod tests {
             remote_entry("notes.txt", false, Some(12)),
             remote_entry("FAMILY%20BUDGET.csv", false, Some(9)),
         ];
-        let indices = super::visible_remote_indices(&entries, "  family ");
+        let indices = super::visible_remote_indices(&entries, "  family ").unwrap();
         assert_eq!(indices, vec![0, 2]);
         assert_eq!(entries[indices[0]].uri, "smb://host/share/Family%20Photos");
         assert_eq!(
             super::visible_remote_indices(&entries, "no match"),
-            Vec::<usize>::new()
+            Some(Vec::<usize>::new())
         );
-        assert_eq!(super::visible_remote_indices(&entries, "  ").len(), 3);
-        assert_eq!(super::visible_remote_indices(&entries, "notes"), vec![1]);
+        assert!(super::visible_remote_indices(&entries, "  ").is_none());
+        assert_eq!(super::visible_remote_indices(&entries, "notes"), Some(vec![1]));
     }
 
     #[test]
