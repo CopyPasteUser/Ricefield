@@ -600,7 +600,10 @@ pub fn upload(request: UploadRequest, cancelled: &AtomicBool) -> Result<UploadRe
     verify_remote_bytes(&stage, &credentials, &mut snapshot, cancelled)
         .map_err(|error| staged_upload_error(&stage, &error))?;
     if cancelled.load(Ordering::Relaxed) {
-        return Err(staged_upload_error(&stage, "Upload cancelled before publication"));
+        return Err(staged_upload_error(
+            &stage,
+            "Upload cancelled before publication",
+        ));
     }
     // Once publication starts, cancelling can produce an ambiguous outcome:
     // the server may commit before the client notices the broken connection.
@@ -845,8 +848,14 @@ mod tests {
         let collision =
             upload(request(file.clone(), &server), &AtomicBool::new(false)).unwrap_err();
         assert!(collision.contains("HTTP 412"), "{collision}");
-        assert!(collision.contains(&format!("{}/.ricefield-upload-", server.url)), "{collision}");
-        assert!(collision.contains("Check both the final destination"), "{collision}");
+        assert!(
+            collision.contains(&format!("{}/.ricefield-upload-", server.url)),
+            "{collision}"
+        );
+        assert!(
+            collision.contains("Check both the final destination"),
+            "{collision}"
+        );
         assert_eq!(server.path("My%20Notes.txt"), b"verified upload bytes");
         fs::remove_file(file).unwrap();
         fs::remove_dir(folder).unwrap();
