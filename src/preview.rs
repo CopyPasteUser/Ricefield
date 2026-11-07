@@ -262,7 +262,11 @@ pub(crate) fn utf16_text(bytes: &[u8], truncated: bool) -> Option<String> {
             }
         })
         .collect::<Vec<_>>();
-    if truncated && units.last().is_some_and(|unit| (0xd800..=0xdbff).contains(unit)) {
+    if truncated
+        && units
+            .last()
+            .is_some_and(|unit| (0xd800..=0xdbff).contains(unit))
+    {
         units.pop();
     }
     let text = String::from_utf16(&units).ok()?;
