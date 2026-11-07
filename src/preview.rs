@@ -33,7 +33,7 @@ pub enum Preview {
 }
 
 fn image_extension(extension: &str) -> bool {
-    matches!(extension, "png" | "jpg" | "jpeg" | "gif" | "webp")
+    matches!(extension, "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico")
 }
 
 fn decode_image(bytes: &[u8], max_width: u32, max_height: u32) -> io::Result<Thumbnail> {
@@ -292,7 +292,9 @@ pub fn load(path: &Path) -> io::Result<Preview> {
             Err(error) if error.to_string().contains("16 MP") => Ok(Preview::Info(
                 "Image dimensions exceed preview limit (16 MP)".into(),
             )),
-            Err(error) => Err(error),
+            Err(error) => Ok(Preview::Info(format!(
+                "Image preview unavailable: {error}. Open the file with an image viewer."
+            ))),
         };
     }
     if extension == "pdf" {
@@ -301,7 +303,11 @@ pub fn load(path: &Path) -> io::Result<Preview> {
                 "PDF too large for the 64 MiB preview limit".into(),
             ));
         }
-        return pdf_preview(path);
+        return Ok(pdf_preview(path).unwrap_or_else(|error| {
+            Preview::Info(format!(
+                "PDF rendering unavailable: {error}. Open the document with a PDF viewer (pdftoppm is optional)."
+            ))
+        }));
     }
     if matches!(
         extension.as_str(),
@@ -312,7 +318,11 @@ pub fn load(path: &Path) -> io::Result<Preview> {
                 "Media exceeds the 4 GiB metadata probe limit".into(),
             ));
         }
-        return media_preview(path);
+        return Ok(media_preview(path).unwrap_or_else(|error| {
+            Preview::Info(format!(
+                "Media metadata unavailable: {error}. Open the file with a media player (ffprobe is optional)."
+            ))
+        }));
     }
     if crate::archive::Format::is_archive(path) {
         if opened.len() > 64 * 1024 * 1024 {
@@ -320,7 +330,11 @@ pub fn load(path: &Path) -> io::Result<Preview> {
                 "Large archive — use the bounded Archive browser to inspect entries".into(),
             ));
         }
-        return archive_preview(path);
+        return Ok(archive_preview(path).unwrap_or_else(|error| {
+            Preview::Info(format!(
+                "Archive listing unavailable: {error}. Open it with an archive manager to inspect the contents."
+            ))
+        }));
     }
     let mut bytes = vec![0u8; 32 * 1024];
     let count = file.read(&mut bytes)?;
@@ -421,6 +435,18 @@ mod tests {
         let thumb = thumbnail(&path).unwrap().unwrap();
         assert!(thumb.width <= 108 && thumb.height <= 108);
         assert_eq!(thumb.rgba.len(), thumb.width * thumb.height * 4);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn common_raster_extensions_use_the_image_decoder() {
+        assert!(image_extension("bmp"));
+        assert!(image_extension("ico"));
+        assert!(!image_extension("svg")); // Render untrusted SVG as safe text.
+        let root = test_root();
+        let path = root.join("picture.bmp");
+        fs::write(&path, include_bytes!("../assets/ricefield.png")).unwrap();
+        assert!(matches!(load(&path).unwrap(), Preview::Image { .. }));
         fs::remove_dir_all(root).unwrap();
     }
 

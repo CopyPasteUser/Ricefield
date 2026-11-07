@@ -16,6 +16,10 @@ Linux desktop file management for RiceBowl users. v0.1 interface English; runtim
   independent scan and preview cancellation tokens, and never clone stale
   entry lists or selections. The closed-tab stack holds at most 16 snapshots
   in memory; it is not serialized and closing the only tab goes Home.
+- Network folders can open in a new tab through discovery, the selected-folder
+  toolbar action or a row context menu. The new tab starts directly at the
+  validated remote URI, with independent scan/preview tokens and no visit to
+  its local fallback path; read-only restrictions remain identical.
 - The session snapshot keeps at most 32 absolute, UTF-8 tab paths and one
   active index. An explicit launch path overrides restoration, and opting out
   clears the stored paths. Unavailable mounts are handled by asynchronous
@@ -214,7 +218,8 @@ not silently rolled back; cancelled/unstarted entries remain explicit.
   single local file; desktop IDs and MIME types are validated before a
   shell-free GIO launch. Slow/unavailable backends show a cancellable loading
   or error state, and no file content is copied to an external process by the
-  lookup itself.
+  lookup itself. Local file context menus and the preview pane invoke the
+  same chooser, including recommended MIME handlers.
   External theme files are observed at the shared idle cadence, reloaded only
   after a metadata change, and limited to regular 256 KiB inputs. A broken
   edit never replaces the last working theme or touches open tabs/transfers;

@@ -181,23 +181,29 @@ impl Entry {
         } else if self.is_dir {
             "Folder"
         } else {
-            match self
-                .path
-                .extension()
-                .and_then(|extension| extension.to_str())
-            {
-                Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "svg") => "Image",
-                Some("mp3" | "flac" | "wav" | "ogg" | "m4a") => "Audio",
-                Some("mkv" | "mp4" | "avi" | "webm" | "mov") => "Video",
-                Some(
-                    "zip" | "7z" | "tar" | "gz" | "xz" | "zst" | "tgz" | "txz" | "tzst" | "rar",
-                ) => "Archive",
-                Some("rs" | "py" | "js" | "ts" | "html" | "css" | "sh") => "Code",
-                Some("pdf") => "PDF",
-                Some("txt" | "md") => "Document",
-                _ => "File",
-            }
+            file_kind_from_name(&self.name)
         }
+    }
+}
+
+/// Shared local/remote file badges; classification never opens an untrusted file.
+pub fn file_kind_from_name(name: &str) -> &'static str {
+    let extension = Path::new(name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico" | "tif" | "tiff" => "Image",
+        "mp3" | "flac" | "wav" | "ogg" | "m4a" | "opus" | "aac" => "Audio",
+        "mkv" | "mp4" | "avi" | "webm" | "mov" | "m4v" | "mpeg" | "mpg" => "Video",
+        "zip" | "7z" | "tar" | "gz" | "xz" | "zst" | "tgz" | "txz" | "tzst" | "rar" | "bz2" => "Archive",
+        "rs" | "py" | "js" | "ts" | "tsx" | "jsx" | "html" | "css" | "sh" | "go" | "c" | "cpp" | "h" | "hpp" | "java" | "json" | "yaml" | "yml" | "toml" | "xml" | "sql" => "Code",
+        "pdf" => "PDF",
+        "csv" | "tsv" | "xls" | "xlsx" | "ods" => "Spreadsheet",
+        "ppt" | "pptx" | "odp" => "Presentation",
+        "txt" | "md" | "rtf" | "doc" | "docx" | "odt" => "Document",
+        _ => "File",
     }
 }
 
@@ -3579,6 +3585,24 @@ pub fn age(modified: Option<SystemTime>) -> String {
 mod tests {
     use super::*;
     use std::time::UNIX_EPOCH;
+
+    #[test]
+    fn file_type_badges_cover_common_formats_case_insensitively() {
+        for (name, kind) in [
+            ("photo.BMP", "Image"),
+            ("recording.OPUS", "Audio"),
+            ("movie.MP4", "Video"),
+            ("bundle.7Z", "Archive"),
+            ("main.RS", "Code"),
+            ("report.PDF", "PDF"),
+            ("budget.XLSX", "Spreadsheet"),
+            ("slides.PPTX", "Presentation"),
+            ("letter.DOCX", "Document"),
+            ("mystery", "File"),
+        ] {
+            assert_eq!(file_kind_from_name(name), kind, "{name}");
+        }
+    }
 
     #[cfg(unix)]
     fn special_file_fixture(path: &Path) -> Option<std::os::unix::net::UnixListener> {

@@ -113,7 +113,8 @@ pub fn remote_row(
     let icon_color = if visual.is_directory {
         theme.palette.folder()
     } else {
-        theme.palette.file()
+        file_kind_color(filesystem::file_kind_from_name(visual.name))
+            .unwrap_or_else(|| theme.palette.file())
     };
     let x = rect.left() + 9.0;
     let y = rect.center().y - 8.0;
@@ -533,6 +534,9 @@ fn paint_file_cell(
         );
     } else {
         paint_file_icon(&painter, icon_area, file, theme);
+        if !file.is_dir {
+            paint_type_badge(&painter, icon_area, file.kind());
+        }
     }
     if !visual.grid && matches!(shell, ShellKind::Chromeos | ShellKind::Aqua) {
         let name = shorten(
@@ -677,6 +681,86 @@ fn paint_file_cell(
     }
 }
 
+fn file_kind_color(kind: &str) -> Option<Color32> {
+    Some(match kind {
+        "Image" => Color32::from_rgb(42, 147, 95),
+        "Audio" => Color32::from_rgb(137, 83, 174),
+        "Video" => Color32::from_rgb(55, 111, 183),
+        "Archive" => Color32::from_rgb(178, 109, 38),
+        "PDF" => Color32::from_rgb(183, 54, 58),
+        "Code" => Color32::from_rgb(38, 133, 147),
+        "Spreadsheet" => Color32::from_rgb(35, 125, 80),
+        "Presentation" => Color32::from_rgb(194, 101, 46),
+        "Document" => Color32::from_rgb(69, 116, 178),
+        "Link" => Color32::from_rgb(98, 106, 121),
+        _ => return None,
+    })
+}
+
+/// Small original vector symbols sit on top of each rice's existing paper art.
+/// They distinguish file types without importing OS icon packs or font glyphs.
+fn paint_type_badge(painter: &Painter, rect: Rect, kind: &str) {
+    let Some(color) = file_kind_color(kind) else { return };
+    let s = rect.width().min(rect.height());
+    if s < 17.0 { return; }
+    let at = |x: f32, y: f32| Pos2::new(rect.left() + x * s, rect.top() + y * s);
+    let box_at = |x1: f32, y1: f32, x2: f32, y2: f32| Rect::from_min_max(at(x1, y1), at(x2, y2));
+    painter.rect_filled(box_at(0.27, 0.34, 0.73, 0.68), 2, Color32::WHITE);
+    let line = Stroke::new((s * 0.042).clamp(1.0, 2.0), color);
+    match kind {
+        "Image" => {
+            painter.rect_stroke(box_at(0.31, 0.38, 0.69, 0.64), 1, line, egui::StrokeKind::Inside);
+            painter.circle_filled(at(0.59, 0.45), s * 0.035, color);
+            painter.line_segment([at(0.34, 0.59), at(0.45, 0.49)], line);
+            painter.line_segment([at(0.45, 0.49), at(0.54, 0.57)], line);
+        }
+        "Audio" => {
+            painter.line_segment([at(0.49, 0.42), at(0.49, 0.59)], line);
+            painter.line_segment([at(0.62, 0.40), at(0.62, 0.56)], line);
+            painter.line_segment([at(0.49, 0.42), at(0.62, 0.40)], line);
+            painter.circle_filled(at(0.45, 0.60), s * 0.05, color);
+            painter.circle_filled(at(0.58, 0.57), s * 0.05, color);
+        }
+        "Video" => {
+            painter.add(egui::Shape::convex_polygon(
+                vec![at(0.44, 0.41), at(0.44, 0.61), at(0.62, 0.51)], color, Stroke::NONE,
+            ));
+        }
+        "Archive" => {
+            painter.rect_stroke(box_at(0.36, 0.41, 0.64, 0.61), 1, line, egui::StrokeKind::Inside);
+            painter.line_segment([at(0.36, 0.47), at(0.64, 0.47)], line);
+            painter.line_segment([at(0.50, 0.43), at(0.50, 0.60)], line);
+        }
+        "Code" => {
+            for (a, b) in [((0.44, 0.43), (0.37, 0.51)), ((0.37, 0.51), (0.44, 0.59)),
+                ((0.57, 0.43), (0.64, 0.51)), ((0.64, 0.51), (0.57, 0.59))] {
+                painter.line_segment([at(a.0, a.1), at(b.0, b.1)], line);
+            }
+            painter.line_segment([at(0.54, 0.41), at(0.48, 0.61)], line);
+        }
+        "Spreadsheet" => {
+            painter.rect_stroke(box_at(0.34, 0.39, 0.66, 0.63), 0, line, egui::StrokeKind::Inside);
+            painter.line_segment([at(0.34, 0.47), at(0.66, 0.47)], line);
+            painter.line_segment([at(0.49, 0.39), at(0.49, 0.63)], line);
+        }
+        "Presentation" => {
+            painter.rect_stroke(box_at(0.34, 0.40, 0.66, 0.57), 0, line, egui::StrokeKind::Inside);
+            painter.line_segment([at(0.50, 0.57), at(0.50, 0.64)], line);
+            painter.line_segment([at(0.42, 0.64), at(0.58, 0.64)], line);
+        }
+        "PDF" | "Document" => {
+            for y in [0.43, 0.50, 0.57] {
+                painter.line_segment([at(0.37, y), at(if y == 0.57 { 0.56 } else { 0.63 }, y)], line);
+            }
+        }
+        "Link" => {
+            painter.circle_stroke(at(0.44, 0.49), s * 0.09, line);
+            painter.circle_stroke(at(0.57, 0.54), s * 0.09, line);
+        }
+        _ => {}
+    }
+}
+
 fn paint_file_icon(painter: &Painter, rect: Rect, file: &Entry, theme: &Theme) {
     if theme.shell_kind() == ShellKind::Classic {
         paint_classic98_file_icon(painter, rect, file);
@@ -745,13 +829,15 @@ fn paint_file_icon(painter: &Painter, rect: Rect, file: &Entry, theme: &Theme) {
             "Link" => "LNK",
             _ => "FILE",
         };
-        painter.text(
-            body.center(),
-            Align2::CENTER_CENTER,
-            short,
-            FontId::proportional((rect.width() * 0.29).clamp(8.0, 13.0)),
-            Color32::WHITE,
-        );
+        if file_kind_color(file.kind()).is_none() {
+            painter.text(
+                body.center(),
+                Align2::CENTER_CENTER,
+                short,
+                FontId::proportional((rect.width() * 0.29).clamp(8.0, 13.0)),
+                Color32::WHITE,
+            );
+        }
     }
 }
 
@@ -890,24 +976,16 @@ fn paint_finder_file_icon(painter: &Painter, rect: Rect, file: &Entry, theme: &T
             2,
             Color32::from_rgb(225, 233, 244),
         );
-        let extension = match file.kind() {
-            "Image" => "IMG",
-            "Audio" => "AUD",
-            "Video" => "VID",
-            "Archive" => "ZIP",
-            "PDF" => "PDF",
-            "Code" => "DEV",
-            "Link" => "URL",
-            _ => "DOC",
-        };
         painter.rect_filled(box_at(0.22, 0.39, 0.79, 0.73), 2, theme.palette.file());
-        painter.text(
-            p(0.5, 0.56),
-            Align2::CENTER_CENTER,
-            extension,
-            FontId::proportional((s * 0.21).clamp(7.0, 10.0)),
-            Color32::WHITE,
-        );
+        if file_kind_color(file.kind()).is_none() {
+            painter.text(
+                p(0.5, 0.56),
+                Align2::CENTER_CENTER,
+                "FILE",
+                FontId::proportional((s * 0.21).clamp(7.0, 10.0)),
+                Color32::WHITE,
+            );
+        }
     }
 }
 
@@ -955,24 +1033,16 @@ fn paint_aqua_file_icon(painter: &Painter, rect: Rect, file: &Entry, theme: &The
             2,
             Color32::WHITE.gamma_multiply(0.88),
         );
-        let emblem = match file.kind() {
-            "Image" => "IMG",
-            "Audio" => "MP3",
-            "Video" => "VID",
-            "Archive" => "ZIP",
-            "PDF" => "PDF",
-            "Code" => "DEV",
-            "Link" => "URL",
-            _ => "FILE",
-        };
         painter.rect_filled(box_at(0.23, 0.39, 0.78, 0.70), 3, theme.palette.file());
-        painter.text(
-            at(0.5, 0.55),
-            Align2::CENTER_CENTER,
-            emblem,
-            FontId::proportional((size * 0.19).clamp(7.0, 10.0)),
-            Color32::WHITE,
-        );
+        if file_kind_color(file.kind()).is_none() {
+            painter.text(
+                at(0.5, 0.55),
+                Align2::CENTER_CENTER,
+                "FILE",
+                FontId::proportional((size * 0.19).clamp(7.0, 10.0)),
+                Color32::WHITE,
+            );
+        }
     }
 }
 
@@ -1188,7 +1258,14 @@ fn paint_luna_file_icon(painter: &Painter, rect: Rect, file: &Entry) {
 
 #[cfg(test)]
 mod tests {
-    use super::shorten;
+    use super::{file_kind_color, shorten};
+
+    #[test]
+    fn semantic_file_badges_are_distinct_from_generic_files() {
+        assert!(file_kind_color("File").is_none());
+        assert_ne!(file_kind_color("Image"), file_kind_color("PDF"));
+        assert_ne!(file_kind_color("Spreadsheet"), file_kind_color("Presentation"));
+    }
 
     #[test]
     fn file_label_truncation_preserves_unicode_scalars() {

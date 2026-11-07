@@ -35,20 +35,20 @@ fn parse_mime(text: &str) -> Option<&str> {
 
 fn parse_handlers(text: &str) -> Vec<String> {
     let mut apps = Vec::new();
-    let mut registered = false;
+    let mut listing = false;
     for line in text.lines() {
         let clean = line.trim();
         if clean == "Registered applications:" {
-            registered = true;
+            listing = true;
             continue;
         }
         if clean == "Recommended applications:" {
-            registered = false;
+            listing = true;
             continue;
         }
         let candidate = if line.starts_with("Default application for") {
             line.rsplit_once(':').map(|(_, app)| app.trim())
-        } else if registered {
+        } else if listing {
             Some(clean)
         } else {
             None
@@ -140,7 +140,11 @@ mod tests {
                     \tother.desktop\n";
         assert_eq!(
             parse_handlers(data),
-            vec!["viewer.desktop", "org.example.Photos.desktop"]
+            vec![
+                "viewer.desktop",
+                "org.example.Photos.desktop",
+                "other.desktop"
+            ]
         );
         assert!(launch("../../evil.desktop", Path::new("/tmp/test")).is_err());
     }

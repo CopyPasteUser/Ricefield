@@ -142,6 +142,8 @@ the bundled font must not turn an arrow into a missing-glyph box.
 ## Do's and Don'ts
 
 - Do keep each rice's own color, density, structure and folder icon language.
+- Do reuse the shared semantic file-type pictograms on each rice's original
+  paper artwork; network rows use the same type classification and accents.
 - Do keep copy/move/Trash behavior identical across themes.
 - Do let the desktop window manager handle native decorations and the RiceBowl session lifecycle.
 - Don't silently overwrite files or permanently delete from the file list.
