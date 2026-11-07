@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — Nonblocking custom-theme startup
+
+- Display a bundled fallback immediately and load custom TOML themes on the
+  existing background worker, so an offline mount cannot stall UI startup.
+  In-flight results from a superseded theme are still discarded. Validated
+  custom themes replace the fallback when loaded; slow device acceptance is
+  still pending.
+
 ## Unreleased — Persistent, bounded per-file transfer diagnostics
 
 - Preserve up to 24 source/destination/outcome/error summaries for each recent
