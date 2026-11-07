@@ -1336,11 +1336,11 @@ pub struct Explorer {
     recovery_loading: bool,
     recovery_rescan_requested: bool,
     recovery_open: bool,
-    recovery_comparison_sender: Sender<(u64, String, journal::Comparison)>,
-    recovery_comparison_receiver: Receiver<(u64, String, journal::Comparison)>,
+    recovery_comparison_sender: Sender<(u64, String, bool, journal::Comparison)>,
+    recovery_comparison_receiver: Receiver<(u64, String, bool, journal::Comparison)>,
     recovery_comparison_active: Option<String>,
     recovery_comparison_cancel: Arc<AtomicBool>,
-    recovery_comparisons: HashMap<String, journal::Comparison>,
+    recovery_comparisons: HashMap<String, (bool, journal::Comparison)>,
     recovery_resolution_confirm: Option<String>,
     recovery_resolution_active: bool,
     clipboard: Option<Clipboard>,
@@ -1784,13 +1784,17 @@ impl Explorer {
         });
     }
 
-    fn compare_recovery_record(&mut self, record: &journal::Record) {
+    fn compare_recovery_record(&mut self, record: &journal::Record, staged: bool) {
         if self.recovery_comparison_active.is_some() || self.recovery_loading {
             return;
         }
         let id = record.id.clone();
         let source = record.source.clone();
-        let destination = record.destination.clone();
+        let destination = match (staged, record.staging.as_ref()) {
+            (true, Some(path)) => path.join("payload"),
+            (true, None) => return,
+            _ => record.destination.clone(),
+        };
         let generation = self.recovery_generation;
         let sender = self.recovery_comparison_sender.clone();
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -1799,7 +1803,7 @@ impl Explorer {
         self.recovery_comparison_active = Some(id.clone());
         thread::spawn(move || {
             let result = journal::compare_for_recovery(&source, &destination, &cancelled);
-            let _ = sender.send((generation, id, result));
+            let _ = sender.send((generation, id, staged, result));
         });
     }
 
@@ -3176,7 +3180,9 @@ impl Explorer {
                 true,
             ));
         }
-        while let Ok((generation, id, result)) = self.recovery_comparison_receiver.try_recv() {
+        while let Ok((generation, id, staged, result)) =
+            self.recovery_comparison_receiver.try_recv()
+        {
             if self.recovery_comparison_active.as_deref() == Some(id.as_str()) {
                 self.recovery_comparison_active = None;
             }
@@ -3186,7 +3192,7 @@ impl Explorer {
                     .iter()
                     .any(|entry| entry.record.id == id)
             {
-                self.recovery_comparisons.insert(id, result);
+                self.recovery_comparisons.insert(id, (staged, result));
             }
         }
         while let Ok((generation, result)) = self.recovery_receiver.try_recv() {
@@ -3750,9 +3756,13 @@ impl Explorer {
                                     browse_parent = record.destination.parent().map(Path::to_path_buf);
                                 }
                                 if let Some(staging) = &record.staging
+                                    && matches!(
+                                        inspection.staging.as_ref(),
+                                        Some(journal::PathStatus::Directory)
+                                    )
                                     && ui.button("Browse staging folder").clicked()
                                 {
-                                    browse_parent = staging.parent().map(Path::to_path_buf);
+                                    browse_parent = Some(staging.clone());
                                 }
                             });
                             if ui.add_enabled(
@@ -3784,17 +3794,38 @@ impl Explorer {
                             } else {
                                 let enabled = !self.recovery_loading
                                     && self.recovery_comparison_active.is_none();
-                                if ui
-                                    .add_enabled(
-                                        enabled,
-                                        egui::Button::new("Compare contents (read-only)"),
-                                    )
-                                    .clicked()
-                                {
-                                    compare = Some(record.clone());
-                                }
+                                ui.horizontal_wrapped(|ui| {
+                                    if ui
+                                        .add_enabled(
+                                            enabled,
+                                            egui::Button::new("Compare source and destination"),
+                                        )
+                                        .clicked()
+                                    {
+                                        compare = Some((record.clone(), false));
+                                    }
+                                    if record.state == JournalState::StagedVerified
+                                        && matches!(
+                                            inspection.staging.as_ref(),
+                                            Some(journal::PathStatus::Directory)
+                                        )
+                                        && ui
+                                            .add_enabled(
+                                                enabled,
+                                                egui::Button::new("Compare source and staged copy"),
+                                            )
+                                            .clicked()
+                                    {
+                                        compare = Some((record.clone(), true));
+                                    }
+                                });
                             }
-                            if let Some(result) = self.recovery_comparisons.get(&record.id) {
+                            if let Some((staged, result)) = self.recovery_comparisons.get(&record.id) {
+                                ui.small(if *staged {
+                                    "Read-only comparison against staged payload:"
+                                } else {
+                                    "Read-only comparison against destination:"
+                                });
                                 let color = match result {
                                     journal::Comparison::Identical { .. } => Color32::LIGHT_GREEN,
                                     journal::Comparison::Different(_) => Color32::LIGHT_RED,
@@ -3802,7 +3833,8 @@ impl Explorer {
                                 };
                                 ui.colored_label(color, result.label());
                                 #[cfg(unix)]
-                                if matches!(result, journal::Comparison::Identical { .. })
+                                if !*staged
+                                    && matches!(result, journal::Comparison::Identical { .. })
                                     && matches!(record.state, JournalState::Published | JournalState::StagedVerified)
                                     && matches!(inspection.source, journal::PathStatus::File | journal::PathStatus::Symlink)
                                     && !self.recovery_loading
@@ -3844,8 +3876,8 @@ impl Explorer {
             self.recovery_comparison_cancel
                 .store(true, Ordering::Relaxed);
         }
-        if let Some(record) = compare {
-            self.compare_recovery_record(&record);
+        if let Some((record, staged)) = compare {
+            self.compare_recovery_record(&record, staged);
         }
         if rescan {
             self.check_unfinished_moves();
@@ -3854,8 +3886,8 @@ impl Explorer {
             self.recovery_open = false;
             self.recovery_comparison_cancel
                 .store(true, Ordering::Relaxed);
-            // Navigate to the parent rather than following a potentially
-            // replaced source/destination symlink. Navigation scans on a worker.
+            // Source/destination actions select their parent; staging opens
+            // only if observed as a real directory. Scan on a worker.
             self.navigate(folder);
         }
         if let Some((source, destination)) = prepare_copy {

@@ -659,6 +659,13 @@ impl Journal {
         &self.record
     }
 
+    /// Once a fully verified stage is durably recorded, preserve it on an
+    /// ordinary publication error for explicit user review after restart.
+    /// Prepared (possibly partial) stages are still disposable.
+    pub(crate) fn retain_verified_stage(&self) -> bool {
+        matches!(self.record.state, State::StagedVerified | State::Published)
+    }
+
     /// Record the reserved staging directory before copying data into it.
     pub fn set_staging(&mut self, staging: &Path) -> io::Result<()> {
         if self.record.state != State::Prepared || self.record.staging.is_some() {

@@ -99,14 +99,14 @@ The associated cut clipboard intent is consumed so an old Cut does not
 silently paste the same verified copy twice. Same-filesystem Move retains its
 atomic rename behavior.
 
-Legacy v3 Move journals saved the verified staged object's inode before it was
-published. If publication races with another writer or a crash, recovery
-can report whether the destination still names that staged inode. This
-evidence is read-only and cannot itself authorize retry, rollback, cleanup
-or dismissal. Legacy journal versions without staged inode evidence remain
-inspectable and explicitly marked as unproven. The current source-retaining
-cross-device Copy does not create a new Move journal; old unfinished records
-remain reviewable.
+Cross-device Copy journals save the verified staged object's inode before
+publication. If publishing races with another writer, is cancelled or fails
+after verification, RiceField retains that verified staging data for review;
+unverified/partial staging is disposable on ordinary errors. Recovery can
+compare the original with the staged payload separately from the destination,
+but a match never authorizes automatic replay, rollback, cleanup or source
+deletion. Older journal versions without staged inode evidence remain
+inspectable and explicitly marked as unproven.
 
 Copy/cut immediately updates the internal file clipboard and synchronizes
 the desktop clipboard in a worker. Outstanding desktop writes coalesce to the
@@ -195,8 +195,10 @@ not silently rolled back; cancelled/unstarted entries remain explicit.
   of theme/status-bar settings. The review window is inspection-only: journal
   states do not authorize automatic deletion, resume or overwriting. Show source
   and destination saved-inode evidence independently, with clear missing,
-  changed and replaced states. Browse buttons navigate to the recorded paths'
-  parent folders without following the recorded entry as a symlink. An optional
+  changed and replaced states. Source/destination browse buttons navigate to
+  their parent folders; a verified directory staging path may be opened
+  directly for read-only inspection, but never through a symlink. The staged
+  payload comparison cannot unlock the published-copy journal-resolution action. An optional
   separate Copy is only offered for a visible source with matching recorded
   identity, opens normal asynchronous Paste options with Keep both and an
   explicit second confirmation, and never modifies journal evidence or

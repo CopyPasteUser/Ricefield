@@ -430,6 +430,10 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   reader used for recovery. Keep incomplete, malformed or changing records,
   and sync the journal directory after cleanup. No incomplete record expiry,
   resume, rollback or comprehensive long-term retention policy is implied.
+- [x] Retain a fully verified staging payload on later journaled publication
+  failure, preserving original and competing destinations. Provide independent
+  read-only source/staging comparison in recovery review; incomplete stages
+  remain disposable. Verified staging still needs explicit manual resolution.
 - [ ] Complete durable content provenance and safe restart resume/rollback
   for legacy Move journals; a matching read-only scan is insufficient.
   New cross-volume transfers do not automatically delete the original.
