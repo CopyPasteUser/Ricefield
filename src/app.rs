@@ -926,6 +926,21 @@ fn accept_property_result(dialog: &mut Option<Dialog>, message: PropertyResult) 
     }
 }
 
+struct ThemeReloadResult {
+    generation: u64,
+    path: PathBuf,
+    fingerprint: Option<(SystemTime, u64)>,
+    theme: Result<Option<Theme>, String>,
+}
+
+fn current_theme_reload(
+    active_path: Option<&Path>,
+    pending_generation: Option<u64>,
+    result: &ThemeReloadResult,
+) -> bool {
+    pending_generation == Some(result.generation) && active_path == Some(result.path.as_path())
+}
+
 pub struct Explorer {
     desktop_service: Option<desktop::Service>,
     desktop_properties: VecDeque<PathBuf>,
@@ -934,6 +949,10 @@ pub struct Explorer {
     theme_file: Option<PathBuf>,
     theme_file_state: Option<(SystemTime, u64)>,
     theme_last_check: Instant,
+    theme_reload_sender: Sender<ThemeReloadResult>,
+    theme_reload_receiver: Receiver<ThemeReloadResult>,
+    theme_reload_generation: u64,
+    theme_reload_pending: Option<u64>,
     session_owner: bool,
     tabs: Vec<Tab>,
     closed_tabs: VecDeque<TabSnapshot>,
@@ -1126,6 +1145,7 @@ impl Explorer {
             .and_then(|path| Self::theme_file_fingerprint(path));
 
         let (scan_sender, scan_receiver) = mpsc::channel();
+        let (theme_reload_sender, theme_reload_receiver) = mpsc::channel();
         let (remote_scan_sender, remote_scan_receiver) = mpsc::channel();
         let (remote_preview_sender, remote_preview_receiver) = mpsc::channel();
         let (remote_download_sender, remote_download_receiver) = mpsc::channel();
@@ -1181,6 +1201,10 @@ impl Explorer {
             theme_file,
             theme_file_state,
             theme_last_check: Instant::now(),
+            theme_reload_sender,
+            theme_reload_receiver,
+            theme_reload_generation: 0,
+            theme_reload_pending: None,
             session_owner: !separate_window,
             tabs: Vec::new(),
             closed_tabs: VecDeque::new(),
@@ -2500,6 +2524,31 @@ impl Explorer {
     }
 
     fn poll_background(&mut self, context: &egui::Context) {
+        while let Ok(message) = self.theme_reload_receiver.try_recv() {
+            if !current_theme_reload(
+                self.theme_file.as_deref(),
+                self.theme_reload_pending,
+                &message,
+            ) {
+                continue;
+            }
+            self.theme_reload_pending = None;
+            self.theme_file_state = message.fingerprint;
+            match message.theme {
+                Ok(Some(theme)) => {
+                    self.theme = theme;
+                    self.theme.apply(context);
+                    self.status = Some(("External TOML theme reloaded".into(), false));
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    self.status = Some((
+                        format!("Theme update rejected; previous theme preserved: {error}"),
+                        true,
+                    ));
+                }
+            }
+        }
         if let Some(receiver) = &self.history_receiver {
             let mut events = Vec::new();
             while let Ok(event) = receiver.try_recv() {
@@ -4080,6 +4129,7 @@ impl Explorer {
             self.theme = theme;
             self.theme_file = None;
             self.theme_file_state = None;
+            self.theme_reload_pending = None;
             self.config.theme = id.to_owned();
             self.config.custom_theme_file = None;
             self.dirty_config = true;
@@ -4096,24 +4146,36 @@ impl Explorer {
         let Some(path) = self.theme_file.as_ref().cloned() else {
             return;
         };
-        let fingerprint = Self::theme_file_fingerprint(&path);
-        if !force && self.theme_file_state == fingerprint {
+        if self.theme_reload_pending.is_some() {
             return;
         }
-        self.theme_file_state = fingerprint;
-        match Theme::from_file(&path) {
-            Ok(updated) => {
-                self.theme = updated;
-                self.theme.apply(context);
-                self.status = Some(("External TOML theme reloaded".into(), false));
-            }
-            Err(error) => {
-                self.status = Some((
-                    format!("Theme update rejected; previous theme preserved: {error}"),
-                    true,
-                ));
-            }
-        }
+        self.theme_reload_generation = self.theme_reload_generation.wrapping_add(1);
+        let generation = self.theme_reload_generation;
+        self.theme_reload_pending = Some(generation);
+        let previous = self.theme_file_state;
+        let sender = self.theme_reload_sender.clone();
+        let context = context.clone();
+        thread::spawn(move || {
+            let fingerprint = Self::theme_file_fingerprint(&path);
+            let theme = if !force && previous == fingerprint {
+                Ok(None)
+            } else {
+                Theme::from_file(&path).and_then(|theme| {
+                    (fingerprint == Self::theme_file_fingerprint(&path))
+                        .then_some(Some(theme))
+                        .ok_or_else(|| {
+                            "Theme changed while reading; retry after next refresh".into()
+                        })
+                })
+            };
+            let _ = sender.send(ThemeReloadResult {
+                generation,
+                path,
+                fingerprint,
+                theme,
+            });
+            context.request_repaint();
+        });
     }
 
     fn keyboard(&mut self, context: &egui::Context) {
@@ -9384,7 +9446,8 @@ impl Explorer {
                     self.config.custom_theme_file = Some(path.clone());
                     self.theme = *theme;
                     self.theme_file = Some(path.clone());
-                    self.theme_file_state = Self::theme_file_fingerprint(&path);
+                    self.theme_file_state = None;
+                    self.theme_reload_pending = None;
                     self.theme.apply(context);
                     self.dirty_config = true;
                     self.dialog = None;
@@ -9596,6 +9659,33 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn a_late_external_theme_result_cannot_replace_a_newer_theme_selection() {
+        let path = PathBuf::from("/tmp/ricefield-theme-test.toml");
+        let result = super::ThemeReloadResult {
+            generation: 42,
+            path: path.clone(),
+            fingerprint: None,
+            theme: Ok(None),
+        };
+        assert!(super::current_theme_reload(
+            Some(path.as_path()),
+            Some(42),
+            &result
+        ));
+        assert!(!super::current_theme_reload(None, Some(42), &result));
+        assert!(!super::current_theme_reload(
+            Some(path.as_path()),
+            Some(43),
+            &result
+        ));
+        assert!(!super::current_theme_reload(
+            Some(std::path::Path::new("/tmp/new-theme.toml")),
+            Some(42),
+            &result
+        ));
+    }
 
     #[test]
     fn restored_transfer_history_is_read_only_and_never_exposes_undo() {

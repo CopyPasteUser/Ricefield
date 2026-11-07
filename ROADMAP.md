@@ -290,6 +290,12 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   Their standard folders now use the same asynchronously refreshed available-
   places snapshot as the other five rices; a stalled filesystem must not block
   the renderer simply because its Places section is visible.
+- [x] Move periodic external TOML theme fingerprinting and reload/parsing off
+  the egui render thread. A single pending worker at a time avoids repeated
+  scans on stalled mounts; generation and path checks discard late results
+  after changing themes, and changed-during-read sources preserve the active
+  theme. Startup theme reading and preference writes still merit separate
+  responsiveness review.
 - [x] Load file properties and Unix permission metadata in a bounded
   background worker, not on each render frame. Keep only the latest requested
   dialog when a slow mount stalls an earlier query; reject stale results and
