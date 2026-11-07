@@ -100,7 +100,11 @@ automated evidence only; **all boxes below require owner verification**.
   irreversible deletion is clearly gated, never triggered by a preview.
 - [ ] **B10 Properties/metadata:** inspect owner, group, permissions,
   timestamps and extended attributes. Test only authorized non-privileged
-  edits; protected changes must fail safely and state why.
+  edits; protected changes must fail safely and state why. On a disposable
+  ext4 file, create a new POSIX access ACL for a test UID (`r--`), verify via
+  `getfacl`, then try creating another: the existing ACL must remain bytewise
+  untouched. Try a symlink and a read-only filesystem; neither may silently
+  change another inode. Existing ACL replacement is intentionally unavailable.
 - [ ] **B11 Error paths:** attempt a read-only directory, inaccessible
   folder, too-long filename, self-copy and disappearing source. Confirm
   actionable errors, no UI hang and no mutation of unrelated files.

@@ -695,6 +695,12 @@ pub enum Action {
         value: String,
         expected: fs::Metadata,
     },
+    CreateNamedUserAcl {
+        path: PathBuf,
+        uid: u32,
+        permissions: u16,
+        expected: fs::Metadata,
+    },
 }
 
 pub fn valid_name(name: &str) -> bool {
@@ -903,6 +909,112 @@ fn create_user_attribute_guarded(
             attribute.as_ptr(),
             value.as_ptr().cast(),
             value.len(),
+            libc::XATTR_CREATE,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+/// Parse an unambiguous POSIX rwx permission triplet, without accepting
+/// numeric octal, abbreviated rights or whitespace from the GUI.
+pub fn parse_acl_rwx(value: &str) -> Option<u16> {
+    let bytes = value.as_bytes();
+    if bytes.len() != 3
+        || !matches!(bytes[0], b'r' | b'-')
+        || !matches!(bytes[1], b'w' | b'-')
+        || !matches!(bytes[2], b'x' | b'-')
+    {
+        return None;
+    }
+    Some(u16::from(bytes[0] == b'r') * 4
+        + u16::from(bytes[1] == b'w') * 2
+        + u16::from(bytes[2] == b'x'))
+}
+
+/// Create one new Linux POSIX access ACL for a named UID. Existing ACLs are
+/// never edited: XATTR_CREATE atomically refuses a concurrent ACL writer.
+/// The new mask is the union of the old group bits and the requested rights,
+/// so creating an entry never silently reduces existing group permissions.
+#[cfg(target_os = "linux")]
+fn create_named_user_acl_guarded(
+    path: &Path,
+    uid: u32,
+    permissions: u16,
+    expected: &fs::Metadata,
+) -> io::Result<()> {
+    use std::os::{fd::{AsRawFd, FromRawFd, OwnedFd}, unix::fs::MetadataExt};
+
+    if uid == u32::MAX || permissions > 7 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Expected a numeric UID and ACL rights between 0 and 7",
+        ));
+    }
+    let name = CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Invalid filename"))?;
+    // SAFETY: O_NOFOLLOW pins the selected inode; nonblocking open prevents
+    // blocking on a substituted FIFO. No privileged helper or shell is used.
+    let raw = unsafe {
+        libc::open(
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK,
+        )
+    };
+    if raw < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `open` returned an owned FD closed when `file` is dropped.
+    let file = File::from(unsafe { OwnedFd::from_raw_fd(raw) });
+    let metadata = file.metadata()?;
+    ensure_same_source_metadata(expected, &metadata)?;
+    if !metadata.is_file() && !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "ACLs require an ordinary file or directory",
+        ));
+    }
+    if uid == metadata.uid() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "The owner already has a separate POSIX ACL entry",
+        ));
+    }
+
+    // Linux's documented posix_acl_xattr_header/entry ABI, little endian:
+    // version=2 followed by (tag:u16,perm:u16,id:u32) per entry. Only one
+    // named user is introduced; base owner/group/other bits are preserved.
+    const USER_OBJ: u16 = 0x01;
+    const USER: u16 = 0x02;
+    const GROUP_OBJ: u16 = 0x04;
+    const MASK: u16 = 0x10;
+    const OTHER: u16 = 0x20;
+    let mode = metadata.mode();
+    let group_rights = ((mode >> 3) & 7) as u16;
+    let mut acl = Vec::with_capacity(4 + 5 * 8);
+    acl.extend_from_slice(&2_u32.to_le_bytes());
+    for (tag, rights, id) in [
+        (USER_OBJ, ((mode >> 6) & 7) as u16, u32::MAX),
+        (USER, permissions, uid),
+        (GROUP_OBJ, group_rights, u32::MAX),
+        (MASK, group_rights | permissions, u32::MAX),
+        (OTHER, (mode & 7) as u16, u32::MAX),
+    ] {
+        acl.extend_from_slice(&tag.to_le_bytes());
+        acl.extend_from_slice(&rights.to_le_bytes());
+        acl.extend_from_slice(&id.to_le_bytes());
+    }
+    // SAFETY: the descriptor refers to the verified inode; the kernel
+    // validates ACL structure, permissions and exclusive creation atomically.
+    let result = unsafe {
+        libc::fsetxattr(
+            file.as_raw_fd(),
+            c"system.posix_acl_access".as_ptr(),
+            acl.as_ptr().cast(),
+            acl.len(),
             libc::XATTR_CREATE,
         )
     };
@@ -2113,6 +2225,26 @@ fn perform_with_progress_and_items(
                 Err(io::Error::new(
                     io::ErrorKind::Unsupported,
                     "Extended attribute editing requires Linux",
+                ))
+            }
+        }
+        Action::CreateNamedUserAcl {
+            path,
+            uid,
+            permissions,
+            expected,
+        } => {
+            transfer.check()?;
+            #[cfg(target_os = "linux")]
+            {
+                create_named_user_acl_guarded(path, *uid, *permissions, expected)?;
+                Ok(format!("Granted a new POSIX ACL entry for UID {uid}"))
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "POSIX ACL editing requires Linux",
                 ))
             }
         }
@@ -7118,6 +7250,88 @@ mod tests {
         );
         assert!(read_link_xattr(&selected, b"user.test").is_err());
         assert!(read_link_xattr(&old, b"user.test").is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn named_user_acl_create_is_exclusive_and_preserves_existing_group_access() {
+        use std::os::unix::fs::PermissionsExt;
+
+        assert_eq!(parse_acl_rwx("r-x"), Some(5));
+        assert_eq!(parse_acl_rwx("---"), Some(0));
+        for bad in ["rx", "rwx ", "rwq", "7", "R-x"] {
+            assert!(parse_acl_rwx(bad).is_none());
+        }
+
+        let root = test_root();
+        let path = root.join("acl-file");
+        fs::write(&path, b"preserved").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+        let expected = fs::symlink_metadata(&path).unwrap();
+        let result = create_named_user_acl_guarded(&path, 123_456, 4, &expected);
+        if let Err(error) = &result
+            && error.raw_os_error() == Some(libc::EOPNOTSUPP)
+        {
+            fs::remove_dir_all(root).unwrap();
+            return;
+        }
+        result.unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"preserved");
+        let acl = read_link_xattr(&path, b"system.posix_acl_access").unwrap();
+        assert_eq!(&acl[..4], &2_u32.to_le_bytes());
+        assert_eq!(acl.len(), 44);
+        assert_eq!(u16::from_le_bytes([acl[12], acl[13]]), 2);
+        assert_eq!(u16::from_le_bytes([acl[14], acl[15]]), 4);
+        assert_eq!(u32::from_le_bytes(acl[16..20].try_into().unwrap()), 123_456);
+        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o640);
+
+        let current = fs::symlink_metadata(&path).unwrap();
+        let collision = create_named_user_acl_guarded(&path, 456_789, 7, &current).unwrap_err();
+        assert_eq!(collision.raw_os_error(), Some(libc::EEXIST));
+        assert_eq!(read_link_xattr(&path, b"system.posix_acl_access").unwrap(), acl);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn named_user_acl_rejects_invalid_uid_stale_inode_and_symlinks() {
+        use std::os::unix::fs::{MetadataExt, symlink};
+
+        let root = test_root();
+        let path = root.join("owned");
+        fs::write(&path, b"original").unwrap();
+        let expected = fs::symlink_metadata(&path).unwrap();
+        assert_eq!(
+            create_named_user_acl_guarded(&path, expected.uid(), 4, &expected)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidInput
+        );
+        assert_eq!(
+            create_named_user_acl_guarded(&path, u32::MAX, 4, &expected)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidInput
+        );
+        assert_eq!(
+            create_named_user_acl_guarded(&path, 1000, 8, &expected)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidInput
+        );
+        let link = root.join("link");
+        symlink(&path, &link).unwrap();
+        assert!(create_named_user_acl_guarded(&link, 1000, 4, &expected).is_err());
+
+        fs::rename(&path, root.join("old")).unwrap();
+        fs::write(&path, b"replacement").unwrap();
+        assert_eq!(
+            create_named_user_acl_guarded(&path, 1000, 4, &expected)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

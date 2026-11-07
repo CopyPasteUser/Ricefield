@@ -1045,6 +1045,8 @@ enum Dialog {
         group: String,
         attribute_name: String,
         attribute_value: String,
+        acl_user: String,
+        acl_permissions: String,
         generation: u64,
         details: Option<Result<Box<PropertySnapshot>, String>>,
         analysis: Option<Result<String, String>>,
@@ -5321,6 +5323,8 @@ impl Explorer {
             group: String::new(),
             attribute_name: "user.".into(),
             attribute_value: String::new(),
+            acl_user: String::new(),
+            acl_permissions: "r--".into(),
             generation,
             details: None,
             analysis: None,
@@ -10339,6 +10343,8 @@ impl Explorer {
                     group,
                     attribute_name,
                     attribute_value,
+                    acl_user,
+                    acl_permissions,
                     details,
                     analysis,
                     generation,
@@ -10470,6 +10476,40 @@ impl Explorer {
                             });
                             #[cfg(target_os = "linux")]
                             ui.small("Ownership changes follow your account's Linux permissions; no sudo or privilege escalation.");
+                            #[cfg(target_os = "linux")]
+                            ui.vertical(|ui| {
+                                ui.separator();
+                                ui.label("Create a POSIX access ACL for one additional user:");
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label("User UID:");
+                                    ui.add_sized([100.0, 25.0], egui::TextEdit::singleline(acl_user));
+                                    ui.label("Rights (rwx):");
+                                    ui.add_sized([75.0, 25.0], egui::TextEdit::singleline(acl_permissions));
+                                });
+                                let parsed = acl_user
+                                    .trim()
+                                    .parse::<u32>()
+                                    .ok()
+                                    .filter(|uid| *uid != u32::MAX)
+                                    .zip(filesystem::parse_acl_rwx(acl_permissions));
+                                if ui
+                                    .add_enabled(
+                                        parsed.is_some() && !snapshot.is_symlink,
+                                        egui::Button::new("Create ACL entry"),
+                                    )
+                                    .clicked()
+                                {
+                                    let (uid, permissions) = parsed.expect("ACL button requires a valid UID and rights");
+                                    action = Some(Action::CreateNamedUserAcl {
+                                        path: path.clone(),
+                                        uid,
+                                        permissions,
+                                        expected: snapshot.metadata.clone(),
+                                    });
+                                    dismiss = true;
+                                }
+                                ui.small("Only creates a new ACL; existing ACLs are never overwritten. Group rights are preserved. Requires filesystem ACL support and ordinary Linux permissions.");
+                            });
                             #[cfg(target_os = "linux")]
                             ui.vertical(|ui| {
                                 ui.separator();
@@ -11192,6 +11232,8 @@ mod tests {
             group: String::new(),
             attribute_name: "user.".into(),
             attribute_value: String::new(),
+            acl_user: String::new(),
+            acl_permissions: "r--".into(),
             generation: 8,
             details: None,
             analysis: None,

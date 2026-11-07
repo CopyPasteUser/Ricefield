@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — guarded named-user POSIX access ACL creation
+
+- Extend the local Properties panel with a narrowly scoped Linux ACL grant
+  for a selected numeric UID (`rwx` rights). The file descriptor pins the
+  original inode, the prior metadata must still match, and `XATTR_CREATE`
+  rejects every existing or concurrently created ACL. Original group rights
+  are preserved by the new mask; ordinary kernel permissions govern writes.
+- Add hostile input, inode-swap, symlink and collision tests. Existing ACL
+  replacement/removal, directory defaults and privileged ACL workflows are
+  still unavailable; real ext4/exFAT/NAS behavior is an owner test gate.
+
 ## 1.0.0-rc.20 — encrypted removable-volume candidate
 
 - Bump the development candidate after adding external LUKS Unlock/Lock and
