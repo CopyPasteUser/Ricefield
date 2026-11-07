@@ -1189,6 +1189,32 @@ fn current_theme_reload(
     pending_generation == Some(result.generation) && active_path == Some(result.path.as_path())
 }
 
+/// First frame must depend only on bundled theme data, never an external path.
+fn starting_theme(configured: &str, external: bool) -> (Theme, Option<(String, bool)>) {
+    match Theme::builtin(configured) {
+        Some(theme) => (
+            theme,
+            external.then(|| {
+                (
+                    "Loading external TOML theme in the background…".into(),
+                    false,
+                )
+            }),
+        ),
+        None => (
+            Theme::builtin("win7").expect("bundled theme"),
+            Some(if external {
+                (
+                    "Loading external TOML theme in the background…".into(),
+                    false,
+                )
+            } else {
+                (format!("Unknown theme: {configured}"), true)
+            }),
+        ),
+    }
+}
+
 pub struct Explorer {
     desktop_service: Option<desktop::Service>,
     desktop_properties: VecDeque<PathBuf>,
@@ -1387,22 +1413,12 @@ impl Explorer {
                 && saved.extension().is_some_and(|ext| ext == "toml"))
             .then(|| saved.clone())
         });
-        let theme_result = if let Some(path) = theme_file.as_ref() {
-            Theme::from_file(path)
-        } else {
-            Theme::builtin(&config.theme).ok_or_else(|| format!("Unknown theme: {}", config.theme))
-        };
-        let (theme, status) = match theme_result {
-            Ok(theme) => (theme, None),
-            Err(error) => (
-                Theme::builtin("win7").expect("bundled theme"),
-                Some((error, true)),
-            ),
-        };
+        // Never open a user-selected TOML path during GUI construction: a
+        // disconnected mount or hung FUSE file must not block the first frame.
+        // Start with an available builtin and load custom content on a worker.
+        let (theme, status) = starting_theme(&config.theme, theme_file.is_some());
         theme.apply(context);
-        let theme_file_state = theme_file
-            .as_ref()
-            .and_then(|path| Self::theme_file_fingerprint(path));
+        let theme_file_state = None;
 
         let (scan_sender, scan_receiver) = mpsc::channel();
         let (theme_reload_sender, theme_reload_receiver) = mpsc::channel();
@@ -1664,6 +1680,11 @@ impl Explorer {
             explorer.remember_session();
         }
         explorer.check_unfinished_moves();
+        if explorer.theme_file.is_some() {
+            // The worker owns all initial filesystem reads and requests a
+            // repaint when the theme has been validated and applied.
+            explorer.reload_theme_file(context, true);
+        }
         explorer
     }
 
@@ -10504,6 +10525,18 @@ mod tests {
             Some(42),
             &result
         ));
+    }
+
+    #[test]
+    fn external_theme_bootstraps_without_reading_custom_file() {
+        let (theme, status) = super::starting_theme("win7", true);
+        assert_eq!(theme.id, "win7");
+        assert!(matches!(status, Some((message, false)) if message.contains("background")));
+        let (fallback, status) = super::starting_theme("user-custom-theme", true);
+        assert_eq!(fallback.id, "win7");
+        assert!(matches!(status, Some((message, false)) if message.contains("background")));
+        let (_, missing) = super::starting_theme("unknown", false);
+        assert!(matches!(missing, Some((message, true)) if message.contains("Unknown")));
     }
 
     #[test]

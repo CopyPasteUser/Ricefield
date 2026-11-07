@@ -310,7 +310,10 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   the egui render thread. A single pending worker at a time avoids repeated
   scans on stalled mounts; generation and path checks discard late results
   after changing themes, and changed-during-read sources preserve the active
-  theme. Startup theme reading still merits a separate responsiveness review.
+  theme. Startup now paints a bundled fallback immediately and sends initial
+  external TOML parsing/fingerprinting through the same guarded worker. A
+  suspended FUSE/NAS reader can keep that optional load pending indefinitely,
+  but cannot block the first GUI frame. Real slow-mount acceptance remains open.
 - [x] Persist preference changes on one background writer instead of running
   filesystem writes in the render loop. A bounded single-slot snapshot holds
   the newest settings while the writer is busy, avoiding stale writer races or
