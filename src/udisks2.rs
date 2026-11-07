@@ -1010,12 +1010,14 @@ mod tests {
             .remove("CleartextDevice");
         assert!(!can_power_off_safely(&objects, drive));
 
-        let props = objects.get_mut(&block).unwrap();
-        props.remove(ENCRYPTED_INTERFACE);
+        objects.get_mut(&block).unwrap().remove(ENCRYPTED_INTERFACE);
         assert!(!can_power_off_safely(&objects, drive));
         let mut fake_fs = HashMap::new();
         insert_prop(&mut fake_fs, "MountPoints", Vec::<Vec<u8>>::new());
-        props.insert(FS_INTERFACE.try_into().unwrap(), fake_fs);
+        objects
+            .get_mut(&block)
+            .unwrap()
+            .insert(FS_INTERFACE.try_into().unwrap(), fake_fs);
         assert!(!can_power_off_safely(&objects, drive));
     }
 }
