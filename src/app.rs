@@ -80,8 +80,9 @@ fn sort_remote_entries(entries: &mut [volume::RemoteEntry], by: RemoteSort, desc
     });
 }
 
-/// Remote search filters the current directory snapshot only, never the server.
-/// Match decoded display names while preserving encoded URIs for all actions.
+/// Keep selection and displayed rows aligned with the current filename query,
+/// even while a bounded GIO network search is still in flight. Use decoded names
+/// for matching but preserve encoded URIs for navigation and transfers.
 fn remote_matches_query(entry: &volume::RemoteEntry, query: &str) -> bool {
     let query = query.trim();
     query.is_empty()
@@ -108,11 +109,8 @@ fn next_remote_selection(
     if visible.is_empty() {
         return None;
     }
-    let current = current_uri.and_then(|uri| {
-        visible
-            .iter()
-            .position(|&index| entries[index].uri == uri)
-    });
+    let current =
+        current_uri.and_then(|uri| visible.iter().position(|&index| entries[index].uri == uri));
     let next = match (current, down) {
         (None, true) => 0,
         (None, false) => visible.len() - 1,
@@ -2050,7 +2048,7 @@ impl Explorer {
             let sender = self.remote_scan_sender.clone();
             let id = tab.id;
             let generation = tab.generation;
-            let query = tab.query.clone();
+            let query = tab.query.trim().to_owned();
             let recursive = tab.recursive_search;
             thread::spawn(move || {
                 let result = if query.is_empty() {
@@ -8706,9 +8704,10 @@ impl Explorer {
                             if self.current().query.is_empty() {
                                 ui.small("Navigate to another folder, or refresh the network listing.");
                             } else {
-                                ui.small("Search filters filenames in this folder, not the whole server.");
+                                ui.small("Searches filenames, with optional bounded subfolder search.");
                                 if ui.button("Clear search").clicked() {
                                     self.current_mut().query.clear();
+                                    self.scan(self.active);
                                 }
                             }
                         });
@@ -10297,8 +10296,7 @@ mod tests {
         ];
         let first = super::next_remote_selection(&entries, "file", None, true).unwrap();
         assert_eq!(first, entries[1].uri);
-        let second =
-            super::next_remote_selection(&entries, "file", Some(&first), true).unwrap();
+        let second = super::next_remote_selection(&entries, "file", Some(&first), true).unwrap();
         assert_eq!(second, entries[3].uri);
         assert_eq!(
             super::next_remote_selection(&entries, "file", Some(&second), true),
@@ -10312,7 +10310,10 @@ mod tests {
             super::next_remote_selection(&entries, "file", Some(&entries[0].uri), false),
             Some(second)
         );
-        assert_eq!(super::next_remote_selection(&entries, "missing", None, true), None);
+        assert_eq!(
+            super::next_remote_selection(&entries, "missing", None, true),
+            None
+        );
     }
 
     #[test]
