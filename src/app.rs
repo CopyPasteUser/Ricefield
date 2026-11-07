@@ -10533,13 +10533,13 @@ mod tests {
     #[test]
     fn transfer_history_prioritizes_failures_and_restores_only_read_only_evidence() {
         let items: Vec<_> = (0..42)
-            .map(|index| filesystem::ItemResult {
+            .map(|index| ItemResult {
                 source: PathBuf::from(format!("/tmp/source-{index}")),
                 target: Some(PathBuf::from(format!("/tmp/target-{index}"))),
                 state: if index == 41 {
-                    filesystem::ItemState::Failed
+                    ItemState::Failed
                 } else {
-                    filesystem::ItemState::Completed
+                    ItemState::Completed
                 },
                 detail: (index == 41).then(|| "Permission denied".into()),
             })
@@ -10567,7 +10567,7 @@ mod tests {
         assert!(restored.rename_undo.is_none());
         assert!(restored.batch_rename_undo.is_none());
         assert_eq!(restored.items.len(), transfer_history::MAX_ITEMS_PER_RECORD);
-        assert_eq!(restored.items[0].state, filesystem::ItemState::Failed);
+        assert_eq!(restored.items[0].state, ItemState::Failed);
         assert_eq!(
             restored.items[0].detail.as_deref(),
             Some("Permission denied")
