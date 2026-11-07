@@ -162,7 +162,10 @@ variants can fail even with the correct password; see the
 [measured compatibility results](ARCHIVE-INTEROPERABILITY.md).
 
 **Space** opens Quick Look; the Preview panel is separate. Image thumbnails use
-an in-memory cache. Text/code previews are bounded; PDF first-page preview needs
+an in-memory cache. Text/code previews are bounded; binary files show up to
+256 bytes in a read-only hex/ASCII view without executing or decoding their
+contents. Larger binary files are explicitly marked truncated. This applies
+to local files, not network URI previews. PDF first-page preview needs
 `pdftoppm`, and media metadata needs `ffprobe`. Actual media playback uses Open.
 
 Properties loads metadata in a worker. **Calculate folder size** and
