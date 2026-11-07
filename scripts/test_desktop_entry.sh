@@ -24,7 +24,7 @@ for mode in default custom; do
   test -f "$data_dir/icons/hicolor/scalable/apps/ricefield.svg"
   grep -Fqx -- "Exec=\"$HOME/.local/bin/ricefield\" %U" "$launcher"
   grep -Fqx -- 'Terminal=false' "$launcher"
-  grep -Fqx -- 'Categories=System;FileManager;' "$launcher"
+  grep -Fqx -- 'Categories=System;FileManager;FileTools;' "$launcher"
   if command -v desktop-file-validate >/dev/null 2>&1; then
     desktop-file-validate "$launcher"
   fi

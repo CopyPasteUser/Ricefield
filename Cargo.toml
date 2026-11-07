@@ -1,6 +1,6 @@
 [package]
 name = "ricefield"
-version = "1.0.0-rc.17"
+version = "1.0.0-rc.18"
 edition = "2024"
 description = "A fast, themeable Linux file explorer built in Rust for RiceBowl"
 license = "MIT"

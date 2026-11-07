@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — Restart-stage recovery and WebDAV diagnostics
+
+- Explicitly publish a fully verified, unchanged staged regular file or symlink
+  on Linux after two confirmations, with a pinned private stage, atomic
+  no-overwrite rename, a directory durability barrier and final byte comparison.
+  Retain the source and refuse stale, unverifiable or colliding paths.
+- On an uncertain WebDAV upload failure, display the exact private staging URI
+  for manual server inspection. Never silently delete or retry an ambiguous
+  upload; keep unsupported network writes disabled.
+- Register the launcher under the standard `FileTools` desktop category as
+  well as `FileManager`, avoiding desktop-file validation hints.
+
 ## Unreleased — Explicit verified-publication journal resolution
 
 - After a process crash, let the owner explicitly resolve an already-published
