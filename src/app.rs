@@ -959,6 +959,11 @@ pub struct Explorer {
     remote_download_cancel: Arc<AtomicBool>,
     remote_download_bytes: Arc<AtomicU64>,
     remote_download_directory: String,
+    remote_staging_sender: Sender<(PathBuf, Result<remote_download::StagingInspection, String>)>,
+    remote_staging_receiver:
+        Receiver<(PathBuf, Result<remote_download::StagingInspection, String>)>,
+    remote_staging_result: Option<(PathBuf, Result<remote_download::StagingInspection, String>)>,
+    remote_staging_busy: bool,
     refresh_sender: Sender<RefreshResult>,
     refresh_receiver: Receiver<RefreshResult>,
     volume_sender: Sender<Result<(String, Option<String>), String>>,
@@ -1124,6 +1129,7 @@ impl Explorer {
         let (remote_scan_sender, remote_scan_receiver) = mpsc::channel();
         let (remote_preview_sender, remote_preview_receiver) = mpsc::channel();
         let (remote_download_sender, remote_download_receiver) = mpsc::channel();
+        let (remote_staging_sender, remote_staging_receiver) = mpsc::channel();
         let remote_download_directory = config
             .remote_download_directory
             .as_ref()
@@ -1200,6 +1206,10 @@ impl Explorer {
             remote_download_cancel: Arc::new(AtomicBool::new(false)),
             remote_download_bytes: Arc::new(AtomicU64::new(0)),
             remote_download_directory,
+            remote_staging_sender,
+            remote_staging_receiver,
+            remote_staging_result: None,
+            remote_staging_busy: false,
             refresh_sender,
             refresh_receiver,
             volume_sender,
@@ -2023,6 +2033,27 @@ impl Explorer {
                 )
             };
             let _ = sender.send(result);
+        });
+    }
+
+    fn inspect_remote_staging(&mut self) {
+        if self.remote_staging_busy {
+            return;
+        }
+        let directory = match remote_download::download_directory(&self.remote_download_directory) {
+            Ok(directory) => directory,
+            Err(error) => {
+                self.status = Some((error.into(), true));
+                return;
+            }
+        };
+        self.remote_staging_busy = true;
+        self.remote_staging_result = None;
+        let sender = self.remote_staging_sender.clone();
+        thread::spawn(move || {
+            let result =
+                remote_download::inspect_staging(&directory).map_err(|error| error.to_string());
+            let _ = sender.send((directory, result));
         });
     }
 
@@ -2940,6 +2971,10 @@ impl Explorer {
                 Err(error) => (error, true),
             });
             self.start_next_remote_download();
+        }
+        while let Ok(result) = self.remote_staging_receiver.try_recv() {
+            self.remote_staging_busy = false;
+            self.remote_staging_result = Some(result);
         }
         while let Ok(event) = self.op_receiver.try_recv() {
             match event {
@@ -7979,6 +8014,49 @@ impl Explorer {
                         self.dirty_config = true;
                     }
                 });
+                ui.horizontal(|ui| {
+                    if ui.add_enabled(!self.remote_staging_busy && !self.remote_download_busy,
+                        egui::Button::new("Inspect interrupted downloads"))
+                        .on_hover_text("Read-only scan for private staging folders left by an interrupted download")
+                        .clicked() {
+                        self.inspect_remote_staging();
+                    }
+                    if self.remote_staging_busy {
+                        ui.spinner();
+                        ui.small("Inspecting local download folder…");
+                    }
+                });
+                let mut open_staging = None;
+                if let Some((folder, result)) = &self.remote_staging_result
+                    && folder.to_string_lossy() == self.remote_download_directory {
+                    match result {
+                        Ok(inspection) if inspection.directories.is_empty() => {
+                            ui.small("No private RiceField download staging folders found.");
+                        }
+                        Ok(inspection) => {
+                            ui.colored_label(Color32::YELLOW,
+                                "Possible interrupted downloads (or downloads running in another RiceField instance). These are incomplete; nothing has been removed or resumed.");
+                            egui::ScrollArea::vertical().max_height(155.0).show(ui, |ui| {
+                                for path in &inspection.directories {
+                                    ui.horizontal(|ui| {
+                                        ui.small(path.file_name().unwrap_or_default().to_string_lossy());
+                                        if ui.small_button("Inspect folder").clicked() {
+                                            open_staging = Some(path.clone());
+                                        }
+                                    });
+                                }
+                            });
+                            if inspection.truncated {
+                                ui.small("More staging folders exist; only the first 64 are listed.");
+                            }
+                            ui.small("Inspect manually before deciding what to keep. RiceField never deletes crash remnants automatically.");
+                        }
+                        Err(error) => { ui.colored_label(Color32::YELLOW, format!("Cannot inspect downloads: {error}")); }
+                    }
+                }
+                if let Some(path) = open_staging {
+                    self.navigate(path);
+                }
                 if self.remote_download_busy {
                     ui.horizontal(|ui| {
                         ui.spinner();

@@ -9,8 +9,11 @@ use std::{
     collections::{HashSet, VecDeque},
     ffi::OsString,
     fs::{self, DirBuilder, File, OpenOptions},
-    io::{Read, Write},
-    os::unix::{ffi::OsStringExt, fs::DirBuilderExt},
+    io::{self, Read, Write},
+    os::unix::{
+        ffi::OsStringExt,
+        fs::{DirBuilderExt, MetadataExt},
+    },
     path::{Component, Path, PathBuf},
     process::{Command, ExitStatus, Stdio},
     sync::{
@@ -27,6 +30,77 @@ const MAX_FOLDER_ENTRIES: usize = 4096;
 const MAX_FOLDER_DEPTH: usize = 16;
 const MAX_FOLDER_DIRECTORIES: usize = 512;
 pub const MAX_WAITING_DOWNLOADS: usize = 16;
+const MAX_STAGING_SCAN: usize = 8192;
+const MAX_STAGING_RESULTS: usize = 64;
+
+/// Read-only hints, not authenticated recovery records. Another process may
+/// still be writing to a matching directory; never delete or replay these.
+pub struct StagingInspection {
+    pub directories: Vec<PathBuf>,
+    pub truncated: bool,
+}
+
+/// Find privately owned download staging directories left after a possible
+/// crash. This is intentionally opt-in and never examines their contents.
+pub fn inspect_staging(directory: &Path) -> io::Result<StagingInspection> {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(StagingInspection {
+                directories: Vec::new(),
+                truncated: false,
+            });
+        }
+        Err(error) => return Err(error),
+    };
+    let mut directories = Vec::new();
+    let mut truncated = false;
+    for (index, entry) in entries.enumerate() {
+        if index >= MAX_STAGING_SCAN {
+            return Err(io::Error::other(
+                "Download folder has too many entries to inspect safely",
+            ));
+        }
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(suffix) = name
+            .to_str()
+            .and_then(|name| name.strip_prefix(".ricefield-download-"))
+        else {
+            continue;
+        };
+        let mut fields = suffix.split('-');
+        if !matches!((fields.next(), fields.next(), fields.next(), fields.next()),
+            (Some(pid), Some(nonce), Some(attempt), None)
+            if !pid.is_empty() && pid.bytes().all(|byte| byte.is_ascii_digit())
+                && !nonce.is_empty() && nonce.len() <= 40 && nonce.bytes().all(|byte| byte.is_ascii_digit())
+                && !attempt.is_empty() && attempt.len() <= 2 && attempt.bytes().all(|byte| byte.is_ascii_digit()))
+        {
+            continue;
+        }
+        let metadata = match fs::symlink_metadata(entry.path()) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        if !metadata.is_dir()
+            || metadata.uid() != unsafe { libc::geteuid() }
+            || metadata.mode() & 0o077 != 0
+        {
+            continue;
+        }
+        if directories.len() < MAX_STAGING_RESULTS {
+            directories.push(entry.path());
+        } else {
+            truncated = true;
+        }
+    }
+    directories.sort();
+    Ok(StagingInspection {
+        directories,
+        truncated,
+    })
+}
 
 /// Only explicitly selected network downloads enter this in-memory FIFO.
 /// Enqueued paths are snapshots, never reconstructed from later UI state.
@@ -541,6 +615,35 @@ mod tests {
         let mut separate_target = request(5);
         separate_target.directory = PathBuf::from("/tmp/another-local-folder");
         assert_eq!(queue.enqueue(separate_target).unwrap(), 2);
+    }
+
+    #[test]
+    fn staging_inspection_finds_only_private_owned_directories_without_mutation() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let target = private_fixture("staging-inspect");
+        let abandoned = StagingDirectory::create(&target).unwrap();
+        let expected = abandoned.0.clone();
+        fs::write(expected.join("partial"), b"retain after crash").unwrap();
+        std::mem::forget(abandoned); // Simulate a process killed before Drop.
+
+        let public = target.join(".ricefield-download-2-3-4");
+        fs::create_dir(&public).unwrap();
+        fs::set_permissions(&public, fs::Permissions::from_mode(0o755)).unwrap();
+        symlink(&expected, target.join(".ricefield-download-5-6-7")).unwrap();
+        fs::write(target.join(".ricefield-download-8-9-1"), b"not a directory").unwrap();
+        fs::create_dir(target.join(".ricefield-download-malice")).unwrap();
+
+        let result = inspect_staging(&target).unwrap();
+        assert_eq!(result.directories, vec![expected.clone()]);
+        assert!(!result.truncated);
+        assert_eq!(
+            fs::read(expected.join("partial")).unwrap(),
+            b"retain after crash"
+        );
+        let missing = inspect_staging(&target.join("not-created")).unwrap();
+        assert!(missing.directories.is_empty());
+        fs::remove_dir_all(target).unwrap();
     }
 
     fn private_fixture(label: &str) -> PathBuf {

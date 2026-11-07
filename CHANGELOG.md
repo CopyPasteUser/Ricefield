@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — Interrupted network-download inspection
+
+- Add an explicit, background-only **Inspect interrupted downloads** control
+  to remote tabs. It finds up to 64 privately owned staging directories in
+  the selected local download folder, without opening their contents or
+  removing them. Symlinks, ordinary files and non-private directories are
+  excluded; large folders fail with a visible bounded-scan error.
+- Let users open a matching folder for manual examination. Other RiceField
+  instances may still be using it, so the result never triggers automatic
+  cleanup, resume or source deletion. A disposable crash-remnant regression
+  checks that partial bytes survive the inspection unchanged.
+
 ## Unreleased — ChromeOS Files shell
 
 - Give ChromeOS a distinct Files-like app toolbar, touch-friendly view pills,
