@@ -54,7 +54,7 @@ later development build.
   application starts from a terminal *and* the desktop application menu.
 - [ ] **A02 Upgrade:** run `bash install.sh` over the previous RC with saved
   bookmarks, settings, custom themes and session; no settings or user files
-  disappear. Check obsolete Rice Explorer launchers manually.
+  disappear. Check obsolete pre-rename launchers manually.
 - [ ] **A03 Uninstall/reinstall:** in a separate disposable account or test
   environment, run the bundled `uninstall.sh`, confirm it removes only
   RiceField's own installed binary/icon/launcher, and reinstall. The system
