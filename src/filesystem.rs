@@ -930,9 +930,11 @@ pub fn parse_acl_rwx(value: &str) -> Option<u16> {
     {
         return None;
     }
-    Some(u16::from(bytes[0] == b'r') * 4
-        + u16::from(bytes[1] == b'w') * 2
-        + u16::from(bytes[2] == b'x'))
+    Some(
+        u16::from(bytes[0] == b'r') * 4
+            + u16::from(bytes[1] == b'w') * 2
+            + u16::from(bytes[2] == b'x'),
+    )
 }
 
 /// Create one new Linux POSIX access ACL for a named UID. Existing ACLs are
@@ -946,7 +948,10 @@ fn create_named_user_acl_guarded(
     permissions: u16,
     expected: &fs::Metadata,
 ) -> io::Result<()> {
-    use std::os::{fd::{AsRawFd, FromRawFd, OwnedFd}, unix::fs::MetadataExt};
+    use std::os::{
+        fd::{AsRawFd, FromRawFd, OwnedFd},
+        unix::fs::MetadataExt,
+    };
 
     if uid == u32::MAX || permissions > 7 {
         return Err(io::Error::new(
@@ -7284,12 +7289,18 @@ mod tests {
         assert_eq!(u16::from_le_bytes([acl[12], acl[13]]), 2);
         assert_eq!(u16::from_le_bytes([acl[14], acl[15]]), 4);
         assert_eq!(u32::from_le_bytes(acl[16..20].try_into().unwrap()), 123_456);
-        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o640);
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
 
         let current = fs::symlink_metadata(&path).unwrap();
         let collision = create_named_user_acl_guarded(&path, 456_789, 7, &current).unwrap_err();
         assert_eq!(collision.raw_os_error(), Some(libc::EEXIST));
-        assert_eq!(read_link_xattr(&path, b"system.posix_acl_access").unwrap(), acl);
+        assert_eq!(
+            read_link_xattr(&path, b"system.posix_acl_access").unwrap(),
+            acl
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
