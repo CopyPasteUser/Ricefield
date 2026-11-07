@@ -178,6 +178,28 @@ fn handlers() -> Vec<(&'static str, Vec<&'static str>, Vec<&'static str>)> {
     }
 }
 
+/// Desktop managers differ in which clipboard targets they advertise. Try
+/// the GNOME copy/cut format first (it preserves Move intent), then a plain
+/// URI list as a copy-only fallback. Never infer Cut from an ordinary list.
+fn paste_handlers() -> Vec<Vec<&'static str>> {
+    let handlers = handlers();
+    let mut commands: Vec<_> = handlers.iter().map(|(_, _, paste)| paste.clone()).collect();
+    for (program, _, _) in handlers {
+        commands.push(match program {
+            "wl-copy" => vec!["wl-paste", "--no-newline", "--type", "text/uri-list"],
+            _ => vec![
+                "xclip",
+                "-selection",
+                "clipboard",
+                "-t",
+                "text/uri-list",
+                "-o",
+            ],
+        });
+    }
+    commands
+}
+
 pub fn copy_files(paths: &[PathBuf], cut: bool) -> io::Result<()> {
     if paths.is_empty() {
         return Ok(());
@@ -214,7 +236,7 @@ pub fn copy_files(paths: &[PathBuf], cut: bool) -> io::Result<()> {
 }
 
 pub fn paste_files() -> Option<Files> {
-    for (_, _, command) in handlers() {
+    for command in paste_handlers() {
         let (program, args) = command.split_first()?;
         let mut command = Command::new(program);
         command.args(args);
@@ -285,6 +307,35 @@ mod tests {
             parse_files("# comment\nfile:///tmp/a\n").unwrap().paths,
             vec![PathBuf::from("/tmp/a")]
         );
+    }
+
+    #[test]
+    fn uri_list_fallback_is_copy_only_and_keeps_native_targets_first() {
+        let candidates = paste_handlers();
+        assert_eq!(candidates.len(), 4);
+        assert!(
+            candidates[..2]
+                .iter()
+                .all(|args| { args.contains(&"x-special/gnome-copied-files") })
+        );
+        assert!(
+            candidates[2..]
+                .iter()
+                .all(|args| args.contains(&"text/uri-list"))
+        );
+        let files = parse_files(
+            "# URI list from another file manager\r\nfile:///tmp/first%20file\r\nfile:///tmp/second\r\n",
+        )
+        .unwrap();
+        assert!(!files.cut);
+        assert_eq!(
+            files.paths,
+            vec![
+                PathBuf::from("/tmp/first file"),
+                PathBuf::from("/tmp/second")
+            ]
+        );
+        assert!(parse_files("https://example.invalid/file\r\n").is_none());
     }
 
     #[test]
