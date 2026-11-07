@@ -75,7 +75,7 @@ ricefield --theme-file /path/to/custom-rice.toml
 - Cross-device moves preserve their sources after verified copies; cleanup requires a separate decision.
 - Batch rename has guarded session-only Undo, not full crash recovery. Inspect any interrupted batch.
 - USB mount, unmount and eject rely on UDisks2/Polkit; real-hardware acceptance and encrypted-volume unlock remain open.
-- Recovery offers inspection, **not automatic rollback**. Test risky operations with disposable files.
+- Cross-device Move creates a verified copy and **keeps the source**. An incomplete move has private crash-inspection evidence, but recovery offers inspection, **not automatic rollback or source deletion**. Test risky operations with disposable files.
 
 [Detailed 1.0 status](docs/1.0-STATUS.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md)
 

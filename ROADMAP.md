@@ -376,7 +376,11 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   startup, a visible warning and manual inspection of unfinished transfers.
   Its record reader now pins regular inodes without following replacement
   symlinks or blocking on substituted FIFOs, and checks for changes after
-  bounded reads. Full resume/rollback remains open.
+  bounded reads. The verified cross-device copy path now also creates durable
+  journal records in production: Prepared → StagedVerified → Published, then
+  retires Completed records. A crash or failed publication leaves inspectable
+  evidence, while a successful copy still retains the original source. Full
+  resume/rollback and power-loss validation remain open.
 - [x] Inspect source, destination and staging path presence asynchronously
   during recovery scans, without following symlinks or writing to any path.
   Distinguish missing, present and inaccessible entries; show conservative

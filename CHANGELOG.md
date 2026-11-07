@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — Production crash evidence for cross-device copies
+
+- Record real cross-device Move copies in the durable private move journal,
+  including staging, verification and publication transitions. A completed
+  copy keeps its source and retires the journal; collisions or interruption
+  leave evidence for read-only inspection after restart.
+- Fail closed if the journal cannot be reserved. Add isolated success/collision
+  tests without enabling automatic rollback, replay or unsafe source removal.
+
 ## Unreleased — Nonblocking custom-theme startup
 
 - Display a bundled fallback immediately and load custom TOML themes on the
