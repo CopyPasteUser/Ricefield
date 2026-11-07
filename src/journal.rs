@@ -8,6 +8,8 @@
 //! its original source.
 
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "linux")]
+use std::collections::BTreeMap;
 use std::{
     collections::BTreeSet,
     env,
@@ -18,8 +20,6 @@ use std::{
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
-#[cfg(target_os = "linux")]
-use std::collections::BTreeMap;
 
 const VERSION: u32 = 3;
 const MAX_RECORD_BYTES: u64 = 64 * 1024;
@@ -388,7 +388,11 @@ pub fn compare_for_recovery(
 /// Publishing a staged directory requires the copy contract's *complete*
 /// metadata checks and hardlink topology, in addition to byte equality.
 #[cfg(target_os = "linux")]
-pub fn compare_staged_copy(source: &Path, destination: &Path, cancelled: &AtomicBool) -> Comparison {
+pub fn compare_staged_copy(
+    source: &Path,
+    destination: &Path,
+    cancelled: &AtomicBool,
+) -> Comparison {
     let strict_metadata = fs::symlink_metadata(source).is_ok_and(|metadata| metadata.is_dir());
     compare_for_recovery_inner(source, destination, cancelled, strict_metadata)
 }
@@ -1696,7 +1700,10 @@ mod tests {
         fs::create_dir(payload.join("sub")).unwrap();
         fs::write(payload.join("sub/child.txt"), b"safe nested bytes").unwrap();
         fs::write(payload.join("root.txt"), b"root bytes").unwrap();
-        match_modified_time(&source.join("sub/child.txt"), &payload.join("sub/child.txt"));
+        match_modified_time(
+            &source.join("sub/child.txt"),
+            &payload.join("sub/child.txt"),
+        );
         match_modified_time(&source.join("root.txt"), &payload.join("root.txt"));
         match_modified_time(&source.join("sub"), &payload.join("sub"));
         match_modified_time(&source, &payload);
@@ -1735,29 +1742,26 @@ mod tests {
             b"changed stage",
         )
         .unwrap();
-        assert!(publish_verified_stage_in(
-            &directory,
-            &journal.record().id,
-            &AtomicBool::new(false),
-        )
-        .is_err());
+        assert!(
+            publish_verified_stage_in(&directory, &journal.record().id, &AtomicBool::new(false),)
+                .is_err()
+        );
         assert!(!directory.join("destination-tree").exists());
         fs::remove_dir_all(directory).unwrap();
 
         let directory = test_directory();
         let journal = verified_directory_fixture(&directory);
         fs::create_dir(directory.join("destination-tree")).unwrap();
-        let error = publish_verified_stage_in(
-            &directory,
-            &journal.record().id,
-            &AtomicBool::new(false),
-        )
-        .unwrap_err();
+        let error =
+            publish_verified_stage_in(&directory, &journal.record().id, &AtomicBool::new(false))
+                .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
         assert!(directory.join("source-tree/sub/child.txt").exists());
-        assert!(directory
-            .join(".ricefield-staging-directory-fixture/payload/sub/child.txt")
-            .exists());
+        assert!(
+            directory
+                .join(".ricefield-staging-directory-fixture/payload/sub/child.txt")
+                .exists()
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -1768,15 +1772,12 @@ mod tests {
 
         let directory = test_directory();
         let journal = verified_directory_fixture(&directory);
-        let nested =
-            directory.join(".ricefield-staging-directory-fixture/payload/sub/child.txt");
+        let nested = directory.join(".ricefield-staging-directory-fixture/payload/sub/child.txt");
         fs::set_permissions(&nested, fs::Permissions::from_mode(0o600)).unwrap();
-        assert!(publish_verified_stage_in(
-            &directory,
-            &journal.record().id,
-            &AtomicBool::new(false),
-        )
-        .is_err());
+        assert!(
+            publish_verified_stage_in(&directory, &journal.record().id, &AtomicBool::new(false),)
+                .is_err()
+        );
         assert!(!directory.join("destination-tree").exists());
         assert!(nested.exists());
         fs::remove_dir_all(directory).unwrap();
