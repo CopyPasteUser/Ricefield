@@ -244,6 +244,12 @@ pub fn preview_remote_text(uri: &str, cancelled: &AtomicBool) -> Result<String, 
 }
 
 fn preview_remote_bytes(bytes: &[u8], truncated: bool) -> Result<String, String> {
+    if let Some(mut text) = crate::preview::utf16_text(bytes, truncated) {
+        if truncated {
+            text.push_str("\n\n[Preview limited to the first 32 KiB]");
+        }
+        return Ok(text);
+    }
     // A valid UTF-8 character can straddle the artificial prefix boundary.
     // Do not mislabel that particular case as binary.
     let end = match std::str::from_utf8(bytes) {
@@ -879,6 +885,27 @@ mod tests {
         let text = preview_remote_bytes(b"abc\xc3", true).unwrap();
         assert!(text.starts_with("abc"));
         assert!(text.contains("limited to the first 32 KiB"));
+    }
+
+    #[test]
+    fn remote_preview_decodes_utf16_and_handles_cut_code_units() {
+        assert_eq!(
+            preview_remote_bytes(b"\xff\xfeH\0i\0", false).unwrap(),
+            "Hi"
+        );
+        assert_eq!(
+            preview_remote_bytes(b"\xfe\xff\0H\0", true).unwrap(),
+            "H\n\n[Preview limited to the first 32 KiB]"
+        );
+        assert_eq!(
+            preview_remote_bytes(b"\xff\xfeA\0\x3d\xd8", true).unwrap(),
+            "A\n\n[Preview limited to the first 32 KiB]"
+        );
+        let invalid = preview_remote_bytes(b"\xff\xfe\x1b\0", false).unwrap();
+        assert!(invalid.contains("ff fe 1b 00"));
+        assert!(!invalid.contains('\x1b'));
+        let incomplete = preview_remote_bytes(b"\xff\xfeA\0\x3d\xd8", false).unwrap();
+        assert!(incomplete.contains("ff fe 41 00 3d d8"));
     }
 
     #[test]

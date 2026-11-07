@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — Safe UTF-16 network preview parity
+
+- Extend the bounded read-only GIO prefix preview to BOM-marked UTF-16LE/BE;
+  permit an unfinished last code unit/surrogate only when the prefix reader
+  reports truncation. Malformed complete files and control characters still
+  display the safe hex view. Add regression coverage for both byte orders,
+  truncated units and unsafe bytes.
+
 ## Unreleased — More resilient local file previews
 
 - Detect PNG/JPEG/GIF/WebP/BMP/ICO from a fixed-size signature on the existing
