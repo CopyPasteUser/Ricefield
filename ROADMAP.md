@@ -744,7 +744,11 @@ touching disk; real HDD and UI responsiveness measurements remain outstanding.
   bounded background discovery and argument-safe launching (0.9 alpha.2).
 - [x] Opt-in native FileManager1: folder requests, local item selection and
   sequential properties, private-bus protocol/ownership and GUI checks (1.0 rc.1).
-- [ ] Portals and complete URI/clipboard interoperability.
+- [ ] Portals and complete URI/clipboard interoperability. The local Open With
+  dialog now offers an optional native OpenURI v3 `OpenFile(ask=true)` portal
+  chooser with a pinned read-only descriptor, nonblocking FIFO rejection and
+  background error reporting; broader portal/clipboard/drag integration and
+  real X11/Wayland acceptance remain open.
 - [x] Live reload for an explicitly supplied `--theme-file` TOML with
   256 KiB validation, previous-theme fallback and manual retry (0.9 alpha.1).
 - [x] Visual TOML theme editor, import, private no-overwrite export and

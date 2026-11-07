@@ -15,7 +15,7 @@ use crate::{
     location::Location,
     metadata, open_with,
     operation_queue::OperationQueue,
-    preview, remote_download, remote_upload, remote_upload_journal,
+    portal, preview, remote_download, remote_upload, remote_upload_journal,
     shell_components::{self, ToolbarAction},
     shell_renderer::{self, FileCellLayout, shorten},
     theme::{BUILTIN_IDS, ChromeComponent, ShellKind, SidebarPosition, SidebarSection, Theme},
@@ -1310,6 +1310,8 @@ pub struct Explorer {
     duplicate_cancel: Arc<AtomicBool>,
     open_with_sender: Sender<(u64, Result<Vec<String>, String>)>,
     open_with_receiver: Receiver<(u64, Result<Vec<String>, String>)>,
+    portal_sender: Sender<Result<(), String>>,
+    portal_receiver: Receiver<Result<(), String>>,
     open_with_generation: u64,
     open_with_cancel: Arc<AtomicBool>,
     analysis_worker_running: bool,
@@ -1457,6 +1459,7 @@ impl Explorer {
         let (analysis_sender, analysis_receiver) = mpsc::channel();
         let (duplicate_sender, duplicate_receiver) = mpsc::channel();
         let (open_with_sender, open_with_receiver) = mpsc::channel();
+        let (portal_sender, portal_receiver) = mpsc::channel();
         let (op_sender, op_receiver) = mpsc::channel();
         let (paste_preview_sender, paste_preview_receiver) = mpsc::channel();
         let (recovery_sender, recovery_receiver) = mpsc::channel();
@@ -1577,6 +1580,8 @@ impl Explorer {
             duplicate_cancel: Arc::new(AtomicBool::new(false)),
             open_with_sender,
             open_with_receiver,
+            portal_sender,
+            portal_receiver,
             open_with_generation: 0,
             open_with_cancel: Arc::new(AtomicBool::new(false)),
             analysis_worker_running: false,
@@ -3160,6 +3165,16 @@ impl Explorer {
             {
                 *apps = Some(result);
             }
+        }
+        while let Ok(result) = self.portal_receiver.try_recv() {
+            self.status = Some(match result {
+                Ok(()) => (
+                    "System app chooser requested; select an application in the desktop dialog"
+                        .into(),
+                    false,
+                ),
+                Err(error) => (format!("System app chooser unavailable: {error}"), true),
+            });
         }
         while let Ok((generation, result)) = self.duplicate_receiver.try_recv() {
             if let Some(Dialog::Duplicates {
@@ -9908,6 +9923,7 @@ impl Explorer {
         let mut refresh_paste_preview = None;
         let mut requested_analysis = None;
         let mut open_with_launch = None;
+        let mut open_with_portal = None;
         let mut theme_editor_outcome = None;
         let analysis_busy = self.analysis_worker_running;
         if let Some(dialog) = self.dialog.as_mut() {
@@ -9955,6 +9971,13 @@ impl Explorer {
                                         }
                                     });
                             }
+                        }
+                        if ui
+                            .button("Choose another app with system dialog…")
+                            .clicked()
+                        {
+                            open_with_portal = Some(path.clone());
+                            dismiss = true;
                         }
                         if ui.button("Cancel").clicked() {
                             dismiss = true;
@@ -10572,6 +10595,16 @@ impl Explorer {
             self.status = Some(match open_with::launch(&desktop_id, &path) {
                 Ok(()) => (format!("Requested launch using {desktop_id}"), false),
                 Err(error) => (format!("Cannot launch {desktop_id}: {error}"), true),
+            });
+        }
+        if let Some(path) = open_with_portal {
+            let sender = self.portal_sender.clone();
+            let context = context.clone();
+            self.status = Some(("Requesting desktop app chooser…".into(), false));
+            thread::spawn(move || {
+                let result = portal::choose_application(&path);
+                let _ = sender.send(result);
+                context.request_repaint();
             });
         }
         if let Some((path, generation)) = requested_analysis {

@@ -119,7 +119,10 @@ automated evidence only; **all boxes below require owner verification**.
   not a crash or unsafe execution.
 - [ ] **C03 MIME Open With:** inspect recommended handlers, choose an app,
   cancel the chooser, and try a non-executable/unknown file. Never silently
-  open with an unrelated handler.
+  open with an unrelated handler. Also click **Choose another app with system
+  dialog…**: on a desktop with OpenURI portal version 3 or newer the native
+  chooser should appear without changing default associations; on an older
+  desktop it must give a clear error without hanging the RiceField window.
 - [ ] **C04 Archives:** list/extract a clean ZIP and tar.gz, create a small
   archive, and test available encrypted ZIP/7z/RAR formats. Unsupported
   encryption must report its backend limitation. Use hostile-path fixtures
