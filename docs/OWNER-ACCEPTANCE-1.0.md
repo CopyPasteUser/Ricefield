@@ -7,8 +7,8 @@ Use the exact candidate commit/version tested; do not silently substitute a
 later development build.
 
 The `1.0.0-rc.20` development candidate passed
-[GitHub CI #808](https://github.com/CopyPasteUser/Ricefield/actions/runs/42398647167)
-with 378 Rust tests plus Linux release, installation and GUI checks. This is
+[GitHub CI #843](https://github.com/CopyPasteUser/Ricefield/actions/runs/42402923975)
+with 382 Rust tests plus Linux release, installation and GUI checks. This is
 automated evidence only; **all boxes below require owner verification**.
 
 ## Preparation and safety
