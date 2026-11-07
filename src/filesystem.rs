@@ -4031,11 +4031,12 @@ mod tests {
         assert_eq!(fs::read(&source).unwrap(), b"original bytes");
         assert_eq!(fs::read(&destination).unwrap(), b"other writer");
         let staging = journal.record().staging.as_ref().unwrap();
-        assert_eq!(fs::read(staging.join("payload")).unwrap(), b"original bytes");
-        let persisted = fs::read_to_string(
-            journal_dir.join(format!("{}.toml", journal.record().id)),
-        )
-        .unwrap();
+        assert_eq!(
+            fs::read(staging.join("payload")).unwrap(),
+            b"original bytes"
+        );
+        let persisted =
+            fs::read_to_string(journal_dir.join(format!("{}.toml", journal.record().id))).unwrap();
         assert!(persisted.contains("state = \"staged_verified\""));
         fs::remove_dir_all(root).unwrap();
     }
