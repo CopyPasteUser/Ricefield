@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — Bounded directory restart recovery
+
+- Allow explicit, two-step confirmation to publish a verified, still-private
+  directory stage on Linux with atomic no-overwrite semantics. Compare nested
+  bytes, metadata, xattrs and hardlink topology within strict bounds before
+  and after publication. Retain the original and reject any uncertainty.
+- Permit the same bounded verification when retiring an already-published
+  directory journal after a crash. No automatic replay, source deletion,
+  unrestricted tree recovery or power-loss sign-off is implied.
+
 ## Unreleased — Restart-stage recovery and WebDAV diagnostics
 
 - Explicitly publish a fully verified, unchanged staged regular file or symlink

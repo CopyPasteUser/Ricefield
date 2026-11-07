@@ -397,12 +397,13 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   targets) with clear match/mismatch/inconclusive results. Check snapshots
   before/after reads; do not interpret matches as permission to delete.
 - [x] Allow an explicit, cancellable, two-step confirmation to retire the journal for a
-  **previously published independent regular file/symlink copy only** after a second bounded byte
-  comparison and refreshed source/destination inode evidence. Serialize
+  **previously published independent copy** after a second bounded comparison
+  and refreshed source/destination inode evidence. Linux directory copies
+  additionally require strict nested metadata and hardlink-topology checks. Serialize
   journal writes across workers and reject stale writers so a retired record
   cannot be resurrected. Keep both source and destination untouched; refuse
-  stale metadata, altered bytes, collisions and unverified staging. Directory
-  records remain available because root identity does not prove nested metadata. This is
+  stale metadata, altered bytes, collisions and unverified staging. A directory
+  record remains available when nested metadata cannot be verified. This is
   not automatic replay, cleanup of staging debris, or full crash recovery.
 - [x] Persist Unix source inode and metadata evidence before staging and
   published-destination identity after the durable publication barrier.
@@ -433,14 +434,15 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
 - [x] Retain a fully verified staging payload on later journaled publication
   failure, preserving original and competing destinations. Provide independent
   read-only source/staging comparison in recovery review; incomplete stages
-  remain disposable. Publication of eligible staged files/links now has an
+  remain disposable. Publication of eligible staged files/links/trees now has an
   explicit guarded workflow; all other cases still require manual resolution.
 - [x] Permit explicit, two-step Linux restart publication of a fully verified
-  staged regular file/symlink only after fresh bounded source/stage comparison,
+  staged regular file/symlink/bounded directory only after fresh source/stage
+  comparison (including nested metadata and hardlinks for directories),
   private-stage inode checks and atomic no-overwrite rename; sync and verify
   the published result, retain the source and fail closed on any uncertainty.
-  Directory resume, rollback, power-loss and larger copy verification remain
-  outstanding.
+  Oversized/unverifiable trees, rollback, power-loss and larger copy verification
+  remain outstanding.
 - [ ] Complete durable content provenance and safe restart resume/rollback
   for legacy Move journals; a matching read-only scan is insufficient.
   New cross-volume transfers do not automatically delete the original.

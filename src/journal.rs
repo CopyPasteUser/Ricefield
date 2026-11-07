@@ -3,10 +3,13 @@
 //! Each transition atomically replaces a private TOML file and syncs both the
 //! file and its containing directory. Recovery is explicitly user-initiated:
 //! an already published copy can be confirmed and its journal retired, or a
-//! verified unpublished regular file/symlink can be published without replacing
-//! a destination. No recovery action deletes its original source.
+//! verified unpublished regular file, symlink or bounded directory tree can
+//! be published without replacing a destination. No recovery action deletes
+//! its original source.
 
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "linux")]
+use std::collections::BTreeMap;
 use std::{
     collections::BTreeSet,
     env,
@@ -256,7 +259,10 @@ impl Inspection {
     pub fn can_offer_stage_publication(&self) -> bool {
         self.record.state == State::StagedVerified
             && self.record.staged_identity.is_some()
-            && matches!(self.source, PathStatus::File | PathStatus::Symlink)
+            && matches!(
+                self.source,
+                PathStatus::File | PathStatus::Symlink | PathStatus::Directory
+            )
             && matches!(self.source_identity, IdentityStatus::SameSnapshot)
             && matches!(self.destination, PathStatus::Missing)
             && matches!(self.staging, Some(PathStatus::Directory))
@@ -365,6 +371,10 @@ impl Comparison {
 struct ComparisonBudget {
     entries: u64,
     bytes: u64,
+    #[cfg(target_os = "linux")]
+    source_links: BTreeMap<(u64, u64), (u64, u64)>,
+    #[cfg(target_os = "linux")]
+    destination_links: BTreeMap<(u64, u64), (u64, u64)>,
 }
 
 pub fn compare_for_recovery(
@@ -372,8 +382,36 @@ pub fn compare_for_recovery(
     destination: &Path,
     cancelled: &AtomicBool,
 ) -> Comparison {
+    compare_for_recovery_inner(source, destination, cancelled, false)
+}
+
+/// Publishing a staged directory requires the copy contract's *complete*
+/// metadata checks and hardlink topology, in addition to byte equality.
+#[cfg(target_os = "linux")]
+pub fn compare_staged_copy(
+    source: &Path,
+    destination: &Path,
+    cancelled: &AtomicBool,
+) -> Comparison {
+    let strict_metadata = fs::symlink_metadata(source).is_ok_and(|metadata| metadata.is_dir());
+    compare_for_recovery_inner(source, destination, cancelled, strict_metadata)
+}
+
+fn compare_for_recovery_inner(
+    source: &Path,
+    destination: &Path,
+    cancelled: &AtomicBool,
+    strict_metadata: bool,
+) -> Comparison {
     let mut budget = ComparisonBudget::default();
-    match compare_node(source, destination, 0, cancelled, &mut budget) {
+    match compare_node(
+        source,
+        destination,
+        0,
+        cancelled,
+        &mut budget,
+        strict_metadata,
+    ) {
         Ok(Some(reason)) => Comparison::Different(reason),
         Ok(None) => Comparison::Identical {
             entries: budget.entries,
@@ -389,6 +427,7 @@ fn compare_node(
     depth: usize,
     cancelled: &AtomicBool,
     budget: &mut ComparisonBudget,
+    strict_metadata: bool,
 ) -> io::Result<Option<String>> {
     if cancelled.load(Ordering::Relaxed) {
         return Err(io::Error::new(
@@ -409,6 +448,40 @@ fn compare_node(
             "Different item types at {}",
             source.display()
         )));
+    }
+    #[cfg(target_os = "linux")]
+    if strict_metadata {
+        use std::os::unix::fs::MetadataExt;
+
+        match crate::filesystem::verify_copied_metadata(source, destination, &left, &right) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::InvalidData => {
+                return Ok(Some(format!(
+                    "Different permissions, ownership, timestamps or attributes at {}: {error}",
+                    source.display()
+                )));
+            }
+            Err(error) => return Err(error),
+        }
+        if left.is_file() {
+            let left_key = (left.dev(), left.ino());
+            let right_key = (right.dev(), right.ino());
+            if left.nlink() != right.nlink()
+                || budget
+                    .source_links
+                    .insert(left_key, right_key)
+                    .is_some_and(|previous| previous != right_key)
+                || budget
+                    .destination_links
+                    .insert(right_key, left_key)
+                    .is_some_and(|previous| previous != left_key)
+            {
+                return Ok(Some(format!(
+                    "Different hardlink topology at {}",
+                    source.display()
+                )));
+            }
+        }
     }
     if left.file_type().is_symlink() {
         if fs::read_link(source)? != fs::read_link(destination)? {
@@ -433,6 +506,7 @@ fn compare_node(
                 depth + 1,
                 cancelled,
                 budget,
+                strict_metadata,
             )? {
                 return Ok(Some(reason));
             }
@@ -789,7 +863,8 @@ pub fn resolve_verified_copy(id: &str, cancelled: &AtomicBool) -> io::Result<()>
     resolve_verified_copy_in(&journal_directory()?, id, cancelled)
 }
 
-/// Complete publication of a verified, still-private regular file or symlink.
+/// Complete publication of a verified, still-private file, symlink or bounded
+/// directory tree. Trees additionally require full metadata and hardlink checks.
 /// Unlike a fresh Copy, this reuses exactly the staged inode saved in the
 /// journal, never replaces a destination, and always retains the original.
 /// Cancellation is honored before atomic publication, not during durability
@@ -842,9 +917,9 @@ fn publish_verified_stage_in(directory: &Path, id: &str, cancelled: &AtomicBool)
         ));
     }
     let original = fs::symlink_metadata(&record.source)?;
-    if !(original.is_file() || original.file_type().is_symlink()) {
+    if !(original.is_file() || original.is_dir() || original.file_type().is_symlink()) {
         return Err(invalid_data(
-            "Directory and special-file recovery require manual inspection",
+            "Special-file recovery requires manual inspection",
         ));
     }
     if cancelled.load(Ordering::Relaxed) {
@@ -854,7 +929,7 @@ fn publish_verified_stage_in(directory: &Path, id: &str, cancelled: &AtomicBool)
         ));
     }
     if !matches!(
-        compare_for_recovery(&record.source, &staging.join("payload"), cancelled),
+        compare_staged_copy(&record.source, &staging.join("payload"), cancelled),
         Comparison::Identical { .. }
     ) {
         return Err(invalid_data(
@@ -977,11 +1052,11 @@ fn publish_verified_stage_in(directory: &Path, id: &str, cancelled: &AtomicBool)
             "Published inode or metadata differs from verified stage; inspect both copies",
         ));
     }
-    // A same-user process can change a staged file despite private-directory
-    // permissions. Verify once more after the no-overwrite rename; never
-    // mark a mutated payload as a successful recovery.
+    // A same-user process can change staged contents despite private-directory
+    // permissions. Verify again after the no-overwrite rename, including
+    // nested metadata and hardlinks for directories.
     if !matches!(
-        compare_for_recovery(&record.source, &record.destination, &AtomicBool::new(false),),
+        compare_staged_copy(&record.source, &record.destination, &AtomicBool::new(false),),
         Comparison::Identical { .. }
     ) {
         return Err(invalid_data(
@@ -1018,6 +1093,9 @@ fn resolve_verified_copy_in(directory: &Path, id: &str, cancelled: &AtomicBool) 
             "Recovery verification cancelled",
         ));
     }
+    #[cfg(target_os = "linux")]
+    let comparison = compare_staged_copy(&record.source, &record.destination, cancelled);
+    #[cfg(not(target_os = "linux"))]
     let comparison = compare_for_recovery(&record.source, &record.destination, cancelled);
     if cancelled.load(Ordering::Relaxed) {
         return Err(io::Error::new(
@@ -1065,12 +1143,19 @@ fn resolve_verified_copy_in(directory: &Path, id: &str, cancelled: &AtomicBool) 
 
 #[cfg(unix)]
 fn verify_resolvable_publication(record: &Record) -> io::Result<()> {
-    // Directory root identities do not cover metadata or external hardlinks
-    // of nested entries. Keep their journals available for manual inspection.
+    // On Linux, a bounded strict tree comparison additionally checks nested
+    // metadata and hardlink topology. Other Unix targets still require
+    // manual directory review because those checks are unavailable there.
     let source_meta = fs::symlink_metadata(&record.source)?;
-    if source_meta.is_dir() || !(source_meta.is_file() || source_meta.file_type().is_symlink()) {
+    #[cfg(not(target_os = "linux"))]
+    if source_meta.is_dir() {
         return Err(invalid_data(
-            "Directory and special-file recovery require manual inspection",
+            "Directory recovery requires Linux metadata verification",
+        ));
+    }
+    if !(source_meta.is_dir() || source_meta.is_file() || source_meta.file_type().is_symlink()) {
+        return Err(invalid_data(
+            "Special-file recovery requires manual inspection",
         ));
     }
     let destination = identity_of(&fs::symlink_metadata(&record.destination)?);
@@ -1584,6 +1669,157 @@ mod tests {
         File::open(&staging).unwrap().sync_all().unwrap();
         journal.advance(State::StagedVerified).unwrap();
         journal
+    }
+
+    #[cfg(target_os = "linux")]
+    fn match_modified_time(source: &Path, target: &Path) {
+        let modified = fs::symlink_metadata(source).unwrap().modified().unwrap();
+        File::open(target)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    fn verified_directory_fixture(directory: &Path) -> Journal {
+        use std::os::unix::fs::PermissionsExt;
+
+        let source = directory.join("source-tree");
+        let destination = directory.join("destination-tree");
+        fs::create_dir(&source).unwrap();
+        fs::create_dir(source.join("sub")).unwrap();
+        fs::write(source.join("sub/child.txt"), b"safe nested bytes").unwrap();
+        fs::write(source.join("root.txt"), b"root bytes").unwrap();
+        let mut journal = Journal::begin_in(directory, &source, &destination).unwrap();
+        let staging = directory.join(".ricefield-staging-directory-fixture");
+        fs::create_dir(&staging).unwrap();
+        fs::set_permissions(&staging, fs::Permissions::from_mode(0o700)).unwrap();
+        journal.set_staging(&staging).unwrap();
+        let payload = staging.join("payload");
+        fs::create_dir(&payload).unwrap();
+        fs::create_dir(payload.join("sub")).unwrap();
+        fs::write(payload.join("sub/child.txt"), b"safe nested bytes").unwrap();
+        fs::write(payload.join("root.txt"), b"root bytes").unwrap();
+        match_modified_time(
+            &source.join("sub/child.txt"),
+            &payload.join("sub/child.txt"),
+        );
+        match_modified_time(&source.join("root.txt"), &payload.join("root.txt"));
+        match_modified_time(&source.join("sub"), &payload.join("sub"));
+        match_modified_time(&source, &payload);
+        File::open(&staging).unwrap().sync_all().unwrap();
+        journal.advance(State::StagedVerified).unwrap();
+        journal
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn verified_directory_stage_publishes_nested_tree_without_removing_original() {
+        let directory = test_directory();
+        let journal = verified_directory_fixture(&directory);
+        let id = journal.record().id.clone();
+        assert!(inspect_record(journal.record().clone()).can_offer_stage_publication());
+        publish_verified_stage_in(&directory, &id, &AtomicBool::new(false)).unwrap();
+        assert_eq!(
+            fs::read(directory.join("source-tree/sub/child.txt")).unwrap(),
+            b"safe nested bytes"
+        );
+        assert_eq!(
+            fs::read(directory.join("destination-tree/sub/child.txt")).unwrap(),
+            b"safe nested bytes"
+        );
+        assert!(scan_incomplete_in(&directory).unwrap().is_empty());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn verified_directory_stage_rejects_nested_mutation_and_existing_destination() {
+        let directory = test_directory();
+        let journal = verified_directory_fixture(&directory);
+        fs::write(
+            directory.join(".ricefield-staging-directory-fixture/payload/sub/child.txt"),
+            b"changed stage",
+        )
+        .unwrap();
+        assert!(
+            publish_verified_stage_in(&directory, &journal.record().id, &AtomicBool::new(false),)
+                .is_err()
+        );
+        assert!(!directory.join("destination-tree").exists());
+        fs::remove_dir_all(directory).unwrap();
+
+        let directory = test_directory();
+        let journal = verified_directory_fixture(&directory);
+        fs::create_dir(directory.join("destination-tree")).unwrap();
+        let error =
+            publish_verified_stage_in(&directory, &journal.record().id, &AtomicBool::new(false))
+                .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert!(directory.join("source-tree/sub/child.txt").exists());
+        assert!(
+            directory
+                .join(".ricefield-staging-directory-fixture/payload/sub/child.txt")
+                .exists()
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn verified_directory_stage_refuses_nested_metadata_drift() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = test_directory();
+        let journal = verified_directory_fixture(&directory);
+        let nested = directory.join(".ricefield-staging-directory-fixture/payload/sub/child.txt");
+        fs::set_permissions(&nested, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(
+            publish_verified_stage_in(&directory, &journal.record().id, &AtomicBool::new(false),)
+                .is_err()
+        );
+        assert!(!directory.join("destination-tree").exists());
+        assert!(nested.exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn published_directory_stage_can_retire_verified_journal_after_restart() {
+        let directory = test_directory();
+        let journal = verified_directory_fixture(&directory);
+        let staging = directory.join(".ricefield-staging-directory-fixture/payload");
+        fs::rename(&staging, directory.join("destination-tree")).unwrap();
+        resolve_verified_copy_in(&directory, &journal.record().id, &AtomicBool::new(false))
+            .unwrap();
+        assert_eq!(
+            fs::read(directory.join("source-tree/sub/child.txt")).unwrap(),
+            b"safe nested bytes"
+        );
+        assert!(scan_incomplete_in(&directory).unwrap().is_empty());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn strict_directory_comparison_rejects_lost_hardlink_aliases() {
+        let directory = test_directory();
+        let source = directory.join("links-source");
+        let target = directory.join("links-target");
+        fs::create_dir(&source).unwrap();
+        fs::create_dir(&target).unwrap();
+        fs::write(source.join("one"), b"one inode").unwrap();
+        fs::hard_link(source.join("one"), source.join("two")).unwrap();
+        fs::write(target.join("one"), b"one inode").unwrap();
+        fs::write(target.join("two"), b"one inode").unwrap();
+        match_modified_time(&source.join("one"), &target.join("one"));
+        match_modified_time(&source.join("two"), &target.join("two"));
+        match_modified_time(&source, &target);
+        assert!(matches!(
+            compare_staged_copy(&source, &target, &AtomicBool::new(false)),
+            Comparison::Different(reason) if reason.contains("hardlink")
+        ));
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[cfg(target_os = "linux")]
