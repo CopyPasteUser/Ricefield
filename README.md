@@ -37,7 +37,7 @@ The details are intentional: 98 has a dense gray menu and tree, XP a blue tasks 
 - **Reach storage:** SMB, SFTP, WebDAV and MTP discovery/browsing with folders opening in the current or a new tab, navigable breadcrumbs, selectable/sortable file rows, previews, queued downloads and optional credential storage. WebDAV additionally offers a guarded **single-file upload** after a live server collision-safety probe; USB actions use UDisks2/Polkit.
 - **Customize:** seven built-in rices plus user TOML files for palettes, spacing, navigation and layout.
 
-**Release status: `1.0.0-rc.18` development candidate.** Automated Rust checks and native Linux GUI smoke tests pass. The 1.0 network-write/recovery code gates **and** physical Linux Mint/NAS/USB acceptance are still open. Keep your existing file manager installed.
+**Release status: `1.0.0-rc.19` development candidate.** Automated Rust checks and native Linux GUI smoke tests pass. The 1.0 network-write/recovery code gates **and** physical Linux Mint/NAS/USB acceptance are still open. Keep your existing file manager installed. [Owner acceptance checklist](docs/OWNER-ACCEPTANCE-1.0.md).
 
 ## Install
 
@@ -77,7 +77,7 @@ ricefield --theme-file /path/to/custom-rice.toml
 - USB mount, unmount and eject rely on UDisks2/Polkit; real-hardware acceptance and encrypted-volume unlock remain open.
 - Cross-device Move creates a verified copy and **keeps the source**. Its private crash journal supports read-only inspection, explicitly confirmed resolution of already-published copies, and guarded no-overwrite publication of a verified, unchanged staged file, symlink or bounded directory on Linux. Nested metadata and hardlinks must match exactly; oversized or uncertain trees still require manual review. There is no automatic rollback, broad replay or source deletion. Test risky operations with disposable files.
 
-[Detailed 1.0 status](docs/1.0-STATUS.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md)
+[Detailed 1.0 status](docs/1.0-STATUS.md) · [Owner acceptance tests](docs/OWNER-ACCEPTANCE-1.0.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md)
 
 ## Develop
 

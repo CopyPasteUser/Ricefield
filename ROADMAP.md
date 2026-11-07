@@ -1,6 +1,6 @@
 # RiceField roadmap to 1.0
 
-**Current candidate: `1.0.0-rc.18`.** See [the scope and evidence ledger](docs/1.0-STATUS.md).
+**Current candidate: `1.0.0-rc.19`.** See [the scope and evidence ledger](docs/1.0-STATUS.md) and [owner acceptance matrix](docs/OWNER-ACCEPTANCE-1.0.md).
 This roadmap retains incomplete capabilities explicitly: a candidate version
 does not turn unchecked safety, integration or physical-device work into a pass.
 
@@ -752,6 +752,12 @@ pass. Physical Mint X11/Wayland review is deliberately scheduled *after* the
 1.0 code-complete candidate, before stable release sign-off.
 
 ### 1.0 — Code-complete candidate, then owner acceptance
+
+- [x] Prepare an explicit owner test matrix with reproducible disposable
+  fixtures, per-case pass/fail IDs, Linux Mint/NAS/USB/RiceBowl/low-memory
+  coverage and a results template in
+  [OWNER-ACCEPTANCE-1.0.md](docs/OWNER-ACCEPTANCE-1.0.md). The tests have
+  **not** been performed on the owner's physical devices.
 
 - [x] Serialize concurrent user-local installer, rollback and uninstall
   operations with a shared advisory lock and automated overlapping-process

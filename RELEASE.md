@@ -1,6 +1,6 @@
 # Release process (Linux x86_64)
 
-RiceField 1.0.0-rc.18 is a **development candidate**, not signed off for use
+RiceField 1.0.0-rc.19 is a **development candidate**, not signed off for use
 with irreplaceable files or as a complete network/archive file manager.
 The code can produce a tested distribution bundle, but a green CI run alone
 does not satisfy the safety, recovery and Linux Mint hardware gates in
@@ -8,6 +8,8 @@ does not satisfy the safety, recovery and Linux Mint hardware gates in
 
 The current candidate scope, actual lab results, remaining code limitations and
 post-freeze device checklist are maintained in [docs/1.0-STATUS.md](docs/1.0-STATUS.md).
+The actionable owner test cases and reporting template are in
+[docs/OWNER-ACCEPTANCE-1.0.md](docs/OWNER-ACCEPTANCE-1.0.md).
 The historical version gates below remain evidence, not claims of acceptance.
 
 **Owner's release sequence:** complete the 1.0 code candidate autonomously,
