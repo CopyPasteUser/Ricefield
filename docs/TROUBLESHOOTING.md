@@ -112,8 +112,10 @@ rollback. Do not remove originals merely to dismiss a recovery warning.
 
 RiceField reports the private WebDAV staging URI if a network error, cancelled
 verification or server collision leaves an uncertain remote-upload state.
+If a preliminary server safety probe fails, the error instead identifies the
+random probe prefix (rounds 0–3 and suffixes `-a`, `-b`, `-destination`).
 Record the URI privately, verify whether the final destination exists, then
-inspect the staged object on the server with your file manager or WebDAV
+inspect the staged or probe objects on the server with your file manager or WebDAV
 administration tool. Do not blindly retry, overwrite or remove either path.
 RiceField deliberately performs no automatic remote cleanup or retry: a timeout
 can occur after the server already committed the publication. Never paste

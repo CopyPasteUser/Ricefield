@@ -55,11 +55,14 @@ nonconforming servers fail closed, with no upload. This provides a narrowly
 testable backend, **not acceptance of every WebDAV implementation**; real
 NAS and adversarial process-crash cases still require user testing. Failed
 uploads may leave hidden server stages requiring manual inspection.
-When an upload could have created a stage and later fails, RiceField reports
-the exact private stage URI and warns that timeout or publication results may
-be ambiguous. It does not automatically delete or retry the remote object.
-Preserve that URI privately until the final destination and stage have been
-checked on the server. This is not durable remote-upload journaling.
+When a safety probe fails, RiceField reports the random probe-name prefix,
+rounds and suffixes so any leftover disposable objects can be found. When an
+upload could have created a stage and later fails, RiceField reports the exact
+private stage URI and warns that timeout or publication results may be
+ambiguous. It does not automatically delete or retry the uncertain remote
+object. Preserve these paths privately until the final destination, probes
+and stage have been checked on the server. This is not durable remote-upload
+journaling.
 
 SMB, SFTP and MTP upload, and all remote rename and delete actions remain
 disabled until their own atomic backends pass the same gate. A system-mounted share can be

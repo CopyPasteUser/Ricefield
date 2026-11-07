@@ -7,8 +7,9 @@
   no-overwrite rename, a directory durability barrier and final byte comparison.
   Retain the source and refuse stale, unverifiable or colliding paths.
 - On an uncertain WebDAV upload failure, display the exact private staging URI
-  for manual server inspection. Never silently delete or retry an ambiguous
-  upload; keep unsupported network writes disabled.
+  for manual server inspection. Failed server safety probes likewise report
+  the random prefix of potentially remaining probe objects. Never silently
+  delete or retry an ambiguous upload; keep unsupported network writes disabled.
 - Register the launcher under the standard `FileTools` desktop category as
   well as `FileManager`, avoiding desktop-file validation hints.
 
