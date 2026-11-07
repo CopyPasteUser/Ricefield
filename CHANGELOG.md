@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.0-rc.20 — encrypted removable-volume candidate
+
+- Bump the development candidate after adding external LUKS Unlock/Lock and
+  verifying when native UDisks2 USB PowerOff may be requested for a locked
+  container. Retain explicit owner tests for actual Linux Mint, USB, Polkit,
+  NAS, recovery and the seven visual styles; do not tag stable `v1.0.0`.
+- Keep non-atomic SMB/SFTP/MTP uploads and other unfinished safety gates
+  disabled rather than silently expanding the write surface.
+
 ## Unreleased — verified locked-LUKS USB PowerOff
 
 - Permit native USB PowerOff only for an explicitly locked encrypted container

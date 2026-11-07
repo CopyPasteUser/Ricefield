@@ -1,6 +1,6 @@
 # RiceField roadmap to 1.0
 
-**Current candidate: `1.0.0-rc.19`.** See [the scope and evidence ledger](docs/1.0-STATUS.md) and [owner acceptance matrix](docs/OWNER-ACCEPTANCE-1.0.md).
+**Current candidate: `1.0.0-rc.20`.** See [the scope and evidence ledger](docs/1.0-STATUS.md) and [owner acceptance matrix](docs/OWNER-ACCEPTANCE-1.0.md).
 This roadmap retains incomplete capabilities explicitly: a candidate version
 does not turn unchecked safety, integration or physical-device work into a pass.
 
