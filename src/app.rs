@@ -80,6 +80,48 @@ fn sort_remote_entries(entries: &mut [volume::RemoteEntry], by: RemoteSort, desc
     });
 }
 
+/// Remote search filters the current directory snapshot only, never the server.
+/// Match decoded display names while preserving encoded URIs for all actions.
+fn remote_matches_query(entry: &volume::RemoteEntry, query: &str) -> bool {
+    let query = query.trim();
+    query.is_empty()
+        || volume::display_remote_name(&entry.name)
+            .to_lowercase()
+            .contains(&query.to_lowercase())
+}
+
+fn visible_remote_indices(entries: &[volume::RemoteEntry], query: &str) -> Vec<usize> {
+    entries
+        .iter()
+        .enumerate()
+        .filter_map(|(index, entry)| remote_matches_query(entry, query).then_some(index))
+        .collect()
+}
+
+fn next_remote_selection(
+    entries: &[volume::RemoteEntry],
+    query: &str,
+    current_uri: Option<&str>,
+    down: bool,
+) -> Option<String> {
+    let visible = visible_remote_indices(entries, query);
+    if visible.is_empty() {
+        return None;
+    }
+    let current = current_uri.and_then(|uri| {
+        visible
+            .iter()
+            .position(|&index| entries[index].uri == uri)
+    });
+    let next = match (current, down) {
+        (None, true) => 0,
+        (None, false) => visible.len() - 1,
+        (Some(index), true) => (index + 1).min(visible.len() - 1),
+        (Some(index), false) => index.saturating_sub(1),
+    };
+    Some(entries[visible[next]].uri.clone())
+}
+
 fn remote_sort_header(
     ui: &mut egui::Ui,
     theme: &Theme,
@@ -4544,20 +4586,14 @@ impl Explorer {
         let typing = context.egui_wants_keyboard_input() || self.focus_address || self.focus_search;
         if !typing {
             if self.current().remote_uri.is_some() && !ctrl && !alt {
-                if (up || down) && !self.current().remote_entries.is_empty() {
+                if up || down {
                     let tab = self.current_mut();
-                    let current = tab.remote_selected_uri.as_ref().and_then(|uri| {
-                        tab.remote_entries
-                            .iter()
-                            .position(|entry| &entry.uri == uri)
-                    });
-                    let next = match (current, down) {
-                        (None, true) => 0,
-                        (None, false) => tab.remote_entries.len() - 1,
-                        (Some(index), true) => (index + 1).min(tab.remote_entries.len() - 1),
-                        (Some(index), false) => index.saturating_sub(1),
-                    };
-                    tab.remote_selected_uri = Some(tab.remote_entries[next].uri.clone());
+                    tab.remote_selected_uri = next_remote_selection(
+                        &tab.remote_entries,
+                        &tab.query,
+                        tab.remote_selected_uri.as_deref(),
+                        down,
+                    );
                 }
                 if enter
                     && let Some(uri) = self.current().remote_selected_uri.clone()
@@ -4565,7 +4601,9 @@ impl Explorer {
                         .current()
                         .remote_entries
                         .iter()
-                        .find(|entry| entry.uri == uri)
+                        .find(|entry| {
+                            entry.uri == uri && remote_matches_query(entry, &self.current().query)
+                        })
                         .cloned()
                 {
                     if entry.is_directory {
@@ -4584,7 +4622,7 @@ impl Explorer {
                     self.current_mut().clear_remote_preview();
                 }
             }
-            if ctrl && a {
+            if ctrl && a && self.current().remote_uri.is_none() {
                 let paths: Vec<_> = self
                     .current()
                     .visible
@@ -8608,11 +8646,12 @@ impl Explorer {
                     }
                 });
                 ui.separator();
+                let visible = visible_remote_indices(&self.current().remote_entries, &self.current().query);
                 let selected = self.current().remote_selected_uri.as_ref().and_then(|uri| {
                     self.current()
                         .remote_entries
                         .iter()
-                        .find(|entry| &entry.uri == uri)
+                        .find(|entry| &entry.uri == uri && remote_matches_query(entry, &self.current().query))
                 }).cloned();
                 let mut selected_action = None;
                 ui.horizontal_wrapped(|ui| {
@@ -8640,8 +8679,8 @@ impl Explorer {
                         self.start_remote_download(entry.uri.clone(), entry.name.clone(), entry.is_directory);
                     }
                     ui.separator();
-                    ui.small(format!("{} items · {}",
-                        self.current().remote_entries.len(),
+                    ui.small(format!("{} shown / {} total · {}",
+                        visible.len(), self.current().remote_entries.len(),
                         if selected.is_some() { "1 selected" } else { "Select a row for actions" }));
                 });
                 if let Some((uri, true)) = selected_action {
@@ -8660,11 +8699,18 @@ impl Explorer {
                     if let Some(warning) = &self.current().scan_warning {
                         ui.colored_label(Color32::YELLOW, warning);
                     }
-                    if self.current().remote_entries.is_empty() {
+                    if visible.is_empty() {
                         ui.vertical_centered(|ui| {
                             ui.add_space(40.0);
                             ui.heading(if self.current().query.is_empty() { "This network folder is empty" } else { "No matching filenames" });
-                            ui.small("Navigate to another folder, or refresh the network listing.");
+                            if self.current().query.is_empty() {
+                                ui.small("Navigate to another folder, or refresh the network listing.");
+                            } else {
+                                ui.small("Search filters filenames in this folder, not the whole server.");
+                                if ui.button("Clear search").clicked() {
+                                    self.current_mut().query.clear();
+                                }
+                            }
                         });
                     } else {
                     let current_sort = self.current().remote_sort;
@@ -8691,8 +8737,9 @@ impl Explorer {
                         ui.available_height().max(120.0)
                     };
                     let row_height = theme.metrics.row_height.max(28.0);
-                    egui::ScrollArea::vertical().max_height(list_height).show_rows(ui, row_height, entries.len(), |ui, rows| {
-                        for entry in &entries[rows] {
+                    egui::ScrollArea::vertical().max_height(list_height).show_rows(ui, row_height, visible.len(), |ui, rows| {
+                        for &index in &visible[rows] {
+                            let entry = &entries[index];
                             let display_name = volume::display_remote_name(&entry.name);
                             let response = shell_renderer::remote_row(
                                 ui, &theme, shell_renderer::RemoteRowVisual {
@@ -10220,6 +10267,52 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["folder", "largest", "smallest", "unknown"]
         );
+    }
+
+    #[test]
+    fn remote_search_filters_display_names_without_changing_network_uris() {
+        let entries = vec![
+            remote_entry("Family%20Photos", true, None),
+            remote_entry("notes.txt", false, Some(12)),
+            remote_entry("FAMILY%20BUDGET.csv", false, Some(9)),
+        ];
+        let indices = super::visible_remote_indices(&entries, "  family ");
+        assert_eq!(indices, vec![0, 2]);
+        assert_eq!(entries[indices[0]].uri, "smb://host/share/Family%20Photos");
+        assert_eq!(
+            super::visible_remote_indices(&entries, "no match"),
+            Vec::<usize>::new()
+        );
+        assert_eq!(super::visible_remote_indices(&entries, "  ").len(), 3);
+        assert_eq!(super::visible_remote_indices(&entries, "notes"), vec![1]);
+    }
+
+    #[test]
+    fn remote_keyboard_navigation_only_visits_visible_search_results() {
+        let entries = vec![
+            remote_entry("alpha", true, None),
+            remote_entry("file-one.txt", false, Some(1)),
+            remote_entry("beta", true, None),
+            remote_entry("file-two.txt", false, Some(2)),
+        ];
+        let first = super::next_remote_selection(&entries, "file", None, true).unwrap();
+        assert_eq!(first, entries[1].uri);
+        let second =
+            super::next_remote_selection(&entries, "file", Some(&first), true).unwrap();
+        assert_eq!(second, entries[3].uri);
+        assert_eq!(
+            super::next_remote_selection(&entries, "file", Some(&second), true),
+            Some(second.clone())
+        );
+        assert_eq!(
+            super::next_remote_selection(&entries, "file", Some(&second), false),
+            Some(first)
+        );
+        assert_eq!(
+            super::next_remote_selection(&entries, "file", Some(&entries[0].uri), false),
+            Some(second)
+        );
+        assert_eq!(super::next_remote_selection(&entries, "missing", None, true), None);
     }
 
     #[test]
