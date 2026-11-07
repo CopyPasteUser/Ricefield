@@ -2733,7 +2733,7 @@ fn create_staging_dir(parent: &Path) -> io::Result<PathBuf> {
         .as_nanos();
     for attempt in 0..128 {
         let path = parent.join(format!(
-            ".rice-explorer-staging-{}-{nonce}-{attempt}",
+            ".ricefield-staging-{}-{nonce}-{attempt}",
             std::process::id()
         ));
         let mut builder = fs::DirBuilder::new();
@@ -3680,7 +3680,7 @@ mod tests {
                 .as_nanos();
             let sequence = NEXT_TEST_ROOT.fetch_add(1, Ordering::Relaxed);
             let dir = std::env::temp_dir().join(format!(
-                "rice-explorer-test-{}-{nonce}-{sequence}",
+                "ricefield-test-{}-{nonce}-{sequence}",
                 std::process::id()
             ));
             match fs::create_dir(&dir) {
@@ -4295,7 +4295,7 @@ mod tests {
         fs::create_dir(&original).unwrap();
         fs::create_dir(&output).unwrap();
         fs::write(&file, b"body").unwrap();
-        let key = CString::new("user.rice_explorer_test").unwrap();
+        let key = CString::new("user.ricefield_test").unwrap();
         let value = b"valuable metadata";
         for path in [&original, &file] {
             let name = CString::new(path.as_os_str().as_bytes()).unwrap();
@@ -7124,7 +7124,7 @@ mod tests {
             fs::remove_dir_all(root).unwrap();
             return;
         }
-        let target = shared.join(format!("rice-explorer-test-{}", std::process::id()));
+        let target = shared.join(format!("ricefield-test-{}", std::process::id()));
         if fs::create_dir(&target).is_err() {
             fs::remove_dir_all(root).unwrap();
             return;
@@ -7169,7 +7169,7 @@ mod tests {
             return;
         }
         let destination = shared.join(format!(
-            "rice-explorer-retained-{}-{}",
+            "ricefield-retained-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -7224,7 +7224,7 @@ mod tests {
             return;
         }
         let destination = shared.join(format!(
-            "rice-explorer-hardlink-test-{}-{}",
+            "ricefield-hardlink-test-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -7277,7 +7277,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let target = shared.join(format!("rice-explorer-race-{}-{nonce}", std::process::id()));
+        let target = shared.join(format!("ricefield-race-{}-{nonce}", std::process::id()));
         if fs::create_dir(&target).is_err() {
             fs::remove_dir_all(root).unwrap();
             return;
@@ -7404,7 +7404,7 @@ mod tests {
                         path.file_name()
                             .unwrap()
                             .to_string_lossy()
-                            .starts_with(".rice-explorer-staging-")
+                            .starts_with(".ricefield-staging-")
                     })
                     .unwrap();
                 fs::set_permissions(staging.join("payload"), fs::Permissions::from_mode(0o600))
@@ -7445,7 +7445,7 @@ mod tests {
             .set_times(source_times(&fs::symlink_metadata(&source).unwrap()))
             .unwrap();
         let path = CString::new(source.as_os_str().as_bytes()).unwrap();
-        let key = CString::new("user.rice_explorer_verification").unwrap();
+        let key = CString::new("user.ricefield_verification").unwrap();
         let value = b"must survive";
         let status = unsafe {
             libc::lsetxattr(

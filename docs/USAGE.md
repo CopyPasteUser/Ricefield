@@ -230,13 +230,13 @@ are checked every three seconds; rejected changes retain the last working theme.
 The theme picker also offers **Reload external TOML**. Direct RiceBowl event sync
 is not implemented; a launcher can pass `--theme <profile> <folder>`.
 
-Preferences live at `$XDG_CONFIG_HOME/rice-explorer/config.toml`, defaulting to
-`~/.config/rice-explorer/config.toml`; editor themes live in its `themes/`
+Preferences live at `$XDG_CONFIG_HOME/ricefield/config.toml`, defaulting to
+`~/.config/ricefield/config.toml`; editor themes live in its `themes/`
 subdirectory. Settings are privately written through temporary-file replacement.
 
 ## Linux desktop requests
 
-`rice-explorer --file-manager-service` opts into FileManager1 on the session bus.
+`ricefield --file-manager-service` opts into FileManager1 on the session bus.
 It opens supported folders, reveals local files and shows local properties.
 It neither replaces nor queues behind an existing owner such as Thunar, and
 installs no competing activation service. Active filters can hide requested

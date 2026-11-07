@@ -158,7 +158,7 @@ mod tests {
     fn private_bus_roundtrip_and_existing_owner_are_respected() {
         // The dedicated CI smoke starts this under dbus-run-session. Ordinary
         // unit tests must never acquire a name on the developer's desktop bus.
-        assert!(std::env::var_os("RICE_EXPLORER_TEST_BUS").is_some());
+        assert!(std::env::var_os("RICEFIELD_TEST_BUS").is_some());
         let mut service = Service::start(&egui::Context::default());
         let connection = service
             .ready

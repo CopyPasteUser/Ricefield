@@ -33,9 +33,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rice-explorer-ubuntu-24.04-${{ runner.arch }}-cargo-${{ hashFiles('Cargo.lock') }}
+          key: ricefield-ubuntu-24.04-${{ runner.arch }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            rice-explorer-ubuntu-24.04-${{ runner.arch }}-cargo-
+            ricefield-ubuntu-24.04-${{ runner.arch }}-cargo-
       - name: Linux development and GUI smoke dependencies
         run: |
           set -euo pipefail
@@ -60,32 +60,32 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked --all-targets
       - name: Native FileManager1 protocol on a private session bus
-        run: dbus-run-session -- env RICE_EXPLORER_TEST_BUS=1 cargo test --locked desktop::tests::private_bus_roundtrip_and_existing_owner_are_respected -- --ignored --exact
+        run: dbus-run-session -- env RICEFIELD_TEST_BUS=1 cargo test --locked desktop::tests::private_bus_roundtrip_and_existing_owner_are_respected -- --ignored --exact
       - run: cargo build --locked --release
       - name: Disposable performance and desktop integration checks
         run: |
-          target/release/rice-explorer --benchmark > performance-filesystem.toml
-          timeout -k 5s 60s dbus-run-session -- env RICE_EXPLORER_TEST_BUS=1 xvfb-run -a bash scripts/test_file_manager_service.sh
+          target/release/ricefield --benchmark > performance-filesystem.toml
+          timeout -k 5s 60s dbus-run-session -- env RICEFIELD_TEST_BUS=1 xvfb-run -a bash scripts/test_file_manager_service.sh
           timeout -k 5s 60s xvfb-run -a bash scripts/test_filters.sh
           bash scripts/run_ci_desktop_measurement.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: rice-explorer-release-performance
+          name: ricefield-release-performance
           path: performance-*.toml
           if-no-files-found: error
       - name: CLI and seven-theme graphical smoke
         run: |
-          target/release/rice-explorer --help
-          target/release/rice-explorer --version
-          target/release/rice-explorer --list-themes
+          target/release/ricefield --help
+          target/release/ricefield --version
+          target/release/ricefield --list-themes
           timeout -k 10s 8m xvfb-run -a -s '-screen 0 1280x800x24' bash scripts/gui_smoke.sh
       - name: Build and verify reproducible release bundle
         shell: bash
         run: |
           set -euo pipefail
           export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
-          bash scripts/package-release.sh target/release/rice-explorer dist
-          bash scripts/package-release.sh target/release/rice-explorer dist-repeat
+          bash scripts/package-release.sh target/release/ricefield dist
+          bash scripts/package-release.sh target/release/ricefield dist-repeat
           (cd dist && sha256sum --check -- *.sha256)
           archive="$(find dist -maxdepth 1 -type f -name '*.tar.gz' -print -quit)"
           cmp -- "$archive" "dist-repeat/$(basename "$archive")"
@@ -94,17 +94,17 @@ jobs:
           tar xzf "$archive" -C "$unpack_dir"
           bundle_dir="$(find "$unpack_dir" -mindepth 1 -maxdepth 1 -type d -print -quit)"
           HOME="$test_home" bash "$bundle_dir/install.sh"
-          HOME="$test_home" "$test_home/.local/bin/rice-explorer" --version
+          HOME="$test_home" "$test_home/.local/bin/ricefield" --version
           HOME="$test_home" bash "$bundle_dir/uninstall.sh"
-          test ! -e "$test_home/.local/bin/rice-explorer"
+          test ! -e "$test_home/.local/bin/ricefield"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: rice-explorer-release-bundle
+          name: ricefield-release-bundle
           path: dist/
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: rice-explorer-release-gui-smoke
+          name: ricefield-release-gui-smoke
           path: screenshots/
           if-no-files-found: error
 
@@ -129,7 +129,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh run download "$GITHUB_RUN_ID" --name rice-explorer-release-bundle --dir dist
+        run: gh run download "$GITHUB_RUN_ID" --name ricefield-release-bundle --dir dist
       - name: Publish GitHub release from existing tag
         env:
           GH_TOKEN: ${{ github.token }}

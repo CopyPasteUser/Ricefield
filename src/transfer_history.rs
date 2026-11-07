@@ -101,7 +101,7 @@ fn state_file() -> io::Result<PathBuf> {
             "XDG_STATE_HOME must be an absolute path without '..'",
         ));
     }
-    Ok(root.join("rice-explorer").join("transfer-history.toml"))
+    Ok(root.join("ricefield").join("transfer-history.toml"))
 }
 
 fn load_from(path: &Path) -> io::Result<Vec<Record>> {

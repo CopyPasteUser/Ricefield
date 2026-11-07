@@ -1,6 +1,6 @@
 ---
 version: alpha
-name: "RiceExplorer"
+name: "RiceField"
 description: "A native file explorer whose interface shifts with the user's desktop rice while file operations stay consistent."
 colors:
   primary: "#1766a6"
@@ -34,11 +34,11 @@ components:
   modal: {}
 ---
 
-# RiceExplorer design system
+# RiceField design system
 
 ## Overview
 
-RiceExplorer is a workbench for files, not a dashboard. It should feel like the exact operating-system era the user chooses—without abandoning recognizable navigation or file safety. The signature is a **composable explorer shell**: classic, Luna, Aero, Ribbon, Aqua, ChromeOS and Finder identities can select and arrange their UI components while sharing the same file operations and navigation state. Its restrained file grid/list remains the stable center.
+RiceField is a workbench for files, not a dashboard. It should feel like the exact operating-system era the user chooses—without abandoning recognizable navigation or file safety. The signature is a **composable explorer shell**: classic, Luna, Aero, Ribbon, Aqua, ChromeOS and Finder identities can select and arrange their UI components while sharing the same file operations and navigation state. Its restrained file grid/list remains the stable center.
 
 Audience: people using RiceBowl on Linux X11/Wayland, including older ThinkPads and small desktops. Product register, English UI in v0.1, WCAG 2.2 AA as the target. Do not use decorative gradients, large marketing cards or gratuitous animation.
 

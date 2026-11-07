@@ -13,13 +13,13 @@ cleanup() {
   rm -r -- "$fixture"
 }
 trap cleanup EXIT
-mkdir -p "$fixture/config/rice-explorer" "$fixture/state" "$fixture/cache" "$fixture/files" screenshots
+mkdir -p "$fixture/config/ricefield" "$fixture/state" "$fixture/cache" "$fixture/files" screenshots
 printf 'one' > "$fixture/files/report-42.pdf"
 printf 'two' > "$fixture/files/other.txt"
-printf "filter_name_regex = '['\n" > "$fixture/config/rice-explorer/config.toml"
+printf "filter_name_regex = '['\n" > "$fixture/config/ricefield/config.toml"
 export XDG_CONFIG_HOME="$fixture/config" XDG_STATE_HOME="$fixture/state" XDG_CACHE_HOME="$fixture/cache"
 export LIBGL_ALWAYS_SOFTWARE=1 GSETTINGS_BACKEND=memory
-./target/release/rice-explorer --theme win7 "$fixture/files" > "$fixture/app.log" 2>&1 &
+./target/release/ricefield --theme win7 "$fixture/files" > "$fixture/app.log" 2>&1 &
 app_pid=$!
 window=''
 for ((attempt = 0; attempt < 100; attempt++)); do
@@ -52,12 +52,12 @@ click_at 750 376 # Filename regex text field
 xdotool key ctrl+a
 xdotool type --delay 20 '42'
 for ((attempt = 0; attempt < 50; attempt++)); do
-  if grep -Fqx 'filter_name_regex = "42"' "$fixture/config/rice-explorer/config.toml"; then
+  if grep -Fqx 'filter_name_regex = "42"' "$fixture/config/ricefield/config.toml"; then
     break
   fi
   sleep 0.1
 done
-if ! grep -Fqx 'filter_name_regex = "42"' "$fixture/config/rice-explorer/config.toml"; then
+if ! grep -Fqx 'filter_name_regex = "42"' "$fixture/config/ricefield/config.toml"; then
   import -window "$window" screenshots/filters-edit-failed.png
   if [[ ${CI:-} == true ]] && command -v convert >/dev/null 2>&1; then
     # Keep a small visual diagnostic in CI logs when artifact download is

@@ -59,7 +59,7 @@ fn command(action: Action, uri: &str) -> Command {
             command.arg("clear");
         }
     }
-    command.args(["application", "rice-explorer", "location", uri]);
+    command.args(["application", "ricefield", "location", uri]);
     command
 }
 

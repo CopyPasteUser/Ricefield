@@ -21,12 +21,12 @@ fi
 # Acquire before inspecting any destination: a failed upgrade must never
 # restore stale backups on top of a newer concurrently installed version.
 source "$project_dir/scripts/user_install_lock.sh"
-rice_explorer_lock_installation
+ricefield_lock_installation
 
 targets=(
-  "$user_home/.local/bin/rice-explorer"
-  "$data_dir/applications/rice-explorer.desktop"
-  "$data_dir/icons/hicolor/scalable/apps/rice-explorer.svg"
+  "$user_home/.local/bin/ricefield"
+  "$data_dir/applications/ricefield.desktop"
+  "$data_dir/icons/hicolor/scalable/apps/ricefield.svg"
 )
 for target in "${targets[@]}"; do
   if [[ -L "$target" || ( -e "$target" && ! -f "$target" ) ]]; then
@@ -49,7 +49,7 @@ on_exit() {
     for i in "${!targets[@]}"; do
       if [[ "${previous[$i]}" == 1 ]]; then
         # Restore by rename too, so a running former binary stays intact.
-        rollback_tmp="$(mktemp "$(dirname -- "${targets[$i]}")/.rice-explorer-rollback.XXXXXX")" || { restored=0; continue; }
+        rollback_tmp="$(mktemp "$(dirname -- "${targets[$i]}")/.ricefield-rollback.XXXXXX")" || { restored=0; continue; }
         if ! cp -p -- "$backup_dir/$i" "$rollback_tmp" || ! mv -f -- "$rollback_tmp" "${targets[$i]}"; then
           restored=0
           rm -f -- "$rollback_tmp"
@@ -77,7 +77,7 @@ for i in "${!targets[@]}"; do
 done
 
 mkdir -p -- "$(dirname -- "${targets[0]}")"
-binary_tmp="$(mktemp "$(dirname -- "${targets[0]}")/.rice-explorer.XXXXXX")"
+binary_tmp="$(mktemp "$(dirname -- "${targets[0]}")/.ricefield.XXXXXX")"
 install -m755 -- "$source_binary" "$binary_tmp"
 mv -f -- "$binary_tmp" "${targets[0]}"
 binary_tmp=''
@@ -85,7 +85,7 @@ published=1
 # The parent keeps the advisory lock. Do not leak its descriptor into desktop
 # cache helpers that might spawn longer-lived background processes.
 (
-  exec {RICE_EXPLORER_INSTALL_LOCK_FD}>&-
+  exec {RICEFIELD_INSTALL_LOCK_FD}>&-
   bash "$project_dir/scripts/install_desktop_entry.sh" "$project_dir"
 )
 echo 'Installed RiceField and its application-menu launcher.'

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Must be run under both dbus-run-session and Xvfb, never the user's bus.
-: "${RICE_EXPLORER_TEST_BUS:?Run with a private D-Bus session}"
+: "${RICEFIELD_TEST_BUS:?Run with a private D-Bus session}"
 fixture="$(mktemp -d)"
 app_pid=''
 cleanup() {
@@ -18,7 +18,7 @@ printf 'Selected through FileManager1\n' > "$fixture/files/reveal.txt"
 export XDG_CONFIG_HOME="$fixture/config" XDG_STATE_HOME="$fixture/state" XDG_CACHE_HOME="$fixture/cache"
 export LIBGL_ALWAYS_SOFTWARE=1
 export GSETTINGS_BACKEND=memory
-./target/release/rice-explorer --file-manager-service "$fixture/files" > "$fixture/app.log" 2>&1 &
+./target/release/ricefield --file-manager-service "$fixture/files" > "$fixture/app.log" 2>&1 &
 app_pid=$!
 call_service() {
   timeout 5s gdbus call --session --dest org.freedesktop.FileManager1 \

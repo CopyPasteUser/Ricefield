@@ -192,7 +192,7 @@ pub fn config_file() -> PathBuf {
     let root = env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| home().join(".config"));
-    root.join("rice-explorer").join("config.toml")
+    root.join("ricefield").join("config.toml")
 }
 
 impl Config {
@@ -638,10 +638,10 @@ mod tests {
             .unwrap()
             .as_nanos();
         let root = env::temp_dir().join(format!(
-            "rice-explorer-config-test-{}-{unique}",
+            "ricefield-config-test-{}-{unique}",
             std::process::id()
         ));
-        let file = root.join("rice-explorer").join("config.toml");
+        let file = root.join("ricefield").join("config.toml");
         fs::create_dir_all(file.parent().unwrap()).unwrap();
         let decoy = file.with_extension("toml.tmp");
         fs::write(&decoy, b"unrelated").unwrap();

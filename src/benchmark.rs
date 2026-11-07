@@ -21,10 +21,7 @@ pub fn run() -> io::Result<()> {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "rice-explorer-bench-{}-{nonce}",
-        std::process::id()
-    ));
+    let root = std::env::temp_dir().join(format!("ricefield-bench-{}-{nonce}", std::process::id()));
     let mut builder = fs::DirBuilder::new();
     #[cfg(unix)]
     {
