@@ -53,6 +53,23 @@ Original vector icons, a sky-and-water masthead and a responsive bottom dock;
 no downloaded or proprietary operating-system assets. File actions remain
 shared and network tabs remain read-only.
 
+## ChromeOS · Files rice
+
+![ChromeOS-inspired Files shell at 1120 × 720](chromeos.png)
+
+| Additional view | Screenshot |
+| --- | --- |
+| Clicked icon-grid view | [chromeos-icons.png](chromeos-icons.png) |
+| Open functional More menu | [chromeos-more.png](chromeos-more.png) |
+| Split view | [chromeos-split.png](chromeos-split.png) |
+| Compact window (700 × 470) | [chromeos-compact.png](chromeos-compact.png) |
+| Narrow window (380 × 650) | [chromeos-narrow.png](chromeos-narrow.png) |
+
+Unlike Finder or Explorer, the Files shell groups My files, shortcuts and
+storage/network locations beneath a compact material-style toolbar. It uses
+original flat blue folder/file vectors and no Google services or assets.
+The overflow menu, grid/list toggle and navigational controls are live.
+
 ## macOS · Finder rice
 
 ![Finder-inspired macOS shell in a real 1120 × 720 GUI capture](macos.png)

@@ -163,6 +163,26 @@ for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sideba
     xdotool mousemove --window "$window_id" 956 53 click 1
     sleep 0.35
   fi
+  # ChromeOS Files must have working overflow actions and a genuinely
+  # different icon grid. Keep screenshots of both, not only its static shell.
+  if [[ "$theme" == chromeos ]]; then
+    xdotool mousemove --window "$window_id" 1072 25 click 1
+    sleep 0.45
+    xdotool mousemove --window "$window_id" 970 650
+    import -window "$window_id" screenshots/chromeos-more.png
+    require_visible_change screenshots/chromeos.png screenshots/chromeos-more.png \
+      'ChromeOS Files More menu' 600
+    xdotool key Escape
+    sleep 0.2
+    xdotool mousemove --window "$window_id" 990 25 click 1
+    sleep 0.5
+    xdotool mousemove --window "$window_id" 970 650
+    import -window "$window_id" screenshots/chromeos-icons.png
+    require_visible_change screenshots/chromeos.png screenshots/chromeos-icons.png \
+      'ChromeOS Files grid view' 2000
+    xdotool mousemove --window "$window_id" 1027 25 click 1
+    sleep 0.3
+  fi
   # Exercise the new two-pane command on every shell; a screenshot is a smoke
   # artifact, not proof of correct hit targets or system drag-and-drop.
   xdotool key F3

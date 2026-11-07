@@ -677,7 +677,14 @@ pub fn sidebar_section(
         }
         return;
     }
-    let title = if theme.shell_kind() == ShellKind::Finder {
+    let title = if theme.shell_kind() == ShellKind::Chromeos {
+        match section {
+            SidebarSection::Tasks => "Tools",
+            SidebarSection::Places => "My files",
+            SidebarSection::Favorites => "Shortcuts",
+            SidebarSection::Volumes => "Storage & network",
+        }
+    } else if theme.shell_kind() == ShellKind::Finder {
         match section {
             SidebarSection::Tasks => "Tools",
             SidebarSection::Places => "Places",
@@ -724,7 +731,11 @@ pub fn sidebar_section(
                 .size(
                     if matches!(
                         theme.shell_kind(),
-                        ShellKind::Aero | ShellKind::Ribbon | ShellKind::Aqua | ShellKind::Finder
+                        ShellKind::Aero
+                            | ShellKind::Ribbon
+                            | ShellKind::Aqua
+                            | ShellKind::Finder
+                            | ShellKind::Chromeos
                     ) {
                         12.5
                     } else {
@@ -735,7 +746,11 @@ pub fn sidebar_section(
                 .color(
                     if matches!(
                         theme.shell_kind(),
-                        ShellKind::Aero | ShellKind::Ribbon | ShellKind::Aqua | ShellKind::Finder
+                        ShellKind::Aero
+                            | ShellKind::Ribbon
+                            | ShellKind::Aqua
+                            | ShellKind::Finder
+                            | ShellKind::Chromeos
                     ) {
                         theme.palette.text()
                     } else {

@@ -1,6 +1,8 @@
 use crate::{
     aqua::{self, AquaAction, AquaContext},
-    archive, clipboard,
+    archive,
+    chromeos::{self, FilesAction, FilesContext, FilesNavIcon},
+    clipboard,
     config::{self, Config},
     desktop, discovery, duplicates,
     file_view::{self, natural_cmp},
@@ -1067,6 +1069,7 @@ pub struct Explorer {
     aero_advanced_open: bool,
     aqua_advanced_open: bool,
     finder_advanced_open: bool,
+    chromeos_advanced_open: bool,
     win10_ribbon_page: RibbonPage,
     win10_ribbon_expanded: bool,
     win10_advanced_open: bool,
@@ -1309,6 +1312,7 @@ impl Explorer {
             aero_advanced_open: false,
             aqua_advanced_open: false,
             finder_advanced_open: false,
+            chromeos_advanced_open: false,
             win10_ribbon_page: RibbonPage::Home,
             win10_ribbon_expanded: true,
             win10_advanced_open: false,
@@ -3274,7 +3278,11 @@ impl Explorer {
         let theme = self.theme.clone();
         if matches!(
             theme.shell_kind(),
-            ShellKind::Luna | ShellKind::Ribbon | ShellKind::Aqua | ShellKind::Finder
+            ShellKind::Luna
+                | ShellKind::Ribbon
+                | ShellKind::Aqua
+                | ShellKind::Finder
+                | ShellKind::Chromeos
         ) && !self.busy
             && self.operation_queue.is_empty()
             && self.active_operation.is_none()
@@ -4477,7 +4485,7 @@ impl Explorer {
                     // Windows 10's classic Explorer has a ribbon but no
                     // single-folder tab row; keep RiceField's multi-tab UI
                     // when two or more tabs are actually open.
-                    if theme.shell_kind() == ShellKind::Ribbon
+                    if matches!(theme.shell_kind(), ShellKind::Ribbon | ShellKind::Chromeos)
                         && *component == ChromeComponent::Tabs
                         && self.tabs.len() == 1
                     {
@@ -4666,6 +4674,12 @@ impl Explorer {
     }
 
     fn command_bar(&mut self, ui: &mut egui::Ui, theme: &Theme) {
+        if theme.shell_kind() == ShellKind::Chromeos {
+            if let Some(action) = chromeos::secondary_commands(ui, self.chromeos_context()) {
+                self.chromeos_command(action);
+            }
+            return;
+        }
         if theme.shell_kind() == ShellKind::Finder {
             // Custom TOML compositions may still explicitly request this
             // optional secondary strip. The default Finder theme uses a
@@ -4955,6 +4969,10 @@ impl Explorer {
     }
 
     fn navigation_bar(&mut self, ui: &mut egui::Ui) {
+        if self.theme.shell_kind() == ShellKind::Chromeos {
+            self.chromeos_navigation_bar(ui);
+            return;
+        }
         if self.theme.shell_kind() == ShellKind::Finder {
             self.finder_navigation_bar(ui);
             return;
@@ -4989,6 +5007,101 @@ impl Explorer {
                 self.navigation_address(ui, false);
                 self.navigation_search(ui, false);
             });
+        }
+    }
+
+    fn chromeos_navigation_bar(&mut self, ui: &mut egui::Ui) {
+        let theme = self.theme.clone();
+        let title = self
+            .current()
+            .path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "My files".into());
+        if let Some(action) = chromeos::toolbar(ui, &theme, &title, self.chromeos_context()) {
+            self.chromeos_command(action);
+        }
+        let narrow = ui.available_width() < 730.0;
+        ui.horizontal(|ui| {
+            let width = if narrow {
+                ui.available_width().max(90.0)
+            } else {
+                (ui.available_width() - 265.0).max(130.0)
+            };
+            self.breadcrumb_bar(ui, width);
+            if !narrow {
+                self.navigation_search(ui, false);
+            }
+        });
+        if narrow {
+            ui.horizontal(|ui| self.navigation_search(ui, true));
+        }
+    }
+
+    fn chromeos_context(&self) -> FilesContext {
+        FilesContext {
+            local: self.current().remote_uri.is_none(),
+            selection: self.current().selected.len(),
+            back: !self.current().back.is_empty(),
+            forward: !self.current().forward.is_empty(),
+            grid: self.config.view == "grid",
+            split: self.split_pair.is_some(),
+            sidebar: self.config.show_sidebar,
+            hidden: self.config.show_hidden,
+            pinned: self.config.bookmarks.contains(&self.current().path),
+            tools: self.chromeos_advanced_open,
+            volume_busy: self.volume_busy,
+        }
+    }
+
+    fn chromeos_command(&mut self, action: FilesAction) {
+        match action {
+            FilesAction::Back => self.navigation_command(NavigationCommand::Back),
+            FilesAction::Forward => self.navigation_command(NavigationCommand::Forward),
+            FilesAction::Parent => self.navigation_command(NavigationCommand::Parent),
+            FilesAction::Grid | FilesAction::List => {
+                self.config.view = if action == FilesAction::Grid {
+                    "grid"
+                } else {
+                    "list"
+                }
+                .into();
+                self.dirty_config = true;
+            }
+            FilesAction::NewFolder => self.file_command(FileCommand::NewFolder),
+            FilesAction::Refresh => self.navigation_command(NavigationCommand::Refresh),
+            FilesAction::Copy => self.file_command(FileCommand::Copy),
+            FilesAction::Cut => self.file_command(FileCommand::Cut),
+            FilesAction::Paste => self.file_command(FileCommand::Paste),
+            FilesAction::Rename => self.file_command(FileCommand::Rename),
+            FilesAction::Trash => self.file_command(FileCommand::Trash),
+            FilesAction::Info => self.file_command(FileCommand::Properties),
+            FilesAction::Preview => {
+                if self.preview_quick_look {
+                    self.preview_quick_look = false;
+                    self.preview_path = None;
+                    self.preview_content = None;
+                } else if let Some(path) = self.selected_paths().first().cloned() {
+                    self.preview_quick_look = true;
+                    self.open_preview(path);
+                }
+            }
+            FilesAction::Pin => self.toggle_bookmark(),
+            FilesAction::Split => self.navigation_command(NavigationCommand::Split),
+            FilesAction::Sidebar => {
+                self.config.show_sidebar = !self.config.show_sidebar;
+                self.dirty_config = true;
+            }
+            FilesAction::Hidden => self.navigation_command(NavigationCommand::Hidden),
+            FilesAction::Network => {
+                self.discovery_open = true;
+                if self.discovery_hosts.is_empty() {
+                    self.start_discovery();
+                }
+            }
+            FilesAction::Connect => self.open_network_login(String::new()),
+            FilesAction::Transfers => self.show_operations = true,
+            FilesAction::Tools => self.chromeos_advanced_open = !self.chromeos_advanced_open,
         }
     }
 
@@ -5229,7 +5342,10 @@ impl Explorer {
         let remote = self.current().remote_uri.is_some();
         let win10 = self.theme.shell_kind() == ShellKind::Ribbon;
         let aqua = self.theme.shell_kind() == ShellKind::Aqua;
-        let finder_shell = self.theme.shell_kind() == ShellKind::Finder;
+        let finder_shell = matches!(
+            self.theme.shell_kind(),
+            ShellKind::Finder | ShellKind::Chromeos
+        );
         egui::Frame::new()
             .fill(Color32::WHITE)
             .stroke(egui::Stroke::new(
@@ -5587,7 +5703,11 @@ impl Explorer {
     fn navigation_search(&mut self, ui: &mut egui::Ui, compact: bool) {
         let aero = matches!(
             self.theme.shell_kind(),
-            ShellKind::Aero | ShellKind::Ribbon | ShellKind::Aqua | ShellKind::Finder
+            ShellKind::Aero
+                | ShellKind::Ribbon
+                | ShellKind::Aqua
+                | ShellKind::Finder
+                | ShellKind::Chromeos
         );
         let search_width = if aero {
             if compact {
@@ -5706,7 +5826,10 @@ impl Explorer {
                     .inner_margin(
                         if matches!(
                             theme.shell_kind(),
-                            ShellKind::Ribbon | ShellKind::Aqua | ShellKind::Finder
+                            ShellKind::Ribbon
+                                | ShellKind::Aqua
+                                | ShellKind::Finder
+                                | ShellKind::Chromeos
                         ) {
                             egui::Margin::symmetric(5, 8)
                         } else {
@@ -5741,6 +5864,7 @@ impl Explorer {
                                     | ShellKind::Ribbon
                                     | ShellKind::Aqua
                                     | ShellKind::Finder
+                                    | ShellKind::Chromeos
                             ) {
                                 ui.add_space(9.0);
                             } else {
@@ -5751,6 +5875,40 @@ impl Explorer {
                         let mut render_section = |ui: &mut egui::Ui| match section {
                             SidebarSection::Tasks => self.sidebar_tasks(ui),
                             SidebarSection::Places => {
+                                if theme.shell_kind() == ShellKind::Chromeos {
+                                    let home = config::home();
+                                    if chromeos::sidebar_link(
+                                        ui,
+                                        &theme,
+                                        "My files",
+                                        self.current().path == home,
+                                        FilesNavIcon::Home,
+                                    ) {
+                                        self.navigate(home.clone());
+                                    }
+                                    for (name, icon) in [
+                                        ("Downloads", FilesNavIcon::Download),
+                                        ("Documents", FilesNavIcon::Folder),
+                                        ("Pictures", FilesNavIcon::Image),
+                                        ("Music", FilesNavIcon::Music),
+                                        ("Videos", FilesNavIcon::Video),
+                                        ("Desktop", FilesNavIcon::Folder),
+                                    ] {
+                                        let path = home.join(name);
+                                        if path.is_dir()
+                                            && chromeos::sidebar_link(
+                                                ui,
+                                                &theme,
+                                                name,
+                                                self.current().path == path,
+                                                icon,
+                                            )
+                                        {
+                                            self.navigate(path);
+                                        }
+                                    }
+                                    return;
+                                }
                                 if theme.shell_kind() == ShellKind::Finder {
                                     for (name, path) in self.places.clone() {
                                         let icon = if path == Path::new("/") {
@@ -5893,6 +6051,39 @@ impl Explorer {
                                 self.folder_tree_root(ui);
                             }
                             SidebarSection::Favorites => {
+                                if theme.shell_kind() == ShellKind::Chromeos {
+                                    for path in self.config.bookmarks.clone() {
+                                        let label =
+                                            path.file_name().unwrap_or_default().to_string_lossy();
+                                        if chromeos::sidebar_link(
+                                            ui,
+                                            &theme,
+                                            &shorten(&label, 22),
+                                            self.current().path == path,
+                                            FilesNavIcon::Shortcut,
+                                        ) {
+                                            self.navigate(path);
+                                        }
+                                    }
+                                    if self.current().remote_uri.is_none()
+                                        && ui
+                                            .small_button(
+                                                if self
+                                                    .config
+                                                    .bookmarks
+                                                    .contains(&self.current().path)
+                                                {
+                                                    "− Remove shortcut"
+                                                } else {
+                                                    "+ Add shortcut"
+                                                },
+                                            )
+                                            .clicked()
+                                    {
+                                        self.toggle_bookmark();
+                                    }
+                                    return;
+                                }
                                 if theme.shell_kind() == ShellKind::Finder {
                                     let home = config::home();
                                     if finder::sidebar_link(
@@ -6152,7 +6343,16 @@ impl Explorer {
                                 let ribbon = theme.shell_kind() == ShellKind::Ribbon;
                                 let aqua_shell = theme.shell_kind() == ShellKind::Aqua;
                                 let finder_shell = theme.shell_kind() == ShellKind::Finder;
-                                let discover = if finder_shell {
+                                let chromeos_shell = theme.shell_kind() == ShellKind::Chromeos;
+                                let discover = if chromeos_shell {
+                                    chromeos::sidebar_link(
+                                        ui,
+                                        &theme,
+                                        "Network",
+                                        false,
+                                        FilesNavIcon::Network,
+                                    )
+                                } else if finder_shell {
                                     finder::sidebar_link(
                                         ui,
                                         &theme,
@@ -6199,7 +6399,16 @@ impl Explorer {
                                         self.start_discovery();
                                     }
                                 }
-                                let connect = if finder_shell {
+                                let connect = if chromeos_shell {
+                                    !self.volume_busy
+                                        && chromeos::sidebar_link(
+                                            ui,
+                                            &theme,
+                                            "Connect to server",
+                                            false,
+                                            FilesNavIcon::Network,
+                                        )
+                                } else if finder_shell {
                                     !self.volume_busy
                                         && finder::sidebar_link(
                                             ui,
@@ -6319,7 +6528,15 @@ impl Explorer {
                                     ) {
                                         continue;
                                     }
-                                    let remote_clicked = if finder_shell {
+                                    let remote_clicked = if chromeos_shell {
+                                        chromeos::sidebar_link(
+                                            ui,
+                                            &theme,
+                                            &shorten(&uri, 24),
+                                            false,
+                                            FilesNavIcon::Network,
+                                        )
+                                    } else if finder_shell {
                                         finder::sidebar_link(
                                             ui,
                                             &theme,
@@ -6369,7 +6586,19 @@ impl Explorer {
                                             path.file_name().unwrap_or_default().to_string_lossy()
                                         )
                                     };
-                                    let response = if finder_shell {
+                                    let response = if chromeos_shell {
+                                        chromeos::sidebar_response(
+                                            ui,
+                                            &theme,
+                                            &label,
+                                            self.current().path == path,
+                                            if volume.network {
+                                                FilesNavIcon::Network
+                                            } else {
+                                                FilesNavIcon::Drive
+                                            },
+                                        )
+                                    } else if finder_shell {
                                         finder::sidebar_response(
                                             ui,
                                             &theme,
@@ -6470,7 +6699,9 @@ impl Explorer {
                                             }
                                         });
                                     }
-                                    let activated = if finder_shell {
+                                    let activated = if chromeos_shell {
+                                        chromeos::activated(ui, &response)
+                                    } else if finder_shell {
                                         finder::sidebar_activated(ui, &response)
                                     } else if aqua_shell {
                                         aqua::sidebar_activated(ui, &response)
@@ -6770,13 +7001,15 @@ impl Explorer {
             .frame(
                 egui::Frame::new()
                     .fill(theme.palette.panel())
-                    .inner_margin(egui::Margin::same(if matches!(theme.shell_kind(), ShellKind::Luna | ShellKind::Aero | ShellKind::Ribbon | ShellKind::Aqua | ShellKind::Finder) { 5 } else { 14 })),
+                    .inner_margin(egui::Margin::same(if matches!(theme.shell_kind(), ShellKind::Luna | ShellKind::Aero | ShellKind::Ribbon | ShellKind::Aqua | ShellKind::Finder | ShellKind::Chromeos) { 5 } else { 14 })),
             )
             .show(ui, |ui| {
                 // The XP shell starts with the folder view, not two rows of
                 // modern commands. Advanced tools remain available via Tools
                 // -> Show RiceField tools, without losing any functionality.
-                let show_toolbox = if theme.shell_kind() == ShellKind::Finder {
+                let show_toolbox = if theme.shell_kind() == ShellKind::Chromeos {
+                    self.chromeos_advanced_open
+                } else if theme.shell_kind() == ShellKind::Finder {
                     self.finder_advanced_open
                 } else if theme.shell_kind() == ShellKind::Aqua {
                     self.aqua_advanced_open
