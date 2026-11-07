@@ -147,6 +147,12 @@ At baseline commit `214e585`, `main` and
 | P1 | Transfer UX | Queue, bounded concurrency, progress/rate/ETA, conflict dialog, undo when safe, batch rename preview |
 | P1 | Storage and network | GIO/GVfs SMB/SFTP/WebDAV, system NFS, UDisks2/Polkit mount/eject, secrets, reconnect and offline errors |
 | P0 | Network writes before 1.0 | Server-enforced atomic no-overwrite publication for each promised backend, private staging and byte verification, adversarial two-client races, abort/offline/crash recovery; fail closed when unsupported |
+
+WebDAV now has an initial conditional `PUT`/`MOVE Overwrite: F` implementation
+with a disposable per-upload live server probe and staged byte verification.
+This is **partial P0 work**, not acceptance: SMB/SFTP/MTP write backends,
+interrupted remote stage recovery and actual NAS concurrency/hardware tests
+are still outstanding. Never substitute generic GIO move for any of them.
 | P1 | Archives | ZIP, TAR variants, 7z and optional RAR with traversal, symlink and bomb protection |
 | P1 | Explorer functions | Split view, session restore, drag-out, folder tree, context actions and robust keyboard interaction |
 | P1 | Preview and search | Bounded thumbnails, PDF/media/code/archive preview, metadata, filters and cancellable search |

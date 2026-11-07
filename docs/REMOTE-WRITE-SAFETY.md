@@ -1,6 +1,6 @@
 # Why generic GIO network writes are still disabled
 
-**Status: P0, 2026-11-06.** RiceField must not overwrite an unrelated file,
+**Status: P0, updated 2026-11-07.** RiceField must not overwrite an unrelated file,
 even when two clients race to publish the same destination name. A file may
 appear under its final name only after its complete contents are verified.
 These are requirements for turning on network writes, not optional UX policy.
@@ -45,7 +45,19 @@ its upload controls, native bindings or remote write code entered `main`.
 ## Safe behavior today
 
 GIO URI tabs support **read-only navigation, previews and explicit downloads**.
-Remote rename, delete and upload remain disabled. A system-mounted share can be
+An isolated WebDAV-only single-file upload path now attempts conditional
+`PUT If-None-Match: *` to an unpredictable private stage, verifies the full
+staged bytes against a private local snapshot and requests server-side
+`MOVE` with `Overwrite: F`. Before each upload, four disposable checks
+(including three concurrent two-client collisions) require exactly one
+publisher to succeed and the other to receive HTTP 412. Unsupported or
+nonconforming servers fail closed, with no upload. This provides a narrowly
+testable backend, **not acceptance of every WebDAV implementation**; real
+NAS and adversarial process-crash cases still require user testing. Failed
+uploads may leave hidden server stages requiring manual inspection.
+
+SMB, SFTP and MTP upload, and all remote rename and delete actions remain
+disabled until their own atomic backends pass the same gate. A system-mounted share can be
 browsed as a local path and only supports the local file engine's guarded
 operations where its mount exposes the necessary filesystem primitives.
 Do not bypass a rejected atomic rename with a non-atomic fallback.

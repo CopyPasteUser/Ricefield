@@ -33,7 +33,7 @@ The details are intentional: 98 has a dense gray menu and tree, XP a blue tasks 
 - **Browse:** tabs, split panes, bookmarks, folder tree, list/grid views and session restore.
 - **Organize:** copy, move, rename, cycle-safe batch rename, trash, file permissions, progress and conflict previews.
 - **Find and inspect:** search, saved filters, thumbnails, Quick Look and ZIP/TAR/7z handling.
-- **Reach storage:** SMB, SFTP, WebDAV and MTP discovery/browsing with navigable breadcrumbs, selectable/sortable file rows, previews, queued downloads and optional credential storage; removable USB volume actions using UDisks2/Polkit.
+- **Reach storage:** SMB, SFTP, WebDAV and MTP discovery/browsing with navigable breadcrumbs, selectable/sortable file rows, previews, queued downloads and optional credential storage. WebDAV additionally offers a guarded **single-file upload** after a live server collision-safety probe; USB actions use UDisks2/Polkit.
 - **Customize:** seven built-in rices plus user TOML files for palettes, spacing, navigation and layout.
 
 **Release status: `1.0.0-rc.17` candidate.** Automated Rust tests and native Linux GUI screenshots pass, but the final physical Linux Mint/NAS/USB acceptance is still open. Keep your existing file manager installed.
@@ -45,7 +45,7 @@ Target: Linux x86_64 (Ubuntu 24.04 release builds support Linux Mint 22). The co
 ```bash
 sudo apt install build-essential pkg-config libxcb-render0-dev \
   libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-0 \
-  libssl-dev libgl1-mesa-dev libarchive13t64 xdg-utils
+  libssl-dev libgl1-mesa-dev libarchive13t64 xdg-utils curl
 
 git clone https://github.com/CopyPasteUser/Ricefield.git
 cd Ricefield
@@ -70,7 +70,7 @@ ricefield --theme-file /path/to/custom-rice.toml
 
 ## Safety and known limits
 
-- Remote locations are **read-only**; downloads to a local folder are explicit, bounded and no-overwrite. Remote upload, rename and deletion remain disabled pending [atomicity guarantees](docs/REMOTE-WRITE-SAFETY.md).
+- Remote browsing is **read-only by default**, with explicit bounded no-overwrite downloads. WebDAV single-file upload is available only after a live conditional-MOVE safety probe, private stage and full byte verification. SMB, SFTP, MTP uploads, remote rename and deletion remain disabled pending [backend-specific atomicity guarantees](docs/REMOTE-WRITE-SAFETY.md); the 1.0 network-write gate is still open.
 - Cross-device moves preserve their sources after verified copies; cleanup requires a separate decision.
 - Batch rename has guarded session-only Undo, not full crash recovery. Inspect any interrupted batch.
 - USB mount, unmount and eject rely on UDisks2/Polkit; real-hardware acceptance and encrypted-volume unlock remain open.

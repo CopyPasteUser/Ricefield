@@ -110,8 +110,9 @@ Service after a successful mount. **Use saved login** retrieves them on demand;
 **Forget saved login** removes them. There is no plaintext fallback or automatic
 login. An unavailable/locked keyring or desktop session can prevent the operation.
 
-Connected shares open as read-only tabs with history, refresh, bounded filename
-search and text/binary prefix previews. Only the first 32 KiB are streamed for
+Connected shares open as predominantly read-only tabs with breadcrumbs,
+sortable selectable files, history, refresh, bounded filename search and
+text/binary prefix previews. Only the first 32 KiB are streamed for
 preview; large text is marked truncated, and binary bytes appear as a safe
 256-byte hex/ASCII sample. These previews are not source-integrity checks.
 Click **Download** beside a remote file
@@ -141,9 +142,22 @@ including within a downloaded folder. A server-side type change during
 transfer is not yet protected by a source-identity snapshot.
 Folder downloads preserve filenames and file bytes, not remote ownership,
 ACLs, extended attributes or server-side modification times; they are not
-lossless NAS backups. Remote uploads, rename, deletion and full file opening
-are not implemented. Real NAS/offline/keyring/download
-acceptance remains open.
+lossless NAS backups. For **WebDAV only**, select **Upload file…** in a remote
+tab, enter an absolute local regular-file path (prefilled from one selected
+local tab item when available), and supply a username/password or an exactly
+matching saved Secret Service login. RiceField first runs live server
+no-overwrite probes, copies the local source to a private snapshot, uploads a
+hidden conditional stage, compares every byte via GET and asks the server to
+publish atomically with `MOVE Overwrite: F`. The existing target must be
+refused with HTTP 412. Private `.ricefield-upload-*` stages may remain on
+server failures or crashes; inspect them manually. There is no automatic
+overwrite fallback, folder upload, remote rename or remote delete. SMB/SFTP/
+MTP writes remain unavailable, and **real NAS/offline/interrupt acceptance
+is required before 1.0**. The client also needs `curl` installed; HTTPS uses
+the normal system CA trust, never an insecure-TLS bypass. For `dav://` plain
+HTTP outside loopback, the user must explicitly acknowledge that passwords
+and file contents may cross the network unencrypted; use `davs://` whenever
+possible.
 
 ## Archives and previews
 

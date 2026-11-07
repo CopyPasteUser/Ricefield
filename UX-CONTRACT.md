@@ -115,10 +115,16 @@ may be active at once.
 
 The address bar and CLI use the same local/remote location parser. A valid
 `file://` URI resolves to a native path. SMB/SFTP/WebDAV/MTP addresses launch
-read-only GIO tabs; an unsupported scheme fails without navigating or
+read-only GIO browsing tabs; an unsupported scheme fails without navigating or
 mutating the current local tab. The desktop launcher accepts URIs via `%U`.
 URI credentials are rejected rather than retained in status messages or tab
-history. Remote mutations remain disabled pending independent recovery gates.
+history. The only separate, explicitly authorized remote mutation is a
+single-file WebDAV upload: it copies a no-follow local source to a private
+snapshot, probes `If-None-Match: *` and `MOVE Overwrite: F` (including remote
+two-client collisions), compares full staged bytes and requests the server
+to publish without overwrite. Incompatible servers and SMB/SFTP/MTP remain
+write-disabled; no generic GIO fallback, remote rename or delete is allowed.
+Unsuccessful uploads can leave private server-side stages for manual review.
 Remote preview reads only a bounded first-32-KiB prefix on a cancellable worker;
 larger text is explicitly marked incomplete, and binary/control-bearing bytes
 use the shared escaped 256-byte hex preview. The preview does not imply a
