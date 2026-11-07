@@ -25,8 +25,13 @@
   yellow folders and white paper file icons without any Microsoft artwork.
 - Hide the modern toolbox by default, retain it via Tools, and route every
   action through shared filesystem and remote write safety controllers.
-- Scripted GUI smoke and physical Linux Mint/NAS acceptance remain separate
-  gates; window decorations stay with the desktop window manager.
+- Native Xvfb GUI smoke passes for the full shell, clicked Tools menu, split,
+  compact and narrow states (CI `42340656430`); published captures are in
+  `docs/screenshots/`. Compare all 21 pairs of the seven default rice images
+  to detect accidental convergence. Correct Win7's idle transfer band and the
+  GUI filter harness coordinates after its removal.
+- Physical Linux Mint/NAS acceptance remains a separate gate; window
+  decorations stay with the desktop window manager.
 
 ## Unreleased — macOS Finder-inspired shell
 

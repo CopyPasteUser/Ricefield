@@ -37,8 +37,11 @@ performance, Linux integration, then visual polish.
   under shared safety controls, with advanced tools on demand.
 - [x] Preserve narrow-window accessibility, custom TOML composition and
   RiceBowl/window-manager ownership of window decorations. Use no MS assets.
-- [ ] Inspect and publish native CI screenshots for full, View/menu actions,
-  split, compact and narrow layouts; compare against era-appropriate references.
+- [x] Inspect and publish native CI screenshots for the full shell, functional
+  Tools menu, split, compact and narrow layouts. All 21 pairs of seven rice
+  default views exceed the visual-difference threshold (CI `42340656430`).
+- [ ] Obtain owner visual-fidelity sign-off against era-appropriate references
+  on a physical Linux desktop; screenshots alone do not prove exact fidelity.
 - [ ] Check physical Linux Mint scaling, mouse/keyboard focus and NAS/USB
   interactions before considering visual acceptance complete.
 

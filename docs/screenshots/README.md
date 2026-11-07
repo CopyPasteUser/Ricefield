@@ -2,6 +2,21 @@
 
 These are unedited screenshots captured from the **running Rust/egui application** in GitHub Actions' Xvfb GUI smoke test. The fixtures contain disposable example files; the images are not renders or concept mockups. They verify rendering, not usability on a physical Linux desktop.
 
+## Windows 98 · Classic Explorer
+
+![Windows 98-inspired Classic Explorer with a gray menu/toolbar and folders rail](win98.png)
+
+| Additional view | Screenshot |
+| --- | --- |
+| Functional Tools menu | [win98-tools.png](win98-tools.png) |
+| Two-folder split | [win98-split.png](win98-split.png) |
+| Compact window (700 × 470) | [win98-compact.png](win98-compact.png) |
+| Narrow window (380 × 650) | [win98-narrow.png](win98-narrow.png) |
+
+The gray menus, period-style bevel controls, Address/Go line and Folders/Drives
+rail are deliberately unlike the blue XP task pane or the modern File shells.
+File/volume actions remain real, with guarded mutations and native WM captions.
+
 ## Windows 10 · Explorer ribbon
 
 ![Windows 10-inspired Explorer shell at 1120 × 720](win10.png)
@@ -86,9 +101,5 @@ Original blue-folder/file vectors and Finder-like navigation, Favorites and
 Locations, with functional icon/list switches, Quick Look and More commands.
 There are no Apple icons or imitation traffic-light window controls: native
 decorations come from the desktop/window manager.
-
-## Other shells
-
-- [Windows 98-inspired](win98.png)
 
 Theme-specific UI uses original RiceField vector shapes and styling; no Microsoft assets or branding are copied. OS-level window decorations are left to the window manager / RiceBowl.

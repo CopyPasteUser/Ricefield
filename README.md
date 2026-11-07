@@ -2,53 +2,45 @@
 
 # RiceField
 
-**One file manager. Seven ways to make it yours.**
+**One Linux file manager. Seven unmistakable desktop styles.**
 
-A customizable Linux file manager built with **Rust + egui**, designed to work on its own and eventually integrate with the [RiceBowl desktop](https://github.com/CopyPasteUser/Ricebowl).
+A fast, customizable **Rust + egui** file manager, standalone today and designed for the [RiceBowl desktop](https://github.com/CopyPasteUser/Ricebowl).
 
-[Get started](#install) · [User guide](docs/USAGE.md) · [1.0 acceptance status](docs/1.0-STATUS.md) · [Screenshots](docs/screenshots/)
+[Install](#install) · [Screenshot gallery](docs/screenshots/) · [User guide](docs/USAGE.md) · [1.0 readiness](docs/1.0-STATUS.md)
 
 [![Rust checks](https://github.com/CopyPasteUser/Ricefield/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/Ricefield/actions/workflows/ci.yml)
 
 </div>
 
-![RiceField's original macOS Finder-inspired file-manager shell](docs/screenshots/macos.png)
+## Choose your desktop
 
-**macOS · Finder:** [full window](docs/screenshots/macos.png) · [icon view](docs/screenshots/macos-icons.png) · [More menu](docs/screenshots/macos-more.png) · [split view](docs/screenshots/macos-split.png) · [compact](docs/screenshots/macos-compact.png) · [narrow](docs/screenshots/macos-narrow.png)
+Each rice changes the navigation, toolbar, density, color, icons and workflow—not just a coat of paint. All seven run the **same real file manager**.
 
-**Windows 10 · Explorer:** [full window](docs/screenshots/win10.png) · [View](docs/screenshots/win10-view.png) · [Share](docs/screenshots/win10-share.png) · [split](docs/screenshots/win10-split.png) · [compact](docs/screenshots/win10-compact.png) · [narrow](docs/screenshots/win10-narrow.png)
+| Windows 98 · Classic Explorer | Windows XP · Luna |
+|:---:|:---:|
+| [![Original Windows 98-inspired Classic shell](docs/screenshots/win98.png)](docs/screenshots/win98.png) | [![Windows XP Luna-inspired tasks pane](docs/screenshots/xp-luna.png)](docs/screenshots/xp-luna.png) |
+| **Windows 7 · Aero** | **Windows 10 · Ribbon** |
+| [![Windows 7-style Explorer shell](docs/screenshots/win7.png)](docs/screenshots/win7.png) | [![Windows 10-inspired Explorer Ribbon](docs/screenshots/win10.png)](docs/screenshots/win10.png) |
+| **Frutiger Aero · Blue Skies** | **ChromeOS · Files** |
+| [![Frutiger Aero-inspired aqua shell](docs/screenshots/frutiger-aero.png)](docs/screenshots/frutiger-aero.png) | [![ChromeOS-inspired Files shell](docs/screenshots/chromeos.png)](docs/screenshots/chromeos.png) |
+| **macOS · Finder** | **Interactive views** |
+| [![macOS Finder-inspired shell](docs/screenshots/macos.png)](docs/screenshots/macos.png) | [ChromeOS grid + More](docs/screenshots/README.md#chromeos--files-rice) · [Windows 98 Tools](docs/screenshots/README.md#windows-98--classic-explorer) · [All compact and split views](docs/screenshots/) |
 
-**Windows 7 · Aero:** [full window](docs/screenshots/win7.png) · [split view](docs/screenshots/win7-split.png) · [compact](docs/screenshots/win7-compact.png) · [narrow](docs/screenshots/win7-narrow.png)
+The details are intentional: 98 has a gray menu and tree, XP a blue tasks pane, 7 an Aero command bar, 10 a Ribbon, Frutiger a glass shelf, ChromeOS a Files toolbar and macOS a Finder toolbar. Original vectors replace proprietary icons and logos. **Window decorations are controlled by RiceBowl or your Linux window manager**, not these file-manager themes.
 
-**XP Luna:** [full window](docs/screenshots/xp-luna.png) · [split view](docs/screenshots/xp-luna-split.png) · [more real GUI screenshots](docs/screenshots/)
+## File management
 
-**Frutiger Aero · Blue Skies:** [full window](docs/screenshots/frutiger-aero.png) · [Tools dock](docs/screenshots/frutiger-aero-tools.png) · [split view](docs/screenshots/frutiger-aero-split.png) · [compact](docs/screenshots/frutiger-aero-compact.png) · [narrow](docs/screenshots/frutiger-aero-narrow.png)
+- **Browse:** tabs, split panes, bookmarks, folder tree, list/grid views and session restore.
+- **Organize:** copy, move, rename, cycle-safe batch rename, trash, file permissions, progress and conflict previews.
+- **Find and inspect:** search, saved filters, thumbnails, Quick Look and ZIP/TAR/7z handling.
+- **Reach storage:** SMB, SFTP, WebDAV and MTP discovery/browsing; optional credential storage; removable USB volume actions using UDisks2/Polkit.
+- **Customize:** seven built-in rices plus user TOML files for palettes, spacing, navigation and layout.
 
-> **Status: 1.0.0-rc.17 candidate.** Not a signed-off stable 1.0. Network-write safety, complete recovery and physical Linux Mint/NAS/USB acceptance remain open. Keep your current file manager and use disposable data for testing risky operations.
-
-## Built for real file management
-
-- **Explore:** tabs, split panes, folder tree, bookmarks, grid/list views and session restore.
-- **Organize:** create, copy, move, rename (including cycle-safe batch rename), trash, link, edit Unix permissions/ownership and add no-overwrite `user.*` attributes where authorized, with progress, conflict previews and read-only transfer history across restarts.
-- **Find:** filename and content search, glob/regex filters, saved searches, thumbnails and Quick Look.
-- **Open archives:** create, browse and extract supported ZIP, TAR and 7z archives.
-- **Reach your NAS:** discover and browse SMB, SFTP, WebDAV and MTP, queue bounded file/folder downloads to a chosen local location, and optionally save credentials in Secret Service.
-- **Attach USB storage:** discover removable filesystems; explicitly mount, safely unmount, eject or power off eligible USB drives through UDisks2/Polkit.
-- **Rice it:** seven distinctive shells (98, XP, 7, 10, Frutiger Aero, ChromeOS and macOS) plus editable layout, colors and density.
-
-**Windows 7 · Aero:** [Explorer-style shell](docs/screenshots/win7.png) with clickable breadcrumb paths, an Organize/Share command strip, Favorites/Libraries/Computer navigation, aligned details columns and a bottom selection-details pane. File operations, network safety and window decorations remain shared with the core and desktop window manager.
-
-**Windows 10 · Explorer:** [Ribbon shell](docs/screenshots/win10.png) with File/Home/Share/View pages, responsive command groups, Quick access, This PC, breadcrumb navigation, details/icon view switching and original flat vector icons. Its controls reuse RiceField's guarded file operations; window decorations belong to RiceBowl/the window manager.
-
-**Frutiger Aero · Blue Skies:** [Aqua shell](docs/screenshots/frutiger-aero.png) with an original sky-and-water masthead, pearl-green places sidebar, glossy file and folder vectors, live breadcrumb/search navigation and a responsive bottom glass-shelf dock. Its tools perform real file operations; local-only actions are disabled for read-only network locations. No borrowed Windows or Vista artwork.
-
-**macOS · Finder:** [Finder-inspired shell](docs/screenshots/macos.png) with a compact navigation toolbar, working icon/list switches, Quick Look, favorite folders, local/network locations and aligned sortable details columns. Original blue-folder vector art and a responsive compact mode; actions reuse RiceField's protected file operations. Apple assets and fake cloud services are not included, and window decorations remain the desktop's responsibility.
-
-File operations remain independent of the selected visual shell.
+**Release status: `1.0.0-rc.17` candidate.** Automated Rust tests and native Linux GUI screenshots pass, but the final physical Linux Mint/NAS/USB acceptance is still open. Keep your existing file manager installed.
 
 ## Install
 
-Target: **Linux x86_64** (release builds use Ubuntu 24.04 for Linux Mint 22 compatibility). The CLI and installed binary remain named `rice-explorer` for compatibility while the project branding becomes RiceField.
+Target: Linux x86_64 (Ubuntu 24.04 release builds support Linux Mint 22). The command remains `rice-explorer` for compatibility.
 
 ```bash
 sudo apt install build-essential pkg-config libxcb-render0-dev \
@@ -61,31 +53,30 @@ bash install.sh
 rice-explorer
 ```
 
-Building from source requires a current stable [Rust toolchain](https://rustup.rs/). Installation is user-local and does **not** replace your default file manager.
+Requires a current stable [Rust toolchain](https://rustup.rs/) when building from source. The installation is user-local and does not replace your default file manager. Release builds and checksums: [Releases](https://github.com/CopyPasteUser/Ricefield/releases) · [Release guide](RELEASE.md).
 
-Prefer a bundle? Check [Releases](https://github.com/CopyPasteUser/Ricefield/releases) and verify its SHA-256 checksum before installing. See [release instructions](RELEASE.md).
-
-### Try different shells
+Try a specific rice:
 
 ```bash
+rice-explorer --theme win98 ~/Documents
+rice-explorer --theme xp-luna ~/Documents
 rice-explorer --theme win7 ~/Downloads
 rice-explorer --theme win10 ~/Downloads
-rice-explorer --theme xp-luna ~/Documents
 rice-explorer --theme frutiger-aero ~/Pictures
+rice-explorer --theme chromeos ~/Downloads
 rice-explorer --theme macos
-rice-explorer --theme-file /path/to/my-rice.toml
+rice-explorer --theme-file /path/to/custom-rice.toml
 ```
 
-## Important limits
+## Safety and known limits
 
-- Cross-filesystem **Move** leaves the source intact after a verified copy; cleanup is a separate user decision.
-- Batch rename uses atomic Linux name exchanges for selected-name cycles and attempts guarded rollback on ordinary errors. Completed batches offer session-only, identity-checked Undo; crash recovery and Undo after restart are unavailable. A crash or concurrent external modification can leave *partial names* requiring manual review; unrelated targets are never intentionally overwritten.
-- Network tabs provide **read-only browsing and explicit downloads** to a configurable local folder (default `~/Downloads`, 8 GiB per download, no overwrite). Recursive downloads are limited to 4,096 entries, 512 folders, 16 levels and 20 minutes; GIO-reported symlinks/special entries cannot be downloaded. Remote uploads, rename and deletion remain disabled due to [an atomicity blocker](docs/REMOTE-WRITE-SAFETY.md).
-- Recovery provides inspection and comparisons, **not automatic transaction rollback**.
-- Desktop integration does not silently take over the system's default file manager.
-- Native removable-device actions need the system's UDisks2 service and a working Polkit authentication agent. USB mounting/ejecting still await real-device acceptance; encrypted-volume unlocking and USB power-off are not implemented.
+- Remote locations are **read-only**; downloads to a local folder are explicit, bounded and no-overwrite. Remote upload, rename and deletion remain disabled pending [atomicity guarantees](docs/REMOTE-WRITE-SAFETY.md).
+- Cross-device moves preserve their sources after verified copies; cleanup requires a separate decision.
+- Batch rename has guarded session-only Undo, not full crash recovery. Inspect any interrupted batch.
+- USB mount, unmount and eject rely on UDisks2/Polkit; real-hardware acceptance and encrypted-volume unlock remain open.
+- Recovery offers inspection, **not automatic rollback**. Test risky operations with disposable files.
 
-The [1.0 status document](docs/1.0-STATUS.md) records verified coverage and remaining tests. See [troubleshooting](docs/TROUBLESHOOTING.md) and the [user guide](docs/USAGE.md) for detailed behavior.
+[Detailed 1.0 status](docs/1.0-STATUS.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md)
 
 ## Develop
 
@@ -95,6 +86,6 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked --all-targets
 ```
 
-[Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [MIT License](LICENSE)
+[Contributing](CONTRIBUTING.md) · [MIT License](LICENSE)
 
-RiceField's visual themes use original Linux artwork and are not affiliated with Microsoft, Apple or Google.
+RiceField is not affiliated with Microsoft, Apple or Google. All included theme artwork is original.

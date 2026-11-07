@@ -7878,9 +7878,9 @@ impl Explorer {
                             column.horizontal(|ui| {
                                 if ui
                                     .add(egui::Button::new(if self.active == index {
-                                        "● Focused"
+                                        "Focused"
                                     } else {
-                                        "○ Focus"
+                                        "Focus"
                                     }).selected(self.active == index))
                                     .on_hover_text("Make this folder the target for toolbar and keyboard actions")
                                     .clicked()
