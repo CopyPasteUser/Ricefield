@@ -238,24 +238,38 @@ fn binary_preview(bytes: &[u8], size: u64) -> Preview {
 
 /// Recognize BOM-marked UTF-16 without guessing arbitrary binary encodings.
 /// Control characters are rejected before the string is shown in the UI.
-fn utf16_text(bytes: &[u8]) -> Option<String> {
+pub(crate) fn utf16_text(bytes: &[u8], truncated: bool) -> Option<String> {
     let little_endian = match bytes.get(..2)? {
         [0xff, 0xfe] => true,
         [0xfe, 0xff] => false,
         _ => return None,
     };
     let payload = bytes.get(2..)?;
-    if payload.len() % 2 != 0 {
+    if !truncated && payload.len() % 2 != 0 {
         return None;
     }
-    let units = payload.as_chunks::<2>().0.iter().map(|pair| {
-        if little_endian {
-            u16::from_le_bytes([pair[0], pair[1]])
-        } else {
-            u16::from_be_bytes([pair[0], pair[1]])
-        }
-    });
-    let text = String::from_utf16(&units.collect::<Vec<_>>()).ok()?;
+    // A remote prefix may end halfway through a UTF-16 code unit or just
+    // after the high surrogate of a pair. Only trim that artificial tail.
+    let mut units = payload
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| {
+            if little_endian {
+                u16::from_le_bytes([pair[0], pair[1]])
+            } else {
+                u16::from_be_bytes([pair[0], pair[1]])
+            }
+        })
+        .collect::<Vec<_>>();
+    if truncated
+        && units
+            .last()
+            .is_some_and(|unit| (0xd800..=0xdbff).contains(unit))
+    {
+        units.pop();
+    }
+    let text = String::from_utf16(&units).ok()?;
     if text
         .chars()
         .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\r' | '\t'))
@@ -389,7 +403,7 @@ pub fn load(path: &Path) -> io::Result<Preview> {
     let mut bytes = vec![0u8; 32 * 1024];
     let count = file.read(&mut bytes)?;
     bytes.truncate(count);
-    if let Some(text) = utf16_text(&bytes) {
+    if let Some(text) = utf16_text(&bytes, false) {
         return Ok(if text.is_empty() {
             Preview::Info("Empty file".into())
         } else {

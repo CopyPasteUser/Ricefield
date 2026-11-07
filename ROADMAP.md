@@ -507,7 +507,9 @@ recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
   that cannot yet be opened or transferred. Small UTF-8 remote files can now
   be inspected through a bounded, cancellable, read-only text preview. A later
   preview increment also permits a first-32-KiB prefix for larger remote files
-  and renders binary data as a bounded 256-byte hex/ASCII view. This is not
+  and renders binary data as a bounded 256-byte hex/ASCII view. BOM-marked
+  UTF-16LE/BE files now use the same safe text decoder as local previews,
+  trimming an incomplete code unit at the remote prefix boundary. This is not
   lossless network content validation or a full file-open operation. RC.2
   added staged local single-file downloads; rc.4 adds bounded whole-folder
   content downloads without exposing incomplete local trees. Native high-volume
