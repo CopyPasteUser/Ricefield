@@ -2,6 +2,7 @@ use crate::{
     aqua::{self, AquaAction, AquaContext},
     archive,
     chromeos::{self, FilesAction, FilesContext, FilesNavIcon},
+    classic98::{self, ClassicAction, ClassicContext, TreeIcon},
     clipboard,
     config::{self, Config},
     desktop, discovery, duplicates,
@@ -1070,6 +1071,7 @@ pub struct Explorer {
     aqua_advanced_open: bool,
     finder_advanced_open: bool,
     chromeos_advanced_open: bool,
+    classic98_advanced_open: bool,
     win10_ribbon_page: RibbonPage,
     win10_ribbon_expanded: bool,
     win10_advanced_open: bool,
@@ -1313,6 +1315,7 @@ impl Explorer {
             aqua_advanced_open: false,
             finder_advanced_open: false,
             chromeos_advanced_open: false,
+            classic98_advanced_open: false,
             win10_ribbon_page: RibbonPage::Home,
             win10_ribbon_expanded: true,
             win10_advanced_open: false,
@@ -3271,18 +3274,20 @@ impl Explorer {
         }
     }
 
-    /// One shared transfer surface for every rice. In Luna and Windows 10 it
-    /// stays hidden when idle; transfer history remains accessible from the
-    /// Tools menu or the Windows 10 File/Share ribbon.
+    /// One shared transfer surface for every rice. Historic and native-like
+    /// shells keep it hidden when idle, while their menus/controls still
+    /// expose transfer history whenever requested.
     fn transfer_strip(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme.clone();
         if matches!(
             theme.shell_kind(),
             ShellKind::Luna
+                | ShellKind::Aero
                 | ShellKind::Ribbon
                 | ShellKind::Aqua
                 | ShellKind::Finder
                 | ShellKind::Chromeos
+                | ShellKind::Classic
         ) && !self.busy
             && self.operation_queue.is_empty()
             && self.active_operation.is_none()
@@ -4466,16 +4471,34 @@ impl Explorer {
             .frame(
                 egui::Frame::new()
                     .fill(theme.palette.chrome())
-                    .inner_margin(if theme.shell_kind() == ShellKind::Luna {
-                        egui::Margin::ZERO
-                    } else if theme.shell_kind() == ShellKind::Aero {
-                        egui::Margin::symmetric(8, 5)
-                    } else {
-                        egui::Margin::same(7)
-                    }),
+                    .inner_margin(
+                        if matches!(theme.shell_kind(), ShellKind::Luna | ShellKind::Classic) {
+                            egui::Margin::ZERO
+                        } else if theme.shell_kind() == ShellKind::Aero {
+                            egui::Margin::symmetric(8, 5)
+                        } else {
+                            egui::Margin::same(7)
+                        },
+                    ),
             )
             .show(ui, |ui| {
                 for (index, component) in components.iter().enumerate() {
+                    if theme.shell_kind() == ShellKind::Classic {
+                        if *component == ChromeComponent::Tabs && self.tabs.len() == 1 {
+                            continue;
+                        }
+                        egui::Frame::new()
+                            .fill(Color32::from_rgb(192, 192, 192))
+                            .stroke(egui::Stroke::new(0.7, Color32::from_gray(102)))
+                            .inner_margin(egui::Margin::symmetric(5, 3))
+                            .show(ui, |ui| match component {
+                                ChromeComponent::MenuBar => self.menu_bar(ui),
+                                ChromeComponent::Tabs => self.tabs_bar(ui),
+                                ChromeComponent::Navigation => self.navigation_bar(ui),
+                                ChromeComponent::CommandBar => self.command_bar(ui, &theme),
+                            });
+                        continue;
+                    }
                     if theme.shell_kind() == ShellKind::Aero
                         && *component == ChromeComponent::Tabs
                         && self.tabs.len() == 1
@@ -4530,13 +4553,16 @@ impl Explorer {
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         let is_luna = self.theme.shell_kind() == ShellKind::Luna;
-        let menu_text = if is_luna {
+        let is_classic = self.theme.shell_kind() == ShellKind::Classic;
+        let menu_text = if is_classic {
+            Color32::BLACK
+        } else if is_luna {
             Color32::from_rgb(33, 48, 77)
         } else {
             Color32::WHITE
         };
         ui.horizontal(|ui| {
-            if !is_luna {
+            if !is_luna && !is_classic {
                 ui.label(egui::RichText::new("RiceField").color(menu_text).strong());
                 ui.separator();
             }
@@ -4615,6 +4641,81 @@ impl Explorer {
                     }
                 }
             });
+            if is_classic {
+                ui.menu_button(egui::RichText::new("Go").color(menu_text), |ui| {
+                    for (label, action) in [
+                        ("Back  Alt+Left", ClassicAction::Back),
+                        ("Forward  Alt+Right", ClassicAction::Forward),
+                        ("Up One Level", ClassicAction::Up),
+                        ("Refresh  Ctrl+R", ClassicAction::Refresh),
+                        ("Network Neighborhood", ClassicAction::Network),
+                    ] {
+                        if ui
+                            .add_enabled(
+                                self.classic98_context().enabled(action),
+                                egui::Button::new(label),
+                            )
+                            .clicked()
+                        {
+                            self.classic98_command(action);
+                            ui.close();
+                        }
+                    }
+                    if ui.button("Home").clicked() {
+                        self.navigate(config::home());
+                        ui.close();
+                    }
+                });
+                ui.menu_button(egui::RichText::new("Favorites").color(menu_text), |ui| {
+                    if ui
+                        .add_enabled(
+                            self.current().remote_uri.is_none(),
+                            egui::Button::new("Add current folder"),
+                        )
+                        .clicked()
+                    {
+                        self.toggle_bookmark();
+                        ui.close();
+                    }
+                    ui.separator();
+                    for path in self.config.bookmarks.clone() {
+                        if ui
+                            .button(path.file_name().unwrap_or_default().to_string_lossy())
+                            .clicked()
+                        {
+                            self.navigate(path);
+                            ui.close();
+                        }
+                    }
+                });
+                ui.menu_button(egui::RichText::new("Tools").color(menu_text), |ui| {
+                    if ui
+                        .button(if self.classic98_advanced_open {
+                            "Hide advanced tools"
+                        } else {
+                            "Show advanced tools"
+                        })
+                        .clicked()
+                    {
+                        self.classic98_advanced_open = !self.classic98_advanced_open;
+                        ui.close();
+                    }
+                    if ui.button("Connect to server…").clicked() {
+                        self.open_network_login(String::new());
+                        ui.close();
+                    }
+                    if ui.button("Transfers & history…").clicked() {
+                        self.show_operations = true;
+                        ui.close();
+                    }
+                });
+                ui.menu_button(egui::RichText::new("Help").color(menu_text), |ui| {
+                    ui.strong("RiceField · Classic Explorer");
+                    ui.label("A Windows 98-era inspired Linux file manager.");
+                    ui.small("No Microsoft assets or bundled Windows applications.");
+                    ui.label("Ctrl+N folder · F2 rename · F3 split · Ctrl+F search");
+                });
+            }
             if is_luna {
                 ui.menu_button(egui::RichText::new("Favorites").color(menu_text), |ui| {
                     if ui.button("Add to Favorites").clicked() {
@@ -4677,6 +4778,12 @@ impl Explorer {
         if theme.shell_kind() == ShellKind::Chromeos {
             if let Some(action) = chromeos::secondary_commands(ui, self.chromeos_context()) {
                 self.chromeos_command(action);
+            }
+            return;
+        }
+        if theme.shell_kind() == ShellKind::Classic {
+            if let Some(action) = classic98::secondary_commands(ui, self.classic98_context()) {
+                self.classic98_command(action);
             }
             return;
         }
@@ -4973,6 +5080,10 @@ impl Explorer {
             self.chromeos_navigation_bar(ui);
             return;
         }
+        if self.theme.shell_kind() == ShellKind::Classic {
+            self.classic98_navigation_bar(ui);
+            return;
+        }
         if self.theme.shell_kind() == ShellKind::Finder {
             self.finder_navigation_bar(ui);
             return;
@@ -5105,6 +5216,110 @@ impl Explorer {
         }
     }
 
+    fn classic98_navigation_bar(&mut self, ui: &mut egui::Ui) {
+        if let Some(action) = classic98::toolbar(ui, self.classic98_context()) {
+            self.classic98_command(action);
+        }
+        let narrow = ui.available_width() < 760.0;
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Address").color(Color32::BLACK));
+            let width = if narrow {
+                (ui.available_width() - 65.0).max(90.0)
+            } else {
+                (ui.available_width() - 260.0).max(155.0)
+            };
+            let input = ui.add_sized(
+                [width, 25.0],
+                egui::TextEdit::singleline(&mut self.current_mut().address)
+                    .hint_text("Enter a local folder or network location"),
+            );
+            if self.focus_address {
+                ui.memory_mut(|memory| memory.request_focus(input.id));
+                self.focus_address = false;
+            }
+            if input.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                let address = self.current().address.clone();
+                self.navigate_address(address);
+            }
+            if ui.button("Go").clicked() {
+                let address = self.current().address.clone();
+                self.navigate_address(address);
+            }
+            if !narrow {
+                self.navigation_search(ui, false);
+            }
+        });
+        if narrow {
+            ui.horizontal(|ui| self.navigation_search(ui, true));
+        }
+    }
+
+    fn classic98_context(&self) -> ClassicContext {
+        ClassicContext {
+            local: self.current().remote_uri.is_none(),
+            selection: self.current().selected.len(),
+            back: !self.current().back.is_empty(),
+            forward: !self.current().forward.is_empty(),
+            grid: self.config.view == "grid",
+            split: self.split_pair.is_some(),
+            hidden: self.config.show_hidden,
+            sidebar: self.config.show_sidebar,
+            pinned: self.config.bookmarks.contains(&self.current().path),
+            tools: self.classic98_advanced_open,
+            volume_busy: self.volume_busy,
+        }
+    }
+
+    fn classic98_command(&mut self, action: ClassicAction) {
+        match action {
+            ClassicAction::Back => self.navigation_command(NavigationCommand::Back),
+            ClassicAction::Forward => self.navigation_command(NavigationCommand::Forward),
+            ClassicAction::Up => self.navigation_command(NavigationCommand::Parent),
+            ClassicAction::NewFolder => self.file_command(FileCommand::NewFolder),
+            ClassicAction::Copy => self.file_command(FileCommand::Copy),
+            ClassicAction::Cut => self.file_command(FileCommand::Cut),
+            ClassicAction::Paste => self.file_command(FileCommand::Paste),
+            ClassicAction::Rename => self.file_command(FileCommand::Rename),
+            ClassicAction::Delete => self.file_command(FileCommand::Trash),
+            ClassicAction::Info => self.file_command(FileCommand::Properties),
+            ClassicAction::Grid | ClassicAction::List => {
+                self.config.view = if action == ClassicAction::Grid {
+                    "grid"
+                } else {
+                    "list"
+                }
+                .into();
+                self.dirty_config = true;
+            }
+            ClassicAction::Preview => {
+                if self.preview_quick_look {
+                    self.preview_quick_look = false;
+                    self.preview_path = None;
+                    self.preview_content = None;
+                } else if let Some(path) = self.selected_paths().first().cloned() {
+                    self.preview_quick_look = true;
+                    self.open_preview(path);
+                }
+            }
+            ClassicAction::Favorites => self.toggle_bookmark(),
+            ClassicAction::Split => self.navigation_command(NavigationCommand::Split),
+            ClassicAction::Hidden => self.navigation_command(NavigationCommand::Hidden),
+            ClassicAction::Sidebar => {
+                self.config.show_sidebar = !self.config.show_sidebar;
+                self.dirty_config = true;
+            }
+            ClassicAction::Refresh => self.navigation_command(NavigationCommand::Refresh),
+            ClassicAction::Network => {
+                self.discovery_open = true;
+                if self.discovery_hosts.is_empty() {
+                    self.start_discovery();
+                }
+            }
+            ClassicAction::Connect => self.open_network_login(String::new()),
+            ClassicAction::Transfers => self.show_operations = true,
+            ClassicAction::Tools => self.classic98_advanced_open = !self.classic98_advanced_open,
+        }
+    }
     fn finder_navigation_bar(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme.clone();
         let title = self
@@ -5708,6 +5923,7 @@ impl Explorer {
                 | ShellKind::Aqua
                 | ShellKind::Finder
                 | ShellKind::Chromeos
+                | ShellKind::Classic
         );
         let search_width = if aero {
             if compact {
@@ -5830,6 +6046,7 @@ impl Explorer {
                                 | ShellKind::Aqua
                                 | ShellKind::Finder
                                 | ShellKind::Chromeos
+                                | ShellKind::Classic
                         ) {
                             egui::Margin::symmetric(5, 8)
                         } else {
@@ -5907,6 +6124,28 @@ impl Explorer {
                                             self.navigate(path);
                                         }
                                     }
+                                    return;
+                                }
+                                if theme.shell_kind() == ShellKind::Classic {
+                                    for (label, path) in self.places.clone() {
+                                        let icon = if path == Path::new("/") {
+                                            TreeIcon::Disk
+                                        } else if path == config::home() {
+                                            TreeIcon::Home
+                                        } else {
+                                            TreeIcon::Folder
+                                        };
+                                        let response = classic98::tree_link(
+                                            ui,
+                                            label,
+                                            self.current().path == path,
+                                            icon,
+                                        );
+                                        if classic98::activated(ui, &response) {
+                                            self.navigate(path);
+                                        }
+                                    }
+                                    ui.collapsing("Browse folders", |ui| self.folder_tree_root(ui));
                                     return;
                                 }
                                 if theme.shell_kind() == ShellKind::Finder {
@@ -6079,6 +6318,27 @@ impl Explorer {
                                                 },
                                             )
                                             .clicked()
+                                    {
+                                        self.toggle_bookmark();
+                                    }
+                                    return;
+                                }
+                                if theme.shell_kind() == ShellKind::Classic {
+                                    for path in self.config.bookmarks.clone() {
+                                        let label =
+                                            path.file_name().unwrap_or_default().to_string_lossy();
+                                        let response = classic98::tree_link(
+                                            ui,
+                                            &shorten(&label, 23),
+                                            self.current().path == path,
+                                            TreeIcon::Favorite,
+                                        );
+                                        if classic98::activated(ui, &response) {
+                                            self.navigate(path);
+                                        }
+                                    }
+                                    if self.current().remote_uri.is_none()
+                                        && ui.small_button("Add to Favorites").clicked()
                                     {
                                         self.toggle_bookmark();
                                     }
@@ -6344,6 +6604,7 @@ impl Explorer {
                                 let aqua_shell = theme.shell_kind() == ShellKind::Aqua;
                                 let finder_shell = theme.shell_kind() == ShellKind::Finder;
                                 let chromeos_shell = theme.shell_kind() == ShellKind::Chromeos;
+                                let classic_shell = theme.shell_kind() == ShellKind::Classic;
                                 let discover = if chromeos_shell {
                                     chromeos::sidebar_link(
                                         ui,
@@ -6352,6 +6613,14 @@ impl Explorer {
                                         false,
                                         FilesNavIcon::Network,
                                     )
+                                } else if classic_shell {
+                                    let response = classic98::tree_link(
+                                        ui,
+                                        "Network Neighborhood",
+                                        false,
+                                        TreeIcon::Network,
+                                    );
+                                    classic98::activated(ui, &response)
                                 } else if finder_shell {
                                     finder::sidebar_link(
                                         ui,
@@ -6408,6 +6677,14 @@ impl Explorer {
                                             false,
                                             FilesNavIcon::Network,
                                         )
+                                } else if classic_shell {
+                                    let response = classic98::tree_link(
+                                        ui,
+                                        "Map network folder",
+                                        false,
+                                        TreeIcon::Network,
+                                    );
+                                    !self.volume_busy && classic98::activated(ui, &response)
                                 } else if finder_shell {
                                     !self.volume_busy
                                         && finder::sidebar_link(
@@ -6536,6 +6813,14 @@ impl Explorer {
                                             false,
                                             FilesNavIcon::Network,
                                         )
+                                    } else if classic_shell {
+                                        let response = classic98::tree_link(
+                                            ui,
+                                            &shorten(&uri, 25),
+                                            false,
+                                            TreeIcon::Network,
+                                        );
+                                        classic98::activated(ui, &response)
                                     } else if finder_shell {
                                         finder::sidebar_link(
                                             ui,
@@ -6596,6 +6881,17 @@ impl Explorer {
                                                 FilesNavIcon::Network
                                             } else {
                                                 FilesNavIcon::Drive
+                                            },
+                                        )
+                                    } else if classic_shell {
+                                        classic98::tree_link(
+                                            ui,
+                                            &label,
+                                            self.current().path == path,
+                                            if volume.network {
+                                                TreeIcon::Network
+                                            } else {
+                                                TreeIcon::Disk
                                             },
                                         )
                                     } else if finder_shell {
@@ -6701,6 +6997,8 @@ impl Explorer {
                                     }
                                     let activated = if chromeos_shell {
                                         chromeos::activated(ui, &response)
+                                    } else if classic_shell {
+                                        classic98::activated(ui, &response)
                                     } else if finder_shell {
                                         finder::sidebar_activated(ui, &response)
                                     } else if aqua_shell {
@@ -7001,7 +7299,7 @@ impl Explorer {
             .frame(
                 egui::Frame::new()
                     .fill(theme.palette.panel())
-                    .inner_margin(egui::Margin::same(if matches!(theme.shell_kind(), ShellKind::Luna | ShellKind::Aero | ShellKind::Ribbon | ShellKind::Aqua | ShellKind::Finder | ShellKind::Chromeos) { 5 } else { 14 })),
+                    .inner_margin(egui::Margin::same(if matches!(theme.shell_kind(), ShellKind::Luna | ShellKind::Aero | ShellKind::Ribbon | ShellKind::Aqua | ShellKind::Finder | ShellKind::Chromeos | ShellKind::Classic) { 5 } else { 14 })),
             )
             .show(ui, |ui| {
                 // The XP shell starts with the folder view, not two rows of
@@ -7009,6 +7307,8 @@ impl Explorer {
                 // -> Show RiceField tools, without losing any functionality.
                 let show_toolbox = if theme.shell_kind() == ShellKind::Chromeos {
                     self.chromeos_advanced_open
+                } else if theme.shell_kind() == ShellKind::Classic {
+                    self.classic98_advanced_open
                 } else if theme.shell_kind() == ShellKind::Finder {
                     self.finder_advanced_open
                 } else if theme.shell_kind() == ShellKind::Aqua {
@@ -7578,9 +7878,9 @@ impl Explorer {
                             column.horizontal(|ui| {
                                 if ui
                                     .add(egui::Button::new(if self.active == index {
-                                        "● Focused"
+                                        "Focused"
                                     } else {
-                                        "○ Focus"
+                                        "Focus"
                                     }).selected(self.active == index))
                                     .on_hover_text("Make this folder the target for toolbar and keyboard actions")
                                     .clicked()

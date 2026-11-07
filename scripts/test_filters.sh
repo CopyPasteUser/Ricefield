@@ -41,14 +41,14 @@ click_at() {
 # Exercise that user-facing disclosure before opening the editable Filters
 # menu. The old positions assumed the now-removed generic Explorer toolbar.
 click_at 680 55  # More tools (Aero command strip)
-click_at 649 140 # Filters in the revealed tools row (above the column headings)
+click_at 649 113 # Filters in the revealed tools row; Aero hides the idle transfer strip
 import -window "$window" screenshots/filters-menu-open.png
-click_at 750 290 # Custom pattern and ranges (inside the header hitbox)
+click_at 750 263 # Custom pattern and ranges (inside the header hitbox)
 import -window "$window" screenshots/filters-invalid-regex.png
 # The invalid-regex message is rendered below the second text field. This
-# coordinate was verified against the full 1120x720 Xvfb failure capture;
-# y=390 lands on the regex label, not in its editable area.
-click_at 750 403 # Filename regex text field
+# coordinate tracks the 27px upward shift after hiding the idle Aero
+# transfers strip, and still lands inside the actual editable text field.
+click_at 750 376 # Filename regex text field
 xdotool key ctrl+a
 xdotool type --delay 20 '42'
 for ((attempt = 0; attempt < 50; attempt++)); do

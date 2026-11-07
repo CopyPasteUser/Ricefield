@@ -4,6 +4,7 @@ mod aqua;
 mod archive;
 mod benchmark;
 mod chromeos;
+mod classic98;
 mod clipboard;
 mod config;
 mod desktop;

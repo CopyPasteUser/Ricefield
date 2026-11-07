@@ -4,23 +4,27 @@ layout = "classic"
 schema_version = 1
 [palette]
 background = "#c0c0c0"
-chrome = "#000080"
+chrome = "#c0c0c0"
 panel = "#ffffff"
-sidebar = "#c0c0c0"
+sidebar = "#e4e4e4"
 text = "#111111"
 muted = "#454545"
 accent = "#000080"
-selection = "#a7b7dc"
-border = "#737373"
-folder = "#e9cc54"
-file = "#a1b8cc"
+selection = "#a3b7db"
+border = "#808080"
+folder = "#efc849"
+file = "#a5bbd4"
 [metrics]
 rounding = 0
-row_height = 27
+row_height = 26
 tile_width = 106
-sidebar_width = 192
-icon_size = 23
+sidebar_width = 205
+icon_size = 24
 
 [shell]
 kind = "classic"
 top = ["menu-bar", "navigation", "tabs"]
+
+[shell.sidebar]
+sections = ["places", "volumes"]
+width = 205

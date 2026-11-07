@@ -55,6 +55,12 @@ The renderer uses egui's bundled system-like proportional font, with a technical
 ## Layout
 
 - Classic: menu bar and familiar tool row, squared or gently beveled UI, narrower dense rows.
+- Windows 98 Classic specifically uses `themes/win98.toml` for gray controls,
+  dark-blue selection emphasis, original square file/folder vectors and a
+  compact Folders/Drives navigation rail. `src/classic98.rs` emits semantic
+  actions without authority over file mutations, while Explorer owns address
+  validation, history, network write safety and destructive confirmations.
+  Title bars/caption buttons remain the job of RiceBowl or the native WM.
 - Aero: layered navigation and separate command bar, deliberate cool surface contrast.
 - Modern: tab-first condensed navigation, roomy rows and rounded surfaces.
 - The optional `[shell]` TOML table selects a shell identity and independently
