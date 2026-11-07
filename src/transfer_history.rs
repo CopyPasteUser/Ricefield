@@ -522,7 +522,7 @@ mod tests {
         let bounded = record.bounded();
         assert_eq!(bounded.items.len(), MAX_ITEMS_PER_RECORD);
         assert!(bounded.valid());
-        save_to(&path, &[bounded.clone()]).unwrap();
+        save_to(&path, std::slice::from_ref(&bounded)).unwrap();
         assert_eq!(load_from(&path).unwrap(), vec![bounded]);
         fs::remove_dir_all(root).unwrap();
     }
