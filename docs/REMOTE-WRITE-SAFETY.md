@@ -1,5 +1,7 @@
 # Why generic GIO network writes are still disabled
 
+[Backend capability matrix and test contract](REMOTE-BACKEND-MATRIX.md)
+
 **Status: P0, updated 2026-11-07.** RiceField must not overwrite an unrelated file,
 even when two clients race to publish the same destination name. A file may
 appear under its final name only after its complete contents are verified.
