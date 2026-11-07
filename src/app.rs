@@ -945,6 +945,7 @@ pub struct Explorer {
     desktop_service: Option<desktop::Service>,
     desktop_properties: VecDeque<PathBuf>,
     config: Config,
+    config_writer: config::SaveWorker,
     theme: Theme,
     theme_file: Option<PathBuf>,
     theme_file_state: Option<(SystemTime, u64)>,
@@ -1197,6 +1198,7 @@ impl Explorer {
             desktop_service: file_manager_service.then(|| desktop::Service::start(context)),
             desktop_properties: VecDeque::new(),
             config,
+            config_writer: config::SaveWorker::spawn(),
             theme,
             theme_file,
             theme_file_state,
@@ -2524,6 +2526,9 @@ impl Explorer {
     }
 
     fn poll_background(&mut self, context: &egui::Context) {
+        while let Some(error) = self.config_writer.next_error() {
+            self.status = Some((format!("Cannot save preferences: {error}"), true));
+        }
         while let Ok(message) = self.theme_reload_receiver.try_recv() {
             if !current_theme_reload(
                 self.theme_file.as_deref(),
@@ -9501,6 +9506,7 @@ impl Drop for Explorer {
         if let Some(done) = self.history_done_receiver.take() {
             let _ = done.recv_timeout(Duration::from_secs(2));
         }
+        self.config_writer.finish();
     }
 }
 
@@ -9602,10 +9608,11 @@ impl eframe::App for Explorer {
         self.recovery_dialog(&context);
         self.transfer_dialog(&context);
         if self.dirty_config && self.session_owner {
-            if let Err(error) = self.config.save() {
+            if let Err(error) = self.config_writer.request(&self.config) {
                 self.status = Some((format!("Cannot save preferences: {error}"), true));
+            } else {
+                self.dirty_config = false;
             }
-            self.dirty_config = false;
         }
         let waiting_for_preview = matches!(
             &self.dialog,

@@ -294,8 +294,13 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   the egui render thread. A single pending worker at a time avoids repeated
   scans on stalled mounts; generation and path checks discard late results
   after changing themes, and changed-during-read sources preserve the active
-  theme. Startup theme reading and preference writes still merit separate
-  responsiveness review.
+  theme. Startup theme reading still merits a separate responsiveness review.
+- [x] Persist preference changes on one background writer instead of running
+  filesystem writes in the render loop. A bounded single-slot snapshot holds
+  the newest settings while the writer is busy, avoiding stale writer races or
+  an unbounded queue. Failures are shown in the GUI and normal shutdown waits
+  up to two seconds for pending writes; sudden process death or indefinitely
+  stalled state mounts still cannot guarantee persistence.
 - [x] Load file properties and Unix permission metadata in a bounded
   background worker, not on each render frame. Keep only the latest requested
   dialog when a slow mount stalls an earlier query; reject stale results and
