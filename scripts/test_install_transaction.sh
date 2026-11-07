@@ -12,6 +12,7 @@ mkdir -p -- "$HOME/.local/bin"
 binary="$HOME/.local/bin/ricefield"
 launcher="$XDG_DATA_HOME/applications/ricefield.desktop"
 icon="$XDG_DATA_HOME/icons/hicolor/scalable/apps/ricefield.svg"
+png="$XDG_DATA_HOME/icons/hicolor/256x256/apps/ricefield.png"
 
 # Successful first install, then a regular upgrade replacing only the three
 # owned paths. User config and unrelated application entries must survive.
@@ -32,6 +33,8 @@ bash "$project_dir/scripts/install_transaction.sh" /bin/true "$project_dir"
 test -x "$binary"
 test -f "$launcher"
 test -f "$icon"
+test -f "$png"
+grep -Fqx -- "Icon=$png" "$launcher"
 test ! -e "$HOME/.local/bin/rice-explorer"
 test ! -e "$HOME/.cargo/bin/rice-explorer"
 test ! -e "$XDG_DATA_HOME/applications/rice-explorer.desktop"
@@ -52,6 +55,7 @@ printf '#!/usr/bin/env bash\nprintf broken > "%s"\nexit 23\n' "$launcher" \
 cp -p -- "$binary" "$fixture/before-binary"
 cp -p -- "$launcher" "$fixture/before-launcher"
 cp -p -- "$icon" "$fixture/before-icon"
+cp -p -- "$png" "$fixture/before-png"
 if bash "$project_dir/scripts/install_transaction.sh" /bin/true "$failure_project"; then
   echo 'Fault-injected installer unexpectedly succeeded' >&2
   exit 1
@@ -59,6 +63,7 @@ fi
 cmp -s -- "$binary" "$fixture/before-binary"
 cmp -s -- "$launcher" "$fixture/before-launcher"
 cmp -s -- "$icon" "$fixture/before-icon"
+cmp -s -- "$png" "$fixture/before-png"
 
 # An upgrade must wait for the *same* lock rather than racing a competing
 # updater's backups. The test holder owns a separate file descriptor/process.
@@ -171,5 +176,6 @@ test -x "$binary"
 wait "$holder"
 wait "$uninstaller"
 test ! -e "$binary"
+test ! -e "$png"
 test -f "$HOME/.config/ricefield/personal.toml"
 echo 'Atomic installs, rollback, concurrent update/uninstall locks, symlink refusal and user-data preservation passed'

@@ -27,6 +27,7 @@ targets=(
   "$user_home/.local/bin/ricefield"
   "$data_dir/applications/ricefield.desktop"
   "$data_dir/icons/hicolor/scalable/apps/ricefield.svg"
+  "$data_dir/icons/hicolor/256x256/apps/ricefield.png"
 )
 for target in "${targets[@]}"; do
   if [[ -L "$target" || ( -e "$target" && ! -f "$target" ) ]]; then
@@ -36,7 +37,7 @@ for target in "${targets[@]}"; do
 done
 
 backup_dir="$(mktemp -d)"
-previous=(0 0 0)
+previous=(0 0 0 0)
 published=0
 binary_tmp=''
 on_exit() {
@@ -61,7 +62,7 @@ on_exit() {
     if (( restored == 1 )); then
       echo 'RiceField install failed; previous binary and launcher restored.' >&2
     else
-      echo 'RiceField install failed and rollback was incomplete; inspect the three installation paths.' >&2
+      echo 'RiceField install failed and rollback was incomplete; inspect the four installation paths.' >&2
     fi
   fi
   rm -r -- "$backup_dir"
