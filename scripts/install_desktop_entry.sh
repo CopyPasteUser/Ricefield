@@ -26,17 +26,21 @@ escaped="${escaped//\`/\\\`}"
 escaped="${escaped//%/%%}"
 
 apps_dir="$data_dir/applications"
+png_path="$data_dir/icons/hicolor/256x256/apps/ricefield.png"
 mkdir -p -- "$apps_dir"
 temporary="$(mktemp "$apps_dir/.ricefield.XXXXXX.desktop")"
 icon_temporary=''
+png_temporary=''
 cleanup() {
   [[ -z "$temporary" ]] || rm -f -- "$temporary"
   [[ -z "$icon_temporary" ]] || rm -f -- "$icon_temporary"
+  [[ -z "$png_temporary" ]] || rm -f -- "$png_temporary"
 }
 trap cleanup EXIT
 while IFS= read -r line || [[ -n "$line" ]]; do
   case "$line" in
     Exec=*) printf 'Exec="%s" %%U\n' "$escaped" ;;
+    Icon=*) printf 'Icon=%s\n' "$png_path" ;;
     *) printf '%s\n' "$line" ;;
   esac
 done < "$project_dir/assets/ricefield.desktop" > "$temporary"
@@ -44,9 +48,6 @@ chmod 0644 "$temporary"
 if command -v desktop-file-validate >/dev/null 2>&1; then
   desktop-file-validate "$temporary"
 fi
-mv -fT -- "$temporary" "$apps_dir/ricefield.desktop"
-temporary=''
-
 icon_dir="$data_dir/icons/hicolor/scalable/apps"
 mkdir -p -- "$icon_dir"
 icon_temporary="$(mktemp "$icon_dir/.ricefield.XXXXXX.svg")"
@@ -55,6 +56,17 @@ icon_temporary="$(mktemp "$icon_dir/.ricefield.XXXXXX.svg")"
 install -m644 -- "$project_dir/assets/ricefield.svg" "$icon_temporary"
 mv -fT -- "$icon_temporary" "$icon_dir/ricefield.svg"
 icon_temporary=''
+
+png_dir="$(dirname -- "$png_path")"
+mkdir -p -- "$png_dir"
+png_temporary="$(mktemp "$png_dir/.ricefield.XXXXXX.png")"
+install -m644 -- "$project_dir/assets/ricefield.png" "$png_temporary"
+mv -fT -- "$png_temporary" "$png_path"
+png_temporary=''
+
+# Publish the launcher only once both icon formats are fully available.
+mv -fT -- "$temporary" "$apps_dir/ricefield.desktop"
+temporary=''
 
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database "$apps_dir" || true

@@ -57,6 +57,8 @@ install -Dm644 -- "$repo_dir/assets/ricefield.desktop" \
   "$bundle_dir/assets/ricefield.desktop"
 install -Dm644 -- "$repo_dir/assets/ricefield.svg" \
   "$bundle_dir/assets/ricefield.svg"
+install -Dm644 -- "$repo_dir/assets/ricefield.png" \
+  "$bundle_dir/assets/ricefield.png"
 install -Dm644 -- "$repo_dir/LICENSE" "$bundle_dir/LICENSE"
 for document in "$repo_dir"/*.md; do
   install -Dm644 -- "$document" "$bundle_dir/$(basename -- "$document")"

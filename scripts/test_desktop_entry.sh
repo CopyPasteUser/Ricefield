@@ -22,7 +22,9 @@ for mode in default custom; do
   launcher="$data_dir/applications/ricefield.desktop"
   test -f "$launcher"
   test -f "$data_dir/icons/hicolor/scalable/apps/ricefield.svg"
+  test -f "$data_dir/icons/hicolor/256x256/apps/ricefield.png"
   grep -Fqx -- "Exec=\"$HOME/.local/bin/ricefield\" %U" "$launcher"
+  grep -Fqx -- "Icon=$data_dir/icons/hicolor/256x256/apps/ricefield.png" "$launcher"
   grep -Fqx -- 'Terminal=false' "$launcher"
   grep -Fqx -- 'Categories=System;FileManager;FileTools;' "$launcher"
   if command -v desktop-file-validate >/dev/null 2>&1; then
@@ -31,6 +33,7 @@ for mode in default custom; do
   bash "$project_dir/uninstall.sh"
   test ! -e "$launcher"
   test ! -e "$data_dir/icons/hicolor/scalable/apps/ricefield.svg"
+  test ! -e "$data_dir/icons/hicolor/256x256/apps/ricefield.png"
   install -m755 /bin/true "$HOME/.local/bin/ricefield"
 done
 

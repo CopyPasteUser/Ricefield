@@ -14,6 +14,7 @@ ricefield_lock_installation
 rm -f -- \
   "$user_home/.local/bin/ricefield" \
   "$data_dir/applications/ricefield.desktop" \
-  "$data_dir/icons/hicolor/scalable/apps/ricefield.svg"
+  "$data_dir/icons/hicolor/scalable/apps/ricefield.svg" \
+  "$data_dir/icons/hicolor/256x256/apps/ricefield.png"
 
 echo 'Uninstalled RiceField. User configuration and themes were preserved.'
