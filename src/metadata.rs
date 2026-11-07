@@ -14,6 +14,49 @@ const MAX_VISITED: usize = 100_000;
 const MAX_DURATION: Duration = Duration::from_secs(12);
 const MAX_HASH_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
+/// Decode the Linux POSIX ACL xattr ABI for read-only Properties display.
+/// Never interpret trailing or malformed entries as valid permissions.
+#[cfg(target_os = "linux")]
+fn posix_acl_summary(data: &[u8]) -> Option<String> {
+    if data.len() < 12
+        || (data.len() - 4) % 8 != 0
+        || data.get(..4)? != 2_u32.to_le_bytes()
+    {
+        return None;
+    }
+    let total = (data.len() - 4) / 8;
+    let mut parts = Vec::with_capacity(total.min(12) + 1);
+    for entry in data[4..].chunks_exact(8) {
+        let tag = u16::from_le_bytes([entry[0], entry[1]]);
+        let perms = u16::from_le_bytes([entry[2], entry[3]]);
+        let id = u32::from_le_bytes(entry[4..8].try_into().ok()?);
+        if perms > 7 {
+            return None;
+        }
+        let who = match (tag, id) {
+            (0x01, u32::MAX) => "owner".to_owned(),
+            (0x02, id) if id != u32::MAX => format!("user:{id}"),
+            (0x04, u32::MAX) => "group".to_owned(),
+            (0x08, id) if id != u32::MAX => format!("group:{id}"),
+            (0x10, u32::MAX) => "mask".to_owned(),
+            (0x20, u32::MAX) => "other".to_owned(),
+            _ => return None,
+        };
+        if parts.len() < 12 {
+            let rights = [
+                if perms & 4 != 0 { 'r' } else { '-' },
+                if perms & 2 != 0 { 'w' } else { '-' },
+                if perms & 1 != 0 { 'x' } else { '-' },
+            ];
+            parts.push(format!("{who}:{}", rights.iter().collect::<String>()));
+        }
+    }
+    if total > 12 {
+        parts.push(format!("… {} more entries", total - 12));
+    }
+    Some(parts.join(" · "))
+}
+
 /// Listing attribute *names* never reads secret attribute values. ACLs use
 /// the same kernel namespace and are identified by their standard xattr key.
 #[cfg(target_os = "linux")]
@@ -63,6 +106,32 @@ pub fn xattr_rows(path: &Path) -> Vec<(String, String)> {
         }
         .into(),
     ));
+    for (attribute, label) in [
+        (c"system.posix_acl_access", "Access ACL rules"),
+        (c"system.posix_acl_default", "Default ACL rules"),
+    ] {
+        if !attrs.iter().any(|name| *name == attribute.to_bytes()) {
+            continue;
+        }
+        let mut data = [0u8; 8 * 1024];
+        // SAFETY: a bounded read into a valid buffer. lgetxattr never follows
+        // symlinks, and the Properties reader already runs on a worker.
+        let length = unsafe {
+            libc::lgetxattr(
+                name.as_ptr(),
+                attribute.as_ptr(),
+                data.as_mut_ptr().cast(),
+                data.len(),
+            )
+        };
+        let description = if length < 0 {
+            "Unavailable or exceeds 8 KiB".to_owned()
+        } else {
+            posix_acl_summary(&data[..length as usize])
+                .unwrap_or_else(|| "Malformed or unsupported ACL format".to_owned())
+        };
+        rows.push((label.into(), description));
+    }
     if !attrs.is_empty() {
         let names = attrs
             .iter()
@@ -230,6 +299,48 @@ mod tests {
     use super::*;
 
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn posix_acl_reader_displays_rules_and_fails_closed_on_malformed_bytes() {
+        fn add_entry(bytes: &mut Vec<u8>, tag: u16, permissions: u16, id: u32) {
+            bytes.extend_from_slice(&tag.to_le_bytes());
+            bytes.extend_from_slice(&permissions.to_le_bytes());
+            bytes.extend_from_slice(&id.to_le_bytes());
+        }
+
+        let mut acl = 2_u32.to_le_bytes().to_vec();
+        add_entry(&mut acl, 0x01, 7, u32::MAX);
+        add_entry(&mut acl, 0x02, 4, 123_456);
+        add_entry(&mut acl, 0x04, 5, u32::MAX);
+        add_entry(&mut acl, 0x10, 5, u32::MAX);
+        add_entry(&mut acl, 0x20, 0, u32::MAX);
+        assert_eq!(
+            posix_acl_summary(&acl).as_deref(),
+            Some("owner:rwx · user:123456:r-- · group:r-x · mask:r-x · other:---")
+        );
+        let mut wrong_version = acl.clone();
+        wrong_version[0] = 3;
+        assert!(posix_acl_summary(&wrong_version).is_none());
+        assert!(posix_acl_summary(&acl[..acl.len() - 1]).is_none());
+        let mut invalid_rights = acl.clone();
+        invalid_rights[14] = 8;
+        assert!(posix_acl_summary(&invalid_rights).is_none());
+        let mut unknown_tag = acl.clone();
+        unknown_tag[4] = 0x77;
+        assert!(posix_acl_summary(&unknown_tag).is_none());
+        let mut wrong_identity = acl.clone();
+        wrong_identity[8..12].copy_from_slice(&42_u32.to_le_bytes());
+        assert!(posix_acl_summary(&wrong_identity).is_none());
+
+        let mut many = 2_u32.to_le_bytes().to_vec();
+        for uid in 1..=15 {
+            add_entry(&mut many, 0x02, 4, uid);
+        }
+        let bounded = posix_acl_summary(&many).unwrap();
+        assert!(bounded.contains("3 more entries"));
+        assert!(!bounded.contains("user:15:"));
+    }
 
     #[test]
     fn tiny_folder_size_and_symlink_are_safe() {

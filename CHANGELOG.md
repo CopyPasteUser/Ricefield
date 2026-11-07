@@ -2,6 +2,10 @@
 
 ## Unreleased — guarded named-user POSIX access ACL creation
 
+- Properties now also displays the existing POSIX access/default ACL rules
+  (owner, numeric users/groups, mask, other) in a bounded read-only summary.
+  Malformed, inaccessible and oversized ACLs are labeled without guessing
+  their effective permissions; no external tools or elevated privileges.
 - Extend the local Properties panel with a narrowly scoped Linux ACL grant
   for a selected numeric UID (`rwx` rights). The file descriptor pins the
   original inode, the prior metadata must still match, and a fresh xattr

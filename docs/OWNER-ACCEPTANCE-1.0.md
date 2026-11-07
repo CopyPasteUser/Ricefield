@@ -102,7 +102,10 @@ automated evidence only; **all boxes below require owner verification**.
   timestamps and extended attributes. Test only authorized non-privileged
   edits; protected changes must fail safely and state why. On a disposable
   ext4 file, create a new POSIX access ACL for a test UID (`r--`), verify via
-  `getfacl`, then try creating another: the existing ACL must remain bytewise
+  `getfacl` and check RiceField's read-only access ACL rights summary.
+  On a disposable directory with a default ACL, confirm its named users,
+  groups, mask and other entries are displayed. Then try creating another:
+  the existing ACL must remain bytewise
   untouched. Try a symlink and a read-only filesystem; neither may silently
   change another inode. Existing ACL replacement is intentionally unavailable.
 - [ ] **B11 Error paths:** attempt a read-only directory, inaccessible

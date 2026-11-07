@@ -228,6 +228,10 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   Replacing/removing ACL entries, default
   directory ACLs, richer identity lookup and privileged editing stay out of
   scope until separately proved safe and accepted on target filesystems.
+- [x] Properties decodes existing Linux POSIX access and directory-default ACL
+  entries for inspection with bounded xattr reads. It displays numeric named
+  users/groups and their mask, rejects malformed data, and never edits rules
+  merely by opening a file. Editing existing/default ACLs remains unavailable.
 - [x] Refuse staged publication if a source's identity, size, modification
   time, inode change time or mode changes during the copy; open regular
   sources without following
