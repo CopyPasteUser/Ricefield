@@ -155,10 +155,10 @@ pub fn toolbar(
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     more_menu(ui, state, &mut selected);
                     if !compact {
-                        if toggle(ui, theme, state, FilesAction::List, "☰") {
+                        if toggle(ui, theme, state, FilesAction::List) {
                             selected = Some(FilesAction::List);
                         }
-                        if toggle(ui, theme, state, FilesAction::Grid, "▦") {
+                        if toggle(ui, theme, state, FilesAction::Grid) {
                             selected = Some(FilesAction::Grid);
                         }
                         ui.separator();
@@ -178,9 +178,8 @@ pub fn toolbar(
             });
             if compact {
                 ui.horizontal(|ui| {
-                    for (action, glyph) in [(FilesAction::Grid, "▦"), (FilesAction::List, "☰")]
-                    {
-                        if toggle(ui, theme, state, action, glyph) {
+                    for action in [FilesAction::Grid, FilesAction::List] {
+                        if toggle(ui, theme, state, action) {
                             selected = Some(action);
                         }
                     }
@@ -215,15 +214,9 @@ fn short_title(title: &str, max_len: usize) -> String {
     }
 }
 
-fn toggle(
-    ui: &mut egui::Ui,
-    theme: &Theme,
-    state: FilesContext,
-    action: FilesAction,
-    glyph: &str,
-) -> bool {
-    ui.add(
-        egui::Button::new(egui::RichText::new(glyph).size(15.0))
+fn toggle(ui: &mut egui::Ui, theme: &Theme, state: FilesContext, action: FilesAction) -> bool {
+    let response = ui.add(
+        egui::Button::new("")
             .selected(state.active(action))
             .min_size(Vec2::new(33.0, 31.0))
             .corner_radius(16)
@@ -232,9 +225,39 @@ fn toggle(
             } else {
                 theme.palette.chrome()
             }),
-    )
-    .on_hover_text(state.label(action))
-    .clicked()
+    );
+    let ink = theme.palette.text();
+    let center = response.rect.center();
+    let painter = ui.painter();
+    let stroke = egui::Stroke::new(1.45, ink);
+    match action {
+        FilesAction::Grid => {
+            for row in 0..2 {
+                for col in 0..2 {
+                    let x = center.x + (col as f32 - 1.0) * 9.0 + 1.0;
+                    let y = center.y + (row as f32 - 1.0) * 9.0 + 1.0;
+                    painter.rect_stroke(
+                        egui::Rect::from_min_size(egui::pos2(x, y), Vec2::splat(7.0)),
+                        1.0,
+                        stroke,
+                        egui::StrokeKind::Inside,
+                    );
+                }
+            }
+        }
+        FilesAction::List => {
+            for row in 0..3 {
+                let y = center.y - 7.0 + row as f32 * 7.0;
+                painter.circle_filled(egui::pos2(center.x - 7.0, y), 1.1, ink);
+                painter.line_segment(
+                    [egui::pos2(center.x - 3.5, y), egui::pos2(center.x + 8.0, y)],
+                    stroke,
+                );
+            }
+        }
+        _ => {}
+    }
+    response.on_hover_text(state.label(action)).clicked()
 }
 
 pub fn secondary_commands(ui: &mut egui::Ui, state: FilesContext) -> Option<FilesAction> {
@@ -263,7 +286,7 @@ pub fn secondary_commands(ui: &mut egui::Ui, state: FilesContext) -> Option<File
 }
 
 fn more_menu(ui: &mut egui::Ui, state: FilesContext, selected: &mut Option<FilesAction>) {
-    ui.menu_button("⋮", |ui| {
+    ui.menu_button("More", |ui| {
         ui.set_min_width(192.0);
         for (i, group) in [
             &[
