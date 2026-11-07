@@ -282,6 +282,10 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   avoiding a blocked writer/reader or an unbounded output allocation. A hung
   helper is killed and the in-app clipboard remains available; X11/Wayland
   helper compatibility still requires real-session acceptance.
+- [x] Read standard `text/uri-list` desktop clipboard targets after trying
+  the GNOME file-copy format on both X11 and Wayland. URI-list imports are
+  always Copy, never an inferred Cut; remote or malformed URIs remain rejected.
+  Other desktop-manager interoperability still requires real-session tests.
 - [x] Remove per-frame filesystem probes from ChromeOS and macOS sidebars.
   Their standard folders now use the same asynchronously refreshed available-
   places snapshot as the other five rices; a stalled filesystem must not block
