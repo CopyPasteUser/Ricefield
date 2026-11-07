@@ -15,7 +15,7 @@ use crate::{
     location::Location,
     metadata, open_with,
     operation_queue::OperationQueue,
-    preview, remote_download, remote_upload,
+    preview, remote_download, remote_upload, remote_upload_journal,
     shell_components::{self, ToolbarAction},
     shell_renderer::{self, FileCellLayout, shorten},
     theme::{BUILTIN_IDS, ChromeComponent, ShellKind, SidebarPosition, SidebarSection, Theme},
@@ -1343,6 +1343,14 @@ pub struct Explorer {
     recovery_comparisons: HashMap<String, (bool, journal::Comparison)>,
     recovery_resolution_confirm: Option<String>,
     recovery_resolution_active: bool,
+    remote_journal_sender: Sender<(u64, Result<Vec<remote_upload_journal::Record>, String>)>,
+    remote_journal_receiver: Receiver<(u64, Result<Vec<remote_upload_journal::Record>, String>)>,
+    remote_journal_generation: u64,
+    remote_journal_records: Vec<remote_upload_journal::Record>,
+    remote_journal_error: Option<String>,
+    remote_journal_loading: bool,
+    remote_journal_rescan_requested: bool,
+    remote_journal_confirm: Option<String>,
     clipboard: Option<Clipboard>,
     consumed_cut_paths: Option<Vec<PathBuf>>,
     clipboard_sender: Sender<ClipboardEvent>,
@@ -1449,6 +1457,7 @@ impl Explorer {
         let (paste_preview_sender, paste_preview_receiver) = mpsc::channel();
         let (recovery_sender, recovery_receiver) = mpsc::channel();
         let (recovery_comparison_sender, recovery_comparison_receiver) = mpsc::channel();
+        let (remote_journal_sender, remote_journal_receiver) = mpsc::channel();
         let (clipboard_sender, clipboard_receiver) = mpsc::channel();
         let (archive_sender, archive_receiver) = mpsc::channel();
         let (history_sender, history_receiver, history_done_receiver) = if separate_window {
@@ -1599,6 +1608,14 @@ impl Explorer {
             recovery_comparisons: HashMap::new(),
             recovery_resolution_confirm: None,
             recovery_resolution_active: false,
+            remote_journal_sender,
+            remote_journal_receiver,
+            remote_journal_generation: 0,
+            remote_journal_records: Vec::new(),
+            remote_journal_error: None,
+            remote_journal_loading: false,
+            remote_journal_rescan_requested: false,
+            remote_journal_confirm: None,
             clipboard: None,
             consumed_cut_paths: None,
             clipboard_sender,
@@ -1683,6 +1700,7 @@ impl Explorer {
             explorer.remember_session();
         }
         explorer.check_unfinished_moves();
+        explorer.check_unfinished_webdav_uploads();
         if explorer.theme_file.is_some() {
             // The worker owns all initial filesystem reads and requests a
             // repaint when the theme has been validated and applied.
@@ -1780,6 +1798,40 @@ impl Explorer {
         let sender = self.recovery_sender.clone();
         thread::spawn(move || {
             let result = journal::inspect_incomplete();
+            let _ = sender.send((generation, result));
+        });
+    }
+
+    /// WebDAV evidence lives in local private state. Never query, change,
+    /// delete or replay a remote server during startup/recovery inspection.
+    fn check_unfinished_webdav_uploads(&mut self) {
+        if self.remote_journal_loading {
+            self.remote_journal_rescan_requested = true;
+            return;
+        }
+        self.remote_journal_generation = self.remote_journal_generation.wrapping_add(1);
+        let generation = self.remote_journal_generation;
+        self.remote_journal_loading = true;
+        let sender = self.remote_journal_sender.clone();
+        thread::spawn(move || {
+            let result =
+                remote_upload_journal::inspect_incomplete().map_err(|error| error.to_string());
+            let _ = sender.send((generation, result));
+        });
+    }
+
+    fn acknowledge_webdav_upload(&mut self, record: remote_upload_journal::Record) {
+        if self.remote_journal_loading {
+            return;
+        }
+        self.remote_journal_generation = self.remote_journal_generation.wrapping_add(1);
+        let generation = self.remote_journal_generation;
+        self.remote_journal_loading = true;
+        let sender = self.remote_journal_sender.clone();
+        thread::spawn(move || {
+            let result = remote_upload_journal::acknowledge(&record)
+                .and_then(|()| remote_upload_journal::inspect_incomplete())
+                .map_err(|error| error.to_string());
             let _ = sender.send((generation, result));
         });
     }
@@ -3231,6 +3283,26 @@ impl Explorer {
                 }
             }
         }
+        while let Ok((generation, result)) = self.remote_journal_receiver.try_recv() {
+            if generation != self.remote_journal_generation {
+                continue;
+            }
+            self.remote_journal_loading = false;
+            match result {
+                Ok(records) => {
+                    self.remote_journal_records = records;
+                    self.remote_journal_error = None;
+                    self.remote_journal_confirm = None;
+                }
+                Err(error) => {
+                    // Retain previously inspected evidence on later failures.
+                    self.remote_journal_error = Some(error);
+                }
+            }
+            if std::mem::take(&mut self.remote_journal_rescan_requested) {
+                self.check_unfinished_webdav_uploads();
+            }
+        }
         while let Ok(message) = self.preview_receiver.try_recv() {
             self.preview_worker_running = false;
             if message.generation == self.preview_generation
@@ -3503,6 +3575,7 @@ impl Explorer {
         }
         while let Ok(result) = self.remote_upload_receiver.try_recv() {
             self.remote_upload_busy = false;
+            self.check_unfinished_webdav_uploads();
             self.status = Some(match result {
                 Ok(report) => {
                     if self.current().remote_uri.as_deref()
@@ -3671,7 +3744,11 @@ impl Explorer {
     }
 
     fn recovery_banner(&mut self, ui: &mut egui::Ui) {
-        if self.recovery_records.is_empty() && self.recovery_error.is_none() {
+        if self.recovery_records.is_empty()
+            && self.recovery_error.is_none()
+            && self.remote_journal_records.is_empty()
+            && self.remote_journal_error.is_none()
+        {
             return;
         }
         egui::Panel::top("unfinished_move_notice")
@@ -3684,8 +3761,14 @@ impl Explorer {
                 ui.horizontal_wrapped(|ui| {
                     ui.colored_label(
                         Color32::WHITE,
-                        if self.recovery_error.is_some() {
-                            "File move recovery records need attention".to_owned()
+                        if self.recovery_error.is_some() || self.remote_journal_error.is_some() {
+                            "File transfer recovery records need attention".to_owned()
+                        } else if !self.remote_journal_records.is_empty() {
+                            format!(
+                                "{} unfinished local move(s), {} uncertain WebDAV upload(s) — review before remote cleanup",
+                                self.recovery_records.len(),
+                                self.remote_journal_records.len(),
+                            )
                         } else {
                             format!(
                                 "{} unfinished cross-device file move(s) — source and destination may both exist",
@@ -3709,19 +3792,21 @@ impl Explorer {
         let mut compare = None;
         let mut browse_parent = None;
         let mut prepare_copy = None;
+        let mut acknowledge_webdav = None;
+        let mut confirm_webdav = self.remote_journal_confirm.clone();
         #[cfg(unix)]
         let mut resolve = None;
         #[cfg(target_os = "linux")]
         let mut publish_staged = None;
         #[cfg(unix)]
         let mut confirm_resolution = self.recovery_resolution_confirm.clone();
-        egui::Window::new("Unfinished cross-device moves")
+        egui::Window::new("File transfer recovery")
             .open(&mut open)
             .default_width(610.0)
             .default_height(340.0)
             .resizable(true)
             .show(context, |ui| {
-                ui.label("Recovery never deletes original files or overwrites destinations. An explicit confirmed action can publish a verified staged copy to a free destination or retire a verified publication journal. No action runs automatically.");
+                ui.label("Recovery never deletes original files or overwrites destinations. An explicit confirmed action can publish a verified local staged copy to a free destination or retire a verified publication journal. No action runs automatically.");
                 ui.label("Compare file contents on demand (maximum 512 MiB and 10,000 entries). A match is only a snapshot, never authorization to delete a source.");
                 ui.small("If the original source identity still matches, you can separately prepare a new Copy with a full preview. This does not complete the interrupted Move or clear its journal.");
                 if let Some(error) = &self.recovery_error {
@@ -3901,12 +3986,62 @@ impl Explorer {
                         });
                     }
                 });
+                if !self.remote_journal_records.is_empty() || self.remote_journal_error.is_some() {
+                    ui.separator();
+                    ui.heading("Uncertain WebDAV uploads");
+                    ui.label("These records were saved before uploading. A timeout or crash may have left the stage, final file, both, or neither on the server. RiceField does not query, retry, move or delete these remote files during recovery.");
+                    if let Some(error) = &self.remote_journal_error {
+                        ui.colored_label(Color32::LIGHT_RED, format!("Cannot inspect WebDAV evidence: {error}"));
+                    }
+                    for record in &self.remote_journal_records {
+                        ui.group(|ui| {
+                            ui.strong(format!("WebDAV upload {}", record.id));
+                            ui.label("Intended destination:");
+                            ui.monospace(&record.destination_uri);
+                            ui.label("Private stage (may or may not exist):");
+                            ui.monospace(&record.stage_uri);
+                            ui.horizontal_wrapped(|ui| {
+                                if ui.button("Copy stage URI").clicked() {
+                                    context.copy_text(record.stage_uri.clone());
+                                }
+                                if ui.button("Copy destination URI").clicked() {
+                                    context.copy_text(record.destination_uri.clone());
+                                }
+                            });
+                            ui.small("Inspect both server-side paths independently and retain any ambiguous data. The record does not prove whether publication succeeded.");
+                            if confirm_webdav.as_deref() == Some(record.id.as_str()) {
+                                ui.colored_label(Color32::LIGHT_YELLOW, "Have you independently verified the remote stage and destination, and handled any retained data? Confirming removes ONLY this local journal record, not server files.");
+                                ui.horizontal_wrapped(|ui| {
+                                    if ui.add_enabled(!self.remote_journal_loading, egui::Button::new("Confirm discard local record")).clicked() {
+                                        acknowledge_webdav = Some(record.clone());
+                                        confirm_webdav = None;
+                                    }
+                                    if ui.button("Cancel").clicked() {
+                                        confirm_webdav = None;
+                                    }
+                                });
+                            } else if ui.add_enabled(!self.remote_journal_loading, egui::Button::new("I reviewed the server; discard record…")).clicked() {
+                                confirm_webdav = Some(record.id.clone());
+                            }
+                        });
+                    }
+                }
+                if self.remote_journal_loading {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label("Checking private WebDAV evidence…");
+                    });
+                }
                 ui.separator();
                 if ui.button("Rescan records").clicked() {
                     rescan = true;
                 }
             });
         self.recovery_open = open;
+        self.remote_journal_confirm = confirm_webdav;
+        if let Some(record) = acknowledge_webdav {
+            self.acknowledge_webdav_upload(record);
+        }
         #[cfg(unix)]
         {
             self.recovery_resolution_confirm = confirm_resolution;
@@ -3927,6 +4062,7 @@ impl Explorer {
         }
         if rescan {
             self.check_unfinished_moves();
+            self.check_unfinished_webdav_uploads();
         }
         if let Some(folder) = browse_parent {
             self.recovery_open = false;

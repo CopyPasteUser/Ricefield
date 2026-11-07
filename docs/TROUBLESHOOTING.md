@@ -113,6 +113,10 @@ rollback. Do not remove originals merely to dismiss a recovery warning.
 
 RiceField reports the private WebDAV staging URI if a network error, cancelled
 verification or server collision leaves an uncertain remote-upload state.
+After a restart, open **Review safely…** in the file-transfer warning. The
+private WebDAV evidence journal lists the intended destination and uncertain
+stage, each with a copy button. The record is saved before upload and survives
+an ordinary crash; it does not prove an object exists remotely.
 If a preliminary server safety probe fails, the error instead identifies the
 random probe prefix (rounds 0–3 and suffixes `-a`, `-b`, `-destination`).
 Record the URI privately, verify whether the final destination exists, then
@@ -121,6 +125,11 @@ administration tool. Do not blindly retry, overwrite or remove either path.
 RiceField deliberately performs no automatic remote cleanup or retry: a timeout
 can occur after the server already committed the publication. Never paste
 private remote paths or credentials into public bug reports.
+After verifying both server paths and preserving any ambiguous data, select
+**I reviewed the server; discard record…** and confirm. This deletes only the
+local record, never a remote file. You can leave the record while investigating;
+the private journal has a 256-record cap. If that state cannot be updated,
+new WebDAV uploads refuse to start rather than lose crash evidence.
 
 ## Updating a source checkout fails
 

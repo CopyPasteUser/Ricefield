@@ -5,6 +5,7 @@
 use crate::{
     keyring,
     location::{Location, RemoteScheme},
+    remote_upload_journal,
     volume::MountCredentials,
 };
 use std::{
@@ -564,6 +565,14 @@ fn run_probe_rounds(
 }
 
 pub fn upload(request: UploadRequest, cancelled: &AtomicBool) -> Result<UploadResult, String> {
+    upload_with_journal_directory(request, cancelled, None)
+}
+
+fn upload_with_journal_directory(
+    request: UploadRequest,
+    cancelled: &AtomicBool,
+    journal_override: Option<&Path>,
+) -> Result<UploadResult, String> {
     let base = webdav_url(request.remote_directory.trim_end_matches('/'))?;
     let authority = base
         .split_once("://")
@@ -595,6 +604,15 @@ pub fn upload(request: UploadRequest, cancelled: &AtomicBool) -> Result<UploadRe
         "{base}/.ricefield-upload-{}",
         random_suffix().map_err(|error| error.to_string())?
     );
+    // Refuse a remote write until the stage and intended destination are
+    // durably recorded. Timeout and crash outcomes must survive restarts.
+    let pending = match journal_override {
+        Some(directory) => remote_upload_journal::PendingUpload::begin_in(directory, &stage, &uri),
+        None => remote_upload_journal::PendingUpload::begin(&stage, &uri),
+    }
+    .map_err(|error| {
+        format!("Cannot durably record WebDAV upload before PUT: {error}. No data was uploaded")
+    })?;
     let created = http_action(
         &credentials,
         "PUT",
@@ -639,6 +657,9 @@ pub fn upload(request: UploadRequest, cancelled: &AtomicBool) -> Result<UploadRe
             ),
         ));
     }
+    // A confirmed server acknowledgement retires only local evidence. If
+    // disk retirement fails, the record remains for explicit later review.
+    pending.finish();
     Ok(UploadResult {
         uri: request.remote_directory.trim_end_matches('/').to_owned() + "/" + &name,
         bytes: snapshot.bytes,
@@ -849,6 +870,19 @@ mod tests {
         }
     }
 
+    // Mock server tests never write into a developer's real XDG state.
+    fn upload(request: UploadRequest, cancelled: &AtomicBool) -> Result<UploadResult, String> {
+        let directory = std::env::temp_dir().join(format!(
+            "ricefield-webdav-mock-journals-{}",
+            random_suffix().unwrap()
+        ));
+        let result = super::upload_with_journal_directory(request, cancelled, Some(&directory));
+        if directory.exists() {
+            fs::remove_dir_all(directory).unwrap();
+        }
+        result
+    }
+
     #[test]
     fn webdav_publish_verifies_private_stage_and_never_replaces_existing() {
         let server = MockDav::start(false, false, true);
@@ -873,6 +907,75 @@ mod tests {
             "{collision}"
         );
         assert_eq!(server.path("My%20Notes.txt"), b"verified upload bytes");
+        fs::remove_file(file).unwrap();
+        fs::remove_dir(folder).unwrap();
+    }
+
+    #[test]
+    fn uncertain_publication_retains_private_evidence_and_success_retires_it() {
+        let server = MockDav::start(false, false, false);
+        let (folder, file) = fixture_file("evidence.txt");
+        let journals = folder.join("journals");
+        super::upload_with_journal_directory(
+            request(file.clone(), &server),
+            &AtomicBool::new(false),
+            Some(&journals),
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read_dir(&journals)
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "toml"))
+                .count(),
+            0,
+        );
+        let error = super::upload_with_journal_directory(
+            request(file.clone(), &server),
+            &AtomicBool::new(false),
+            Some(&journals),
+        )
+        .unwrap_err();
+        assert!(error.contains("HTTP 412"), "{error}");
+        let mut records: Vec<_> = fs::read_dir(&journals)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "toml"))
+            .collect();
+        assert_eq!(records.len(), 1);
+        let persisted = fs::read_to_string(records.pop().unwrap().path()).unwrap();
+        assert!(persisted.contains(".ricefield-upload-"));
+        assert!(persisted.contains("evidence.txt"));
+        assert!(!persisted.contains("password"));
+        assert!(!persisted.contains("secret"));
+        fs::remove_dir_all(journals).unwrap();
+        fs::remove_file(file).unwrap();
+        fs::remove_dir(folder).unwrap();
+    }
+
+    #[test]
+    fn unwritable_journal_fails_closed_before_remote_stage_put() {
+        let server = MockDav::start(false, false, false);
+        let (folder, file) = fixture_file("unwritten.txt");
+        let not_a_directory = folder.join("journal-blocker");
+        fs::write(&not_a_directory, b"already a file").unwrap();
+        let error = super::upload_with_journal_directory(
+            request(file.clone(), &server),
+            &AtomicBool::new(false),
+            Some(&not_a_directory),
+        )
+        .unwrap_err();
+        assert!(error.contains("Cannot durably record"), "{error}");
+        assert!(server.path("unwritten.txt").is_empty());
+        assert!(
+            !server
+                .state
+                .lock()
+                .unwrap()
+                .keys()
+                .any(|path| path.contains(".ricefield-upload-"))
+        );
+        fs::remove_file(not_a_directory).unwrap();
         fs::remove_file(file).unwrap();
         fs::remove_dir(folder).unwrap();
     }

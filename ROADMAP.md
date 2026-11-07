@@ -148,11 +148,6 @@ At baseline commit `214e585`, `main` and
 | P1 | Storage and network | GIO/GVfs SMB/SFTP/WebDAV, system NFS, UDisks2/Polkit mount/eject, secrets, reconnect and offline errors |
 | P0 | Network writes before 1.0 | Server-enforced atomic no-overwrite publication for each promised backend, private staging and byte verification, adversarial two-client races, abort/offline/crash recovery; fail closed when unsupported |
 
-WebDAV now has an initial conditional `PUT`/`MOVE Overwrite: F` implementation
-with a disposable per-upload live server probe and staged byte verification.
-This is **partial P0 work**, not acceptance: SMB/SFTP/MTP write backends,
-interrupted remote stage recovery and actual NAS concurrency/hardware tests
-are still outstanding. Never substitute generic GIO move for any of them.
 | P1 | Archives | ZIP, TAR variants, 7z and optional RAR with traversal, symlink and bomb protection |
 | P1 | Explorer functions | Split view, session restore, drag-out, folder tree, context actions and robust keyboard interaction |
 | P1 | Preview and search | Bounded thumbnails, PDF/media/code/archive preview, metadata, filters and cancellable search |
@@ -160,6 +155,14 @@ are still outstanding. Never substitute generic GIO move for any of them.
 | P1 | Composable rice architecture | Versioned TOML shell composition, shared actions, independently replaceable UI panels; no core rewrite |
 | P2 | RiceBowl polish | Seven distinctive shells, live theme IPC, editor, custom Rust component registration and accessibility refinement |
 | P2 | Organization extras | Saved searches, duplicate detection, optional index/tags, ACLs and extended attributes |
+
+WebDAV has a conditional `PUT`/`MOVE Overwrite: F` implementation with a
+disposable live server race probe, staged byte verification and a private,
+synced stage/destination journal reserved before its first upload PUT. Uncertain
+results remain available after restart for explicit *local-only* record
+acknowledgement, not automatic server cleanup. This is **partial P0 work**:
+SMB/SFTP/MTP backend guarantees and actual NAS/offline/crash acceptance are
+outstanding. Never substitute generic GIO move for any of them.
 
 ## Version gates
 
