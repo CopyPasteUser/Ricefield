@@ -2892,7 +2892,18 @@ fn stage_and_publish_with_sync(
             Ok(())
         }
         Err(error) => {
-            if let Err(cleanup_error) = remove_created(&staging_dir) {
+            if journal
+                .as_ref()
+                .is_some_and(|record| record.retain_verified_stage())
+            {
+                // A failed no-overwrite rename, cancelled transfer or sync
+                // barrier must not erase the verified payload recorded for
+                // restart inspection. Never replay it automatically.
+                eprintln!(
+                    "RiceField: preserving verified staging at {} for recovery review",
+                    staging_dir.display()
+                );
+            } else if let Err(cleanup_error) = remove_created(&staging_dir) {
                 eprintln!("RiceField: cannot clean staging directory: {cleanup_error}");
             }
             Err(error)
@@ -3980,6 +3991,57 @@ mod tests {
     }
 
     #[test]
+    fn journaled_collision_preserves_verified_stage_for_recovery() {
+        let root = test_root();
+        let source = root.join("source.txt");
+        let destination = root.join("target.txt");
+        fs::write(&source, b"original bytes").unwrap();
+        let journal_dir = root.join("journal");
+        let mut journal = Journal::begin_in(&journal_dir, &source, &destination).unwrap();
+        let cancelled = AtomicBool::new(false);
+        let mut no_op = |_: Progress| {};
+        let mut transfer = Transfer {
+            cancelled: &cancelled,
+            notify: &mut no_op,
+            transferred: 0,
+            total: 14,
+            last_report: Instant::now(),
+            last_reported_bytes: 0,
+            phase: "Copying",
+        };
+        let mut sync_count = 0;
+        let mut sync = |path: &Path| {
+            sync_count += 1;
+            if sync_count == 1 {
+                fs::write(&destination, b"other writer")?;
+            }
+            sync_directory(path)
+        };
+        let error = stage_and_publish_with_sync(
+            &source,
+            &destination,
+            true,
+            &mut transfer,
+            Some(&mut journal),
+            &mut sync,
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(journal.record().state, State::StagedVerified);
+        assert_eq!(fs::read(&source).unwrap(), b"original bytes");
+        assert_eq!(fs::read(&destination).unwrap(), b"other writer");
+        let staging = journal.record().staging.as_ref().unwrap();
+        assert_eq!(
+            fs::read(staging.join("payload")).unwrap(),
+            b"original bytes"
+        );
+        let persisted =
+            fs::read_to_string(journal_dir.join(format!("{}.toml", journal.record().id))).unwrap();
+        assert!(persisted.contains("state = \"staged_verified\""));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn competing_destination_created_before_publication_is_never_overwritten() {
         let root = test_root();
         let source = root.join("source.txt");
@@ -4068,13 +4130,8 @@ mod tests {
             b"source changed during publication"
         );
         assert!(!destination.exists());
-        assert!(
-            journal
-                .record()
-                .staging
-                .as_ref()
-                .is_some_and(|path| !path.exists())
-        );
+        let staging = journal.record().staging.as_ref().unwrap();
+        assert_eq!(fs::read(staging.join("payload")).unwrap(), b"before");
         fs::remove_dir_all(root).unwrap();
     }
 

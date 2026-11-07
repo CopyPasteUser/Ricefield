@@ -89,6 +89,13 @@ Historical move journals are under `$XDG_STATE_HOME/ricefield/operations/`,
 defaulting to `~/.local/state/ricefield/operations/`. Keep evidence while
 reviewing source, destination and staging paths.
 
+When a journaled cross-device copy passed verification but failed to publish,
+RiceField now keeps the verified staging directory after an ordinary failure.
+In **Unfinished cross-device moves**, choose **Browse staging folder** and
+**Compare source and staged copy** to inspect it. The staged copy may consume
+significant disk space. Do not remove or retry it blindly: a destination may
+have been published even if its final acknowledgement was interrupted.
+
 Recovery inspection and bounded byte comparison are read-only. Matching inode
 metadata or bytes does not authorize deletion or prove that paths cannot change.
 An offered fresh Copy is a separate confirmed operation, not restart resume or
