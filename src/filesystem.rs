@@ -3846,13 +3846,8 @@ mod tests {
             last_reported_bytes: 0,
             phase: "Copying",
         };
-        publish_cross_device_copy_with_journal(
-            &source,
-            &destination,
-            &mut transfer,
-            &mut journal,
-        )
-        .unwrap();
+        publish_cross_device_copy_with_journal(&source, &destination, &mut transfer, &mut journal)
+            .unwrap();
         assert_eq!(journal.record().state, State::Completed);
         assert!(!root.join("journal").join(format!("{id}.toml")).exists());
         assert_eq!(fs::read(&source).unwrap(), b"verified retained source");
