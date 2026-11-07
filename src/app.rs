@@ -10531,7 +10531,7 @@ impl Explorer {
                                     });
                                     dismiss = true;
                                 }
-                                ui.small("Only creates a new ACL; existing ACLs are never overwritten. Group rights are preserved. Requires filesystem ACL support and ordinary Linux permissions.");
+                                ui.small("Creates an ACL only if none is found. Group rights are preserved. Avoid simultaneous ACL edits from other programs: Linux does not guarantee atomic no-replace for this attribute. Requires filesystem ACL support and ordinary Linux permissions.");
                             });
                             #[cfg(target_os = "linux")]
                             ui.vertical(|ui| {
