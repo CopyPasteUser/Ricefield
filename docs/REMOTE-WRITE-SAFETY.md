@@ -59,10 +59,17 @@ When a safety probe fails, RiceField reports the random probe-name prefix,
 rounds and suffixes so any leftover disposable objects can be found. When an
 upload could have created a stage and later fails, RiceField reports the exact
 private stage URI and warns that timeout or publication results may be
-ambiguous. It does not automatically delete or retry the uncertain remote
-object. Preserve these paths privately until the final destination, probes
-and stage have been checked on the server. This is not durable remote-upload
-journaling.
+ambiguous. Before an actual upload's first staging PUT, RiceField durably saves
+the random stage URI and intended final destination in a private user-owned
+WebDAV journal. If the record cannot be created, no upload occurs. A confirmed
+HTTP 201 publication retires only that local record; otherwise the evidence
+survives a process restart and appears in the recovery review UI. A record
+does **not** prove whether a remote stage or final file currently exists.
+Neither startup nor review automatically queries, deletes, retries or
+publishes remote objects. The owner must inspect both paths on the server,
+then explicitly confirm discarding the private **local** record. Failed
+capability probes remain diagnosed by random probe-name prefix, not as upload
+journals. Never share private URI paths in public reports.
 
 SMB, SFTP and MTP upload, and all remote rename and delete actions remain
 disabled until their own atomic backends pass the same gate. A system-mounted share can be

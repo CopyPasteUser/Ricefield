@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — Durable uncertain WebDAV upload evidence
+
+- Before any remote upload stage PUT, synchronously publish a private bounded
+  WebDAV journal with the random stage URI and final destination (no login
+  secrets). Refuse the upload if evidence cannot be durably saved.
+- Retire the local evidence only after the server acknowledges the exclusive
+  final MOVE. Recover ambiguous/crashed attempts on the normal background
+  recovery worker, with copyable paths and an explicitly confirmed local-only
+  journal dismissal after the owner checks the remote server. Never
+  automatically retry, overwrite or delete a remote object.
+- Isolate mocked WebDAV journal tests from real user state, including failure
+  retention and a fail-closed unwritable-journal regression.
+
 ## Unreleased — Bounded directory restart recovery
 
 - Allow explicit, two-step confirmation to publish a verified, still-private
