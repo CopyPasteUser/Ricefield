@@ -81,6 +81,15 @@ fn random_suffix() -> io::Result<String> {
     Ok(seed.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
+/// Once a remote stage might exist, report its exact address for later
+/// inspection. Network timeouts are ambiguous: neither an automatic DELETE
+/// nor an automatic retry is safe without fresh server-side verification.
+fn staged_upload_error(stage: &str, reason: &str) -> String {
+    format!(
+        "{reason}. A private WebDAV stage may remain at {stage}. Check both the final destination and this stage before manual cleanup; RiceField has not deleted or retried either object"
+    )
+}
+
 /// Do not use shell quoting or command-line credentials: curl reads a short,
 /// private config from stdin. Disable ~/.curlrc, redirects and automatic
 /// retries so the destination host never receives an unapproved replay.
@@ -580,15 +589,18 @@ pub fn upload(request: UploadRequest, cancelled: &AtomicBool) -> Result<UploadRe
         &["If-None-Match: *".into()],
         Some(&snapshot.path),
         cancelled,
-    )?;
+    )
+    .map_err(|error| staged_upload_error(&stage, &error))?;
     if created != HTTP_NEW {
-        return Err(format!(
-            "Server refused exclusive stage creation (HTTP {created}); nothing published"
+        return Err(staged_upload_error(
+            &stage,
+            &format!("Server refused exclusive stage creation (HTTP {created})"),
         ));
     }
-    verify_remote_bytes(&stage, &credentials, &mut snapshot, cancelled)?;
+    verify_remote_bytes(&stage, &credentials, &mut snapshot, cancelled)
+        .map_err(|error| staged_upload_error(&stage, &error))?;
     if cancelled.load(Ordering::Relaxed) {
-        return Err("Upload cancelled before publication".into());
+        return Err(staged_upload_error(&stage, "Upload cancelled before publication"));
     }
     // Once publication starts, cancelling can produce an ambiguous outcome:
     // the server may commit before the client notices the broken connection.
@@ -601,10 +613,14 @@ pub fn upload(request: UploadRequest, cancelled: &AtomicBool) -> Result<UploadRe
         &[format!("Destination: {uri}"), "Overwrite: F".into()],
         None,
         &publishing,
-    )?;
+    )
+    .map_err(|error| staged_upload_error(&stage, &error))?;
     if committed != HTTP_NEW {
-        return Err(format!(
-            "Remote destination was not published (HTTP {committed}); pre-existing data was not intentionally replaced"
+        return Err(staged_upload_error(
+            &stage,
+            &format!(
+                "Remote destination was not acknowledged as published (HTTP {committed}); pre-existing data was not intentionally replaced"
+            ),
         ));
     }
     Ok(UploadResult {
@@ -829,6 +845,8 @@ mod tests {
         let collision =
             upload(request(file.clone(), &server), &AtomicBool::new(false)).unwrap_err();
         assert!(collision.contains("HTTP 412"), "{collision}");
+        assert!(collision.contains(&format!("{}/.ricefield-upload-", server.url)), "{collision}");
+        assert!(collision.contains("Check both the final destination"), "{collision}");
         assert_eq!(server.path("My%20Notes.txt"), b"verified upload bytes");
         fs::remove_file(file).unwrap();
         fs::remove_dir(folder).unwrap();

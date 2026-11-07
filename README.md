@@ -37,7 +37,7 @@ The details are intentional: 98 has a dense gray menu and tree, XP a blue tasks 
 - **Reach storage:** SMB, SFTP, WebDAV and MTP discovery/browsing with folders opening in the current or a new tab, navigable breadcrumbs, selectable/sortable file rows, previews, queued downloads and optional credential storage. WebDAV additionally offers a guarded **single-file upload** after a live server collision-safety probe; USB actions use UDisks2/Polkit.
 - **Customize:** seven built-in rices plus user TOML files for palettes, spacing, navigation and layout.
 
-**Release status: `1.0.0-rc.17` candidate.** Automated Rust tests and native Linux GUI screenshots pass, but the final physical Linux Mint/NAS/USB acceptance is still open. Keep your existing file manager installed.
+**Release status: `1.0.0-rc.18` development candidate.** Automated Rust checks and native Linux GUI smoke tests pass. The 1.0 network-write/recovery code gates **and** physical Linux Mint/NAS/USB acceptance are still open. Keep your existing file manager installed.
 
 ## Install
 
@@ -71,11 +71,11 @@ ricefield --theme-file /path/to/custom-rice.toml
 
 ## Safety and known limits
 
-- Remote browsing is **read-only by default**, with explicit bounded no-overwrite downloads. WebDAV single-file upload is available only after a live conditional-MOVE safety probe, private stage and full byte verification. SMB, SFTP, MTP uploads, remote rename and deletion remain disabled pending [backend-specific atomicity guarantees](docs/REMOTE-WRITE-SAFETY.md); the 1.0 network-write gate is still open.
+- Remote browsing is **read-only by default**, with explicit bounded no-overwrite downloads. WebDAV single-file upload is available only after a live conditional-MOVE safety probe, private stage and full byte verification. Failure reports the private stage URI for manual review; no automatic remote cleanup or retries occur. SMB, SFTP, MTP uploads, remote rename and deletion remain disabled pending [backend-specific atomicity guarantees](docs/REMOTE-WRITE-SAFETY.md); the 1.0 network-write gate is still open.
 - Cross-device moves preserve their sources after verified copies; cleanup requires a separate decision.
 - Batch rename has guarded session-only Undo, not full crash recovery. Inspect any interrupted batch.
 - USB mount, unmount and eject rely on UDisks2/Polkit; real-hardware acceptance and encrypted-volume unlock remain open.
-- Cross-device Move creates a verified copy and **keeps the source**. Its private crash journal supports read-only inspection and an explicitly confirmed resolution of an already-published, freshly verified regular file or symlink; this retires **only** the private journal record. Directories, staging-only operations and incomplete provenance still require manual review; there is no automatic rollback, replay or source deletion. Test risky operations with disposable files.
+- Cross-device Move creates a verified copy and **keeps the source**. Its private crash journal supports read-only inspection, explicitly confirmed resolution of an already-published file/symlink, and guarded no-overwrite publication of a verified, unchanged staged file/symlink on Linux. Directories and incomplete provenance still require manual review; there is no automatic rollback, broad replay or source deletion. Test risky operations with disposable files.
 
 [Detailed 1.0 status](docs/1.0-STATUS.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md)
 
