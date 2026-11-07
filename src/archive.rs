@@ -1355,6 +1355,61 @@ mod tests {
     }
 
     #[test]
+    fn generated_hostile_zip_and_tar_paths_never_publish() {
+        // Deterministic, reproducible format-level corpus in addition to the
+        // individual regression fixtures. No fuzz framework or writable
+        // destination outside each fresh disposable directory is involved.
+        let mut seed = 0x7c6d_87a1_4b95_c9e3u64;
+        for format in [Format::Zip, Format::TarGz] {
+            for case in 0..20 {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                let token = format!("{seed:016x}");
+                let fixture = Fixture::new();
+                let hostile = match case % 5 {
+                    0 => format!("../{token}"),
+                    // Even a broken absolute-path guard would land only in
+                    // our disposable fixture, never another user's /tmp.
+                    1 => format!("{}/absolute-{token}", fixture.0.display()),
+                    2 => format!("safe/../../{token}"),
+                    3 => format!("C:/{token}"),
+                    _ => format!("./../{token}"),
+                };
+                let payload = fixture.0.join("payload");
+                fs::write(&payload, b"untrusted contents").unwrap();
+                let archive = fixture.0.join(format!("hostile.{}", format.extension()));
+                let api = Api::load().unwrap();
+                let writer = Writer::open(&api, &archive, format, None).unwrap();
+                let cancelled = AtomicBool::new(false);
+                if writer
+                    .add(
+                        Path::new(&hostile),
+                        Some(&mut File::open(&payload).unwrap()),
+                        18,
+                        &cancelled,
+                        &mut |_| {},
+                    )
+                    .is_ok()
+                {
+                    writer.finish().unwrap();
+                    assert!(
+                        inspect(&archive, &cancelled).is_err(),
+                        "accepted {hostile:?}"
+                    );
+                    assert!(
+                        extract(&archive, &fixture.0, "unpacked", &[], &cancelled, |_| {}).is_err(),
+                        "extracted {hostile:?}"
+                    );
+                }
+                assert!(!fixture.0.join("unpacked").exists());
+                assert!(!fixture.0.join(&token).exists());
+                assert!(!fixture.0.join(format!("absolute-{token}")).exists());
+            }
+        }
+    }
+
+    #[test]
     fn forged_zip_inflated_size_is_rejected_at_preflight() {
         let fixture = Fixture::new();
         let source = fixture.0.join("small.txt");

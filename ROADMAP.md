@@ -529,6 +529,11 @@ stable or infer that skipping the tests satisfies the 0.4 release gate.
   truncated ZIP, wrong passwords and mid-extraction cancellation. libarchive
   normalizes some Windows ZIP separators to safe relative paths before the
   final checks; drive prefixes and escapes remain rejected.
+- [x] Extend those fixtures with 40 deterministic generated ZIP/tar.gz archives
+  containing randomized absolute, parent-traversal and drive-prefixed paths.
+  Verify inspection and staged extraction cannot publish their contents.
+  This is a reproducible hostile corpus, not continuous mutation fuzzing or a
+  substitute for the full format/device acceptance gate.
 - [ ] Expand hostile archive/format fuzzing and password workflows; perform
   complete native Mint acceptance before labelling the release stable. Keyring
   and real-device/network-disconnect acceptance were explicitly deferred by
