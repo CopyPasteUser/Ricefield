@@ -248,7 +248,7 @@ fn utf16_text(bytes: &[u8]) -> Option<String> {
     if payload.len() % 2 != 0 {
         return None;
     }
-    let units = payload.chunks_exact(2).map(|pair| {
+    let units = payload.as_chunks::<2>().0.iter().map(|pair| {
         if little_endian {
             u16::from_le_bytes([pair[0], pair[1]])
         } else {
