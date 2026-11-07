@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — Persistent, bounded per-file transfer diagnostics
+
+- Preserve up to 24 source/destination/outcome/error summaries for each recent
+  local file operation across restarts, prioritizing failures and unfinished
+  entries. Earlier summary-only history remains readable.
+- Keep history strictly display-only: restored records can never authorize
+  Undo, replay or filesystem mutations. Cap each item and the complete private
+  state file; automatically discard oldest records once the 256 KiB limit is
+  approached. Full crash recovery and untruncated logs remain out of scope.
+
 ## Unreleased — Previews, network tabs, Open With and file icons
 
 - Offer bounded BMP/ICO previews and readable fallbacks when optional PDF,

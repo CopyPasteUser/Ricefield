@@ -271,10 +271,13 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
 - [ ] Extend the queue to Move and other operations only after stale-source
   preflight and safe confirmation are implemented; complete failure recovery.
   RC.7 adds bounded, private, durable **read-only result summaries** across
-  restarts via a single background writer, but waiting jobs, detailed per-item
-  results and Undo are deliberately not replayed or restored. A non-regular,
-  corrupt or unsupported history is preserved unchanged. Full crash recovery
-  and durable per-item histories remain open.
+  restarts via a single background writer. A later increment retains up to 24
+  bounded per-item source/target/error summaries per completed operation,
+  prioritizing failed, cancelled and unstarted files; older v1 ledgers remain
+  readable. The worker drops oldest records when the 256 KiB file limit is
+  reached. Waiting jobs, full per-item records and Undo are never replayed or
+  restored. Non-regular, corrupt or unsupported history is preserved unchanged.
+  Full crash recovery and untruncated durable per-item histories remain open.
 - [x] Show elapsed wall-clock time, average transferred-byte throughput and a
   conservative approximate ETA on active transfers across all rice layouts;
   show final elapsed time in session results. Hide estimates before enough
