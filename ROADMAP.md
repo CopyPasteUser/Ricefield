@@ -220,6 +220,14 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   including races. There is no ACL editor, attribute replacement/deletion,
   privileged namespace writer or guarantee that every filesystem supports
   xattrs. Ordinary kernel permissions and disposable Mint testing apply.
+- [x] Properties now permits a **new** Linux POSIX access-ACL entry for a
+  numeric UID on a selected ordinary file/directory. The pinned inode is
+  rechecked; an advisory inode lock and a fresh xattr probe refuse an existing
+  ACL, and the mask retains the original group rights. Linux may ignore
+  `XATTR_CREATE` for POSIX ACLs, so foreign concurrent writers remain a race.
+  Replacing/removing ACL entries, default
+  directory ACLs, richer identity lookup and privileged editing stay out of
+  scope until separately proved safe and accepted on target filesystems.
 - [x] Refuse staged publication if a source's identity, size, modification
   time, inode change time or mode changes during the copy; open regular
   sources without following

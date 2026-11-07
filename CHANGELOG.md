@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — guarded named-user POSIX access ACL creation
+
+- Extend the local Properties panel with a narrowly scoped Linux ACL grant
+  for a selected numeric UID (`rwx` rights). The file descriptor pins the
+  original inode, the prior metadata must still match, and a fresh xattr
+  existence check under a cooperative inode lock rejects existing ACLs.
+  Linux does not reliably enforce `XATTR_CREATE` for system POSIX ACLs;
+  non-cooperating concurrent writers remain a documented race. Original group rights
+  are preserved by the new mask; ordinary kernel permissions govern writes.
+- Add hostile input, inode-swap, symlink and collision tests. Existing ACL
+  replacement/removal, directory defaults and privileged ACL workflows are
+  still unavailable; real ext4/exFAT/NAS behavior is an owner test gate.
+
 ## Unreleased — native system app chooser portal
 
 - Add an optional Open With system chooser backed by XDG Desktop Portal
