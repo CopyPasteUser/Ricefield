@@ -1,8 +1,9 @@
-//! Durable, intentionally non-recovering records for cross-filesystem moves.
+//! Durable, fail-closed records for cross-filesystem moves.
 //!
 //! Each transition atomically replaces a private TOML file and syncs both the
-//! file and its containing directory. Recovery is inspection-only: a journal
-//! record never authorizes automatic deletion of a source or staging path.
+//! file and its containing directory. Recovery is explicitly user-initiated:
+//! an already published copy can be confirmed and its journal retired after
+//! fresh checks. A record never authorizes deletion of source or staging data.
 
 use serde::{Deserialize, Serialize};
 use std::{
@@ -80,7 +81,6 @@ fn identity_of(metadata: &fs::Metadata) -> ObjectIdentity {
         ctime_nsec: metadata.ctime_nsec(),
     }
 }
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IdentityStatus {
     NotRecorded,
@@ -741,10 +741,111 @@ impl Journal {
     }
 
     fn persist(&mut self, updated: Record) -> io::Result<()> {
+        // A recovery finalizer and an active copy worker must never publish
+        // divergent states from stale in-memory copies of the same journal.
+        let directory = self.path.parent().ok_or_else(|| invalid_input("Invalid journal path"))?;
+        #[cfg(unix)]
+        let _lock = lock_journal_directory(directory)?;
+        let (current, _) = read_record(&self.path)?;
+        if current != self.record {
+            return Err(invalid_data("Journal record changed since the last transition"));
+        }
         write_record(&self.path, &updated, false)?;
         self.record = updated;
         Ok(())
     }
+}
+
+/// Resolve only an already-published, byte-verified independent copy after
+/// restart. This operation changes private journal state, never either file.
+/// A user must explicitly request it from the recovery review UI.
+#[cfg(unix)]
+pub fn resolve_verified_copy(id: &str, cancelled: &AtomicBool) -> io::Result<()> {
+    resolve_verified_copy_in(&journal_directory()?, id, cancelled)
+}
+
+#[cfg(unix)]
+fn resolve_verified_copy_in(directory: &Path, id: &str, cancelled: &AtomicBool) -> io::Result<()> {
+    if !valid_id(id) {
+        return Err(invalid_input("Invalid recovery record ID"));
+    }
+    check_private_directory(&fs::symlink_metadata(directory)?)?;
+    let path = directory.join(format!("{id}.toml"));
+    let (record, _) = read_record(&path)?;
+    verify_resolvable_publication(&record)?;
+    if cancelled.load(Ordering::Relaxed) {
+        return Err(io::Error::new(io::ErrorKind::Interrupted, "Recovery verification cancelled"));
+    }
+    let comparison = compare_for_recovery(&record.source, &record.destination, cancelled);
+    if cancelled.load(Ordering::Relaxed) {
+        return Err(io::Error::new(io::ErrorKind::Interrupted, "Recovery verification cancelled"));
+    }
+    if !matches!(comparison, Comparison::Identical { .. }) {
+        return Err(invalid_data("Source and destination contents are not verified identical"));
+    }
+
+    // File comparisons can be expensive. Lock only the final journal update,
+    // then reject any intervening writer transition or metadata drift.
+    let _lock = lock_journal_directory(directory)?;
+    let (current, _) = read_record(&path)?;
+    if current != record {
+        return Err(invalid_data("Recovery record changed during verification"));
+    }
+    verify_resolvable_publication(&current)?;
+    if cancelled.load(Ordering::Relaxed) {
+        return Err(io::Error::new(io::ErrorKind::Interrupted, "Recovery verification cancelled"));
+    }
+
+    let mut completed = current.clone();
+    if current.state == State::StagedVerified {
+        let published_identity = identity_of(&fs::symlink_metadata(&current.destination)?);
+        completed.state = State::Published;
+        completed.destination_identity = Some(published_identity);
+        write_record(&path, &completed, false)?;
+    }
+    completed.state = State::Completed;
+    write_record(&path, &completed, false)?;
+    // Same retirement semantics as ordinary successful copies: a crash or
+    // failed unlink leaves only a harmless terminal record, not lost files.
+    if let Err(error) = fs::remove_file(&path).and_then(|()| File::open(directory)?.sync_all()) {
+        eprintln!("RiceField: resolved journal retirement failed: {error}");
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn verify_resolvable_publication(record: &Record) -> io::Result<()> {
+    // Directory root identities do not cover metadata or external hardlinks
+    // of nested entries. Keep their journals available for manual inspection.
+    let source_meta = fs::symlink_metadata(&record.source)?;
+    if source_meta.is_dir() || !(source_meta.is_file() || source_meta.file_type().is_symlink()) {
+        return Err(invalid_data("Directory and special-file recovery require manual inspection"));
+    }
+    let destination = identity_of(&fs::symlink_metadata(&record.destination)?);
+    let staged = record
+        .staged_identity
+        .as_ref()
+        .ok_or_else(|| invalid_data("Missing staged publication identity"))?;
+    // Rename may update ctime, but verified content length, permissions,
+    // ownership and modification time must remain unchanged from staging.
+    if destination.mode != staged.mode
+        || destination.uid != staged.uid
+        || destination.gid != staged.gid
+        || destination.len != staged.len
+        || destination.mtime != staged.mtime
+        || destination.mtime_nsec != staged.mtime_nsec
+    {
+        return Err(invalid_data("Published file metadata differs from verified staging"));
+    }
+    if !matches!(record.state, State::Published | State::StagedVerified)
+        || !matches!(inspect_identity(&record.source, record.source_identity.as_ref()), IdentityStatus::SameSnapshot)
+        || !matches!(inspect_publication(record), PublicationEvidence::SameInode)
+        || (record.state == State::Published
+            && !matches!(inspect_identity(&record.destination, record.destination_identity.as_ref()), IdentityStatus::SameSnapshot))
+    {
+        return Err(invalid_data("Publication cannot be safely resolved from recorded evidence"));
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -1233,6 +1334,129 @@ mod tests {
                 .join(format!("{}.toml", journal.record().id))
                 .exists()
         );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recovery_can_retire_a_verified_published_copy_without_removing_files() {
+        let directory = test_directory();
+        let source = directory.join("source");
+        let destination = directory.join("destination");
+        fs::write(&source, b"unchanged content").unwrap();
+        let mut journal = Journal::begin_in(&directory, &source, &destination).unwrap();
+        journal.set_staging(&directory.join("stage")).unwrap();
+        publish_test_staging(&mut journal, &destination, b"unchanged content");
+        let id = journal.record().id.clone();
+
+        resolve_verified_copy_in(&directory, &id, &AtomicBool::new(false)).unwrap();
+        assert!(scan_incomplete_in(&directory).unwrap().is_empty());
+        assert_eq!(fs::read(&source).unwrap(), b"unchanged content");
+        assert_eq!(fs::read(&destination).unwrap(), b"unchanged content");
+        assert!(!directory.join(format!("{id}.toml")).exists());
+        // An old writer handle cannot resurrect the retired journal.
+        assert!(journal.advance(State::Completed).is_err());
+        assert!(!directory.join(format!("{id}.toml")).exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recovery_recognizes_publish_before_state_update_but_not_a_collision() {
+        let directory = test_directory();
+        let source = directory.join("source");
+        let destination = directory.join("destination");
+        let staging = directory.join("stage");
+        fs::write(&source, b"original").unwrap();
+        let mut journal = Journal::begin_in(&directory, &source, &destination).unwrap();
+        journal.set_staging(&staging).unwrap();
+        fs::create_dir(&staging).unwrap();
+        fs::write(staging.join("payload"), b"original").unwrap();
+        journal.advance(State::StagedVerified).unwrap();
+        fs::rename(staging.join("payload"), &destination).unwrap();
+        let id = journal.record().id.clone();
+        resolve_verified_copy_in(&directory, &id, &AtomicBool::new(false)).unwrap();
+        assert_eq!(fs::read(&source).unwrap(), b"original");
+        assert_eq!(fs::read(&destination).unwrap(), b"original");
+
+        let destination2 = directory.join("unrelated");
+        let mut second = Journal::begin_in(&directory, &source, &destination2).unwrap();
+        let staging2 = directory.join("stage2");
+        second.set_staging(&staging2).unwrap();
+        fs::create_dir(&staging2).unwrap();
+        fs::write(staging2.join("payload"), b"original").unwrap();
+        second.advance(State::StagedVerified).unwrap();
+        fs::write(&destination2, b"original").unwrap();
+        let second_id = second.record().id.clone();
+        assert!(resolve_verified_copy_in(&directory, &second_id, &AtomicBool::new(false)).is_err());
+        assert_eq!(scan_incomplete_in(&directory).unwrap().len(), 1);
+        assert_eq!(fs::read(destination2).unwrap(), b"original");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recovery_refuses_modified_source_and_different_destination_bytes() {
+        let directory = test_directory();
+        let source = directory.join("source");
+        let destination = directory.join("destination");
+        fs::write(&source, b"original").unwrap();
+        let mut journal = Journal::begin_in(&directory, &source, &destination).unwrap();
+        journal.set_staging(&directory.join("stage")).unwrap();
+        publish_test_staging(&mut journal, &destination, b"original");
+        let id = journal.record().id.clone();
+        fs::write(&destination, b"changed!").unwrap();
+        assert!(resolve_verified_copy_in(&directory, &id, &AtomicBool::new(false)).is_err());
+        fs::write(&destination, b"original").unwrap();
+        fs::write(&source, b"changed!").unwrap();
+        assert!(resolve_verified_copy_in(&directory, &id, &AtomicBool::new(false)).is_err());
+        assert_eq!(scan_incomplete_in(&directory).unwrap().len(), 1);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancelled_recovery_keeps_the_journal_and_both_files() {
+        let directory = test_directory();
+        let source = directory.join("source");
+        let destination = directory.join("destination");
+        fs::write(&source, b"safe copy").unwrap();
+        let mut journal = Journal::begin_in(&directory, &source, &destination).unwrap();
+        journal.set_staging(&directory.join("stage")).unwrap();
+        publish_test_staging(&mut journal, &destination, b"safe copy");
+        let cancelled = AtomicBool::new(true);
+        assert_eq!(
+            resolve_verified_copy_in(&directory, &journal.record().id, &cancelled)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Interrupted
+        );
+        assert_eq!(scan_incomplete_in(&directory).unwrap().len(), 1);
+        assert_eq!(fs::read(source).unwrap(), b"safe copy");
+        assert_eq!(fs::read(destination).unwrap(), b"safe copy");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_recovery_keeps_evidence_for_nested_metadata_review() {
+        let directory = test_directory();
+        let source = directory.join("source");
+        let destination = directory.join("destination");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("child"), b"contents").unwrap();
+        let mut journal = Journal::begin_in(&directory, &source, &destination).unwrap();
+        let staging = directory.join("stage");
+        journal.set_staging(&staging).unwrap();
+        fs::create_dir(&staging).unwrap();
+        fs::create_dir(staging.join("payload")).unwrap();
+        fs::write(staging.join("payload/child"), b"contents").unwrap();
+        journal.advance(State::StagedVerified).unwrap();
+        fs::rename(staging.join("payload"), &destination).unwrap();
+        journal.advance(State::Published).unwrap();
+        assert!(resolve_verified_copy_in(&directory, &journal.record().id, &AtomicBool::new(false)).is_err());
+        assert_eq!(scan_incomplete_in(&directory).unwrap().len(), 1);
+        assert_eq!(fs::read(destination.join("child")).unwrap(), b"contents");
         fs::remove_dir_all(directory).unwrap();
     }
 

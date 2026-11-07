@@ -396,6 +396,14 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   recorded source/destination contents (including nested bytes and symlink
   targets) with clear match/mismatch/inconclusive results. Check snapshots
   before/after reads; do not interpret matches as permission to delete.
+- [x] Allow an explicit, cancellable, two-step confirmation to retire the journal for a
+  **previously published independent regular file/symlink copy only** after a second bounded byte
+  comparison and refreshed source/destination inode evidence. Serialize
+  journal writes across workers and reject stale writers so a retired record
+  cannot be resurrected. Keep both source and destination untouched; refuse
+  stale metadata, altered bytes, collisions and unverified staging. Directory
+  records remain available because root identity does not prove nested metadata. This is
+  not automatic replay, cleanup of staging debris, or full crash recovery.
 - [x] Persist Unix source inode and metadata evidence before staging and
   published-destination identity after the durable publication barrier.
   Journal v3 additionally persists the staged payload inode identity after

@@ -61,7 +61,6 @@ impl RemoteSort {
         }
     }
 }
-
 fn sort_remote_entries(entries: &mut [volume::RemoteEntry], by: RemoteSort, descending: bool) {
     entries.sort_by(|left, right| {
         // Folder grouping is invariant even when reversing a selected column.
@@ -1342,6 +1341,8 @@ pub struct Explorer {
     recovery_comparison_active: Option<String>,
     recovery_comparison_cancel: Arc<AtomicBool>,
     recovery_comparisons: HashMap<String, journal::Comparison>,
+    recovery_resolution_confirm: Option<String>,
+    recovery_resolution_active: bool,
     clipboard: Option<Clipboard>,
     consumed_cut_paths: Option<Vec<PathBuf>>,
     clipboard_sender: Sender<ClipboardEvent>,
@@ -1596,6 +1597,8 @@ impl Explorer {
             recovery_comparison_active: None,
             recovery_comparison_cancel: Arc::new(AtomicBool::new(false)),
             recovery_comparisons: HashMap::new(),
+            recovery_resolution_confirm: None,
+            recovery_resolution_active: false,
             clipboard: None,
             consumed_cut_paths: None,
             clipboard_sender,
@@ -1758,7 +1761,7 @@ impl Explorer {
         context.send_viewport_cmd(egui::ViewportCommand::Focus);
     }
 
-    /// Journal inspection is read-only and never blocks the UI thread.
+    /// Journal inspection never blocks the UI thread.
     fn check_unfinished_moves(&mut self) {
         if self.recovery_loading {
             // A disconnected mount can stall metadata probes. Never spawn an
@@ -1769,7 +1772,9 @@ impl Explorer {
         self.recovery_generation = self.recovery_generation.wrapping_add(1);
         let generation = self.recovery_generation;
         self.recovery_loading = true;
+        self.recovery_resolution_active = false;
         self.recovery_comparisons.clear();
+        self.recovery_resolution_confirm = None;
         self.recovery_comparison_cancel
             .store(true, Ordering::Relaxed);
         let sender = self.recovery_sender.clone();
@@ -1795,6 +1800,32 @@ impl Explorer {
         thread::spawn(move || {
             let result = journal::compare_for_recovery(&source, &destination, &cancelled);
             let _ = sender.send((generation, id, result));
+        });
+    }
+
+    #[cfg(unix)]
+    fn resolve_recovery_record(&mut self, id: String) {
+        if self.recovery_loading || self.recovery_comparison_active.is_some() {
+            return;
+        }
+        self.recovery_generation = self.recovery_generation.wrapping_add(1);
+        let generation = self.recovery_generation;
+        self.recovery_loading = true;
+        self.recovery_resolution_active = true;
+        self.recovery_resolution_confirm = None;
+        self.recovery_comparisons.clear();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.recovery_comparison_cancel = Arc::clone(&cancelled);
+        let sender = self.recovery_sender.clone();
+        thread::spawn(move || {
+            let result = match journal::resolve_verified_copy(&id, &cancelled) {
+                Ok(()) => journal::inspect_incomplete(),
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
+                    journal::inspect_incomplete()
+                }
+                Err(error) => Err(error),
+            };
+            let _ = sender.send((generation, result));
         });
     }
 
@@ -3161,6 +3192,7 @@ impl Explorer {
         while let Ok((generation, result)) = self.recovery_receiver.try_recv() {
             if generation == self.recovery_generation {
                 self.recovery_loading = false;
+                self.recovery_resolution_active = false;
                 match result {
                     Ok(records) => {
                         self.recovery_records = records;
@@ -3654,13 +3686,17 @@ impl Explorer {
         let mut compare = None;
         let mut browse_parent = None;
         let mut prepare_copy = None;
+        #[cfg(unix)]
+        let mut resolve = None;
+        #[cfg(unix)]
+        let mut confirm_resolution = self.recovery_resolution_confirm.clone();
         egui::Window::new("Unfinished cross-device moves")
             .open(&mut open)
             .default_width(610.0)
             .default_height(340.0)
             .resizable(true)
             .show(context, |ui| {
-                ui.label("Inspection is read-only. RiceField will not delete, resume, or overwrite either side automatically.");
+                ui.label("Recovery never deletes, resumes or overwrites files automatically. A confirmed resolution only retires a private journal record after fresh verification; both copies remain.");
                 ui.label("Compare file contents on demand (maximum 512 MiB and 10,000 entries). A match is only a snapshot, never authorization to delete a source.");
                 ui.small("If the original source identity still matches, you can separately prepare a new Copy with a full preview. This does not complete the interrupted Move or clear its journal.");
                 if let Some(error) = &self.recovery_error {
@@ -3669,6 +3705,11 @@ impl Explorer {
                 if self.recovery_loading {
                     ui.spinner();
                     ui.label("Checking operation records…");
+                    if self.recovery_resolution_active
+                        && ui.button("Cancel verification").clicked()
+                    {
+                        self.recovery_comparison_cancel.store(true, Ordering::Relaxed);
+                    }
                 }
                 ui.separator();
                 egui::ScrollArea::vertical().max_height(330.0).show(ui, |ui| {
@@ -3726,8 +3767,8 @@ impl Explorer {
                             let guidance = match record.state {
                                 JournalState::Prepared => "Copy may be incomplete or may not have started.",
                                 JournalState::StagedVerified => "Staged data was verified; final publication may have occurred.",
-                                JournalState::Published => "Destination was published; removing the source may be incomplete.",
-                                JournalState::Completed => "Move completed.",
+                                JournalState::Published => "Destination was published; the original is intentionally retained.",
+                                JournalState::Completed => "Verified copy completed; original retained.",
                             };
                             ui.small(guidance);
                             ui.colored_label(Color32::LIGHT_YELLOW, inspection.guidance());
@@ -3760,6 +3801,28 @@ impl Explorer {
                                     journal::Comparison::Inconclusive(_) => Color32::LIGHT_YELLOW,
                                 };
                                 ui.colored_label(color, result.label());
+                                #[cfg(unix)]
+                                if matches!(result, journal::Comparison::Identical { .. })
+                                    && matches!(record.state, JournalState::Published | JournalState::StagedVerified)
+                                    && matches!(inspection.source, journal::PathStatus::File | journal::PathStatus::Symlink)
+                                    && !self.recovery_loading
+                                    && self.recovery_comparison_active.is_none()
+                                {
+                                    if confirm_resolution.as_deref() == Some(record.id.as_str()) {
+                                        ui.colored_label(Color32::LIGHT_YELLOW, "Confirm retiring this journal record? Both files are kept. A fresh identity and byte comparison will run again; failures leave the record intact.");
+                                        ui.horizontal(|ui| {
+                                            if ui.button("Confirm journal resolution").clicked() {
+                                                resolve = Some(record.id.clone());
+                                                confirm_resolution = None;
+                                            }
+                                            if ui.button("Cancel").clicked() {
+                                                confirm_resolution = None;
+                                            }
+                                        });
+                                    } else if ui.button("Resolve verified copy…").clicked() {
+                                        confirm_resolution = Some(record.id.clone());
+                                    }
+                                }
                             }
                         });
                     }
@@ -3770,6 +3833,13 @@ impl Explorer {
                 }
             });
         self.recovery_open = open;
+        #[cfg(unix)]
+        {
+            self.recovery_resolution_confirm = confirm_resolution;
+            if let Some(id) = resolve {
+                self.resolve_recovery_record(id);
+            }
+        }
         if !open {
             self.recovery_comparison_cancel
                 .store(true, Ordering::Relaxed);
