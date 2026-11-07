@@ -1194,12 +1194,20 @@ fn starting_theme(configured: &str, external: bool) -> (Theme, Option<(String, b
     match Theme::builtin(configured) {
         Some(theme) => (
             theme,
-            external.then(|| ("Loading external TOML theme in the background…".into(), false)),
+            external.then(|| {
+                (
+                    "Loading external TOML theme in the background…".into(),
+                    false,
+                )
+            }),
         ),
         None => (
             Theme::builtin("win7").expect("bundled theme"),
             Some(if external {
-                ("Loading external TOML theme in the background…".into(), false)
+                (
+                    "Loading external TOML theme in the background…".into(),
+                    false,
+                )
             } else {
                 (format!("Unknown theme: {configured}"), true)
             }),
