@@ -429,6 +429,19 @@ fn probe_no_replace(
         "{base}/.ricefield-safety-{}",
         random_suffix().map_err(|error| error.to_string())?
     );
+    run_probe_rounds(&prefix, credentials, snapshot, cancelled).map_err(|error| {
+        format!(
+            "{error}. Private WebDAV safety-probe objects may remain under {prefix}- (rounds 0–3; suffixes -a, -b and -destination). Inspect those objects and the target before manual cleanup; RiceField will not retry an uncertain probe"
+        )
+    })
+}
+
+fn run_probe_rounds(
+    prefix: &str,
+    credentials: &MountCredentials,
+    snapshot: &mut Snapshot,
+    cancelled: &AtomicBool,
+) -> Result<(), String> {
     let probe_a = b"ricefield-safe-publish-probe-a";
     let probe_b = b"ricefield-safe-publish-probe-b";
     let local_a = snapshot.directory.join("probe-a.payload");
@@ -870,6 +883,7 @@ mod tests {
         let (folder, file) = fixture_file("critical.txt");
         let result = upload(request(file.clone(), &server), &AtomicBool::new(false)).unwrap_err();
         assert!(result.contains("unsafe"), "{result}");
+        assert!(result.contains(".ricefield-safety-"), "{result}");
         assert!(server.path("critical.txt").is_empty());
         assert_eq!(fs::read(&file).unwrap(), b"verified upload bytes");
         fs::remove_file(file).unwrap();
@@ -882,6 +896,7 @@ mod tests {
         let (folder, file) = fixture_file("private.txt");
         let result = upload(request(file.clone(), &server), &AtomicBool::new(false)).unwrap_err();
         assert!(result.contains("conditional PUT is unsafe"), "{result}");
+        assert!(result.contains(".ricefield-safety-"), "{result}");
         assert!(server.path("private.txt").is_empty());
         assert_eq!(fs::read(&file).unwrap(), b"verified upload bytes");
         fs::remove_file(file).unwrap();
