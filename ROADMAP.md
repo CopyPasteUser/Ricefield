@@ -453,10 +453,13 @@ recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
   missing advertisements still require typing an address once. A
   bounded metadata listing distinguishes traversable directories from files
   that cannot yet be opened or transferred. Small UTF-8 remote files can now
-  be inspected through a bounded, cancellable, read-only text preview. RC.2
+  be inspected through a bounded, cancellable, read-only text preview. A later
+  preview increment also permits a first-32-KiB prefix for larger remote files
+  and renders binary data as a bounded 256-byte hex/ASCII view. This is not
+  lossless network content validation or a full file-open operation. RC.2
   added staged local single-file downloads; rc.4 adds bounded whole-folder
-  content downloads without exposing incomplete local trees. Binary preview,
-  native high-volume network transfers and remote writes remain open. RC.5
+  content downloads without exposing incomplete local trees. Native high-volume
+  network transfers and remote writes remain open. RC.5
   rejects symlink/special-file downloads from GIO listings, including inside
   recursively downloaded folders, instead of following untrusted links. RC.6
   introduces up to 16 explicit waiting network downloads, snapshotted target

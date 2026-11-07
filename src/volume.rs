@@ -7,7 +7,10 @@ use std::{
     io::{Read, Write},
     path::PathBuf,
     process::{Command, Stdio},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -218,7 +221,7 @@ fn hex(byte: u8) -> Option<u8> {
 }
 
 /// Reading a remote file never grants a POSIX path or a mutating capability.
-/// Only bounded plain-text previews are supported until native GIO is ready.
+/// Only a bounded prefix is read: large files do not need to be downloaded.
 pub fn preview_remote_text(uri: &str, cancelled: &AtomicBool) -> Result<String, String> {
     if !matches!(
         crate::location::Location::parse(uri.into()),
@@ -228,14 +231,35 @@ pub fn preview_remote_text(uri: &str, cancelled: &AtomicBool) -> Result<String, 
     }
     let mut command = Command::new("gio");
     command.args(["cat", uri]);
-    let bytes = capture_gio(
+    let (bytes, truncated) = capture_gio_prefix(
         command,
         MAX_REMOTE_TEXT_BYTES,
         Duration::from_secs(12),
         cancelled,
         "Network preview",
     )?;
-    decode_remote_text(&bytes)
+    preview_remote_bytes(&bytes, truncated)
+}
+
+fn preview_remote_bytes(bytes: &[u8], truncated: bool) -> Result<String, String> {
+    // A valid UTF-8 character can straddle the artificial prefix boundary.
+    // Do not mislabel that particular case as binary.
+    let end = match std::str::from_utf8(bytes) {
+        Err(error) if truncated && error.error_len().is_none() => error.valid_up_to(),
+        _ => bytes.len(),
+    };
+    match decode_remote_text(&bytes[..end]) {
+        Ok(mut text) => {
+            if truncated {
+                text.push_str("\n\n[Preview limited to the first 32 KiB]");
+            }
+            Ok(text)
+        }
+        Err(_) => Ok(crate::preview::binary_hex_text(
+            bytes,
+            (!truncated).then_some(bytes.len() as u64),
+        )),
+    }
 }
 
 pub(crate) fn capture_gio(
@@ -245,7 +269,18 @@ pub(crate) fn capture_gio(
     cancelled: &AtomicBool,
     operation: &str,
 ) -> Result<Vec<u8>, String> {
-    capture_command(command, limit, timeout, cancelled, operation, false)
+    capture_command(command, limit, timeout, cancelled, operation, false, false)
+        .map(|(bytes, _)| bytes)
+}
+
+fn capture_gio_prefix(
+    command: Command,
+    limit: u64,
+    timeout: Duration,
+    cancelled: &AtomicBool,
+    operation: &str,
+) -> Result<(Vec<u8>, bool), String> {
+    capture_command(command, limit, timeout, cancelled, operation, false, true)
 }
 
 /// A caller-supplied, already-open stdin is needed for hashing the exact file
@@ -257,7 +292,8 @@ pub(crate) fn capture_gio_with_stdin(
     cancelled: &AtomicBool,
     operation: &str,
 ) -> Result<Vec<u8>, String> {
-    capture_command(command, limit, timeout, cancelled, operation, true)
+    capture_command(command, limit, timeout, cancelled, operation, true, false)
+        .map(|(bytes, _)| bytes)
 }
 
 fn capture_command(
@@ -267,7 +303,8 @@ fn capture_command(
     cancelled: &AtomicBool,
     operation: &str,
     supplied_stdin: bool,
-) -> Result<Vec<u8>, String> {
+    allow_prefix: bool,
+) -> Result<(Vec<u8>, bool), String> {
     if !supplied_stdin {
         command.stdin(Stdio::null());
     }
@@ -280,12 +317,16 @@ fn capture_command(
         .stdout
         .take()
         .ok_or_else(|| format!("{operation} output unavailable"))?;
+    let prefix_ready = Arc::new(AtomicBool::new(false));
+    let reader_ready = Arc::clone(&prefix_ready);
     let reader = thread::spawn(move || {
         let mut bytes = Vec::new();
-        stdout
-            .take(limit + 1)
-            .read_to_end(&mut bytes)
-            .map(|_| bytes)
+        stdout.take(limit + 1).read_to_end(&mut bytes).map(|_| {
+            if bytes.len() as u64 > limit {
+                reader_ready.store(true, Ordering::Release);
+            }
+            bytes
+        })
     });
     let deadline = Instant::now() + timeout;
     let status = loop {
@@ -294,6 +335,18 @@ fn capture_command(
             let _ = child.wait();
             let _ = reader.join();
             return Err(format!("{operation} cancelled"));
+        }
+        if allow_prefix && prefix_ready.load(Ordering::Acquire) {
+            // We asked only for a preview prefix. Kill a writer that might
+            // otherwise wait on a slow server or a full/closed stdout pipe.
+            let _ = child.kill();
+            let _ = child.wait();
+            let mut bytes = reader
+                .join()
+                .map_err(|_| format!("{operation} reader panicked"))?
+                .map_err(|error| format!("Cannot read {operation}: {error}"))?;
+            bytes.truncate(limit as usize);
+            return Ok((bytes, true));
         }
         match child.try_wait() {
             Ok(Some(status)) => break status,
@@ -315,22 +368,26 @@ fn capture_command(
             }
         }
     };
-    let bytes = reader
+    let mut bytes = reader
         .join()
         .map_err(|_| format!("{operation} reader panicked"))?
         .map_err(|error| format!("Cannot read {operation}: {error}"))?;
-    if bytes.len() as u64 > limit {
+    let truncated = bytes.len() as u64 > limit;
+    if truncated && !allow_prefix {
         return Err(format!(
             "{operation} exceeds the {} KiB limit",
             limit / 1024
         ));
     }
-    if !status.success() {
+    if !status.success() && !truncated {
         return Err(format!(
             "{operation} failed. Check connection and permissions."
         ));
     }
-    Ok(bytes)
+    if truncated {
+        bytes.truncate(limit as usize);
+    }
+    Ok((bytes, truncated))
 }
 
 fn decode_remote_text(bytes: &[u8]) -> Result<String, String> {
@@ -808,6 +865,12 @@ mod tests {
         assert!(decode_remote_text(b"text\0hidden").is_err());
         assert!(decode_remote_text(&[0xff]).is_err());
         assert!(decode_remote_text(b"\x1b[31mcolored").is_err());
+        let binary = preview_remote_bytes(b"\x1b[31m\x00", false).unwrap();
+        assert!(binary.contains("1b 5b 33 31 6d 00"));
+        assert!(!binary.contains('\x1b'));
+        let text = preview_remote_bytes(b"abc\xc3", true).unwrap();
+        assert!(text.starts_with("abc"));
+        assert!(text.contains("limited to the first 32 KiB"));
     }
 
     #[test]
@@ -822,5 +885,35 @@ mod tests {
             "Test output",
         );
         assert!(result.unwrap_err().contains("limit"));
+    }
+
+    #[test]
+    fn remote_prefix_capture_stops_large_stream_without_downloading_it() {
+        let mut command = Command::new("head");
+        command.args(["-c", "1048576", "/dev/zero"]);
+        let started = Instant::now();
+        let (bytes, truncated) = capture_gio_prefix(
+            command,
+            1024,
+            Duration::from_secs(6),
+            &AtomicBool::new(false),
+            "Test prefix",
+        )
+        .unwrap();
+        assert!(truncated);
+        assert_eq!(bytes.len(), 1024);
+        assert!(bytes.iter().all(|byte| *byte == 0));
+        assert!(started.elapsed() < Duration::from_secs(3));
+
+        let mut failing = Command::new("sh");
+        failing.args(["-c", "printf partial; exit 7"]);
+        let failure = capture_gio_prefix(
+            failing,
+            1024,
+            Duration::from_secs(2),
+            &AtomicBool::new(false),
+            "Broken remote stream",
+        );
+        assert!(failure.unwrap_err().contains("failed"));
     }
 }

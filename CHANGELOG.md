@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — Bounded remote text/binary prefix preview
+
+- Preview the beginning of remote files through a read-only GIO child process;
+  output over 32 KiB is truncated intentionally instead of rejected or
+  downloaded in full. The reader terminates its producer as soon as the
+  prefix is available; cancellation and a 12-second deadline remain active.
+- Render binary or invalid UTF-8 data as the same safe 256-byte hex/ASCII
+  preview used locally. Avoid misclassifying a text character cut at the
+  prefix boundary; label incomplete text and unknown binary sizes explicitly.
+- Add tests for large streams, control bytes and UTF-8 boundary truncation.
+  NAS/credential/disconnect acceptance remains a real-device gate.
+
 ## Unreleased — Interrupted network-download inspection
 
 - Add an explicit, background-only **Inspect interrupted downloads** control
