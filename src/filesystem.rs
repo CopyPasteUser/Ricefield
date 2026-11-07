@@ -3985,7 +3985,7 @@ mod tests {
                 .record()
                 .staging
                 .as_ref()
-                .is_some_and(|path| fs::read(path.join("payload")).unwrap() == b"before")
+                .is_some_and(|path| !path.exists())
         );
         fs::remove_dir_all(root).unwrap();
     }
@@ -4130,13 +4130,8 @@ mod tests {
             b"source changed during publication"
         );
         assert!(!destination.exists());
-        assert!(
-            journal
-                .record()
-                .staging
-                .as_ref()
-                .is_some_and(|path| !path.exists())
-        );
+        let staging = journal.record().staging.as_ref().unwrap();
+        assert_eq!(fs::read(staging.join("payload")).unwrap(), b"before");
         fs::remove_dir_all(root).unwrap();
     }
 
