@@ -231,7 +231,7 @@ fn read_record(path: &Path) -> io::Result<Record> {
             "WebDAV journal file is not private and regular",
         ));
     }
-    let mut file = OpenOptions::new()
+    let file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
         .open(path)?;
