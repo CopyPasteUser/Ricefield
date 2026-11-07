@@ -700,16 +700,25 @@ fn file_kind_color(kind: &str) -> Option<Color32> {
 /// Small original vector symbols sit on top of each rice's existing paper art.
 /// They distinguish file types without importing OS icon packs or font glyphs.
 fn paint_type_badge(painter: &Painter, rect: Rect, kind: &str) {
-    let Some(color) = file_kind_color(kind) else { return };
+    let Some(color) = file_kind_color(kind) else {
+        return;
+    };
     let s = rect.width().min(rect.height());
-    if s < 17.0 { return; }
+    if s < 17.0 {
+        return;
+    }
     let at = |x: f32, y: f32| Pos2::new(rect.left() + x * s, rect.top() + y * s);
     let box_at = |x1: f32, y1: f32, x2: f32, y2: f32| Rect::from_min_max(at(x1, y1), at(x2, y2));
     painter.rect_filled(box_at(0.27, 0.34, 0.73, 0.68), 2, Color32::WHITE);
     let line = Stroke::new((s * 0.042).clamp(1.0, 2.0), color);
     match kind {
         "Image" => {
-            painter.rect_stroke(box_at(0.31, 0.38, 0.69, 0.64), 1, line, egui::StrokeKind::Inside);
+            painter.rect_stroke(
+                box_at(0.31, 0.38, 0.69, 0.64),
+                1,
+                line,
+                egui::StrokeKind::Inside,
+            );
             painter.circle_filled(at(0.59, 0.45), s * 0.035, color);
             painter.line_segment([at(0.34, 0.59), at(0.45, 0.49)], line);
             painter.line_segment([at(0.45, 0.49), at(0.54, 0.57)], line);
@@ -723,34 +732,58 @@ fn paint_type_badge(painter: &Painter, rect: Rect, kind: &str) {
         }
         "Video" => {
             painter.add(egui::Shape::convex_polygon(
-                vec![at(0.44, 0.41), at(0.44, 0.61), at(0.62, 0.51)], color, Stroke::NONE,
+                vec![at(0.44, 0.41), at(0.44, 0.61), at(0.62, 0.51)],
+                color,
+                Stroke::NONE,
             ));
         }
         "Archive" => {
-            painter.rect_stroke(box_at(0.36, 0.41, 0.64, 0.61), 1, line, egui::StrokeKind::Inside);
+            painter.rect_stroke(
+                box_at(0.36, 0.41, 0.64, 0.61),
+                1,
+                line,
+                egui::StrokeKind::Inside,
+            );
             painter.line_segment([at(0.36, 0.47), at(0.64, 0.47)], line);
             painter.line_segment([at(0.50, 0.43), at(0.50, 0.60)], line);
         }
         "Code" => {
-            for (a, b) in [((0.44, 0.43), (0.37, 0.51)), ((0.37, 0.51), (0.44, 0.59)),
-                ((0.57, 0.43), (0.64, 0.51)), ((0.64, 0.51), (0.57, 0.59))] {
+            for (a, b) in [
+                ((0.44, 0.43), (0.37, 0.51)),
+                ((0.37, 0.51), (0.44, 0.59)),
+                ((0.57, 0.43), (0.64, 0.51)),
+                ((0.64, 0.51), (0.57, 0.59)),
+            ] {
                 painter.line_segment([at(a.0, a.1), at(b.0, b.1)], line);
             }
             painter.line_segment([at(0.54, 0.41), at(0.48, 0.61)], line);
         }
         "Spreadsheet" => {
-            painter.rect_stroke(box_at(0.34, 0.39, 0.66, 0.63), 0, line, egui::StrokeKind::Inside);
+            painter.rect_stroke(
+                box_at(0.34, 0.39, 0.66, 0.63),
+                0,
+                line,
+                egui::StrokeKind::Inside,
+            );
             painter.line_segment([at(0.34, 0.47), at(0.66, 0.47)], line);
             painter.line_segment([at(0.49, 0.39), at(0.49, 0.63)], line);
         }
         "Presentation" => {
-            painter.rect_stroke(box_at(0.34, 0.40, 0.66, 0.57), 0, line, egui::StrokeKind::Inside);
+            painter.rect_stroke(
+                box_at(0.34, 0.40, 0.66, 0.57),
+                0,
+                line,
+                egui::StrokeKind::Inside,
+            );
             painter.line_segment([at(0.50, 0.57), at(0.50, 0.64)], line);
             painter.line_segment([at(0.42, 0.64), at(0.58, 0.64)], line);
         }
         "PDF" | "Document" => {
             for y in [0.43, 0.50, 0.57] {
-                painter.line_segment([at(0.37, y), at(if y == 0.57 { 0.56 } else { 0.63 }, y)], line);
+                painter.line_segment(
+                    [at(0.37, y), at(if y == 0.57 { 0.56 } else { 0.63 }, y)],
+                    line,
+                );
             }
         }
         "Link" => {
@@ -1264,7 +1297,10 @@ mod tests {
     fn semantic_file_badges_are_distinct_from_generic_files() {
         assert!(file_kind_color("File").is_none());
         assert_ne!(file_kind_color("Image"), file_kind_color("PDF"));
-        assert_ne!(file_kind_color("Spreadsheet"), file_kind_color("Presentation"));
+        assert_ne!(
+            file_kind_color("Spreadsheet"),
+            file_kind_color("Presentation")
+        );
     }
 
     #[test]

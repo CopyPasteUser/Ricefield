@@ -197,8 +197,11 @@ pub fn file_kind_from_name(name: &str) -> &'static str {
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico" | "tif" | "tiff" => "Image",
         "mp3" | "flac" | "wav" | "ogg" | "m4a" | "opus" | "aac" => "Audio",
         "mkv" | "mp4" | "avi" | "webm" | "mov" | "m4v" | "mpeg" | "mpg" => "Video",
-        "zip" | "7z" | "tar" | "gz" | "xz" | "zst" | "tgz" | "txz" | "tzst" | "rar" | "bz2" => "Archive",
-        "rs" | "py" | "js" | "ts" | "tsx" | "jsx" | "html" | "css" | "sh" | "go" | "c" | "cpp" | "h" | "hpp" | "java" | "json" | "yaml" | "yml" | "toml" | "xml" | "sql" => "Code",
+        "zip" | "7z" | "tar" | "gz" | "xz" | "zst" | "tgz" | "txz" | "tzst" | "rar" | "bz2" => {
+            "Archive"
+        }
+        "rs" | "py" | "js" | "ts" | "tsx" | "jsx" | "html" | "css" | "sh" | "go" | "c" | "cpp"
+        | "h" | "hpp" | "java" | "json" | "yaml" | "yml" | "toml" | "xml" | "sql" => "Code",
         "pdf" => "PDF",
         "csv" | "tsv" | "xls" | "xlsx" | "ods" => "Spreadsheet",
         "ppt" | "pptx" | "odp" => "Presentation",

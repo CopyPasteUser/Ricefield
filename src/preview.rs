@@ -33,7 +33,10 @@ pub enum Preview {
 }
 
 fn image_extension(extension: &str) -> bool {
-    matches!(extension, "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico")
+    matches!(
+        extension,
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico"
+    )
 }
 
 fn decode_image(bytes: &[u8], max_width: u32, max_height: u32) -> io::Result<Thumbnail> {

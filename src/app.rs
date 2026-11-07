@@ -2540,7 +2540,13 @@ impl Explorer {
                                 {
                                     browse = Some(host.uri.clone());
                                 }
-                                if ui.button("New tab").on_hover_text("Browse this server without replacing the current folder").clicked() {
+                                if ui
+                                    .button("New tab")
+                                    .on_hover_text(
+                                        "Browse this server without replacing the current folder",
+                                    )
+                                    .clicked()
+                                {
                                     browse_new_tab = Some(host.uri.clone());
                                 }
                                 if ui.button("Sign in").clicked() {
@@ -7727,7 +7733,10 @@ impl Explorer {
                 }
                 if ui
                     .add_enabled(
-                        self.current().entries.iter().any(|entry| entry.path == path && !entry.is_dir),
+                        self.current()
+                            .entries
+                            .iter()
+                            .any(|entry| entry.path == path && !entry.is_dir),
                         egui::Button::new("Open With…"),
                     )
                     .clicked()
