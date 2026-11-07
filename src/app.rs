@@ -133,7 +133,11 @@ fn next_remote_selection(
         (Some(index), true) => (index + 1).min(count - 1),
         (Some(index), false) => index.saturating_sub(1),
     };
-    Some(entries[visible.as_ref().map_or(next, |indices| indices[next])].uri.clone())
+    Some(
+        entries[visible.as_ref().map_or(next, |indices| indices[next])]
+            .uri
+            .clone(),
+    )
 }
 
 fn remote_sort_header(
@@ -10301,7 +10305,10 @@ mod tests {
             Some(Vec::<usize>::new())
         );
         assert!(super::visible_remote_indices(&entries, "  ").is_none());
-        assert_eq!(super::visible_remote_indices(&entries, "notes"), Some(vec![1]));
+        assert_eq!(
+            super::visible_remote_indices(&entries, "notes"),
+            Some(vec![1])
+        );
     }
 
     #[test]
