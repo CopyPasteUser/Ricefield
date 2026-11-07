@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.0-rc.19 — Owner test protocol prepared
+
+- Bump the development candidate from `rc.18` to `rc.19` after the durable
+  WebDAV journal and actual-process crash evidence increments. Add a detailed
+  owner acceptance checklist covering Mint, NAS, USB, seven rices, file
+  integrity, network collisions, recovery, packaging and low-memory operation.
+- Keep stable `v1.0.0` intentionally untagged. Unverified hardware scenarios,
+  unsupported backend-specific writes and documented code scope remain open.
+
 ## Unreleased — Actual-process WebDAV crash regression
 
 - Extend the independent mock WebDAV server with an opt-in stalled stage-PUT
