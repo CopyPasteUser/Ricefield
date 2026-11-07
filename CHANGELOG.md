@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — More resilient local file previews
+
+- Detect PNG/JPEG/GIF/WebP/BMP/ICO from a fixed-size signature on the existing
+  open descriptor, so image files without recognized suffixes still get the
+  same 32 MiB / 16 MP bounded preview.
+- Render BOM-marked UTF-16LE/BE as readable text; invalid sequences and unsafe
+  control characters fall back to the read-only bounded hex view. Include
+  regressions for extensionless images, both byte orders and control bytes.
+
 ## Unreleased — Production crash evidence for cross-device copies
 
 - Record real cross-device Move copies in the durable private move journal,

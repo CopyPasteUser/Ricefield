@@ -2,7 +2,7 @@
 use std::{
     fmt::Write as _,
     fs,
-    io::{self, Cursor, Read},
+    io::{self, Cursor, Read, Seek},
     path::Path,
     process::Command,
     sync::atomic::AtomicBool,
@@ -236,6 +236,35 @@ fn binary_preview(bytes: &[u8], size: u64) -> Preview {
     Preview::Text(binary_hex_text(bytes, Some(size)))
 }
 
+/// Recognize BOM-marked UTF-16 without guessing arbitrary binary encodings.
+/// Control characters are rejected before the string is shown in the UI.
+fn utf16_text(bytes: &[u8]) -> Option<String> {
+    let little_endian = match bytes.get(..2)? {
+        [0xff, 0xfe] => true,
+        [0xfe, 0xff] => false,
+        _ => return None,
+    };
+    let payload = bytes.get(2..)?;
+    if payload.len() % 2 != 0 {
+        return None;
+    }
+    let units = payload.chunks_exact(2).map(|pair| {
+        if little_endian {
+            u16::from_le_bytes([pair[0], pair[1]])
+        } else {
+            u16::from_be_bytes([pair[0], pair[1]])
+        }
+    });
+    let text = String::from_utf16(&units.collect::<Vec<_>>()).ok()?;
+    if text
+        .chars()
+        .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\r' | '\t'))
+    {
+        return None;
+    }
+    Some(text)
+}
+
 pub fn load(path: &Path) -> io::Result<Preview> {
     // Follow links for *target* size/type checks. lstat reports only the
     // symlink's tiny path length and could bypass the image byte limit.
@@ -268,7 +297,27 @@ pub fn load(path: &Path) -> io::Result<Preview> {
         .and_then(|ext| ext.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    if image_extension(&extension) {
+    // A downloaded image may be extensionless or named .bin. Sniff only a
+    // fixed prefix from the already opened descriptor, then rewind it.
+    let recognized_image = if image_extension(&extension) {
+        true
+    } else {
+        let mut signature = [0u8; 16];
+        let count = file.read(&mut signature)?;
+        file.rewind()?;
+        matches!(
+            image::guess_format(&signature[..count]),
+            Ok(
+                image::ImageFormat::Png
+                    | image::ImageFormat::Jpeg
+                    | image::ImageFormat::Gif
+                    | image::ImageFormat::WebP
+                    | image::ImageFormat::Bmp
+                    | image::ImageFormat::Ico
+            )
+        )
+    };
+    if recognized_image {
         if opened.len() > MAX_IMAGE_BYTES {
             return Ok(Preview::Info(
                 "Image too large for in-app preview (32 MiB limit)".into(),
@@ -342,6 +391,13 @@ pub fn load(path: &Path) -> io::Result<Preview> {
     let mut bytes = vec![0u8; 32 * 1024];
     let count = file.read(&mut bytes)?;
     bytes.truncate(count);
+    if let Some(text) = utf16_text(&bytes) {
+        return Ok(if text.is_empty() {
+            Preview::Info("Empty file".into())
+        } else {
+            Preview::Text(text)
+        });
+    }
     if std::str::from_utf8(&bytes).is_err()
         || bytes.contains(&0)
         || bytes
@@ -454,6 +510,35 @@ mod tests {
     }
 
     #[test]
+    fn image_signature_previews_extensionless_and_misnamed_pngs() {
+        let root = test_root();
+        for name in ["download", "picture.data"] {
+            let path = root.join(name);
+            fs::write(&path, include_bytes!("../assets/ricefield.png")).unwrap();
+            assert!(matches!(load(&path).unwrap(), Preview::Image { .. }));
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bom_marked_utf16_is_readable_but_controls_fall_back_to_hex() {
+        let root = test_root();
+        for (name, bytes) in [
+            ("little.dat", b"\xff\xfeH\0i\0\n\0".as_slice()),
+            ("big.dat", b"\xfe\xff\0H\0i\0\n".as_slice()),
+        ] {
+            let path = root.join(name);
+            fs::write(&path, bytes).unwrap();
+            assert!(matches!(load(&path).unwrap(), Preview::Text(text) if text == "Hi\n"));
+        }
+        let unsafe_text = root.join("escape.dat");
+        fs::write(&unsafe_text, b"\xff\xfe\x1b\0[\0").unwrap();
+        assert!(matches!(load(&unsafe_text).unwrap(), Preview::Text(text)
+            if text.contains("ff fe 1b 00") && !text.contains('\x1b')));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn oversized_thumbnail_is_skipped_without_decoding() {
         let root = test_root();
         let path = root.join("oversized.jpg");
@@ -562,3 +647,4 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 }
+

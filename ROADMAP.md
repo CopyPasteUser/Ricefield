@@ -654,6 +654,10 @@ need the real Mint session. The stable 0.6 gate remains **not approved**.
 - [x] Offer a bounded local binary hex/ASCII preview (256-byte maximum)
   for control-bearing or invalid UTF-8 data, escaped before display and
   read through the existing background preview worker.
+- [x] Identify supported raster images from a short signature even if their
+  filename has no image extension, and decode BOM-marked UTF-16LE/BE text
+  without rendering unsafe control characters. Unsupported formats still
+  receive a bounded informational or hex preview, never arbitrary decoding.
 - [x] Read-only metadata, on-demand bounded folder size and SHA-256, and
   Linux extended-attribute names / POSIX ACL presence (not ACL editing).
 
