@@ -282,6 +282,10 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   avoiding a blocked writer/reader or an unbounded output allocation. A hung
   helper is killed and the in-app clipboard remains available; X11/Wayland
   helper compatibility still requires real-session acceptance.
+- [x] Remove per-frame filesystem probes from ChromeOS and macOS sidebars.
+  Their standard folders now use the same asynchronously refreshed available-
+  places snapshot as the other five rices; a stalled filesystem must not block
+  the renderer simply because its Places section is visible.
 - [x] Load file properties and Unix permission metadata in a bounded
   background worker, not on each render frame. Keep only the latest requested
   dialog when a slow mount stalls an earlier query; reject stale results and
@@ -370,6 +374,11 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   between publication and the durable Published journal transition.
   These snapshots are advisory and do not prove unchanged contents or permit
   automatic deletion; full provenance, crash replay and retention remain open.
+- [x] Exercise the journal with actual abrupt child-process exits at Prepared,
+  StagedVerified, atomic publication-before-Published and Published checkpoints.
+  A new process independently inspects the durable state, staged-to-published
+  inode evidence and intact source bytes. This is crash-process fault injection,
+  **not** simulated sudden power loss, automatic recovery or safe source cleanup.
 - [x] Reclaim structurally valid `Completed` journal entries only when the
   bounded journal capacity is exhausted, validating with the same no-follow
   reader used for recovery. Keep incomplete, malformed or changing records,

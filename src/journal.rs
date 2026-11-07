@@ -1533,6 +1533,85 @@ mod tests {
         fs::remove_dir_all(directory).unwrap();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn abrupt_process_exit_preserves_each_durable_move_checkpoint() {
+        const PHASE: &str = "RICEFIELD_TEST_CRASH_PHASE";
+        const ROOT: &str = "RICEFIELD_TEST_CRASH_ROOT";
+        if let Ok(phase) = env::var(PHASE) {
+            let directory = PathBuf::from(env::var_os(ROOT).expect("Fixture path provided"));
+            let source = directory.join("source");
+            let destination = directory.join("destination");
+            let stage = directory.join("stage");
+            let mut journal = Journal::begin_in(&directory, &source, &destination).unwrap();
+            if phase != "prepared" {
+                journal.set_staging(&stage).unwrap();
+                fs::create_dir(&stage).unwrap();
+                fs::write(stage.join("payload"), b"source bytes").unwrap();
+                File::open(stage.join("payload"))
+                    .unwrap()
+                    .sync_all()
+                    .unwrap();
+                File::open(&stage).unwrap().sync_all().unwrap();
+                journal.advance(State::StagedVerified).unwrap();
+            }
+            if matches!(phase.as_str(), "renamed" | "published") {
+                fs::rename(stage.join("payload"), &destination).unwrap();
+                File::open(&directory).unwrap().sync_all().unwrap();
+            }
+            if phase == "published" {
+                journal.advance(State::Published).unwrap();
+            }
+            // Bypass Drop and the test harness just as an abruptly terminated
+            // file manager would. This is a process-crash test, not a simulated
+            // kernel power failure or a permission to replay the operation.
+            std::process::exit(47);
+        }
+
+        for (phase, expected_state, published) in [
+            ("prepared", State::Prepared, false),
+            ("staged", State::StagedVerified, false),
+            ("renamed", State::StagedVerified, true),
+            ("published", State::Published, true),
+        ] {
+            let directory = test_directory();
+            let source = directory.join("source");
+            let destination = directory.join("destination");
+            fs::write(&source, b"source bytes").unwrap();
+            let status = std::process::Command::new(env::current_exe().unwrap())
+                .arg("journal::tests::abrupt_process_exit_preserves_each_durable_move_checkpoint")
+                .arg("--exact")
+                .env(PHASE, phase)
+                .env(ROOT, &directory)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .unwrap();
+            assert_eq!(status.code(), Some(47), "crash child did not run: {phase}");
+
+            let records = scan_incomplete_in(&directory).unwrap();
+            assert_eq!(records.len(), 1, "missing recovery evidence: {phase}");
+            assert_eq!(records[0].state, expected_state, "phase: {phase}");
+            let inspection = inspect_record(records[0].clone());
+            assert_eq!(inspection.source_identity, IdentityStatus::SameSnapshot);
+            assert_eq!(inspection.destination.present(), published);
+            if published {
+                assert_eq!(fs::read(&destination).unwrap(), b"source bytes");
+                assert_eq!(
+                    inspection.publication_evidence,
+                    PublicationEvidence::SameInode
+                );
+            } else if phase == "staged" {
+                assert_eq!(
+                    inspection.publication_evidence,
+                    PublicationEvidence::DestinationMissing
+                );
+            }
+            assert_eq!(fs::read(&source).unwrap(), b"source bytes");
+            fs::remove_dir_all(directory).unwrap();
+        }
+    }
+
     #[test]
     fn inspection_distinguishes_missing_and_present_paths_without_mutation() {
         let directory = test_directory();
