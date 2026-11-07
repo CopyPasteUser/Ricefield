@@ -46,6 +46,8 @@ install -Dm755 -- "$binary_path" "$bundle_dir/ricefield"
 install -Dm755 -- "$repo_dir/scripts/install-binary.sh" "$bundle_dir/install.sh"
 install -Dm755 -- "$repo_dir/scripts/install_desktop_entry.sh" \
   "$bundle_dir/scripts/install_desktop_entry.sh"
+install -Dm755 -- "$repo_dir/scripts/cleanup_legacy.sh" \
+  "$bundle_dir/scripts/cleanup_legacy.sh"
 install -Dm755 -- "$repo_dir/scripts/install_transaction.sh" \
   "$bundle_dir/scripts/install_transaction.sh"
 install -Dm644 -- "$repo_dir/scripts/user_install_lock.sh" \
