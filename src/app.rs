@@ -1802,6 +1802,9 @@ impl Explorer {
         self.recovery_comparisons.remove(&id);
         self.recovery_comparison_active = Some(id.clone());
         thread::spawn(move || {
+            #[cfg(target_os = "linux")]
+            let result = journal::compare_staged_copy(&source, &destination, &cancelled);
+            #[cfg(not(target_os = "linux"))]
             let result = journal::compare_for_recovery(&source, &destination, &cancelled);
             let _ = sender.send((generation, id, staged, result));
         });
@@ -3857,7 +3860,7 @@ impl Explorer {
                                 {
                                     let confirmation = format!("publish:{}", record.id);
                                     if confirm_resolution.as_deref() == Some(confirmation.as_str()) {
-                                        ui.colored_label(Color32::LIGHT_YELLOW, "Publish this verified staged copy to the currently vacant destination? The original remains untouched. The operation will recheck source, stage and target and refuse a collision; an interrupted publication may require another recovery review.");
+                                        ui.colored_label(Color32::LIGHT_YELLOW, "Publish this verified staged copy to the currently vacant destination? The original remains untouched. The operation will recheck source, stage, nested metadata and target and refuse a collision; an interrupted publication may require another recovery review.");
                                         ui.horizontal(|ui| {
                                             if ui.button("Confirm safe publication").clicked() {
                                                 publish_staged = Some(record.id.clone());
@@ -3875,7 +3878,7 @@ impl Explorer {
                                 if !*staged
                                     && matches!(result, journal::Comparison::Identical { .. })
                                     && matches!(record.state, JournalState::Published | JournalState::StagedVerified)
-                                    && matches!(inspection.source, journal::PathStatus::File | journal::PathStatus::Symlink)
+                                    && matches!(inspection.source, journal::PathStatus::File | journal::PathStatus::Symlink | journal::PathStatus::Directory)
                                     && !self.recovery_loading
                                     && self.recovery_comparison_active.is_none()
                                 {

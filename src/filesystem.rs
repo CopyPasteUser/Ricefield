@@ -3003,7 +3003,7 @@ fn verify_tree(
     Ok(())
 }
 
-fn verify_copied_metadata(
+pub(crate) fn verify_copied_metadata(
     source: &Path,
     destination: &Path,
     source_meta: &fs::Metadata,

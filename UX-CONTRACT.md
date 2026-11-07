@@ -104,12 +104,14 @@ publication. If publishing races with another writer, is cancelled or fails
 after verification, RiceField retains that verified staging data for review;
 unverified/partial staging is disposable on ordinary errors. Recovery can
 compare the original with the staged payload separately from the destination.
-On Linux, an explicitly confirmed, still-identical regular-file or symlink
-stage may be published only to an unoccupied target with descriptor-relative
-atomic `RENAME_NOREPLACE`, durable directory sync and a second bounded byte
-comparison. The original stays untouched, and stale, changed, colliding or
-unverifiable cases fail closed. A successful publication retires the journal;
-no directory replay, automatic recovery, source deletion or overwrite exists.
+On Linux, an explicitly confirmed, still-identical file, symlink or bounded
+directory stage may be published only to an unoccupied target with
+descriptor-relative atomic `RENAME_NOREPLACE`, durable directory sync and a
+second bounded comparison. Directories additionally require exact nested
+permissions, owner/group, timestamps, xattrs and in-tree hardlink topology.
+The original stays untouched, and stale, changed, colliding or unverifiable
+cases fail closed. A successful publication retires the journal; no automatic
+recovery, source deletion, overwriting or general rollback exists.
 Older journal versions without staged inode evidence remain inspectable and
 explicitly marked as unproven.
 
