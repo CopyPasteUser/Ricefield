@@ -12,13 +12,10 @@ esac
 
 legacy_paths=(
   "$user_home/.local/bin/rice-explorer"
+  "$user_home/.cargo/bin/rice-explorer"
   "$data_dir/applications/rice-explorer.desktop"
   "$data_dir/icons/hicolor/scalable/apps/rice-explorer.svg"
 )
-cargo_root="${CARGO_HOME:-$user_home/.cargo}"
-if [[ "$cargo_root" == /* ]]; then
-  legacy_paths+=("$cargo_root/bin/rice-explorer")
-fi
 
 for path in "${legacy_paths[@]}"; do
   if [[ -f "$path" || -L "$path" ]]; then
