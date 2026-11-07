@@ -18,10 +18,7 @@ const MAX_HASH_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// Never interpret trailing or malformed entries as valid permissions.
 #[cfg(target_os = "linux")]
 fn posix_acl_summary(data: &[u8]) -> Option<String> {
-    if data.len() < 12
-        || (data.len() - 4) % 8 != 0
-        || data.get(..4)? != 2_u32.to_le_bytes()
-    {
+    if data.len() < 12 || (data.len() - 4) % 8 != 0 || data.get(..4)? != 2_u32.to_le_bytes() {
         return None;
     }
     let total = (data.len() - 4) / 8;
