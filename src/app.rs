@@ -3993,6 +3993,7 @@ impl Explorer {
                     if let Some(error) = &self.remote_journal_error {
                         ui.colored_label(Color32::LIGHT_RED, format!("Cannot inspect WebDAV evidence: {error}"));
                     }
+                    egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
                     for record in &self.remote_journal_records {
                         ui.group(|ui| {
                             ui.strong(format!("WebDAV upload {}", record.id));
@@ -4025,6 +4026,7 @@ impl Explorer {
                             }
                         });
                     }
+                    });
                 }
                 if self.remote_journal_loading {
                     ui.horizontal(|ui| {

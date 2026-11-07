@@ -163,6 +163,9 @@ results remain available after restart for explicit *local-only* record
 acknowledgement, not automatic server cleanup. This is **partial P0 work**:
 SMB/SFTP/MTP backend guarantees and actual NAS/offline/crash acceptance are
 outstanding. Never substitute generic GIO move for any of them.
+The [backend-specific capability matrix](docs/REMOTE-BACKEND-MATRIX.md)
+records each supported/read-only protocol and the actual-process stage-PUT
+crash regression separately from unverified NAS/hardware semantics.
 
 ## Version gates
 

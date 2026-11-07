@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — Actual-process WebDAV crash regression
+
+- Extend the independent mock WebDAV server with an opt-in stalled stage-PUT
+  response. Kill an actual uploader test process while the server retains the
+  private stage and before the HTTP acknowledgement arrives. Assert that the
+  local journal survives intact, the original source is untouched and no
+  final destination has appeared. The mock remains isolated from real state.
+- Document the per-backend remote-write capability matrix, distinguishing
+  mock-proof behavior from still-required NAS/hardware sign-off.
+
 ## Unreleased — Durable uncertain WebDAV upload evidence
 
 - Before any remote upload stage PUT, synchronously publish a private bounded

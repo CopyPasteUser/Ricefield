@@ -681,23 +681,40 @@ mod tests {
         url: String,
         state: Arc<Mutex<HashMap<String, Vec<u8>>>>,
         running: Arc<AtomicBool>,
+        stall_stage_response: Arc<AtomicBool>,
+        stage_put_seen: Arc<AtomicBool>,
         worker: Option<thread::JoinHandle<()>>,
     }
 
     impl MockDav {
         fn start(replace_on_move: bool, replace_on_put: bool, require_auth: bool) -> Self {
+            Self::start_with_stage_stall(replace_on_move, replace_on_put, require_auth, false)
+        }
+
+        fn start_with_stage_stall(
+            replace_on_move: bool,
+            replace_on_put: bool,
+            require_auth: bool,
+            stall_stage: bool,
+        ) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
             listener.set_nonblocking(true).unwrap();
             let address = listener.local_addr().unwrap();
             let state = Arc::new(Mutex::new(HashMap::new()));
             let running = Arc::new(AtomicBool::new(true));
+            let stall_stage_response = Arc::new(AtomicBool::new(stall_stage));
+            let stage_put_seen = Arc::new(AtomicBool::new(false));
             let files = Arc::clone(&state);
             let alive = Arc::clone(&running);
+            let stage_stall = Arc::clone(&stall_stage_response);
+            let put_seen = Arc::clone(&stage_put_seen);
             let worker = thread::spawn(move || {
                 while alive.load(Ordering::Relaxed) {
                     match listener.accept() {
                         Ok((stream, _)) => {
                             let files = Arc::clone(&files);
+                            let stage_stall = Arc::clone(&stage_stall);
+                            let put_seen = Arc::clone(&put_seen);
                             thread::spawn(move || {
                                 handle_dav(
                                     stream,
@@ -705,6 +722,8 @@ mod tests {
                                     replace_on_move,
                                     replace_on_put,
                                     require_auth,
+                                    &stage_stall,
+                                    &put_seen,
                                 )
                             });
                         }
@@ -719,6 +738,8 @@ mod tests {
                 url: format!("dav://{address}/share"),
                 state,
                 running,
+                stall_stage_response,
+                stage_put_seen,
                 worker: Some(worker),
             }
         }
@@ -736,6 +757,7 @@ mod tests {
     impl Drop for MockDav {
         fn drop(&mut self) {
             self.running.store(false, Ordering::Relaxed);
+            self.stall_stage_response.store(false, Ordering::Release);
             if let Some(worker) = self.worker.take() {
                 worker.join().unwrap();
             }
@@ -748,6 +770,8 @@ mod tests {
         weak_move: bool,
         weak_put: bool,
         require_auth: bool,
+        stall_stage_response: &AtomicBool,
+        stage_put_seen: &AtomicBool,
     ) {
         let mut reader = BufReader::new(stream.try_clone().unwrap());
         let mut request_line = String::new();
@@ -838,6 +862,14 @@ mod tests {
             _ => (405, Vec::new()),
         };
         drop(entries);
+        // An actual child process can be killed after the server has stored
+        // the private stage, while its HTTP request is still incomplete.
+        if method == "PUT" && path.contains("/.ricefield-upload-") && status == 201 {
+            stage_put_seen.store(true, Ordering::Release);
+            while stall_stage_response.load(Ordering::Acquire) {
+                thread::sleep(Duration::from_millis(5));
+            }
+        }
         let text = format!(
             "HTTP/1.1 {status} Mock\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             response.len()
@@ -976,6 +1008,86 @@ mod tests {
                 .any(|path| path.contains(".ricefield-upload-"))
         );
         fs::remove_file(not_a_directory).unwrap();
+        fs::remove_file(file).unwrap();
+        fs::remove_dir(folder).unwrap();
+    }
+
+    #[test]
+    fn abrupt_process_kill_during_stage_put_preserves_restart_evidence() {
+        const CHILD_SERVER: &str = "RICEFIELD_TEST_CRASH_DAV_SERVER";
+        const CHILD_SOURCE: &str = "RICEFIELD_TEST_CRASH_DAV_SOURCE";
+        const CHILD_JOURNAL: &str = "RICEFIELD_TEST_CRASH_DAV_JOURNAL";
+        if let Ok(url) = std::env::var(CHILD_SERVER) {
+            let request = UploadRequest {
+                source: PathBuf::from(std::env::var_os(CHILD_SOURCE).unwrap()),
+                remote_directory: url,
+                credentials: MountCredentials {
+                    username: "tester".into(),
+                    domain: String::new(),
+                    password: "secret".into(),
+                },
+                allow_insecure_http: false,
+            };
+            let directory = PathBuf::from(std::env::var_os(CHILD_JOURNAL).unwrap());
+            let _ = super::upload_with_journal_directory(
+                request,
+                &AtomicBool::new(false),
+                Some(&directory),
+            );
+            panic!("crash fixture must be killed while stage response is withheld");
+        }
+
+        let server = MockDav::start_with_stage_stall(false, false, false, true);
+        let (folder, file) = fixture_file("crash.txt");
+        let journals = folder.join("state");
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("remote_upload::tests::abrupt_process_kill_during_stage_put_preserves_restart_evidence")
+            .arg("--exact")
+            .env(CHILD_SERVER, &server.url)
+            .env(CHILD_SOURCE, &file)
+            .env(CHILD_JOURNAL, &journals)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !server.stage_put_seen.load(Ordering::Acquire) && Instant::now() < deadline {
+            if let Some(status) = child.try_wait().unwrap() {
+                panic!("upload fixture exited before private stage PUT: {status}");
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        if !server.stage_put_seen.load(Ordering::Acquire) {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("upload fixture did not reach the private stage PUT");
+        }
+        child.kill().unwrap();
+        assert!(!child.wait().unwrap().success());
+        server.stall_stage_response.store(false, Ordering::Release);
+
+        let entries: Vec<_> = fs::read_dir(&journals)
+            .unwrap()
+            .map(Result::unwrap)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "toml"))
+            .collect();
+        assert_eq!(entries.len(), 1, "crashed process lost durable evidence");
+        let saved = fs::read_to_string(entries[0].path()).unwrap();
+        let stages: Vec<_> = server
+            .state
+            .lock()
+            .unwrap()
+            .keys()
+            .filter(|path| path.contains("/.ricefield-upload-"))
+            .cloned()
+            .collect();
+        assert_eq!(stages.len(), 1, "mock server lost private stage");
+        assert!(saved.contains(&stages[0]));
+        assert!(saved.contains("crash.txt"));
+        assert!(!saved.contains("secret"));
+        assert!(server.path("crash.txt").is_empty());
+        assert_eq!(fs::read(&file).unwrap(), b"verified upload bytes");
+        fs::remove_dir_all(journals).unwrap();
         fs::remove_file(file).unwrap();
         fs::remove_dir(folder).unwrap();
     }
