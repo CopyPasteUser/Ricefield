@@ -57,8 +57,8 @@ fn posix_acl_summary(data: &[u8]) -> Option<String> {
     Some(parts.join(" · "))
 }
 
-/// Listing attribute *names* never reads secret attribute values. ACLs use
-/// the same kernel namespace and are identified by their standard xattr key.
+/// Listing non-ACL attribute *names* never reads their potentially secret
+/// values. POSIX ACL values are decoded separately with a strict size limit.
 #[cfg(target_os = "linux")]
 pub fn xattr_rows(path: &Path) -> Vec<(String, String)> {
     use std::{ffi::CString, os::unix::ffi::OsStrExt};
@@ -95,7 +95,7 @@ pub fn xattr_rows(path: &Path) -> Vec<(String, String)> {
         .any(|part| *part == b"system.posix_acl_access" || *part == b"system.posix_acl_default");
     let mut rows = vec![(
         "Extended attributes".into(),
-        format!("{} attribute names (values not read)", attrs.len()),
+        format!("{} attribute names (only ACL rules read)", attrs.len()),
     )];
     rows.push((
         "POSIX ACL".into(),
