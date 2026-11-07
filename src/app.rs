@@ -762,13 +762,17 @@ impl CompletedOperation {
                         transfer_history::ItemOutcome::NotStarted => {
                             filesystem::ItemState::NotStarted
                         }
-                        transfer_history::ItemOutcome::Completed => filesystem::ItemState::Completed,
+                        transfer_history::ItemOutcome::Completed => {
+                            filesystem::ItemState::Completed
+                        }
                         transfer_history::ItemOutcome::CopiedSourceRetained => {
                             filesystem::ItemState::CopiedSourceRetained
                         }
                         transfer_history::ItemOutcome::Skipped => filesystem::ItemState::Skipped,
                         transfer_history::ItemOutcome::Failed => filesystem::ItemState::Failed,
-                        transfer_history::ItemOutcome::Cancelled => filesystem::ItemState::Cancelled,
+                        transfer_history::ItemOutcome::Cancelled => {
+                            filesystem::ItemState::Cancelled
+                        }
                     },
                     detail: item.detail,
                 })
@@ -808,7 +812,10 @@ fn history_items(items: &[filesystem::ItemResult]) -> Vec<transfer_history::Item
             };
             saved.push(transfer_history::ItemSummary {
                 source: item.source.to_string_lossy().into_owned(),
-                target: item.target.as_ref().map(|target| target.to_string_lossy().into_owned()),
+                target: item
+                    .target
+                    .as_ref()
+                    .map(|target| target.to_string_lossy().into_owned()),
                 state,
                 detail: item.detail.clone(),
             });
@@ -10561,7 +10568,10 @@ mod tests {
         assert!(restored.batch_rename_undo.is_none());
         assert_eq!(restored.items.len(), transfer_history::MAX_ITEMS_PER_RECORD);
         assert_eq!(restored.items[0].state, filesystem::ItemState::Failed);
-        assert_eq!(restored.items[0].detail.as_deref(), Some("Permission denied"));
+        assert_eq!(
+            restored.items[0].detail.as_deref(),
+            Some("Permission denied")
+        );
     }
 
     #[test]

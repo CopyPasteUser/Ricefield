@@ -81,7 +81,10 @@ impl ItemSummary {
     fn valid(&self) -> bool {
         !self.source.is_empty()
             && self.source.len() <= MAX_PATH_BYTES
-            && self.target.as_ref().is_none_or(|value| value.len() <= MAX_PATH_BYTES)
+            && self
+                .target
+                .as_ref()
+                .is_none_or(|value| value.len() <= MAX_PATH_BYTES)
             && self
                 .detail
                 .as_ref()
@@ -545,12 +548,15 @@ mod tests {
         fit_records_to_budget(&mut records).unwrap();
         assert!(records.len() < MAX_RECORDS);
         assert_eq!(records.first().unwrap().id, 1);
-        assert!(toml::to_string(&Ledger {
-            version: VERSION,
-            records,
-        })
-        .unwrap()
-        .len() as u64 <= MAX_BYTES);
+        assert!(
+            toml::to_string(&Ledger {
+                version: VERSION,
+                records,
+            })
+            .unwrap()
+            .len() as u64
+                <= MAX_BYTES
+        );
     }
 
     #[test]
