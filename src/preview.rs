@@ -307,14 +307,12 @@ pub fn load(path: &Path) -> io::Result<Preview> {
         file.rewind()?;
         matches!(
             image::guess_format(&signature[..count]),
-            Ok(
-                image::ImageFormat::Png
-                    | image::ImageFormat::Jpeg
-                    | image::ImageFormat::Gif
-                    | image::ImageFormat::WebP
-                    | image::ImageFormat::Bmp
-                    | image::ImageFormat::Ico
-            )
+            Ok(image::ImageFormat::Png
+                | image::ImageFormat::Jpeg
+                | image::ImageFormat::Gif
+                | image::ImageFormat::WebP
+                | image::ImageFormat::Bmp
+                | image::ImageFormat::Ico)
         )
     };
     if recognized_image {
@@ -647,4 +645,3 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 }
-
