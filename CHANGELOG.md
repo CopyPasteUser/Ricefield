@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — verified locked-LUKS USB PowerOff
+
+- Permit native USB PowerOff only for an explicitly locked encrypted container
+  with a valid UDisks2 `CleartextDevice=/` state and no other mounted/active
+  siblings. Unlocked or unverifiable crypto blocks, unexpected usage and
+  incomplete filesystem metadata are refused. The daemon handles final
+  authorization/device checks; actual USB/LUKS hardware acceptance remains.
+
 ## Unreleased — explicit encrypted removable-volume controls
 
 - Add native UDisks2/Polkit LUKS Unlock/Lock controls for verified removable

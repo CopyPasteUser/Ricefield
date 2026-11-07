@@ -524,9 +524,10 @@ recovery coverage, metadata/mount tests and deferred physical Mint acceptance.
   backend re-queries all sibling filesystems, including ignored/hidden block
   objects, and refuses if any are mounted or metadata is incomplete. UDisks2
   handles Polkit, final busy checks and flushing. LUKS and physical USB/power
-  safety acceptance remain open; encrypted drives still fail closed on PowerOff
-  until their full mapping/usage safety is verified. Other buses cannot be
-  powered off here.
+  safety acceptance remain open. Explicitly locked LUKS partitions are now
+  eligible only when `CleartextDevice=/` is verified and all other drive
+  objects are idle; missing/active mappings fail closed. Other buses cannot
+  be powered off here.
 - [ ] Connect SMB/SFTP/WebDAV, browse system NFS and supported MTP devices.
   Initial non-blocking `gio mount` connection attempts are supported without
   URI credentials. Read-only remote listing works in normal tabs; native remote

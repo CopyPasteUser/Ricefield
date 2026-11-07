@@ -159,7 +159,10 @@ later development build.
   explanation. After a successful unmount, file tabs handle the missing path.
 - [ ] **E03 PowerOff:** only on a spare drive reporting PowerOff support,
   verify explicit confirmation and refusal while *any* sibling filesystem
-  remains mounted. Reattach and inspect data with the OS.
+  remains mounted. For a disposable LUKS USB drive, verify PowerOff refuses
+  when unlocked and permits a normal system-authorized request only after
+  successful Lock; missing metadata must fail closed. Reattach and inspect
+  data with the OS.
 - [ ] **E04 Filesystems:** test at least ext4 and exFAT where available;
   record FAT/NTFS/NFS/SMB behavior separately. Unsupported ACL/xattr behavior
   must be reported, not hidden or emulated unsafely.

@@ -339,16 +339,39 @@ fn can_power_off_safely(objects: &ManagedObjects, drive_path: &str) -> bool {
             continue;
         }
         inspected = true;
+        let usage = property::<String>(block, "IdUsage").unwrap_or_default();
+        if usage == "crypto" {
+            // PowerOff is safe for an explicitly locked LUKS container, but
+            // never for a live dm mapping or ambiguous crypto metadata.
+            if interfaces.contains_key(FS_INTERFACE) {
+                return false;
+            }
+            let Some(encrypted) = interfaces.get(ENCRYPTED_INTERFACE) else {
+                return false;
+            };
+            let Some(cleartext) =
+                property::<zbus::zvariant::OwnedObjectPath>(encrypted, "CleartextDevice")
+            else {
+                return false;
+            };
+            if cleartext.as_str() != "/" {
+                return false;
+            }
+            continue;
+        }
         if let Some(fs) = interfaces.get(FS_INTERFACE) {
+            if usage != "filesystem" {
+                return false;
+            }
             let Some(mounts) = property::<Vec<Vec<u8>>>(fs, "MountPoints") else {
                 return false;
             };
             if !mounts.is_empty() || mounts.iter().any(|path| parse_mount_path(path).is_none()) {
                 return false;
             }
-        } else if property::<String>(block, "IdUsage").is_some_and(|usage| !usage.is_empty()) {
-            // Unknown active uses (swap, crypto mapping, etc.) are not safe
-            // candidates for unattended disk power-off.
+        } else if !usage.is_empty() {
+            // Swap, unexpected active usage and incomplete filesystem metadata
+            // cannot be treated as idle just because no mountpoint is listed.
             return false;
         }
     }
@@ -938,5 +961,57 @@ mod tests {
             &objects,
             "/org/freedesktop/UDisks2/drives/../evil"
         ));
+    }
+
+    #[test]
+    fn poweroff_allows_only_explicitly_locked_encrypted_usb_blocks() {
+        let mut objects = removable_fixture();
+        let drive = "/org/freedesktop/UDisks2/drives/usb_drive";
+        let block: OwnedObjectPath = "/org/freedesktop/UDisks2/block_devices/sdc1"
+            .try_into()
+            .unwrap();
+        let interfaces = objects.get_mut(&block).unwrap();
+        interfaces.remove(FS_INTERFACE);
+        insert_prop(interfaces.get_mut(BLOCK_INTERFACE).unwrap(), "IdUsage", "crypto");
+        assert!(!can_power_off_safely(&objects, drive));
+
+        let mut encrypted = HashMap::new();
+        insert_prop(
+            &mut encrypted,
+            "CleartextDevice",
+            OwnedObjectPath::try_from("/").unwrap(),
+        );
+        objects
+            .get_mut(&block)
+            .unwrap()
+            .insert(ENCRYPTED_INTERFACE.try_into().unwrap(), encrypted);
+        assert!(can_power_off_safely(&objects, drive));
+
+        let crypto = objects
+            .get_mut(&block)
+            .unwrap()
+            .get_mut(ENCRYPTED_INTERFACE)
+            .unwrap();
+        insert_prop(
+            crypto,
+            "CleartextDevice",
+            OwnedObjectPath::try_from("/org/freedesktop/UDisks2/block_devices/dm_0").unwrap(),
+        );
+        assert!(!can_power_off_safely(&objects, drive));
+        objects
+            .get_mut(&block)
+            .unwrap()
+            .get_mut(ENCRYPTED_INTERFACE)
+            .unwrap()
+            .remove("CleartextDevice");
+        assert!(!can_power_off_safely(&objects, drive));
+
+        let props = objects.get_mut(&block).unwrap();
+        props.remove(ENCRYPTED_INTERFACE);
+        assert!(!can_power_off_safely(&objects, drive));
+        let mut fake_fs = HashMap::new();
+        insert_prop(&mut fake_fs, "MountPoints", Vec::<Vec<u8>>::new());
+        props.insert(FS_INTERFACE.try_into().unwrap(), fake_fs);
+        assert!(!can_power_off_safely(&objects, drive));
     }
 }
