@@ -1,6 +1,6 @@
 # RiceField screenshots
 
-These are unedited screenshots captured from the **running Rust/egui application** in GitHub Actions' Xvfb GUI smoke test. The fixtures contain disposable example files; the images are not renders or concept mockups. They verify rendering, not usability on a physical Linux desktop.
+These are unedited screenshots captured from the **running Rust/egui application** in GitHub Actions' Xvfb GUI smoke test. The fixtures contain disposable example files; the images are not renders or concept mockups. They verify rendering, not usability on a physical Linux desktop. The seven main views below include the post-network-list and distinct-file-row styling from the successful [GUI smoke run #42360627410](https://github.com/CopyPasteUser/Ricefield/actions/runs/42360627410); supplemental views were captured earlier and are kept for coverage until refreshed.
 
 ## Windows 98 · Classic Explorer
 
@@ -66,7 +66,9 @@ compact and narrow windows wrap to a smaller command set with a More menu.
 
 Original vector icons, a sky-and-water masthead and a responsive bottom dock;
 no downloaded or proprietary operating-system assets. File actions remain
-shared and network tabs remain read-only.
+shared. Network tabs support browsing and downloads, plus a separately gated
+WebDAV-only single-file upload; other protocols are intentionally read-only
+until their collision-safe writes are verified.
 
 ## ChromeOS · Files rice
 
