@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — Explicit verified-publication journal resolution
+
+- After a process crash, let the owner explicitly resolve an already-published
+  regular-file/symlink cross-device copy (including the atomic-rename-to-journal window), provided
+  recorded inode evidence and a second bounded byte comparison still agree.
+  The cancellable two-step GUI action retires only the private recovery record and never
+  deletes, overwrites or replays user files.
+- Serialize journal mutations with directory locks and reject stale writer
+  snapshots. Add disposable recovery regressions for published and half-
+  committed records, filename collisions, changed content, cancellation,
+  nested directory refusal and stale writers.
+
 ## Unreleased — Safe UTF-16 network preview parity
 
 - Extend the bounded read-only GIO prefix preview to BOM-marked UTF-16LE/BE;
