@@ -41,7 +41,7 @@ The details are intentional: 98 has a dense gray menu and tree, XP a blue tasks 
 
 ## Install
 
-Target: Linux x86_64 (Ubuntu 24.04 release builds support Linux Mint 22). The command is `ricefield`. Earlier release candidates used a different executable and settings path; back up your settings and remove obsolete launchers before upgrading.
+Target: Linux x86_64 (Ubuntu 24.04 release builds support Linux Mint 22). The command is `ricefield`. Installation and updates automatically register the application-menu entry and SVG icon and remove the old `rice-explorer` executable, launcher, icon and interrupted-install launchers. Older user configuration and themes are kept to avoid data loss.
 
 ```bash
 sudo apt install build-essential pkg-config libxcb-render0-dev \

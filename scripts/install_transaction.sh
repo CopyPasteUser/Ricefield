@@ -88,4 +88,9 @@ published=1
   exec {RICEFIELD_INSTALL_LOCK_FD}>&-
   bash "$project_dir/scripts/install_desktop_entry.sh" "$project_dir"
 )
+# Only clean the old name after the new binary, launcher and icon succeeded.
+# Failure to remove obsolete files must never roll back a working upgrade.
+if ! bash "$project_dir/scripts/cleanup_legacy.sh"; then
+  echo 'Warning: could not remove all obsolete rice-explorer files.' >&2
+fi
 echo 'Installed RiceField and its application-menu launcher.'
