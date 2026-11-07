@@ -6147,7 +6147,10 @@ impl Explorer {
                                         ("Desktop", FilesNavIcon::Folder),
                                     ] {
                                         let path = home.join(name);
-                                        if path.is_dir()
+                                        if self
+                                            .places
+                                            .iter()
+                                            .any(|(_, available)| available == &path)
                                             && chromeos::sidebar_link(
                                                 ui,
                                                 &theme,
@@ -6399,7 +6402,10 @@ impl Explorer {
                                         ("Videos", FinderNavIcon::Folder),
                                     ] {
                                         let path = home.join(label);
-                                        if path.is_dir()
+                                        if self
+                                            .places
+                                            .iter()
+                                            .any(|(_, available)| available == &path)
                                             && finder::sidebar_link(
                                                 ui,
                                                 &theme,
