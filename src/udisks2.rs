@@ -154,10 +154,10 @@ fn encrypted_backing_drive(
         {
             continue;
         }
-        if let Some(drive) = property::<zbus::zvariant::OwnedObjectPath>(block, "Drive") {
-            if drive_path_is_valid(drive.as_str()) {
-                return Some(drive);
-            }
+        if let Some(drive) = property::<zbus::zvariant::OwnedObjectPath>(block, "Drive")
+            && drive_path_is_valid(drive.as_str())
+        {
+            return Some(drive);
         }
     }
     None
