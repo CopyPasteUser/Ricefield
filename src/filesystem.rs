@@ -938,7 +938,9 @@ pub fn parse_acl_rwx(value: &str) -> Option<u16> {
 }
 
 /// Create one new Linux POSIX access ACL for a named UID. Existing ACLs are
-/// never edited: XATTR_CREATE atomically refuses a concurrent ACL writer.
+/// rejected after an inode-scoped advisory lock. Linux's special POSIX ACL
+/// xattr handler may ignore XATTR_CREATE, so concurrent non-cooperating ACL
+/// writers cannot be excluded by this API; do not promise atomic no-replace.
 /// The new mask is the union of the old group bits and the requested rights,
 /// so creating an entry never silently reduces existing group permissions.
 #[cfg(target_os = "linux")]
@@ -989,6 +991,31 @@ fn create_named_user_acl_guarded(
         ));
     }
 
+    // Serialize RiceField writers of this inode. Kernel POSIX ACL xattrs do
+    // not reliably honor XATTR_CREATE (unlike ordinary `user.*` xattrs).
+    // External `setfacl` and chmod writers need not observe this advisory
+    // lock; callers must treat that residual race as a documented limit.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // A zero-length read probes existence without consuming untrusted ACL
+    // data. Any result other than ENODATA is a fail-closed rejection.
+    let existing = unsafe {
+        libc::fgetxattr(
+            file.as_raw_fd(),
+            c"system.posix_acl_access".as_ptr(),
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if existing >= 0 {
+        return Err(io::Error::from_raw_os_error(libc::EEXIST));
+    }
+    let probe_error = io::Error::last_os_error();
+    if probe_error.raw_os_error() != Some(libc::ENODATA) {
+        return Err(probe_error);
+    }
+
     // Linux's documented posix_acl_xattr_header/entry ABI, little endian:
     // version=2 followed by (tag:u16,perm:u16,id:u32) per entry. Only one
     // named user is introduced; base owner/group/other bits are preserved.
@@ -1013,7 +1040,8 @@ fn create_named_user_acl_guarded(
         acl.extend_from_slice(&id.to_le_bytes());
     }
     // SAFETY: the descriptor refers to the verified inode; the kernel
-    // validates ACL structure, permissions and exclusive creation atomically.
+    // validates ACL structure and permissions. XATTR_CREATE is best effort
+    // for this special xattr, hence the preceding locked existence check.
     let result = unsafe {
         libc::fsetxattr(
             file.as_raw_fd(),
@@ -7261,6 +7289,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn named_user_acl_create_is_exclusive_and_preserves_existing_group_access() {
+        use std::os::fd::AsRawFd;
         use std::os::unix::fs::PermissionsExt;
 
         assert_eq!(parse_acl_rwx("r-x"), Some(5));
@@ -7274,6 +7303,18 @@ mod tests {
         fs::write(&path, b"preserved").unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
         let expected = fs::symlink_metadata(&path).unwrap();
+        let competing = File::open(&path).unwrap();
+        assert_eq!(
+            unsafe { libc::flock(competing.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+            0
+        );
+        assert_eq!(
+            create_named_user_acl_guarded(&path, 123_456, 4, &expected)
+                .unwrap_err()
+                .raw_os_error(),
+            Some(libc::EWOULDBLOCK)
+        );
+        drop(competing);
         let result = create_named_user_acl_guarded(&path, 123_456, 4, &expected);
         if let Err(error) = &result
             && error.raw_os_error() == Some(libc::EOPNOTSUPP)

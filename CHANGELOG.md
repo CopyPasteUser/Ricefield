@@ -4,8 +4,10 @@
 
 - Extend the local Properties panel with a narrowly scoped Linux ACL grant
   for a selected numeric UID (`rwx` rights). The file descriptor pins the
-  original inode, the prior metadata must still match, and `XATTR_CREATE`
-  rejects every existing or concurrently created ACL. Original group rights
+  original inode, the prior metadata must still match, and a fresh xattr
+  existence check under a cooperative inode lock rejects existing ACLs.
+  Linux does not reliably enforce `XATTR_CREATE` for system POSIX ACLs;
+  non-cooperating concurrent writers remain a documented race. Original group rights
   are preserved by the new mask; ordinary kernel permissions govern writes.
 - Add hostile input, inode-swap, symlink and collision tests. Existing ACL
   replacement/removal, directory defaults and privileged ACL workflows are
