@@ -81,13 +81,7 @@ mod tests {
         let file = root.join("file.txt");
         std::fs::write(&file, b"portal data").unwrap();
         assert!(local_target(&file).unwrap().metadata().unwrap().is_file());
-        assert!(
-            local_target(&root)
-                .unwrap()
-                .metadata()
-                .unwrap()
-                .is_dir()
-        );
+        assert!(local_target(&root).unwrap().metadata().unwrap().is_dir());
         assert!(local_target(Path::new("relative.txt")).is_err());
         let socket = root.join("socket");
         let _listener = UnixListener::bind(&socket).unwrap();
