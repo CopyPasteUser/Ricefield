@@ -32,6 +32,7 @@ The details are intentional: 98 has a dense gray menu and tree, XP a blue tasks 
 
 - **Browse:** tabs, split panes, bookmarks, folder tree, list/grid views and session restore.
 - **Organize:** copy, move, rename, cycle-safe batch rename, trash, file permissions, guarded new POSIX named-user ACL grants, progress and conflict previews. Open With can use installed MIME handlers or the desktop's application chooser portal when available.
+- **Drag and drop:** copy selected files into folders, other tabs, breadcrumbs, folder-tree entries or split panes; hold Shift to move. Native incoming file drops work locally, while outgoing drops to other apps still use an optional `ripdrag`/`dragon` helper.
 - **Review transfers:** inspect per-file outcomes during a session; after restart, private read-only history keeps up to 24 file-specific diagnostics per operation (failures first), without replay or destructive Undo.
 - **Find and inspect:** search, saved filters, file-type vector icons, thumbnails, Quick Look, extensionless raster-image detection, local/network UTF-8/UTF-16 text and safe binary/hex fallback, optional PDF/media previews and ZIP/TAR/7z handling.
 - **Reach storage:** SMB, SFTP, WebDAV and MTP discovery/browsing with folders opening in the current or a new tab, navigable breadcrumbs, selectable/sortable file rows, previews, queued downloads and optional credential storage. WebDAV additionally offers a guarded **single-file upload** after a live server collision-safety probe; removable USB and encrypted-volume actions use UDisks2/Polkit.
