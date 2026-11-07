@@ -10,10 +10,10 @@ case "$data_dir" in
 esac
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/scripts/user_install_lock.sh"
-rice_explorer_lock_installation
+ricefield_lock_installation
 rm -f -- \
-  "$user_home/.local/bin/rice-explorer" \
-  "$data_dir/applications/rice-explorer.desktop" \
-  "$data_dir/icons/hicolor/scalable/apps/rice-explorer.svg"
+  "$user_home/.local/bin/ricefield" \
+  "$data_dir/applications/ricefield.desktop" \
+  "$data_dir/icons/hicolor/scalable/apps/ricefield.svg"
 
 echo 'Uninstalled RiceField. User configuration and themes were preserved.'

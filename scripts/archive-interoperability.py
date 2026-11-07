@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Probe independent libarchive encrypted fixtures using RiceExplorer's C API.
+"""Probe independent libarchive encrypted fixtures using RiceField's C API.
 
 This is a backend compatibility probe, not a GUI or Rust integration test.
 Run against the upstream libarchive/test directory (containing *.uu fixtures).

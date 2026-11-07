@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — Complete RiceField naming
+
+- Rename the Cargo package, binary, desktop entry, icon assets, user-local
+  paths, installation locks, CI artifacts, release bundles, tests and docs to
+  `ricefield`/RiceField. Prior release-candidate installations may retain an
+  obsolete launcher and separate settings directory; back up user settings
+  before upgrading and remove outdated desktop shortcuts manually.
+
 ## Unreleased — Bounded remote text/binary prefix preview
 
 - Preview the beginning of remote files through a read-only GIO child process;
@@ -320,7 +328,7 @@
 - Allow an explicit local target folder for downloads, with absolute-path
   validation and persistence in the existing backwards-compatible config.
 - Align visible window/launcher/CLI branding to RiceField; preserve the
-  `rice-explorer` command, desktop file identifiers and settings locations.
+  `ricefield` command, desktop file identifiers and settings locations.
   Update the graphical and packaging tests for the visible window name.
 - Keep remote writes and full-folder downloads disabled pending safety work;
   this is not yet a stable release.
@@ -522,7 +530,7 @@
   scope combinations); ordinary search text stays transient and no search
   executes at startup.
 - Write preferences through a private, unpredictable, create-new staging file
-  with atomic replacement. The RiceExplorer-specific config directory is 0700
+  with atomic replacement. The RiceField-specific config directory is 0700
   and file mode 0600 on Unix; legacy fixed `.tmp` paths are untouched.
 - Compile Unicode filename globs to bounded, bit-parallel matchers that need
   constant work per input character even for pathological wildcard patterns.
@@ -855,7 +863,7 @@
   prerelease/publication workflow; do not tag final 0.3 before the outstanding
   recovery and Linux Mint acceptance gates pass.
 - Serialize the recovery-journal capacity check and creation across cooperating
-  Unix RiceExplorer processes with an advisory directory lock. Open that
+  Unix RiceField processes with an advisory directory lock. Open that
   directory without following symlinks and validate its private permissions.
   A concurrent-writer regression verifies that only one process can reserve
   the final journal slot. Add restart fault injection for an already-published
@@ -880,7 +888,7 @@
 - Fail closed on cross-device Move if copied Unix ownership, group, mode or
   modification timestamp differs from the original. On Linux, verify every
   visible extended-attribute name and value, including ACL/security namespaces
-  that RiceExplorer cannot yet copy. Refuse publication or source cleanup
+  that RiceField cannot yet copy. Refuse publication or source cleanup
   when metadata is lost or unreadable; byte equality alone is insufficient.
   Add permission- and xattr-loss regressions. This does not solve atomic
   source unlink or implement privileged metadata migration.
@@ -939,7 +947,7 @@
 - Before cleaning a published cross-device Move, take a bounded source-tree
   identity manifest and recheck each entry. Refuse substituted files even if
   their bytes match the published copy. Account for inode ctime changes
-  caused by RiceExplorer's own earlier hardlink removals. This narrows but
+  caused by RiceField's own earlier hardlink removals. This narrows but
   does not eliminate the remaining non-atomic check/unlink race.
 - Add an explicit read-only source/destination comparison in the unfinished
   move inspector. Compare regular-file bytes and nested directory names,

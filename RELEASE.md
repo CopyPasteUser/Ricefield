@@ -30,7 +30,7 @@ cargo test --locked --all-targets
 cargo build --locked --release
 bash scripts/package-release.sh
 cd dist
-sha256sum --check rice-explorer-*.tar.gz.sha256
+sha256sum --check ricefield-*.tar.gz.sha256
 ```
 
 The archive contains the binary, an unprivileged installer, an uninstaller,

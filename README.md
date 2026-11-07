@@ -40,7 +40,7 @@ The details are intentional: 98 has a gray menu and tree, XP a blue tasks pane, 
 
 ## Install
 
-Target: Linux x86_64 (Ubuntu 24.04 release builds support Linux Mint 22). The command remains `rice-explorer` for compatibility.
+Target: Linux x86_64 (Ubuntu 24.04 release builds support Linux Mint 22). The command is `ricefield`. Earlier release candidates used a different executable and settings path; back up your settings and remove obsolete launchers before upgrading.
 
 ```bash
 sudo apt install build-essential pkg-config libxcb-render0-dev \
@@ -50,7 +50,7 @@ sudo apt install build-essential pkg-config libxcb-render0-dev \
 git clone https://github.com/CopyPasteUser/Ricefield.git
 cd Ricefield
 bash install.sh
-rice-explorer
+ricefield
 ```
 
 Requires a current stable [Rust toolchain](https://rustup.rs/) when building from source. The installation is user-local and does not replace your default file manager. Release builds and checksums: [Releases](https://github.com/CopyPasteUser/Ricefield/releases) · [Release guide](RELEASE.md).
@@ -58,14 +58,14 @@ Requires a current stable [Rust toolchain](https://rustup.rs/) when building fro
 Try a specific rice:
 
 ```bash
-rice-explorer --theme win98 ~/Documents
-rice-explorer --theme xp-luna ~/Documents
-rice-explorer --theme win7 ~/Downloads
-rice-explorer --theme win10 ~/Downloads
-rice-explorer --theme frutiger-aero ~/Pictures
-rice-explorer --theme chromeos ~/Downloads
-rice-explorer --theme macos
-rice-explorer --theme-file /path/to/custom-rice.toml
+ricefield --theme win98 ~/Documents
+ricefield --theme xp-luna ~/Documents
+ricefield --theme win7 ~/Downloads
+ricefield --theme win10 ~/Downloads
+ricefield --theme frutiger-aero ~/Pictures
+ricefield --theme chromeos ~/Downloads
+ricefield --theme macos
+ricefield --theme-file /path/to/custom-rice.toml
 ```
 
 ## Safety and known limits

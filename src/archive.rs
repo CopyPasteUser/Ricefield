@@ -617,7 +617,7 @@ impl Stage {
             .as_nanos();
         for index in 0..32 {
             let path = parent.join(format!(
-                ".rice-explorer-archive-{}-{nanos}-{index}",
+                ".ricefield-archive-{}-{nanos}-{index}",
                 std::process::id()
             ));
             match fs::DirBuilder::new().mode(0o700).create(&path) {
@@ -1102,7 +1102,7 @@ mod tests {
                 .unwrap()
                 .file_name()
                 .to_string_lossy()
-                .starts_with(".rice-explorer-archive-")
+                .starts_with(".ricefield-archive-")
         }));
     }
 
@@ -1164,7 +1164,7 @@ mod tests {
                 .unwrap()
                 .file_name()
                 .to_string_lossy()
-                .starts_with(".rice-explorer-archive-")
+                .starts_with(".ricefield-archive-")
         }));
     }
 
@@ -1270,7 +1270,7 @@ mod tests {
                 .unwrap()
                 .file_name()
                 .to_string_lossy()
-                .starts_with(".rice-explorer-archive-")
+                .starts_with(".ricefield-archive-")
         }));
     }
 

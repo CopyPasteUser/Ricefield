@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Run inside an isolated Xvfb display. These are lab measurements, not Mint
 # hardware acceptance. No settings, thumbnails or journal enter the real home.
-binary="${1:-target/release/rice-explorer}"
+binary="${1:-target/release/ricefield}"
 output="${2:-performance-desktop.toml}"
 fixture="$(mktemp -d)"
 app_pid=''

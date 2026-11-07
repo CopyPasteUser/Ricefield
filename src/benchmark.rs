@@ -22,7 +22,7 @@ pub fn run() -> io::Result<()> {
         .unwrap_or_default()
         .as_nanos();
     let root = std::env::temp_dir().join(format!(
-        "rice-explorer-bench-{}-{nonce}",
+        "ricefield-bench-{}-{nonce}",
         std::process::id()
     ));
     let mut builder = fs::DirBuilder::new();

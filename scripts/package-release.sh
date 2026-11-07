@@ -2,9 +2,9 @@
 set -euo pipefail
 
 repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-binary_path="${1:-$repo_dir/target/release/rice-explorer}"
+binary_path="${1:-$repo_dir/target/release/ricefield}"
 output_dir="${2:-$repo_dir/dist}"
-release_arch="${RICE_EXPLORER_ARCH:-$(uname -m)}"
+release_arch="${RICEFIELD_ARCH:-$(uname -m)}"
 release_version="$(sed -nE 's/^version = "([^"]+)"$/\1/p' "$repo_dir/Cargo.toml")"
 source_epoch="${SOURCE_DATE_EPOCH:-0}"
 
@@ -31,7 +31,7 @@ fi
 
 mkdir -p -- "$output_dir"
 output_dir="$(cd -- "$output_dir" && pwd)"
-package_name="rice-explorer-v${release_version}-linux-${release_arch}"
+package_name="ricefield-v${release_version}-linux-${release_arch}"
 archive_name="$package_name.tar.gz"
 if [[ -e "$output_dir/$archive_name" || -L "$output_dir/$archive_name" ]]; then
   echo "Release archive already exists; refusing to overwrite: $output_dir/$archive_name" >&2
@@ -42,7 +42,7 @@ archive_temp="$(mktemp "$output_dir/.${archive_name}.tmp.XXXXXX")"
 trap 'rm -rf -- "$staging_root"; rm -f -- "$archive_temp"' EXIT
 bundle_dir="$staging_root/$package_name"
 
-install -Dm755 -- "$binary_path" "$bundle_dir/rice-explorer"
+install -Dm755 -- "$binary_path" "$bundle_dir/ricefield"
 install -Dm755 -- "$repo_dir/scripts/install-binary.sh" "$bundle_dir/install.sh"
 install -Dm755 -- "$repo_dir/scripts/install_desktop_entry.sh" \
   "$bundle_dir/scripts/install_desktop_entry.sh"
@@ -51,10 +51,10 @@ install -Dm755 -- "$repo_dir/scripts/install_transaction.sh" \
 install -Dm644 -- "$repo_dir/scripts/user_install_lock.sh" \
   "$bundle_dir/scripts/user_install_lock.sh"
 install -Dm755 -- "$repo_dir/uninstall.sh" "$bundle_dir/uninstall.sh"
-install -Dm644 -- "$repo_dir/assets/rice-explorer.desktop" \
-  "$bundle_dir/assets/rice-explorer.desktop"
-install -Dm644 -- "$repo_dir/assets/rice-explorer.svg" \
-  "$bundle_dir/assets/rice-explorer.svg"
+install -Dm644 -- "$repo_dir/assets/ricefield.desktop" \
+  "$bundle_dir/assets/ricefield.desktop"
+install -Dm644 -- "$repo_dir/assets/ricefield.svg" \
+  "$bundle_dir/assets/ricefield.svg"
 install -Dm644 -- "$repo_dir/LICENSE" "$bundle_dir/LICENSE"
 for document in "$repo_dir"/*.md; do
   install -Dm644 -- "$document" "$bundle_dir/$(basename -- "$document")"

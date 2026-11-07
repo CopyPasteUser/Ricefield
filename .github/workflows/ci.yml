@@ -22,9 +22,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rice-explorer-ubuntu-24.04-${{ runner.arch }}-cargo-${{ hashFiles('Cargo.lock') }}
+          key: ricefield-ubuntu-24.04-${{ runner.arch }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            rice-explorer-ubuntu-24.04-${{ runner.arch }}-cargo-
+            ricefield-ubuntu-24.04-${{ runner.arch }}-cargo-
       - name: Linux graphics dependencies
         run: |
           set -euo pipefail
@@ -52,15 +52,15 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked --all-targets
       - name: Native FileManager1 protocol on a private session bus
-        run: dbus-run-session -- env RICE_EXPLORER_TEST_BUS=1 cargo test --locked desktop::tests::private_bus_roundtrip_and_existing_owner_are_respected -- --ignored --exact
+        run: dbus-run-session -- env RICEFIELD_TEST_BUS=1 cargo test --locked desktop::tests::private_bus_roundtrip_and_existing_owner_are_respected -- --ignored --exact
       - run: cargo build --locked --release
       - name: Disposable 100k-entry and verified-copy benchmark
-        run: target/release/rice-explorer --benchmark > performance-filesystem.toml
+        run: target/release/ricefield --benchmark > performance-filesystem.toml
       - name: CLI smoke
         run: |
-          target/release/rice-explorer --help
-          target/release/rice-explorer --version
-          target/release/rice-explorer --list-themes
+          target/release/ricefield --help
+          target/release/ricefield --version
+          target/release/ricefield --list-themes
       - name: Release bundle and menu launcher smoke
         shell: bash
         run: |
@@ -69,33 +69,33 @@ jobs:
           trap 'rm -r -- "$fixture"' EXIT
           mkdir -p "$fixture/dist" "$fixture/unpacked" "$fixture/home"
           export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
-          bash scripts/package-release.sh target/release/rice-explorer "$fixture/dist"
+          bash scripts/package-release.sh target/release/ricefield "$fixture/dist"
           tar xzf "$fixture/dist/"*.tar.gz -C "$fixture/unpacked"
           bundle="$(find "$fixture/unpacked" -mindepth 1 -maxdepth 1 -type d -print -quit)"
           HOME="$fixture/home" bash "$bundle/install.sh"
-          test -f "$fixture/home/.local/share/applications/rice-explorer.desktop"
+          test -f "$fixture/home/.local/share/applications/ricefield.desktop"
           HOME="$fixture/home" bash "$bundle/uninstall.sh"
-          test ! -e "$fixture/home/.local/share/applications/rice-explorer.desktop"
+          test ! -e "$fixture/home/.local/share/applications/ricefield.desktop"
       - name: Native GUI smoke (Xvfb software GL)
         run: |
           timeout -k 10s 8m xvfb-run -e /dev/stderr -a -s '-screen 0 1280x800x24' bash scripts/gui_smoke.sh
       - name: FileManager1 GUI and desktop measurements
         run: |
-          timeout -k 5s 60s dbus-run-session -- env RICE_EXPLORER_TEST_BUS=1 xvfb-run -a bash scripts/test_file_manager_service.sh
+          timeout -k 5s 60s dbus-run-session -- env RICEFIELD_TEST_BUS=1 xvfb-run -a bash scripts/test_file_manager_service.sh
           timeout -k 5s 60s xvfb-run -a bash scripts/test_filters.sh
           bash scripts/run_ci_desktop_measurement.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: rice-explorer-performance
+          name: ricefield-performance
           path: performance-*.toml
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: rice-explorer-gui-smoke
+          name: ricefield-gui-smoke
           path: screenshots/
           if-no-files-found: warn
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: rice-explorer-linux-x86_64
-          path: target/release/rice-explorer
+          name: ricefield-linux-x86_64
+          path: target/release/ricefield

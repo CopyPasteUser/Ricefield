@@ -324,7 +324,7 @@ mod tests {
     fn hundred_thousand_virtual_entries_sort_and_glob_without_a_filesystem() {
         // Deterministic permutation, not a presorted case that TimSort can
         // optimize away. Exercises the same natural comparator and compiled
-        // glob used by all seven RiceExplorer profiles, without creating any
+        // glob used by all seven RiceField profiles, without creating any
         // files or pretending this establishes real HDD/GUI benchmarks.
         const COUNT: usize = 100_000;
         let mut names = (0..COUNT)

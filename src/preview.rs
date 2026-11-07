@@ -409,7 +409,7 @@ mod tests {
     fn bounded_image_reader_decodes_a_small_png() {
         let root = test_root();
         let path = root.join("icon.png");
-        fs::write(&path, include_bytes!("../assets/rice-explorer.png")).unwrap();
+        fs::write(&path, include_bytes!("../assets/ricefield.png")).unwrap();
         assert!(matches!(
             load(&path).unwrap(),
             Preview::Image {
@@ -438,7 +438,7 @@ mod tests {
 
     #[test]
     fn malformed_images_never_panic_in_the_decoder() {
-        let valid = include_bytes!("../assets/rice-explorer.png");
+        let valid = include_bytes!("../assets/ricefield.png");
         for length in [0, 1, 8, 24, 32, 128, 1024] {
             let _ = std::panic::catch_unwind(|| decode_image(&valid[..length], 108, 108))
                 .expect("a truncated image must not crash the preview worker");

@@ -3,7 +3,7 @@
 # Shared advisory lock for install, upgrade and uninstall. Keep the lock file
 # in user state: unlinking it after release would allow another process to
 # lock a different inode while an older installer is still running.
-rice_explorer_lock_installation() {
+ricefield_lock_installation() {
   local user_home="${HOME:?HOME must be set}"
   local state_root="${XDG_STATE_HOME:-$user_home/.local/state}"
   case "$state_root" in
@@ -14,7 +14,7 @@ rice_explorer_lock_installation() {
     echo 'RiceField install/uninstall needs flock from util-linux' >&2
     return 1
   fi
-  local lock_dir="$state_root/rice-explorer"
+  local lock_dir="$state_root/ricefield"
   local lock_file="$lock_dir/install.lock"
   if [[ -L "$lock_dir" ]]; then
     echo 'Refusing a symlinked RiceField state directory' >&2
@@ -26,8 +26,8 @@ rice_explorer_lock_installation() {
     return 1
   fi
   (umask 077; : >> "$lock_file")
-  exec {RICE_EXPLORER_INSTALL_LOCK_FD}>> "$lock_file"
-  if ! flock -x -w 30 "$RICE_EXPLORER_INSTALL_LOCK_FD"; then
+  exec {RICEFIELD_INSTALL_LOCK_FD}>> "$lock_file"
+  if ! flock -x -w 30 "$RICEFIELD_INSTALL_LOCK_FD"; then
     echo 'Another RiceField install/uninstall still owns the lock' >&2
     return 1
   fi

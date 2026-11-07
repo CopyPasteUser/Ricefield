@@ -3,7 +3,7 @@
 Recorded 2026-11-05. These are **independent backend compatibility checks**,
 not a completed Linux Mint GUI acceptance or a stable 0.5 sign-off.
 
-RiceExplorer dynamically loads `libarchive.so.13` and passes passwords to its
+RiceField dynamically loads `libarchive.so.13` and passes passwords to its
 archive reader. On a Linux test runner with **libarchive 3.7.4**, the
 `scripts/archive-interoperability.py` probe read every member's full payload
 using libarchive's C API (`archive_read_open_fd` / `archive_read_add_passphrase`).

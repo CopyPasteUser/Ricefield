@@ -609,7 +609,7 @@ impl Journal {
     ) -> io::Result<Self> {
         ensure_private_directory(directory)?;
         // Hold an advisory cross-process lock over both the capacity check
-        // and journal publication. Concurrent RiceExplorer writers cannot
+        // and journal publication. Concurrent RiceField writers cannot
         // each see the last free slot and exceed the recovery scan limit.
         #[cfg(unix)]
         let _lock = lock_journal_directory(directory)?;
@@ -902,7 +902,7 @@ fn journal_directory() -> io::Result<PathBuf> {
             PathBuf::from(home).join(".local/state")
         }
     };
-    Ok(state_home.join("rice-explorer/operations"))
+    Ok(state_home.join("ricefield/operations"))
 }
 
 #[cfg(test)]
@@ -1182,7 +1182,7 @@ mod tests {
     use super::*;
 
     fn test_directory() -> PathBuf {
-        let path = env::temp_dir().join(format!("rice-explorer-journal-{}", next_id()));
+        let path = env::temp_dir().join(format!("ricefield-journal-{}", next_id()));
         fs::create_dir(&path).unwrap();
         path
     }

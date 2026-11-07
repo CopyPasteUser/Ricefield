@@ -7,14 +7,14 @@
 First try the installed executable:
 
 ```bash
-~/.local/bin/rice-explorer --version
-~/.local/bin/rice-explorer
+~/.local/bin/ricefield --version
+~/.local/bin/ricefield
 ```
 
 The installer registers an absolute executable path, so the desktop menu does
 not need `~/.local/bin` in its `PATH`. It respects `XDG_DATA_HOME`; by default the
-launcher is `~/.local/share/applications/rice-explorer.desktop`. If available,
-`gtk-launch rice-explorer` can provide launcher diagnostics. A stale desktop
+launcher is `~/.local/share/applications/ricefield.desktop`. If available,
+`gtk-launch ricefield` can provide launcher diagnostics. A stale desktop
 menu cache may require logging out and back in.
 
 From a source checkout, rebuild/register with `bash install.sh`. From a verified
@@ -84,9 +84,9 @@ Review per-file results in **Transfers** before retrying. A failed batch may
 have completed earlier items. Cross-filesystem Move intentionally leaves the
 original even on success; it is not automatic source cleanup.
 
-After interruption, a hidden `.rice-explorer-staging-*` directory can remain.
-Historical move journals are under `$XDG_STATE_HOME/rice-explorer/operations/`,
-defaulting to `~/.local/state/rice-explorer/operations/`. Keep evidence while
+After interruption, a hidden `.ricefield-staging-*` directory can remain.
+Historical move journals are under `$XDG_STATE_HOME/ricefield/operations/`,
+defaulting to `~/.local/state/ricefield/operations/`. Keep evidence while
 reviewing source, destination and staging paths.
 
 Recovery inspection and bounded byte comparison are read-only. Matching inode
@@ -103,7 +103,7 @@ repository before retrying; do not discard unrelated files.
 
 ## Reporting a problem
 
-Include `rice-explorer --version`, distribution/session type (X11 or Wayland),
+Include `ricefield --version`, distribution/session type (X11 or Wayland),
 theme, reproduction steps, exact error and whether a system tool reproduces it.
 Use disposable fixtures for destructive/transfer tests. Review logs and
 screenshots for private paths or credentials before sharing them.

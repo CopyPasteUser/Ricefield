@@ -29,7 +29,7 @@ printf 'RiceField native GUI smoke test\n' > "$display_dir/Readme.txt"
 printf 'Personal notes for the GUI fixture\n' > "$display_dir/Notes.txt"
 printf 'Month,Amount\nNovember,42\n' > "$display_dir/Budget.csv"
 printf '# Markdown preview test\n' > "$display_dir/Documents/Example.md"
-cp assets/rice-explorer.png "$display_dir/Pictures/icon.png"
+cp assets/ricefield.png "$display_dir/Pictures/icon.png"
 cp themes/win7.toml "$fixture_dir/custom-theme.toml"
 # Exercise a *real structural* shell reordering rather than merely recoloring
 # the built-in Aero surface. Keep the custom file independent of bundled rice.
@@ -70,9 +70,9 @@ require_visible_change() {
 
 for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sidebar; do
   if [[ "$theme" == custom-sidebar ]]; then
-    ./target/release/rice-explorer --theme-file "$fixture_dir/custom-theme.toml" "$display_dir" > "$fixture_dir/app.log" 2>&1 &
+    ./target/release/ricefield --theme-file "$fixture_dir/custom-theme.toml" "$display_dir" > "$fixture_dir/app.log" 2>&1 &
   else
-    ./target/release/rice-explorer --theme "$theme" "$display_dir" > "$fixture_dir/app.log" 2>&1 &
+    ./target/release/ricefield --theme "$theme" "$display_dir" > "$fixture_dir/app.log" 2>&1 &
   fi
   app_pid=$!
   # Xvfb/Mesa can take longer to initialize on a cold CI runner. Poll for the

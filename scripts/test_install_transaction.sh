@@ -9,14 +9,14 @@ export XDG_DATA_HOME="$fixture/XDG data"
 export XDG_STATE_HOME="$fixture/XDG state"
 mkdir -p -- "$HOME/.local/bin"
 
-binary="$HOME/.local/bin/rice-explorer"
-launcher="$XDG_DATA_HOME/applications/rice-explorer.desktop"
-icon="$XDG_DATA_HOME/icons/hicolor/scalable/apps/rice-explorer.svg"
+binary="$HOME/.local/bin/ricefield"
+launcher="$XDG_DATA_HOME/applications/ricefield.desktop"
+icon="$XDG_DATA_HOME/icons/hicolor/scalable/apps/ricefield.svg"
 
 # Successful first install, then a regular upgrade replacing only the three
 # owned paths. User config and unrelated application entries must survive.
-mkdir -p -- "$XDG_DATA_HOME/applications" "$HOME/.config/rice-explorer"
-printf 'keep me\n' > "$HOME/.config/rice-explorer/personal.toml"
+mkdir -p -- "$XDG_DATA_HOME/applications" "$HOME/.config/ricefield"
+printf 'keep me\n' > "$HOME/.config/ricefield/personal.toml"
 printf '[Desktop Entry]\nType=Application\nName=Unrelated\nExec=/bin/true\n' \
   > "$XDG_DATA_HOME/applications/unrelated.desktop"
 bash "$project_dir/scripts/install_transaction.sh" /bin/true "$project_dir"
@@ -47,7 +47,7 @@ cmp -s -- "$icon" "$fixture/before-icon"
 
 # An upgrade must wait for the *same* lock rather than racing a competing
 # updater's backups. The test holder owns a separate file descriptor/process.
-lock_file="$XDG_STATE_HOME/rice-explorer/install.lock"
+lock_file="$XDG_STATE_HOME/ricefield/install.lock"
 (
   exec 9>> "$lock_file"
   flock -x 9
@@ -106,7 +106,7 @@ if ! cmp -s -- "$fixture/complete-icon" "$icon"; then
 fi
 touch "$RICEFIELD_TEST_INSTALL_RESUME"
 wait "$icon_installer"
-cmp -s -- "$icon" "$project_dir/assets/rice-explorer.svg"
+cmp -s -- "$icon" "$project_dir/assets/ricefield.svg"
 
 # Installation must not follow a substituted state lock symlink or accept a
 # relative XDG state root (which could target an unexpected current folder).
@@ -132,7 +132,7 @@ if bash "$project_dir/scripts/install_transaction.sh" /bin/true "$project_dir"; 
   exit 1
 fi
 test -L "$icon"
-test -f "$HOME/.config/rice-explorer/personal.toml"
+test -f "$HOME/.config/ricefield/personal.toml"
 test -f "$XDG_DATA_HOME/applications/unrelated.desktop"
 
 # An uninstall is serialized with install/update too.
@@ -156,5 +156,5 @@ test -x "$binary"
 wait "$holder"
 wait "$uninstaller"
 test ! -e "$binary"
-test -f "$HOME/.config/rice-explorer/personal.toml"
+test -f "$HOME/.config/ricefield/personal.toml"
 echo 'Atomic installs, rollback, concurrent update/uninstall locks, symlink refusal and user-data preservation passed'

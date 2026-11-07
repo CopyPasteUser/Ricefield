@@ -8,7 +8,7 @@ trap 'rm -r -- "$fixture"' EXIT
 export HOME="$fixture/user with spaces"
 export XDG_STATE_HOME="$fixture/state"
 mkdir -p -- "$HOME/.local/bin"
-install -m755 /bin/true "$HOME/.local/bin/rice-explorer"
+install -m755 /bin/true "$HOME/.local/bin/ricefield"
 
 for mode in default custom; do
   if [[ "$mode" == custom ]]; then
@@ -19,10 +19,10 @@ for mode in default custom; do
     data_dir="$HOME/.local/share"
   fi
   bash "$project_dir/scripts/install_desktop_entry.sh" "$project_dir"
-  launcher="$data_dir/applications/rice-explorer.desktop"
+  launcher="$data_dir/applications/ricefield.desktop"
   test -f "$launcher"
-  test -f "$data_dir/icons/hicolor/scalable/apps/rice-explorer.svg"
-  grep -Fqx -- "Exec=\"$HOME/.local/bin/rice-explorer\" %U" "$launcher"
+  test -f "$data_dir/icons/hicolor/scalable/apps/ricefield.svg"
+  grep -Fqx -- "Exec=\"$HOME/.local/bin/ricefield\" %U" "$launcher"
   grep -Fqx -- 'Terminal=false' "$launcher"
   grep -Fqx -- 'Categories=System;FileManager;' "$launcher"
   if command -v desktop-file-validate >/dev/null 2>&1; then
@@ -30,8 +30,8 @@ for mode in default custom; do
   fi
   bash "$project_dir/uninstall.sh"
   test ! -e "$launcher"
-  test ! -e "$data_dir/icons/hicolor/scalable/apps/rice-explorer.svg"
-  install -m755 /bin/true "$HOME/.local/bin/rice-explorer"
+  test ! -e "$data_dir/icons/hicolor/scalable/apps/ricefield.svg"
+  install -m755 /bin/true "$HOME/.local/bin/ricefield"
 done
 
 echo 'Desktop entry install, XDG registration and uninstall smoke passed'

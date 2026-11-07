@@ -1,4 +1,4 @@
-# RiceExplorer UX contract
+# RiceField UX contract
 
 ## Scope
 
@@ -88,7 +88,7 @@ Copy may produce independent inodes; the conservative Move pathway does not sile
 hardlink relationships. Neither check provides atomic protection from an
 external writer changing source link counts after the preflight.
 
-After verifying and publishing a cross-device Move's destination, RiceExplorer
+After verifying and publishing a cross-device Move's destination, RiceField
 **must not automatically unlink the source**. Transfers marks it "Copied —
 source kept", and the completion text instructs manual review and cleanup.
 The associated cut clipboard intent is consumed so an old Cut does not
