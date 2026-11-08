@@ -24,6 +24,16 @@ use std::path::PathBuf;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
 
+#[cfg(test)]
+fn kill_test_process_at(checkpoint: &str) {
+    if std::env::var("RICEFIELD_TEST_SFTP_CRASH_AT").as_deref() == Ok(checkpoint) {
+        // SAFETY: this test-only checkpoint terminates the current child
+        // process; the parent verifies the surviving journal and remote data.
+        unsafe { libc::raise(libc::SIGKILL) };
+        unreachable!("SIGKILL cannot be ignored");
+    }
+}
+
 #[derive(Clone)]
 enum Connection {
     Ssh {
@@ -383,6 +393,8 @@ fn probe_atomic_hardlink(
         write_private_payload(&local_a, a)?;
         write_private_payload(&local_b, b)?;
         put(client, &local_a, &format!("{dir}/a"), cancelled)?;
+        #[cfg(test)]
+        kill_test_process_at("probe-a");
         put(client, &local_b, &format!("{dir}/b"), cancelled)?;
         for round in 0..4 {
             let target = format!("{dir}/target-{round}");
@@ -480,6 +492,8 @@ fn upload_with_client(
         private_directory(client, &directory, cancelled)?;
         let stage = format!("{directory}/payload");
         put(client, snapshot.path(), &stage, cancelled)?;
+        #[cfg(test)]
+        kill_test_process_at("stage");
         let verify_path = snapshot.private_file("sftp-verify.payload");
         get(client, &stage, &verify_path, snapshot.bytes, cancelled)?;
         compare_files(snapshot.path(), &verify_path, cancelled)?;
@@ -571,6 +585,67 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.directory);
         }
+    }
+
+    fn run_crash_child_if_requested() {
+        let Some(root) = std::env::var_os("RICEFIELD_TEST_SFTP_CRASH_ROOT") else {
+            return;
+        };
+        let root = PathBuf::from(root);
+        let remote = root.join("remote");
+        let client = Target {
+            connection: Connection::LocalServer(server()),
+            path: remote.to_str().unwrap().to_owned(),
+            uri: format!("sftp://localhost{}", remote.display()),
+        };
+        let request = UploadRequest {
+            source: root.join("example.txt"),
+            remote_directory: client.uri.clone(),
+            credentials: MountCredentials {
+                username: String::new(),
+                password: String::new(),
+                domain: String::new(),
+            },
+            allow_insecure_http: false,
+        };
+        let result = upload_with_client(
+            request,
+            &AtomicBool::new(false),
+            &client,
+            Some(&root.join("evidence")),
+        );
+        panic!("SFTP crash checkpoint was not reached: {result:?}");
+    }
+
+    fn process_crash_fixture(test_name: &str, checkpoint: &str) -> Fixture {
+        let fixture = Fixture::new(server());
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .arg(test_name)
+            .arg("--exact")
+            .env("RICEFIELD_TEST_SFTP_CRASH_ROOT", &fixture.directory)
+            .env("RICEFIELD_TEST_SFTP_CRASH_AT", checkpoint)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("SFTP crash fixture never reached checkpoint {checkpoint}");
+            }
+            thread::sleep(Duration::from_millis(20));
+        };
+        assert_eq!(
+            status.signal(),
+            Some(libc::SIGKILL),
+            "child did not crash at {checkpoint}: {status}"
+        );
+        fixture
     }
 
     #[test]
@@ -683,6 +758,63 @@ mod tests {
         assert_eq!(
             fs::read(&remote).unwrap(),
             b"untrusted server response is longer than the source"
+        );
+    }
+
+    #[test]
+    fn real_sftp_process_crash_during_probe_preserves_recovery_evidence() {
+        run_crash_child_if_requested();
+        let fixture = process_crash_fixture(
+            "remote_upload_sftp::tests::real_sftp_process_crash_during_probe_preserves_recovery_evidence",
+            "probe-a",
+        );
+        let (uploads, probes) =
+            remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap();
+        assert!(uploads.is_empty());
+        assert_eq!(probes.len(), 1);
+        let directory =
+            PathBuf::from(&fixture.client.path).join(format!(".ricefield-safety-{}", probes[0].id));
+        assert_eq!(
+            fs::read(directory.join("a")).unwrap(),
+            b"ricefield-sftp-safe-a"
+        );
+        assert!(
+            probes[0]
+                .prefix_uri
+                .ends_with(&format!(".ricefield-safety-{}", probes[0].id))
+        );
+        assert!(!Path::new(&format!("{}/example.txt", fixture.client.path)).exists());
+        assert_eq!(
+            fs::read(&fixture.source).unwrap(),
+            b"pinned-source-content\n"
+        );
+    }
+
+    #[test]
+    fn real_sftp_process_crash_after_stage_put_preserves_recovery_evidence() {
+        run_crash_child_if_requested();
+        let fixture = process_crash_fixture(
+            "remote_upload_sftp::tests::real_sftp_process_crash_after_stage_put_preserves_recovery_evidence",
+            "stage",
+        );
+        let (uploads, probes) =
+            remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap();
+        assert!(
+            probes.is_empty(),
+            "completed probes must retire their records"
+        );
+        assert_eq!(uploads.len(), 1);
+        let stage = PathBuf::from(&fixture.client.path)
+            .join(format!(".ricefield-upload-{}", uploads[0].id));
+        assert_eq!(
+            fs::read(stage.join("payload")).unwrap(),
+            b"pinned-source-content\n"
+        );
+        assert!(uploads[0].destination_uri.ends_with("/example.txt"));
+        assert!(!Path::new(&format!("{}/example.txt", fixture.client.path)).exists());
+        assert_eq!(
+            fs::read(&fixture.source).unwrap(),
+            b"pinned-source-content\n"
         );
     }
 
