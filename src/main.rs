@@ -50,6 +50,7 @@ fn invalid_argument(message: &str) -> ! {
 fn main() -> eframe::Result {
     let mut selected_theme = None;
     let mut theme_file = None;
+    let mut check_theme_file = None;
     let mut locations = Vec::<location::Location>::new();
     let mut separate_window = false;
     let mut file_manager_service = false;
@@ -58,7 +59,7 @@ fn main() -> eframe::Result {
         match arg.to_str() {
             Some("--help" | "-h") => {
                 println!(
-                    "RiceField {}\nUsage: ricefield [--theme ID] [--theme-file FILE] [LOCATION ...]\n\n--version        Show the package version\n--list-themes    Show bundled profiles\n--theme ID       Select a RiceBowl visual profile\n--theme-file FILE  Load an external editable TOML theme\n--separate-window  Open a secondary window without saving its tab session\n--file-manager-service  Offer FileManager1 on the session bus (opt-in; existing owner wins)\n--benchmark      Measure disposable 100k-entry and verified-copy fixtures\n\nLocations accept local paths, file://, smb://, sftp://, dav(s):// and mtp:// URIs. Network tabs offer read-only browsing, previews and explicit local downloads. WebDAV offers a guarded single-file upload after a live no-overwrite server probe; SMB/SFTP/MTP writes remain disabled. Credentials belong in RiceField's secure connection prompt, never in command-line URIs.\n\nLocal Archive menu: browse, verify, extract selected, and create ZIP/tar.gz/tar.xz/tar.zst/7z (system libarchive required); masked password prompts and optional AES-256 ZIP creation. Encrypted 7z/RAR support depends on the system backend.\n\nKeyboard: F3 two-folder split view, Ctrl+Shift+N separate window, Ctrl+L path, Ctrl+F search, Ctrl+T/W open/close tab, Ctrl+Shift+T reopen, Ctrl+PageUp/PageDown cycle, Ctrl+Shift+PageUp/PageDown reorder; Ctrl+C/X/V copy/cut/paste, F2 rename, Delete trash, Shift+Delete permanent delete, Ctrl+A select all, Ctrl+D duplicate file, Alt+Enter properties, Space preview, Ctrl+H hidden, Ctrl+R refresh.",
+                    "RiceField {}\nUsage: ricefield [--theme ID] [--theme-file FILE] [LOCATION ...]\n       ricefield --check-theme-file FILE\n\n--version        Show the package version\n--list-themes    Show bundled profiles\n--theme ID       Select a RiceBowl visual profile\n--theme-file FILE  Load an external editable TOML theme or RiceProfile v1\n--check-theme-file FILE  Validate an external theme/RiceProfile without opening a GUI\n--separate-window  Open a secondary window without saving its tab session\n--file-manager-service  Offer FileManager1 on the session bus (opt-in; existing owner wins)\n--benchmark      Measure disposable 100k-entry and verified-copy fixtures\n\nLocations accept local paths, file://, smb://, sftp://, dav(s):// and mtp:// URIs. Network tabs offer read-only browsing, previews and explicit local downloads. WebDAV offers a guarded single-file upload after a live no-overwrite server probe; SMB/SFTP/MTP writes remain disabled. Credentials belong in RiceField's secure connection prompt, never in command-line URIs.\n\nLocal Archive menu: browse, verify, extract selected, and create ZIP/tar.gz/tar.xz/tar.zst/7z (system libarchive required); masked password prompts and optional AES-256 ZIP creation. Encrypted 7z/RAR support depends on the system backend.\n\nKeyboard: F3 two-folder split view, Ctrl+Shift+N separate window, Ctrl+L path, Ctrl+F search, Ctrl+T/W open/close tab, Ctrl+Shift+T reopen, Ctrl+Shift+PageUp/PageDown reorder; Ctrl+C/X/V copy/cut/paste, F2 rename, Delete trash, Shift+Delete permanent delete, Ctrl+A select all, Ctrl+D duplicate file, Alt+Enter properties, Space preview, Ctrl+H hidden, Ctrl+R refresh.",
                     env!("CARGO_PKG_VERSION")
                 );
                 return Ok(());
@@ -95,6 +96,12 @@ fn main() -> eframe::Result {
                     .unwrap_or_else(|| invalid_argument("--theme-file requires a path"));
                 theme_file = Some(PathBuf::from(path));
             }
+            Some("--check-theme-file") => {
+                let path = args
+                    .next()
+                    .unwrap_or_else(|| invalid_argument("--check-theme-file requires a path"));
+                check_theme_file = Some(PathBuf::from(path));
+            }
             Some("--") => {
                 for location in args.by_ref() {
                     let path =
@@ -110,6 +117,26 @@ fn main() -> eframe::Result {
                 locations.push(path);
             }
         }
+    }
+    if let Some(path) = check_theme_file {
+        if selected_theme.is_some()
+            || theme_file.is_some()
+            || !locations.is_empty()
+            || separate_window
+            || file_manager_service
+        {
+            invalid_argument("--check-theme-file must be used on its own");
+        }
+        if let Err(error) = theme::Theme::from_file(&path) {
+            invalid_argument(&format!("invalid theme: {error}"));
+        }
+        println!("Valid RiceField theme: {}", path.display());
+        return Ok(());
+    }
+    // RiceBowl supplies a disposable profile only to clients launched inside
+    // its session. Explicit CLI options always take precedence.
+    if selected_theme.is_none() && theme_file.is_none() {
+        theme_file = env::var_os("RICEBOWL_RICEFIELD_THEME_FILE").map(PathBuf::from);
     }
     // RiceBowl can choose the initial profile for this process without
     // changing the user's persisted RiceField preferences. Explicit CLI wins.

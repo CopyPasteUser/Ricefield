@@ -47,6 +47,25 @@ pub struct Theme {
     pub metrics: Metrics,
 }
 
+/// RiceProfile v1 is a small, data-only appearance handoff. Full RiceField
+/// themes continue to use their independent schema and work without RiceBowl.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RiceProfile {
+    format_version: u32,
+    name: String,
+    base_theme: String,
+    appearance: RiceProfileAppearance,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RiceProfileAppearance {
+    accent: String,
+    surface: String,
+    text: String,
+}
+
 fn theme_schema_version() -> u32 {
     1
 }
@@ -329,6 +348,50 @@ impl Theme {
         Ok(theme)
     }
 
+    pub fn from_riceprofile_text(source: &str) -> Result<Self, String> {
+        if source.len() > MAX_THEME_BYTES as usize {
+            return Err("RiceProfile source exceeds 256 KiB limit".into());
+        }
+        let profile: RiceProfile = toml::from_str(source).map_err(|error| error.to_string())?;
+        if profile.format_version != 1 {
+            return Err(format!(
+                "Unsupported RiceProfile version: {}",
+                profile.format_version
+            ));
+        }
+        if profile.name.trim().is_empty()
+            || profile.name.chars().count() > 64
+            || profile.name.chars().any(char::is_control)
+        {
+            return Err("RiceProfile name must be 1–64 printable characters".into());
+        }
+        let mut theme = Self::builtin(&profile.base_theme).ok_or_else(|| {
+            "RiceProfile base_theme is not a supported RiceField theme".to_owned()
+        })?;
+        for color in [
+            &profile.appearance.accent,
+            &profile.appearance.surface,
+            &profile.appearance.text,
+        ] {
+            if parse_color(color).is_none() {
+                return Err(format!("Invalid RiceProfile color: {color}"));
+            }
+        }
+        let appearance = profile.appearance;
+        theme.palette.background = appearance.surface.clone();
+        theme.palette.chrome = appearance.surface.clone();
+        theme.palette.panel = appearance.surface.clone();
+        theme.palette.sidebar = appearance.surface;
+        theme.palette.text = appearance.text.clone();
+        theme.palette.muted = appearance.text;
+        theme.palette.accent = appearance.accent.clone();
+        theme.palette.selection = appearance.accent.clone();
+        theme.palette.border = appearance.accent;
+        theme.name = profile.name;
+        theme.validate()?;
+        Ok(theme)
+    }
+
     pub fn read_source(path: &Path) -> Result<String, String> {
         let mut options = fs::OpenOptions::new();
         options.read(true);
@@ -356,7 +419,15 @@ impl Theme {
     }
 
     pub fn from_file(path: &Path) -> Result<Self, String> {
-        Self::from_text(&Self::read_source(path)?)
+        let source = Self::read_source(path)?;
+        // The marker selects a separate, strictly validated schema; an
+        // arbitrary full theme is never interpreted as executable input.
+        let root: toml::Table = toml::from_str(&source).map_err(|error| error.to_string())?;
+        if root.contains_key("format_version") {
+            Self::from_riceprofile_text(&source)
+        } else {
+            Self::from_text(&source)
+        }
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -474,6 +545,38 @@ impl Theme {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const PROFILE: &str = include_str!("../tests/fixtures/ricebowl-classic-riceprofile-v1.toml");
+
+    #[test]
+    fn riceprofile_v1_applies_only_palette_tokens_to_a_real_theme() {
+        let theme = Theme::from_riceprofile_text(PROFILE).unwrap();
+        let original = Theme::builtin("win7").unwrap();
+        assert_eq!(theme.id, original.id);
+        assert!(theme.layout == original.layout);
+        assert_eq!(theme.metrics.row_height, original.metrics.row_height);
+        assert_eq!(theme.name, "RiceBowl: Classic bottom taskbar");
+        assert_eq!(theme.palette.background, "#203c59");
+        assert_eq!(theme.palette.text, "#f3f7fa");
+        assert_eq!(theme.palette.accent, "#4179aa");
+        theme.validate().unwrap();
+    }
+
+    #[test]
+    fn riceprofile_v1_fails_closed_on_unknown_keys_versions_themes_and_colors() {
+        for invalid in [
+            PROFILE.replace("format_version = 1", "format_version = 2"),
+            PROFILE.replace("base_theme = \"win7\"", "base_theme = \"unknown\""),
+            PROFILE.replace("\"#4179aa\"", "\"red;run-command\""),
+            PROFILE.replace(
+                "text = \"#f3f7fa\"",
+                "text = \"#f3f7fa\"\ncommand = \"nope\"",
+            ),
+            PROFILE.replace("name = \"RiceBowl: Classic bottom taskbar\"", "name = \"\""),
+        ] {
+            assert!(Theme::from_riceprofile_text(&invalid).is_err());
+        }
+    }
 
     #[test]
     fn external_theme_loader_rejects_over_limit_and_non_regular_files() {
