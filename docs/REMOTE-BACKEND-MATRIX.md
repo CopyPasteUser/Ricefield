@@ -62,6 +62,11 @@ Stage readback is additionally capped in the child process to the expected
 source size plus one byte; excessive server data is rejected before it can
 consume unbounded local disk space. The real-protocol test covers exact-size
 and oversized downloads.
+Two actual uploader child-process `SIGKILL` checkpoints additionally assert
+surviving probe evidence immediately after the first server probe upload and
+stage evidence immediately after the private upload. Both preserve the source,
+leave the final name absent and require manual server review after restart.
+They do not simulate abrupt NAS power loss or a lost SFTP response mid-request.
 If OpenSSH hardlink support, remote creation, byte comparison or safety tests
 fail, the upload fails closed; uncertain private probe/stage directories remain
 in the local review journal without automatic server mutations.

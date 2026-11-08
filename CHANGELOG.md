@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — actual-process SFTP recovery checkpoints (P0 #84)
+
+- Add isolated OpenSSH-protocol regressions that terminate the uploader with
+  `SIGKILL` immediately after the first server probe upload and after a private
+  stage upload. On restart, verify persisted probe/stage evidence, surviving
+  remote objects, the unchanged local source and absence of a published target.
+  These are deterministic process crashes, not NAS disconnect or power-loss
+  simulations; they do not authorize automatic server cleanup or replay.
+
 ## Unreleased — bounded SFTP verification downloads (P0 #84)
 
 - Cap the external SFTP client's stage readback to the local snapshot length
