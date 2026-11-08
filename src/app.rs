@@ -11080,7 +11080,7 @@ impl eframe::App for Explorer {
             || self.folder_tree.has_pending()
             || self.thumbnails.has_pending()
             || self.remote_download_busy
-            || self.tabs.iter().any(|tab| tab.loading)
+            || self.tabs.iter().any(|tab| tab.loading || tab.view_pending)
         {
             Duration::from_millis(90)
         } else {
