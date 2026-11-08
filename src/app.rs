@@ -2008,7 +2008,8 @@ impl Explorer {
         self.remote_journal_loading = true;
         let sender = self.remote_journal_sender.clone();
         thread::spawn(move || {
-            let result = remote_upload_journal::inspect_evidence().map_err(|error| error.to_string());
+            let result =
+                remote_upload_journal::inspect_evidence().map_err(|error| error.to_string());
             let _ = sender.send((generation, result));
         });
     }

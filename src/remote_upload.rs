@@ -704,7 +704,13 @@ fn upload_with_journal_directory(
             request.credentials
         };
     let mut snapshot = Snapshot::create(&request.source, cancelled)?;
-    probe_no_replace(&base, &credentials, &mut snapshot, cancelled, journal_override)?;
+    probe_no_replace(
+        &base,
+        &credentials,
+        &mut snapshot,
+        cancelled,
+        journal_override,
+    )?;
     let stage = format!(
         "{base}/.ricefield-upload-{}",
         random_suffix().map_err(|error| error.to_string())?
@@ -1157,7 +1163,8 @@ mod tests {
                 .lock()
                 .unwrap()
                 .keys()
-                .any(|path| path.contains(".ricefield-upload-") || path.contains(".ricefield-safety-"))
+                .any(|path| path.contains(".ricefield-upload-")
+                    || path.contains(".ricefield-safety-"))
         );
         fs::remove_file(not_a_directory).unwrap();
         fs::remove_file(file).unwrap();
@@ -1313,7 +1320,11 @@ mod tests {
             .filter(|path| path.contains("/.ricefield-safety-"))
             .cloned()
             .collect();
-        assert_eq!(probes.len(), 1, "server did not retain the interrupted probe");
+        assert_eq!(
+            probes.len(),
+            1,
+            "server did not retain the interrupted probe"
+        );
         let prefix_path = probes[0].trim_end_matches("-0-a");
         assert!(saved.contains(prefix_path), "journal lost the probe prefix");
         assert!(!saved.contains("secret"));
@@ -1343,7 +1354,11 @@ mod tests {
             .filter_map(Result::ok)
             .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "probe"))
             .collect();
-        assert_eq!(evidence.len(), 1, "failed probe must retain restart evidence");
+        assert_eq!(
+            evidence.len(),
+            1,
+            "failed probe must retain restart evidence"
+        );
         let saved = fs::read_to_string(evidence[0].path()).unwrap();
         assert!(saved.contains(".ricefield-safety-"));
         assert!(!saved.contains("secret"));

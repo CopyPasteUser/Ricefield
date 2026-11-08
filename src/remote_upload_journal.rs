@@ -240,7 +240,9 @@ impl PendingProbe {
         };
         let bytes = toml::to_string(&stored).map_err(io::Error::other)?;
         if bytes.len() as u64 > MAX_RECORD_BYTES {
-            return Err(invalid_data("WebDAV safety-probe record exceeds size limit"));
+            return Err(invalid_data(
+                "WebDAV safety-probe record exceeds size limit",
+            ));
         }
         let mut file = OpenOptions::new()
             .write(true)
@@ -386,7 +388,9 @@ fn scan_probes_in(directory: &Path) -> io::Result<Vec<ProbeRecord>> {
         }
         let record = read_probe_record(&entry.path())?;
         if record.id != id {
-            return Err(invalid_data("WebDAV probe journal filename and record differ"));
+            return Err(invalid_data(
+                "WebDAV probe journal filename and record differ",
+            ));
         }
         records.push(record);
     }
@@ -463,7 +467,9 @@ fn read_probe_record(path: &Path) -> io::Result<ProbeRecord> {
         .open(path)?;
     let current = file.metadata()?;
     if current.dev() != before.dev() || current.ino() != before.ino() {
-        return Err(invalid_data("WebDAV probe journal was replaced during open"));
+        return Err(invalid_data(
+            "WebDAV probe journal was replaced during open",
+        ));
     }
     let mut bytes = Vec::new();
     file.take(MAX_RECORD_BYTES + 1).read_to_end(&mut bytes)?;
