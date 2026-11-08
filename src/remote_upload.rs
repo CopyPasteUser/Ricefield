@@ -1,6 +1,6 @@
 //! Server-conditioned WebDAV uploads. Generic GIO move/copy commands are NOT
-//! safe no-replace primitives (see docs/REMOTE-WRITE-SAFETY.md). SFTP uses
-//! a separately verified hardlink backend; SMB/MTP remain read-only.
+//! safe no-replace primitives (see docs/REMOTE-WRITE-SAFETY.md). SFTP and SMB
+//! use separately verified hardlink backends; MTP remains read-only.
 
 use crate::{
     keyring,
