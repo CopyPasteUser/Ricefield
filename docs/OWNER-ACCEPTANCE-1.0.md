@@ -6,9 +6,11 @@ Automated CI results do not count as physical Mint, NAS or USB evidence.
 Use the exact candidate commit/version tested; do not silently substitute a
 later development build.
 
-The `1.0.0-rc.20` development candidate passed
-[GitHub CI #843](https://github.com/CopyPasteUser/Ricefield/actions/runs/42402923975)
-with 382 Rust tests plus Linux release, installation and GUI checks. This is
+The source snapshot preceding `1.0.0-rc.21` passed
+[GitHub CI #945](https://github.com/CopyPasteUser/Ricefield/actions/runs/42522259044)
+with 416 Rust tests, two additional signed-Samba uploader integration tests,
+Linux release, installation, GUI and performance checks. **First verify the
+actual `rc.21` commit's own green CI before hardware testing.** This is
 automated evidence only; **all boxes below require owner verification**.
 
 ## Preparation and safety
