@@ -11,6 +11,7 @@ use std::{
     fs::{self, File},
     io::{Read, Write},
     os::unix::fs::OpenOptionsExt,
+    os::unix::process::{CommandExt, ExitStatusExt},
     path::Path,
     process::{Command, Stdio},
     sync::atomic::{AtomicBool, Ordering},
@@ -148,11 +149,44 @@ impl Target {
     }
 
     fn run(&self, batch: &str, cancelled: &AtomicBool) -> Result<(), String> {
+        self.run_bounded(batch, cancelled, None)
+    }
+
+    fn run_bounded(
+        &self,
+        batch: &str,
+        cancelled: &AtomicBool,
+        max_download_bytes: Option<u64>,
+    ) -> Result<(), String> {
         if cancelled.load(Ordering::Relaxed) {
             return Err("SFTP upload cancelled".into());
         }
         let mut cmd = Command::new("sftp");
         cmd.args(["-b", "-"]);
+        // The server controls the staged file's reported size. Bound the
+        // verification download in the child, before it can fill local disk.
+        if let Some(bytes) = max_download_bytes {
+            let cap = bytes.saturating_add(1) as libc::rlim_t;
+            unsafe {
+                cmd.pre_exec(move || {
+                    let no_core = libc::rlimit {
+                        rlim_cur: 0,
+                        rlim_max: 0,
+                    };
+                    if libc::setrlimit(libc::RLIMIT_CORE, &no_core) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    let limit = libc::rlimit {
+                        rlim_cur: cap,
+                        rlim_max: cap,
+                    };
+                    if libc::setrlimit(libc::RLIMIT_FSIZE, &limit) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+        }
         match &self.connection {
             Connection::Ssh {
                 host,
@@ -215,6 +249,9 @@ impl Target {
                 Ok(Some(status)) => {
                     return if status.success() {
                         Ok(())
+                    } else if max_download_bytes.is_some() && status.signal() == Some(libc::SIGXFSZ)
+                    {
+                        Err("SFTP verification download exceeded its size limit".into())
                     } else {
                         Err(format!("SFTP server refused operation (exit {status})"))
                     };
@@ -244,12 +281,19 @@ fn put(client: &Target, source: &Path, target: &str, cancelled: &AtomicBool) -> 
     )
 }
 
-fn get(client: &Target, source: &str, target: &Path, cancelled: &AtomicBool) -> Result<(), String> {
+fn get(
+    client: &Target,
+    source: &str,
+    target: &Path,
+    max_bytes: u64,
+    cancelled: &AtomicBool,
+) -> Result<(), String> {
     let local = target.to_str().ok_or("Invalid local verification path")?;
     safe_ascii_path(local)?;
-    client.run(
+    client.run_bounded(
         &format!("get {} {}\n", quoted(source), quoted(local)),
         cancelled,
+        Some(max_bytes),
     )
 }
 
@@ -370,7 +414,7 @@ fn probe_atomic_hardlink(
                 return Err("SFTP probe cancelled".into());
             }
             let verify_path = snapshot.private_file("sftp-verify.payload");
-            get(client, &target, &verify_path, cancelled)?;
+            get(client, &target, &verify_path, 64, cancelled)?;
             let verified = fs::read(&verify_path).map_err(|error| error.to_string())?;
             let expected = if result_a.is_ok() { a } else { b };
             if verified != expected {
@@ -437,7 +481,7 @@ fn upload_with_client(
         let stage = format!("{directory}/payload");
         put(client, snapshot.path(), &stage, cancelled)?;
         let verify_path = snapshot.private_file("sftp-verify.payload");
-        get(client, &stage, &verify_path, cancelled)?;
+        get(client, &stage, &verify_path, snapshot.bytes, cancelled)?;
         compare_files(snapshot.path(), &verify_path, cancelled)?;
         fs::remove_file(verify_path).map_err(|error| error.to_string())?;
         if cancelled.load(Ordering::Relaxed) {
@@ -601,6 +645,45 @@ mod tests {
             remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap();
         assert_eq!(uploads.len(), 1, "uncertain staged upload requires review");
         assert!(probes.is_empty(), "successful probe is retired");
+    }
+
+    #[test]
+    fn real_sftp_verification_download_is_bounded() {
+        let fixture = Fixture::new(server());
+        let remote = PathBuf::from(&fixture.client.path).join("oversized.payload");
+        let local = fixture.directory.join("verification.payload");
+        let cancelled = AtomicBool::new(false);
+        fs::write(&remote, b"exact").unwrap();
+        get(
+            &fixture.client,
+            remote.to_str().unwrap(),
+            &local,
+            5,
+            &cancelled,
+        )
+        .unwrap();
+        assert_eq!(fs::read(&local).unwrap(), b"exact");
+        fs::remove_file(&local).unwrap();
+
+        fs::write(
+            &remote,
+            b"untrusted server response is longer than the source",
+        )
+        .unwrap();
+        let error = get(
+            &fixture.client,
+            remote.to_str().unwrap(),
+            &local,
+            5,
+            &cancelled,
+        )
+        .unwrap_err();
+        assert!(error.contains("size limit"), "{error}");
+        assert!(fs::metadata(&local).map(|file| file.len()).unwrap_or(0) <= 6);
+        assert_eq!(
+            fs::read(&remote).unwrap(),
+            b"untrusted server response is longer than the source"
+        );
     }
 
     #[test]

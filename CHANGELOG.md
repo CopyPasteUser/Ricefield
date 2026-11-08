@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — bounded SFTP verification downloads (P0 #84)
+
+- Cap the external SFTP client's stage readback to the local snapshot length
+  plus one byte using a per-process file-size limit. An oversized or malicious
+  server response now fails closed before it can exhaust local disk space.
+  Disable child core dumps so the file-size signal cannot produce a large or
+  sensitive crash artifact.
+- Exercise both exact-size readback and an oversized response against the real
+  isolated OpenSSH SFTP protocol fixture. No MTP writes or unsafe fallback are
+  enabled; physical SFTP/offline acceptance remains outstanding.
+- Keep the portal special-file rejection test active in sandboxed runners
+  that deny Unix sockets by using the existing FIFO fixture fallback pattern.
+
 ## Unreleased — signed SMB2/3 no-replace publication (partial P0 #84)
 
 - Implement a restricted SMB single-file uploader with ephemeral stdin-pipe
@@ -31,7 +44,8 @@
   embedded credentials, unsafe paths, unsupported names and servers lacking
   hardlink capability. Test a real local OpenSSH SFTP server in CI, including
   existing-target/symlink collisions and independent-client races.
-- Keep SMB/MTP writers disabled and real NAS/physical-offline acceptance open.
+- SMB now has a separate conditional signed hardlink writer; MTP remains
+  disabled, and real NAS/physical-offline acceptance remains open.
 
 ## Unreleased — crash-visible WebDAV safety-probe evidence
 

@@ -65,6 +65,7 @@ pub fn choose_application(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io;
     use std::os::unix::net::UnixListener;
 
     #[test]
@@ -84,7 +85,20 @@ mod tests {
         assert!(local_target(&root).unwrap().metadata().unwrap().is_dir());
         assert!(local_target(Path::new("relative.txt")).is_err());
         let socket = root.join("socket");
-        let _listener = UnixListener::bind(&socket).unwrap();
+        let _listener = match UnixListener::bind(&socket) {
+            Ok(listener) => Some(listener),
+            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+                // Some restricted runners deny AF_UNIX; exercise the same
+                // special-file rejection with a FIFO instead of skipping it.
+                let name = std::ffi::CString::new(std::os::unix::ffi::OsStrExt::as_bytes(
+                    socket.as_os_str(),
+                ))
+                .unwrap();
+                assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+                None
+            }
+            Err(error) => panic!("Cannot create portal socket fixture: {error}"),
+        };
         assert!(local_target(&socket).is_err());
         let fifo = root.join("pipe");
         let name = std::ffi::CString::new(std::os::unix::ffi::OsStrExt::as_bytes(fifo.as_os_str()))

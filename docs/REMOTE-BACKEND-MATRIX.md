@@ -58,6 +58,10 @@ verifies successful publication, existing-file and symlink collisions, a
 simultaneous two-client hardlink race, unsafe URI rejection and unavailable
 server handling. The production path uses `sftp -b -` with strict host-key
 checking, public-key / SSH-agent authentication and no password injection.
+Stage readback is additionally capped in the child process to the expected
+source size plus one byte; excessive server data is rejected before it can
+consume unbounded local disk space. The real-protocol test covers exact-size
+and oversized downloads.
 If OpenSSH hardlink support, remote creation, byte comparison or safety tests
 fail, the upload fails closed; uncertain private probe/stage directories remain
 in the local review journal without automatic server mutations.
