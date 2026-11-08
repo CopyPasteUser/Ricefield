@@ -11,6 +11,7 @@ use std::{
     ffi::OsStr,
     fs::{self, File},
     io::{Read, Write},
+    os::unix::process::CommandExt,
     path::Path,
     process::{Command, Stdio},
     sync::atomic::{AtomicBool, Ordering},
@@ -163,6 +164,15 @@ impl Target {
     }
 
     fn run(&self, command: &str, cancelled: &AtomicBool) -> Result<(), String> {
+        self.run_bounded(command, cancelled, None)
+    }
+
+    fn run_bounded(
+        &self,
+        command: &str,
+        cancelled: &AtomicBool,
+        max_download_bytes: Option<u64>,
+    ) -> Result<(), String> {
         if cancelled.load(Ordering::Relaxed) {
             return Err("SMB upload cancelled".into());
         }
@@ -178,6 +188,30 @@ impl Target {
             .arg(command);
         if let Some(port) = self.port {
             cmd.arg(format!("--port={port}"));
+        }
+        // A crashed external client must not dump in-memory passwords. For
+        // GET, also bound file output even if a peer sends oversized data.
+        let download_cap = max_download_bytes.map(|bytes| bytes.saturating_add(1) as libc::rlim_t);
+        unsafe {
+            cmd.pre_exec(move || {
+                let no_core = libc::rlimit {
+                    rlim_cur: 0,
+                    rlim_max: 0,
+                };
+                if libc::setrlimit(libc::RLIMIT_CORE, &no_core) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if let Some(cap) = download_cap {
+                    let limit = libc::rlimit {
+                        rlim_cur: cap,
+                        rlim_max: cap,
+                    };
+                    if libc::setrlimit(libc::RLIMIT_FSIZE, &limit) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                }
+                Ok(())
+            });
         }
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -247,12 +281,19 @@ fn put(target: &Target, local: &Path, remote: &str, cancelled: &AtomicBool) -> R
     )
 }
 
-fn get(target: &Target, remote: &str, local: &Path, cancelled: &AtomicBool) -> Result<(), String> {
+fn get(
+    target: &Target,
+    remote: &str,
+    local: &Path,
+    max_bytes: u64,
+    cancelled: &AtomicBool,
+) -> Result<(), String> {
     let local = local.to_str().ok_or("Invalid verification path")?;
     safe_path(local)?;
-    target.run(
+    target.run_bounded(
         &format!("get {} {}", quoted(remote), quoted(local)),
         cancelled,
+        Some(max_bytes),
     )
 }
 
@@ -364,7 +405,7 @@ fn safety_probe(
                 ));
             }
             let local = snapshot.private_file("smb-verify.payload");
-            get(target, &destination, &local, cancelled)?;
+            get(target, &destination, &local, 64, cancelled)?;
             let actual = fs::read(&local).map_err(|error| error.to_string())?;
             let expected: &[u8] = if left.is_ok() {
                 b"ricefield-smb-safe-a"
@@ -427,7 +468,7 @@ fn upload_with_target(
         let stage = format!("{dir}/payload");
         put(target, snapshot.path(), &stage, cancelled)?;
         let verify = snapshot.private_file("smb-verify.payload");
-        get(target, &stage, &verify, cancelled)?;
+        get(target, &stage, &verify, snapshot.bytes, cancelled)?;
         compare(snapshot.path(), &verify, cancelled)?;
         fs::remove_file(&verify).map_err(|error| error.to_string())?;
         if cancelled.load(Ordering::Relaxed) {
@@ -518,5 +559,30 @@ mod tests {
             .is_err()
         );
         assert!(basename(OsStr::new("file;rm.txt")).is_err());
+    }
+
+    #[test]
+    fn smb_verified_stage_requires_exact_bytes_and_length() {
+        let directory = std::env::temp_dir().join(format!(
+            "ricefield-smb-verify-{}",
+            remote_upload::random_suffix().unwrap()
+        ));
+        fs::create_dir(&directory).unwrap();
+        let source = directory.join("source");
+        let copy = directory.join("copy");
+        let cancelled = AtomicBool::new(false);
+        fs::write(&source, b"exact payload").unwrap();
+        fs::write(&copy, b"exact payload").unwrap();
+        assert!(compare(&source, &copy, &cancelled).is_ok());
+        fs::write(&copy, b"exact payload plus").unwrap();
+        assert!(compare(&source, &copy, &cancelled).is_err());
+        fs::write(&copy, b"short").unwrap();
+        assert!(compare(&source, &copy, &cancelled).is_err());
+        fs::write(&copy, b"wrong payload").unwrap();
+        assert!(compare(&source, &copy, &cancelled).is_err());
+        cancelled.store(true, Ordering::Relaxed);
+        fs::write(&copy, b"exact payload").unwrap();
+        assert!(compare(&source, &copy, &cancelled).is_err());
+        fs::remove_dir_all(directory).unwrap();
     }
 }

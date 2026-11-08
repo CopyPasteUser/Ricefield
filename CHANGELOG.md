@@ -4,6 +4,8 @@
 
 - Implement a restricted SMB single-file uploader with ephemeral stdin-pipe
   credentials, required SMB signing, isolated staging and full byte readback.
+  Bound remote GET disk output to the expected payload length and disable
+  external-client core dumps so crashed clients cannot disclose credentials.
 - Before using the selected source, require one sequential and three
   independent-client server-atomic SMB `hardlink` collision rounds.
 - Persist synced local probe and stage evidence before every remote mkdir;
