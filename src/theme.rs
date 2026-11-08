@@ -17,7 +17,12 @@ pub const BUILTIN_IDS: &[&str] = &[
 /// Translate RiceBowl's shared rice names to RiceField's bundled profiles.
 /// Unknown/generated rices must not silently select an unrelated style.
 pub fn ricebowl_id(value: &str) -> Option<&'static str> {
-    match value.trim().to_ascii_lowercase().replace(['_', ' '], "-").as_str() {
+    match value
+        .trim()
+        .to_ascii_lowercase()
+        .replace(['_', ' '], "-")
+        .as_str()
+    {
         "windows98" | "windows-98" | "win98" | "98" | "classic98" => Some("win98"),
         "xp" | "xp-luna" | "windows-xp" | "windowsxp" | "luna" => Some("xp-luna"),
         "windows7" | "windows-7" | "win7" | "7" => Some("win7"),

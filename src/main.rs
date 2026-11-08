@@ -116,7 +116,11 @@ fn main() -> eframe::Result {
     if selected_theme.is_none() {
         selected_theme = ["RICEBOWL_RICE", "RICEBOWL_THEME"]
             .into_iter()
-            .find_map(|key| env::var(key).ok().and_then(|value| theme::ricebowl_id(&value)))
+            .find_map(|key| {
+                env::var(key)
+                    .ok()
+                    .and_then(|value| theme::ricebowl_id(&value))
+            })
             .map(str::to_owned);
     }
     let icon = image::load_from_memory(include_bytes!("../assets/ricefield.png"))
