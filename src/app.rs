@@ -44,6 +44,8 @@ const SEARCH_DEBOUNCE: Duration = Duration::from_millis(350);
 const MAX_RECENT_OPERATIONS: usize = transfer_history::MAX_RECORDS;
 const CLIPBOARD_WAIT: Duration = Duration::from_secs(2);
 const MAX_CLOSED_TABS: usize = 16;
+// Small folders update immediately; expensive 100k-entry sorts never run in egui.
+const BACKGROUND_VIEW_THRESHOLD: usize = 8_192;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RemoteSort {
@@ -253,9 +255,13 @@ struct Tab {
     query: String,
     back: Vec<Location>,
     forward: Vec<Location>,
-    entries: Vec<Entry>,
-    folded_names: Vec<String>,
+    entries: Arc<Vec<Entry>>,
+    folded_names: Arc<Vec<String>>,
     visible: Vec<usize>,
+    view_revision: u64,
+    view_pending: bool,
+    view_cancel: Arc<AtomicBool>,
+    view_saved_selection: Option<BTreeSet<PathBuf>>,
     selected: BTreeSet<PathBuf>,
     pending_reveal: BTreeSet<PathBuf>,
     last_selected: Option<usize>,
@@ -288,9 +294,13 @@ impl Tab {
             query: String::new(),
             back: Vec::new(),
             forward: Vec::new(),
-            entries: Vec::new(),
-            folded_names: Vec::new(),
+            entries: Arc::new(Vec::new()),
+            folded_names: Arc::new(Vec::new()),
             visible: Vec::new(),
+            view_revision: 0,
+            view_pending: false,
+            view_cancel: Arc::new(AtomicBool::new(false)),
+            view_saved_selection: None,
             selected: BTreeSet::new(),
             pending_reveal: BTreeSet::new(),
             last_selected: None,
@@ -312,9 +322,27 @@ impl Tab {
 
     fn next_scan_token(&mut self) -> Arc<AtomicBool> {
         self.cancel_scan();
+        self.cancel_view();
         let token = Arc::new(AtomicBool::new(false));
         self.scan_cancel = Arc::clone(&token);
         token
+    }
+
+    fn cancel_view(&mut self) {
+        self.view_cancel.store(true, Ordering::Relaxed);
+        self.view_revision = self.view_revision.wrapping_add(1);
+        self.view_pending = false;
+        if let Some(saved) = self.view_saved_selection.take() {
+            self.selected.extend(saved);
+        }
+    }
+
+    fn accepts_view_result(&self, result: &ViewResult) -> bool {
+        self.id == result.tab
+            && self.generation == result.scan_generation
+            && self.view_revision == result.revision
+            && self.view_pending
+            && !self.view_cancel.load(Ordering::Relaxed)
     }
 
     fn accepts_scan_result(&self, tab_id: u64, generation: u64) -> bool {
@@ -367,8 +395,9 @@ impl Tab {
         }
         self.remote_entries.clear();
         self.remote_selected_uri = None;
-        self.entries.clear();
-        self.folded_names.clear();
+        self.cancel_view();
+        self.entries = Arc::new(Vec::new());
+        self.folded_names = Arc::new(Vec::new());
         self.visible.clear();
         self.selected.clear();
         self.pending_reveal.clear();
@@ -462,6 +491,99 @@ fn retain_visible_selection(tab: &mut Tab) {
         .collect();
     tab.selected
         .retain(|path| visible_paths.contains(path.as_path()));
+}
+
+/// Commit a projected view only after its owner tab/revision was checked.
+/// Return the number of explicitly requested items that were not revealed.
+fn commit_local_view(tab: &mut Tab, visible: Vec<usize>) -> usize {
+    tab.visible = visible;
+    tab.view_pending = false;
+    if let Some(saved) = tab.view_saved_selection.take() {
+        tab.selected.extend(saved);
+    }
+    let requested = std::mem::take(&mut tab.pending_reveal);
+    let expected = requested.len();
+    tab.selected.extend(requested.iter().cloned());
+    retain_visible_selection(tab);
+    tab.last_selected = None;
+    requested
+        .iter()
+        .filter(|path| !tab.selected.contains(*path))
+        .count()
+        .min(expected)
+}
+
+/// Pure, cancellable file view projection. The scan owns filesystem I/O;
+/// filtering and natural sorting must never touch disk or mutate a tab.
+fn project_local_view(
+    entries: &[Entry],
+    folded_names: &[String],
+    query: &str,
+    content_search: bool,
+    config: &Config,
+    cancelled: &AtomicBool,
+) -> Option<Vec<usize>> {
+    if entries.len() != folded_names.len() {
+        return None;
+    }
+    let search = query.to_lowercase();
+    let name_glob = file_view::CompiledGlob::new(&config.filter_name_glob);
+    let name_regex = file_view::filename_regex(&config.filter_name_regex);
+    let now = SystemTime::now();
+    let mut visible = Vec::new();
+    for (index, entry) in entries.iter().enumerate() {
+        if index % 256 == 0 && cancelled.load(Ordering::Relaxed) {
+            return None;
+        }
+        if (config.show_hidden || !entry.name.starts_with('.'))
+            && ((content_search && !query.is_empty()) || folded_names[index].contains(&search))
+            && file_view::matches_filter(entry, &config.filter_kind)
+            && file_view::matches_size(entry, &config.filter_size)
+            && file_view::matches_modified(entry, &config.filter_modified, now)
+            && name_glob.matches(&entry.name)
+            && name_regex.as_ref().is_ok_and(|regex| {
+                regex
+                    .as_ref()
+                    .is_none_or(|regex| regex.is_match(&entry.name))
+            })
+            && file_view::matches_custom_ranges(
+                entry,
+                config.filter_min_size_mib,
+                config.filter_max_size_mib,
+                config.filter_newer_days,
+                config.filter_older_days,
+                now,
+            )
+        {
+            visible.push(index);
+        }
+    }
+    if cancelled.load(Ordering::Relaxed) {
+        return None;
+    }
+    let sort = config.sort_by.as_str();
+    visible.sort_by(|left, right| {
+        let a = &entries[*left];
+        let b = &entries[*right];
+        let folder_order = b.is_dir.cmp(&a.is_dir);
+        if !folder_order.is_eq() {
+            return folder_order;
+        }
+        let comparison = match sort {
+            "size" => a.size.cmp(&b.size),
+            "type" => a.kind().cmp(b.kind()),
+            "modified" => a.modified.cmp(&b.modified),
+            "lexical" => folded_names[*left].cmp(&folded_names[*right]),
+            _ => natural_cmp(&folded_names[*left], &folded_names[*right]),
+        };
+        let ordered = if config.descending {
+            comparison.reverse()
+        } else {
+            comparison
+        };
+        ordered.then_with(|| natural_cmp(&folded_names[*left], &folded_names[*right]))
+    });
+    (!cancelled.load(Ordering::Relaxed)).then_some(visible)
 }
 
 #[derive(Clone, Copy)]
@@ -580,7 +702,15 @@ struct ScanResult {
     path: PathBuf,
     reveal: Option<PathBuf>,
     result: std::io::Result<filesystem::FolderScan>,
+    folded_names: Vec<String>,
     dir_mtime: Option<SystemTime>,
+}
+
+struct ViewResult {
+    tab: u64,
+    scan_generation: u64,
+    revision: u64,
+    visible: Vec<usize>,
 }
 
 struct RemoteScanResult {
@@ -1277,6 +1407,8 @@ pub struct Explorer {
     drop_areas: Vec<DropArea>,
     scan_sender: Sender<ScanResult>,
     scan_receiver: Receiver<ScanResult>,
+    view_sender: Sender<ViewResult>,
+    view_receiver: Receiver<ViewResult>,
     remote_scan_sender: Sender<RemoteScanResult>,
     remote_scan_receiver: Receiver<RemoteScanResult>,
     remote_preview_sender: Sender<RemotePreviewResult>,
@@ -1472,6 +1604,7 @@ impl Explorer {
         let theme_file_state = None;
 
         let (scan_sender, scan_receiver) = mpsc::channel();
+        let (view_sender, view_receiver) = mpsc::channel();
         let (theme_reload_sender, theme_reload_receiver) = mpsc::channel();
         let (remote_scan_sender, remote_scan_receiver) = mpsc::channel();
         let (remote_preview_sender, remote_preview_receiver) = mpsc::channel();
@@ -1548,6 +1681,8 @@ impl Explorer {
             drop_areas: Vec::new(),
             scan_sender,
             scan_receiver,
+            view_sender,
+            view_receiver,
             remote_scan_sender,
             remote_scan_receiver,
             remote_preview_sender,
@@ -2414,6 +2549,7 @@ impl Explorer {
                         path: task.2,
                         reveal: None,
                         result: Err(error),
+                        folded_names: Vec::new(),
                         dir_mtime: None,
                     });
                     return;
@@ -2440,12 +2576,22 @@ impl Explorer {
             if cancel.load(Ordering::Relaxed) {
                 return;
             }
+            let folded_names = result
+                .as_ref()
+                .map(|scan| {
+                    scan.entries
+                        .iter()
+                        .map(|entry| entry.name.to_lowercase())
+                        .collect()
+                })
+                .unwrap_or_default();
             let _ = sender.send(ScanResult {
                 tab: task.0,
                 generation: task.1,
                 path,
                 reveal,
                 result,
+                folded_names,
                 dir_mtime,
             });
         });
@@ -3128,61 +3274,67 @@ impl Explorer {
     }
 
     fn rebuild_visible(&mut self, index: usize) {
-        let config = &self.config;
         let tab = &mut self.tabs[index];
-        let search = tab.query.to_lowercase();
-        let name_glob = file_view::CompiledGlob::new(&config.filter_name_glob);
-        let name_regex = file_view::filename_regex(&config.filter_name_regex);
-        let now = SystemTime::now();
-        tab.visible = (0..tab.entries.len())
-            .filter(|&index| {
-                let entry = &tab.entries[index];
-                (config.show_hidden || !entry.name.starts_with('.'))
-                    && ((tab.content_search && !tab.query.is_empty())
-                        || tab.folded_names[index].contains(&search))
-                    && file_view::matches_filter(entry, &config.filter_kind)
-                    && file_view::matches_size(entry, &config.filter_size)
-                    && file_view::matches_modified(entry, &config.filter_modified, now)
-                    && name_glob.matches(&entry.name)
-                    && name_regex.as_ref().is_ok_and(|regex| {
-                        regex
-                            .as_ref()
-                            .is_none_or(|regex| regex.is_match(&entry.name))
-                    })
-                    && file_view::matches_custom_ranges(
-                        entry,
-                        config.filter_min_size_mib,
-                        config.filter_max_size_mib,
-                        config.filter_newer_days,
-                        config.filter_older_days,
-                        now,
-                    )
-            })
-            .collect();
-        retain_visible_selection(tab);
-        let sort = config.sort_by.as_str();
-        tab.visible.sort_by(|left, right| {
-            let a = &tab.entries[*left];
-            let b = &tab.entries[*right];
-            let folder_order = b.is_dir.cmp(&a.is_dir);
-            if !folder_order.is_eq() {
-                return folder_order;
-            }
-            let comparison = match sort {
-                "size" => a.size.cmp(&b.size),
-                "type" => a.kind().cmp(b.kind()),
-                "modified" => a.modified.cmp(&b.modified),
-                "lexical" => tab.folded_names[*left].cmp(&tab.folded_names[*right]),
-                _ => natural_cmp(&tab.folded_names[*left], &tab.folded_names[*right]),
-            };
-            let ordered = if config.descending {
-                comparison.reverse()
-            } else {
-                comparison
-            };
-            ordered.then_with(|| natural_cmp(&tab.folded_names[*left], &tab.folded_names[*right]))
-        });
+        tab.view_cancel.store(true, Ordering::Relaxed);
+        tab.view_revision = tab.view_revision.wrapping_add(1);
+        let cancelled = Arc::new(AtomicBool::new(false));
+        tab.view_cancel = Arc::clone(&cancelled);
+        if tab.entries.len() < BACKGROUND_VIEW_THRESHOLD {
+            let visible = project_local_view(
+                &tab.entries,
+                &tab.folded_names,
+                &tab.query,
+                tab.content_search,
+                &self.config,
+                &cancelled,
+            )
+            .unwrap_or_default();
+            self.finish_local_view(index, visible);
+            return;
+        }
+        // The data set is shared without copying paths on the rendering thread.
+        // While projecting, no stale/hidden selection may be acted upon.
+        if tab.view_saved_selection.is_none() {
+            tab.view_saved_selection = Some(std::mem::take(&mut tab.selected));
+        }
+        tab.visible.clear();
+        tab.view_pending = true;
         tab.last_selected = None;
+        let entries = Arc::clone(&tab.entries);
+        let folded_names = Arc::clone(&tab.folded_names);
+        let query = tab.query.clone();
+        let content_search = tab.content_search;
+        let config = self.config.clone();
+        let id = tab.id;
+        let scan_generation = tab.generation;
+        let revision = tab.view_revision;
+        let sender = self.view_sender.clone();
+        thread::spawn(move || {
+            if let Some(visible) = project_local_view(
+                &entries,
+                &folded_names,
+                &query,
+                content_search,
+                &config,
+                &cancelled,
+            ) {
+                let _ = sender.send(ViewResult {
+                    tab: id,
+                    scan_generation,
+                    revision,
+                    visible,
+                });
+            }
+        });
+    }
+
+    fn finish_local_view(&mut self, index: usize, visible: Vec<usize>) {
+        if commit_local_view(&mut self.tabs[index], visible) > 0 {
+            self.status = Some((
+                "Some requested items are missing or hidden by the current filters".into(),
+                true,
+            ));
+        }
     }
 
     fn poll_background(&mut self, context: &egui::Context) {
@@ -3641,40 +3793,45 @@ impl Explorer {
                                 None => notice,
                             });
                         }
-                        tab.folded_names = scan
-                            .entries
-                            .iter()
-                            .map(|entry| entry.name.to_lowercase())
-                            .collect();
-                        tab.entries = scan.entries;
+                        tab.folded_names = Arc::new(message.folded_names);
+                        tab.entries = Arc::new(scan.entries);
                         tab.error = None;
-                        tab.selected
-                            .retain(|path| tab.entries.iter().any(|entry| &entry.path == path));
-                        self.rebuild_visible(index);
-                        let reveal = std::mem::take(&mut self.tabs[index].pending_reveal);
-                        let requested = reveal.len() + usize::from(message.reveal.is_some());
-                        self.tabs[index].selected.extend(reveal);
+                        if !tab.selected.is_empty() {
+                            let available: HashSet<&Path> = tab
+                                .entries
+                                .iter()
+                                .map(|entry| entry.path.as_path())
+                                .collect();
+                            tab.selected
+                                .retain(|path| available.contains(path.as_path()));
+                        }
                         if let Some(path) = message.reveal {
-                            self.tabs[index].selected.insert(path);
+                            tab.pending_reveal.insert(path);
                         }
-                        retain_visible_selection(&mut self.tabs[index]);
-                        if requested > 0 && self.tabs[index].selected.len() < requested {
-                            self.status = Some((
-                                "Some requested items are missing or hidden by the current filters"
-                                    .into(),
-                                true,
-                            ));
-                        }
+                        self.rebuild_visible(index);
                         self.remember_session();
                     }
                     Err(error) => {
-                        tab.entries.clear();
-                        tab.folded_names.clear();
+                        tab.cancel_view();
+                        tab.entries = Arc::new(Vec::new());
+                        tab.folded_names = Arc::new(Vec::new());
                         tab.visible.clear();
+                        tab.selected.clear();
+                        tab.pending_reveal.clear();
                         tab.error = Some(filesystem::folder_error_message(&tab.path, &error));
                         tab.scan_warning = None;
                     }
                 }
+            }
+        }
+        while let Ok(message) = self.view_receiver.try_recv() {
+            if let Some(index) = self
+                .tabs
+                .iter()
+                .position(|tab| tab.accepts_view_result(&message))
+            {
+                self.finish_local_view(index, message.visible);
+                context.request_repaint();
             }
         }
         while let Ok(message) = self.remote_scan_receiver.try_recv() {
@@ -7022,6 +7179,13 @@ impl Explorer {
             if remote || self.current().recursive_search || self.current().content_search {
                 self.current().cancel_scan();
                 self.current_mut().search_pending = Some(Instant::now());
+            } else if self.current().entries.len() >= BACKGROUND_VIEW_THRESHOLD {
+                // Coalesce rapid keystrokes before starting an expensive sort.
+                let tab = self.current_mut();
+                tab.cancel_view();
+                tab.selected.clear();
+                tab.visible.clear();
+                tab.search_pending = Some(Instant::now());
             } else {
                 self.rebuild_visible(self.active);
             }
@@ -7031,6 +7195,8 @@ impl Explorer {
         {
             self.current_mut().query.clear();
             self.current_mut().search_pending = None;
+            self.current_mut().cancel_view();
+            self.current_mut().selected.clear();
             if remote || self.current().recursive_search || self.current().content_search {
                 self.scan(self.active);
             } else {
@@ -9040,6 +9206,12 @@ impl Explorer {
             if ui.button("Retry").clicked() {
                 self.scan(index);
             }
+        } else if self.tabs[index].view_pending
+            || (self.tabs[index].search_pending.is_some()
+                && self.tabs[index].entries.len() >= BACKGROUND_VIEW_THRESHOLD)
+        {
+            ui.add(egui::Spinner::new());
+            ui.label("Filtering and sorting folder…");
         } else if self.tabs[index].loading && self.tabs[index].entries.is_empty() {
             ui.add(egui::Spinner::new());
             ui.label("Loading folder…");
@@ -10783,7 +10955,14 @@ impl eframe::App for Explorer {
                 .is_some_and(|when| when.elapsed() >= SEARCH_DEBOUNCE)
             {
                 self.tabs[index].search_pending = None;
-                self.scan(index);
+                if self.tabs[index].remote_uri.is_some()
+                    || self.tabs[index].recursive_search
+                    || self.tabs[index].content_search
+                {
+                    self.scan(index);
+                } else {
+                    self.rebuild_visible(index);
+                }
             }
         }
         if !self.refresh_in_flight && self.last_refresh_check.elapsed() >= Duration::from_secs(3) {
@@ -10901,7 +11080,7 @@ impl eframe::App for Explorer {
             || self.folder_tree.has_pending()
             || self.thumbnails.has_pending()
             || self.remote_download_busy
-            || self.tabs.iter().any(|tab| tab.loading)
+            || self.tabs.iter().any(|tab| tab.loading || tab.view_pending)
         {
             Duration::from_millis(90)
         } else {
@@ -10917,19 +11096,21 @@ impl eframe::App for Explorer {
 mod tests {
     use super::{
         Action, CLIPBOARD_WAIT, Clipboard, Dialog, ItemCounts, NameMode, PasteMode, PendingPaste,
-        PropertyResult, PropertySnapshot, Tab, TabSnapshot, accept_property_result,
-        active_after_swap, choose_paste_clipboard, drop_action, elapsed_label,
-        next_search_repaint_delay, read_property_snapshot, remaining_cut_paths, resolve_split_tabs,
-        retain_visible_selection, transfer_progress_details,
+        PropertyResult, PropertySnapshot, Tab, TabSnapshot, ViewResult, accept_property_result,
+        active_after_swap, choose_paste_clipboard, commit_local_view, drop_action, elapsed_label,
+        next_search_repaint_delay, project_local_view, read_property_snapshot, remaining_cut_paths,
+        resolve_split_tabs, retain_visible_selection, transfer_progress_details,
     };
     use crate::clipboard;
+    use crate::config::Config;
     use crate::filesystem::{ItemResult, ItemState, Progress};
     use crate::location::Location;
     use crate::transfer_history;
     use crate::volume::RemoteEntry;
+    use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
-    use std::sync::atomic::Ordering;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant};
 
     #[test]
@@ -11257,7 +11438,7 @@ mod tests {
         for name in ["hidden.txt", "visible.png"] {
             let path = tab.path.join(name);
             tab.selected.insert(path.clone());
-            tab.entries.push(crate::filesystem::Entry {
+            Arc::make_mut(&mut tab.entries).push(crate::filesystem::Entry {
                 name: name.into(),
                 path,
                 is_dir: false,
@@ -11271,6 +11452,114 @@ mod tests {
         assert_eq!(tab.selected.len(), 1);
         assert!(tab.selected.contains(&tab.entries[1].path));
         assert!(!tab.selected.contains(&tab.entries[0].path));
+    }
+
+    #[test]
+    fn large_folder_projection_sorts_100k_without_disk_access() {
+        let mut entries = Vec::with_capacity(100_000);
+        let mut folded = Vec::with_capacity(100_000);
+        for index in (0..100_000).rev() {
+            let name = format!("file{index}.txt");
+            entries.push(crate::filesystem::Entry {
+                path: PathBuf::from("/synthetic").join(&name),
+                name: name.clone(),
+                is_dir: false,
+                is_symlink: false,
+                size: index,
+                modified: None,
+            });
+            folded.push(name);
+        }
+        let entries = Arc::new(entries);
+        let shared = Arc::clone(&entries);
+        assert!(
+            Arc::ptr_eq(&entries, &shared),
+            "workers share the scan allocation"
+        );
+        let config = Config::default();
+        let visible = project_local_view(
+            &shared,
+            &folded,
+            "file",
+            false,
+            &config,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(visible.len(), 100_000);
+        assert_eq!(shared[visible[0]].name, "file0.txt");
+        assert_eq!(shared[visible[99_999]].name, "file99999.txt");
+        assert!(
+            project_local_view(
+                &shared,
+                &folded,
+                "file",
+                false,
+                &config,
+                &AtomicBool::new(true),
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn stale_view_results_cannot_replace_newer_filter_or_scan() {
+        let mut tab = Tab::new(81, PathBuf::from("/synthetic"));
+        tab.view_pending = true;
+        tab.view_revision = 4;
+        tab.generation = 5;
+        let result = ViewResult {
+            tab: 81,
+            scan_generation: 5,
+            revision: 4,
+            visible: vec![0],
+        };
+        assert!(tab.accepts_view_result(&result));
+        tab.view_revision += 1;
+        assert!(!tab.accepts_view_result(&result));
+        tab.view_revision -= 1;
+        tab.generation += 1;
+        assert!(!tab.accepts_view_result(&result));
+        tab.generation -= 1;
+        tab.view_cancel.store(true, Ordering::Relaxed);
+        assert!(!tab.accepts_view_result(&result));
+        tab.cancel_view();
+        assert!(!tab.accepts_view_result(&result));
+    }
+
+    #[test]
+    fn deferred_selection_only_restores_visible_paths() {
+        let mut tab = Tab::new(12, PathBuf::from("/synthetic"));
+        tab.entries = Arc::new(vec![
+            crate::filesystem::Entry {
+                name: "visible".into(),
+                path: "/synthetic/visible".into(),
+                is_dir: false,
+                is_symlink: false,
+                size: 0,
+                modified: None,
+            },
+            crate::filesystem::Entry {
+                name: "hidden".into(),
+                path: "/synthetic/hidden".into(),
+                is_dir: false,
+                is_symlink: false,
+                size: 0,
+                modified: None,
+            },
+        ]);
+        tab.view_saved_selection = Some(BTreeSet::from([
+            PathBuf::from("/synthetic/visible"),
+            PathBuf::from("/synthetic/hidden"),
+        ]));
+        tab.pending_reveal.insert("/synthetic/hidden".into());
+        assert_eq!(commit_local_view(&mut tab, vec![0]), 1);
+        assert_eq!(
+            tab.selected,
+            BTreeSet::from([PathBuf::from("/synthetic/visible")])
+        );
+        assert!(tab.pending_reveal.is_empty());
+        assert!(tab.view_saved_selection.is_none());
     }
 
     #[test]

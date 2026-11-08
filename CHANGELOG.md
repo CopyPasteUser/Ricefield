@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — responsive large-folder filtering and sorting
+
+- Keep scans and case-folded name preparation off the render thread. For local
+  folders with 8,192 or more entries, filter and natural-sort shared immutable
+  scan data in cancellable background jobs instead of blocking the GUI.
+- Debounce large-folder filename queries; reject outdated results on revised
+  filters, new scans and tab navigation. Temporarily hide stale file actions
+  while projecting, then restore only selections still visible. Add a visible
+  loading state and synthetic 100,000-entry, cancellation and stale-result tests.
+- No on-disk index or new dependency. Physical 4 GB, HDD and X11/Wayland frame
+  responsiveness remain unverified owner acceptance gates.
+
 ## Unreleased — guarded named-user POSIX access ACL creation
 
 - Properties now also displays the existing POSIX access/default ACL rules
