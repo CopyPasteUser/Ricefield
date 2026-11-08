@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased — restricted safe SFTP publication (partial P0 #84)
+
+- Add an independent OpenSSH SFTP writer using private upload directories,
+  four server-side hardlink collision checks, full staged byte verification
+  and a single atomic hardlink-to-final, with no rename/overwrite fallback.
+- Journal each private probe prefix and upload stage before remote mutation;
+  ambiguous failures remain reviewable after restart and never trigger
+  automatic retry, deletion or unverified overwrite. Extend shared recovery
+  UI with SFTP-specific staging/probe object guidance.
+- Use configured SSH key/agent and strict known-host verification only; reject
+  embedded credentials, unsafe paths, unsupported names and servers lacking
+  hardlink capability. Test a real local OpenSSH SFTP server in CI, including
+  existing-target/symlink collisions and independent-client races.
+- Keep SMB/MTP writers disabled and real NAS/physical-offline acceptance open.
+
 ## Unreleased — crash-visible WebDAV safety-probe evidence
 
 - Persist a private, synced, credential-free journal of each random WebDAV

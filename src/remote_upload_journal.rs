@@ -1,6 +1,6 @@
-//! Durable, private evidence for uncertain WebDAV publication attempts.
+//! Durable, private evidence for uncertain WebDAV and SFTP publication attempts.
 //!
-//! Create and sync a record *before* any remote staging PUT. Records never
+//! Create and sync a record *before* any remote staging PUT/mkdir. Records never
 //! contain credentials and never authorize remote deletion or upload replay.
 
 use serde::{Deserialize, Serialize};
@@ -65,7 +65,9 @@ impl ProbeRecord {
         self.id.len() == 32
             && self.id.bytes().all(|byte| byte.is_ascii_hexdigit())
             && suffix == self.id
-            && (parent.starts_with("http://") || parent.starts_with("https://"))
+            && (parent.starts_with("http://")
+                || parent.starts_with("https://")
+                || parent.starts_with("sftp://"))
             && parent
                 .split_once("://")
                 .and_then(|(_, rest)| rest.split('/').next())
@@ -90,7 +92,9 @@ impl Record {
             && self.id.bytes().all(|byte| byte.is_ascii_hexdigit())
             && suffix == self.id
             && parent == destination_parent
-            && (parent.starts_with("http://") || parent.starts_with("https://"))
+            && (parent.starts_with("http://")
+                || parent.starts_with("https://")
+                || parent.starts_with("sftp://"))
             && !parent
                 .split_once("://")
                 .and_then(|(_, rest)| rest.split('/').next())
@@ -190,7 +194,7 @@ impl PendingUpload {
     /// evidence. A failed retirement is logged but must not retry the MOVE.
     pub fn finish(self) {
         if let Err(error) = retire_in(&self.directory, &self.record) {
-            eprintln!("RiceField: WebDAV upload published but journal retirement failed: {error}");
+            eprintln!("RiceField: remote upload published but journal retirement failed: {error}");
         }
     }
 }
@@ -269,7 +273,7 @@ impl PendingProbe {
     /// Only a completed and cleaned-up capability test may retire evidence.
     pub fn finish(self) {
         if let Err(error) = retire_probe_in(&self.directory, &self.record) {
-            eprintln!("RiceField: WebDAV probe finished but journal retirement failed: {error}");
+            eprintln!("RiceField: remote probe finished but journal retirement failed: {error}");
         }
     }
 }
@@ -294,6 +298,11 @@ pub fn inspect_incomplete_probes() -> io::Result<Vec<ProbeRecord>> {
 
 pub fn inspect_evidence() -> io::Result<(Vec<Record>, Vec<ProbeRecord>)> {
     Ok((inspect_incomplete()?, inspect_incomplete_probes()?))
+}
+
+#[cfg(test)]
+pub(crate) fn inspect_evidence_in(directory: &Path) -> io::Result<(Vec<Record>, Vec<ProbeRecord>)> {
+    Ok((scan_in(directory)?, scan_probes_in(directory)?))
 }
 
 /// Explicitly discard private evidence only after external verification.
@@ -621,6 +630,28 @@ mod tests {
         assert_eq!(scan_in(&directory).unwrap().len(), 1);
         retire_in(&directory, &records[0]).unwrap();
         assert!(scan_in(&directory).unwrap().is_empty());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn sftp_upload_and_probe_journals_are_private_and_restart_visible() {
+        let directory = isolated_directory();
+        let id = "0123456789abcdef0123456789abcdef";
+        let stage = format!("sftp://host.example/share/.ricefield-upload-{id}");
+        let destination = "sftp://host.example/share/document.txt";
+        let probe = format!("sftp://host.example/share/.ricefield-safety-{id}");
+        let upload = PendingUpload::begin_in(&directory, &stage, destination).unwrap();
+        let safety = PendingProbe::begin_in(&directory, &probe).unwrap();
+        drop(upload);
+        drop(safety);
+        assert_eq!(scan_in(&directory).unwrap()[0].stage_uri, stage);
+        assert_eq!(scan_probes_in(&directory).unwrap()[0].prefix_uri, probe);
+        let upload_record = scan_in(&directory).unwrap().pop().unwrap();
+        let probe_record = scan_probes_in(&directory).unwrap().pop().unwrap();
+        retire_in(&directory, &upload_record).unwrap();
+        retire_probe_in(&directory, &probe_record).unwrap();
+        assert!(scan_in(&directory).unwrap().is_empty());
+        assert!(scan_probes_in(&directory).unwrap().is_empty());
         fs::remove_dir_all(directory).unwrap();
     }
 

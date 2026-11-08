@@ -26,6 +26,7 @@ mod preview;
 mod remote_download;
 mod remote_upload;
 mod remote_upload_journal;
+mod remote_upload_sftp;
 mod shell_components;
 mod shell_renderer;
 mod theme;

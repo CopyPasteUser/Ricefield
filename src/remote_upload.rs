@@ -1,6 +1,6 @@
 //! Server-conditioned WebDAV uploads. Generic GIO move/copy commands are NOT
-//! safe no-replace primitives (see docs/REMOTE-WRITE-SAFETY.md). Keep other
-//! backends closed until they have independently verified publish protocols.
+//! safe no-replace primitives (see docs/REMOTE-WRITE-SAFETY.md). SFTP uses
+//! a separately verified hardlink backend; SMB/MTP remain read-only.
 
 use crate::{
     keyring,
@@ -55,7 +55,7 @@ fn webdav_url(uri: &str) -> Result<String, String> {
     Ok(format!("{prefix}://{}", uri.split_once("://").unwrap().1))
 }
 
-fn escape_filename(name: &std::ffi::OsStr) -> Result<String, String> {
+pub(crate) fn escape_filename(name: &std::ffi::OsStr) -> Result<String, String> {
     use std::os::unix::ffi::OsStrExt;
     let name = name.as_bytes();
     if name.is_empty()
@@ -77,7 +77,7 @@ fn escape_filename(name: &std::ffi::OsStr) -> Result<String, String> {
     Ok(out)
 }
 
-fn random_suffix() -> io::Result<String> {
+pub(crate) fn random_suffix() -> io::Result<String> {
     let mut seed = [0_u8; 16];
     File::open("/dev/urandom")?.read_exact(&mut seed)?;
     Ok(seed.iter().map(|byte| format!("{byte:02x}")).collect())
@@ -299,15 +299,15 @@ fn copy_snapshot_with_cancel(
     }
 }
 
-struct Snapshot {
+pub(crate) struct Snapshot {
     directory: PathBuf,
     path: PathBuf,
     file: File,
-    bytes: u64,
+    pub(crate) bytes: u64,
 }
 
 impl Snapshot {
-    fn create(source: &Path, cancelled: &AtomicBool) -> Result<Self, String> {
+    pub(crate) fn create(source: &Path, cancelled: &AtomicBool) -> Result<Self, String> {
         if cancelled.load(Ordering::Relaxed) {
             return Err("Upload cancelled before local snapshot".into());
         }
@@ -377,11 +377,22 @@ impl Snapshot {
     }
 }
 
+impl Snapshot {
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) fn private_file(&self, filename: &str) -> PathBuf {
+        self.directory.join(filename)
+    }
+}
+
 impl Drop for Snapshot {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
         let _ = fs::remove_file(self.directory.join("probe-a.payload"));
         let _ = fs::remove_file(self.directory.join("probe-b.payload"));
+        let _ = fs::remove_file(self.directory.join("sftp-verify.payload"));
         let _ = fs::remove_dir(&self.directory);
     }
 }

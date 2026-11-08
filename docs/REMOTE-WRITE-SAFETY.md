@@ -2,7 +2,7 @@
 
 [Backend capability matrix and test contract](REMOTE-BACKEND-MATRIX.md)
 
-**Status: P0, updated 2026-11-07.** RiceField must not overwrite an unrelated file,
+**Status: P0, updated 2026-11-08.** RiceField must not overwrite an unrelated file,
 even when two clients race to publish the same destination name. A file may
 appear under its final name only after its complete contents are verified.
 These are requirements for turning on network writes, not optional UX policy.
@@ -73,7 +73,21 @@ then explicitly confirm discarding the private **local** record. Failed
 capability probes remain diagnosed by random probe-name prefix, not as upload
 journals. Never share private URI paths in public reports.
 
-SMB, SFTP and MTP upload, and all remote rename and delete actions remain
+An additional restricted SFTP single-file writer now probes the server's
+`hardlink@openssh.com` no-replace semantics with four disposable tests,
+including three independent-client races. It uploads a pinned source into an
+exclusively created private directory, performs a complete remote GET and
+byte-for-byte comparison, and publishes only through a server-side hardlink.
+Missing hardlink support or a collision fails closed, without rename, overwrite
+or client-side check-then-write fallback. All probe and stage locations are
+persisted to private local recovery evidence **before** remote creation.
+Uncertain attempts remain for explicit human review; no remote cleanup or
+retry is automatic after an ambiguous result. SFTP uses strict SSH host-key
+checking and configured key/agent authentication; password login, IPv6 literal
+hosts and unsafe/non-ASCII upload names are not accepted by this writer.
+Real-NAS power loss and offline acceptance are still unverified.
+
+SMB and MTP upload, and all remote rename and delete actions remain
 disabled until their own atomic backends pass the same gate. A system-mounted share can be
 browsed as a local path and only supports the local file engine's guarded
 operations where its mount exposes the necessary filesystem primitives.
