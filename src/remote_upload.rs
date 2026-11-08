@@ -800,6 +800,13 @@ mod tests {
         worker: Option<thread::JoinHandle<()>>,
     }
 
+    struct StallSignals<'a> {
+        stage_response: &'a AtomicBool,
+        stage_seen: &'a AtomicBool,
+        probe_response: &'a AtomicBool,
+        probe_seen: &'a AtomicBool,
+    }
+
     impl MockDav {
         fn start(replace_on_move: bool, replace_on_put: bool, require_auth: bool) -> Self {
             Self::start_with_stage_stall(replace_on_move, replace_on_put, require_auth, false)
@@ -862,10 +869,12 @@ mod tests {
                                     replace_on_move,
                                     replace_on_put,
                                     require_auth,
-                                    &stage_stall,
-                                    &put_seen,
-                                    &probe_stall,
-                                    &probe_seen,
+                                    StallSignals {
+                                        stage_response: stage_stall.as_ref(),
+                                        stage_seen: put_seen.as_ref(),
+                                        probe_response: probe_stall.as_ref(),
+                                        probe_seen: probe_seen.as_ref(),
+                                    },
                                 )
                             });
                         }
@@ -915,10 +924,7 @@ mod tests {
         weak_move: bool,
         weak_put: bool,
         require_auth: bool,
-        stall_stage_response: &AtomicBool,
-        stage_put_seen: &AtomicBool,
-        stall_probe_response: &AtomicBool,
-        probe_put_seen: &AtomicBool,
+        stalls: StallSignals<'_>,
     ) {
         let mut reader = BufReader::new(stream.try_clone().unwrap());
         let mut request_line = String::new();
@@ -1012,14 +1018,14 @@ mod tests {
         // An actual child process can be killed after the server has stored
         // the private stage, while its HTTP request is still incomplete.
         if method == "PUT" && path.contains("/.ricefield-upload-") && status == 201 {
-            stage_put_seen.store(true, Ordering::Release);
-            while stall_stage_response.load(Ordering::Acquire) {
+            stalls.stage_seen.store(true, Ordering::Release);
+            while stalls.stage_response.load(Ordering::Acquire) {
                 thread::sleep(Duration::from_millis(5));
             }
         }
         if method == "PUT" && path.contains("/.ricefield-safety-") && status == 201 {
-            probe_put_seen.store(true, Ordering::Release);
-            while stall_probe_response.load(Ordering::Acquire) {
+            stalls.probe_seen.store(true, Ordering::Release);
+            while stalls.probe_response.load(Ordering::Acquire) {
                 thread::sleep(Duration::from_millis(5));
             }
         }
