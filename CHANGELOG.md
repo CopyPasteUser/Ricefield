@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased — durable two-directory publication and restart recovery fault tests
+
+- After an atomic no-overwrite stage-to-destination rename, sync **both** the
+  staging directory (removed `payload` entry) and destination parent (new file
+  entry) before treating a copy as durably published. A post-rename staging
+  sync error retains the original and unresolved journal for explicit review.
+- Apply the same two-directory durability barrier to explicitly confirmed
+  Linux restart publication, with the staging descriptor pinned throughout.
+- Add bounded actual-child-process termination at five restart-publication
+  checkpoints (before rename, after staging sync, after both syncs, after
+  Published, after Completed). Each surviving journal is independently
+  inspected and either safely explicitly published or resolved by verified
+  source/destination comparison; neither copy is deleted.
+- These tests model process termination, **not** sudden power failure or an
+  unclean physical filesystem. Real-device, NAS and outage gates remain open.
+
 ## Unreleased — responsive large-folder filtering and sorting
 
 - Keep scans and case-folded name preparation off the render thread. For local

@@ -1018,6 +1018,8 @@ fn publish_verified_stage_in(directory: &Path, id: &str, cancelled: &AtomicBool)
             .as_bytes(),
     )
     .map_err(|_| invalid_data("Invalid destination filename"))?;
+    #[cfg(test)]
+    recovery_crash_checkpoint("before_rename");
     if unsafe {
         libc::renameat2(
             stage_fd.as_raw_fd(),
@@ -1030,12 +1032,24 @@ fn publish_verified_stage_in(directory: &Path, id: &str, cancelled: &AtomicBool)
     {
         return Err(io::Error::last_os_error());
     }
+    stage_fd.sync_all().map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "Copy published but staging directory sync failed: {error}; original retained and recovery record preserved"
+            ),
+        )
+    })?;
+    #[cfg(test)]
+    recovery_crash_checkpoint("after_stage_sync");
     parent_fd.sync_all().map_err(|error| {
         io::Error::new(
             error.kind(),
             format!("Copy published but destination sync failed: {error}; original retained"),
         )
     })?;
+    #[cfg(test)]
+    recovery_crash_checkpoint("after_both_sync");
     let published_meta = fs::symlink_metadata(&record.destination)?;
     let published_identity = identity_of(&published_meta);
     if published_identity.dev != saved_stage.dev
@@ -1067,8 +1081,12 @@ fn publish_verified_stage_in(directory: &Path, id: &str, cancelled: &AtomicBool)
     completed.state = State::Published;
     completed.destination_identity = Some(published_identity);
     write_record(&path, &completed, false)?;
+    #[cfg(test)]
+    recovery_crash_checkpoint("published");
     completed.state = State::Completed;
     write_record(&path, &completed, false)?;
+    #[cfg(test)]
+    recovery_crash_checkpoint("completed");
     if let Err(error) = fs::remove_file(&path).and_then(|()| File::open(directory)?.sync_all()) {
         eprintln!("RiceField: resumed copy journal retirement failed: {error}");
     }
@@ -1076,6 +1094,18 @@ fn publish_verified_stage_in(directory: &Path, id: &str, cancelled: &AtomicBool)
         eprintln!("RiceField: recovered copy left an empty staging directory: {error}");
     }
     Ok(())
+}
+
+/// Opt-in actual child-process crash points, never present in release builds.
+#[cfg(all(test, target_os = "linux"))]
+fn recovery_crash_checkpoint(name: &str) {
+    if std::env::var("RICEFIELD_TEST_RECOVERY_CRASH")
+        .ok()
+        .as_deref()
+        == Some(name)
+    {
+        std::process::exit(53);
+    }
 }
 
 #[cfg(unix)]
@@ -2480,6 +2510,90 @@ mod tests {
                 );
             }
             assert_eq!(fs::read(&source).unwrap(), b"source bytes");
+            fs::remove_dir_all(directory).unwrap();
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn abrupt_exit_during_explicit_stage_recovery_preserves_resolvable_evidence() {
+        const PHASE: &str = "RICEFIELD_TEST_RECOVERY_CRASH";
+        const ROOT: &str = "RICEFIELD_TEST_RECOVERY_ROOT";
+        if let Ok(phase) = env::var(PHASE) {
+            let directory = PathBuf::from(env::var_os(ROOT).expect("Fixture path provided"));
+            let record = scan_incomplete_in(&directory).unwrap().remove(0);
+            publish_verified_stage_in(&directory, &record.id, &AtomicBool::new(false)).unwrap();
+            panic!("Missing crash checkpoint: {phase}");
+        }
+
+        for (phase, state, published) in [
+            ("before_rename", State::StagedVerified, false),
+            ("after_stage_sync", State::StagedVerified, true),
+            ("after_both_sync", State::StagedVerified, true),
+            ("published", State::Published, true),
+            ("completed", State::Completed, true),
+        ] {
+            let directory = test_directory();
+            let journal = verified_unpublished_fixture(&directory);
+            let id = journal.record().id.clone();
+            let status = std::process::Command::new(env::current_exe().unwrap())
+                .arg("journal::tests::abrupt_exit_during_explicit_stage_recovery_preserves_resolvable_evidence")
+                .arg("--exact")
+                .env(PHASE, phase)
+                .env(ROOT, &directory)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .unwrap();
+            assert_eq!(
+                status.code(),
+                Some(53),
+                "crash checkpoint did not run: {phase}"
+            );
+            let saved = read_record(&directory.join(format!("{id}.toml")))
+                .unwrap()
+                .0;
+            assert_eq!(saved.state, state, "phase: {phase}");
+            assert_eq!(
+                fs::read(directory.join("source")).unwrap(),
+                b"verified original"
+            );
+            assert_eq!(
+                directory.join("destination").exists(),
+                published,
+                "phase: {phase}"
+            );
+            if !published {
+                assert!(
+                    directory
+                        .join(".ricefield-staging-recovery-fixture/payload")
+                        .exists()
+                );
+                // An early crash is a safe explicit retry, not a destructive replay.
+                publish_verified_stage_in(&directory, &id, &AtomicBool::new(false)).unwrap();
+            } else if state != State::Completed {
+                assert_eq!(
+                    fs::read(directory.join("destination")).unwrap(),
+                    b"verified original"
+                );
+                assert_eq!(inspect_publication(&saved), PublicationEvidence::SameInode);
+                // A crash after publication is resolved by content comparison,
+                // not by a second publication attempt or by source deletion.
+                resolve_verified_copy_in(&directory, &id, &AtomicBool::new(false)).unwrap();
+            } else {
+                // Terminal evidence may remain after the last durable write.
+                // It must never appear as an unfinished move to the owner.
+                assert!(scan_incomplete_in(&directory).unwrap().is_empty());
+            }
+            assert_eq!(
+                fs::read(directory.join("source")).unwrap(),
+                b"verified original"
+            );
+            assert_eq!(
+                fs::read(directory.join("destination")).unwrap(),
+                b"verified original"
+            );
+            assert!(scan_incomplete_in(&directory).unwrap().is_empty());
             fs::remove_dir_all(directory).unwrap();
         }
     }

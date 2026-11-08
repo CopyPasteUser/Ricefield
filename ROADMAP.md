@@ -197,6 +197,10 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   safety, recovery or physical Linux Mint acceptance.
 - [ ] Verify initial hidden staging and atomic no-overwrite publication for
   local copies and cross-device moves in CI and on Linux Mint.
+  The post-rename implementation now syncs both the removed staging entry
+  and the newly created destination entry, with injected staging/target sync
+  failure tests and five real child-process recovery-publication crash points.
+  Actual power-loss and filesystem-specific persistence remain unverified.
 - [x] Remove automatic source deletion from cross-device Move: publish a
   verified Copy and keep the original for manual cleanup. This sidesteps the
   unfixable verify-then-unlink race for new cross-volume transfers, but does
