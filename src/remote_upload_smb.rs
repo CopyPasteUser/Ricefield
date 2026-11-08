@@ -564,7 +564,11 @@ mod tests {
         let (uploads, probes) = remote_upload_journal::inspect_evidence_in(&journal).unwrap();
         assert!(uploads.is_empty() && probes.is_empty());
 
-        fs::write(root.join("share").join(&name), b"foreign winner").unwrap();
+        // The Samba daemon owns the server file as `nobody`; the unprivileged
+        // test runner cannot assume permission to rewrite it directly. Make
+        // the second local source different instead, then verify that the
+        // already-published server bytes remain byte-for-byte unchanged.
+        fs::write(&source, b"different second attempt").unwrap();
         let error = upload_with_target(
             samba_request(&root, &name),
             &AtomicBool::new(false),
@@ -578,12 +582,9 @@ mod tests {
         );
         assert_eq!(
             fs::read(root.join("share").join(&name)).unwrap(),
-            b"foreign winner"
-        );
-        assert_eq!(
-            fs::read(&source).unwrap(),
             b"signed SMB Rust uploader snapshot\n"
         );
+        assert_eq!(fs::read(&source).unwrap(), b"different second attempt");
         let (uploads, probes) = remote_upload_journal::inspect_evidence_in(&journal).unwrap();
         assert_eq!(
             uploads.len(),
