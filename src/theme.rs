@@ -354,7 +354,10 @@ impl Theme {
         }
         let profile: RiceProfile = toml::from_str(source).map_err(|error| error.to_string())?;
         if profile.format_version != 1 {
-            return Err(format!("Unsupported RiceProfile version: {}", profile.format_version));
+            return Err(format!(
+                "Unsupported RiceProfile version: {}",
+                profile.format_version
+            ));
         }
         if profile.name.trim().is_empty()
             || profile.name.chars().count() > 64
@@ -362,8 +365,9 @@ impl Theme {
         {
             return Err("RiceProfile name must be 1–64 printable characters".into());
         }
-        let mut theme = Self::builtin(&profile.base_theme)
-            .ok_or_else(|| "RiceProfile base_theme is not a supported RiceField theme".to_owned())?;
+        let mut theme = Self::builtin(&profile.base_theme).ok_or_else(|| {
+            "RiceProfile base_theme is not a supported RiceField theme".to_owned()
+        })?;
         for color in [
             &profile.appearance.accent,
             &profile.appearance.surface,
@@ -564,7 +568,10 @@ mod tests {
             PROFILE.replace("format_version = 1", "format_version = 2"),
             PROFILE.replace("base_theme = \"win7\"", "base_theme = \"unknown\""),
             PROFILE.replace("\"#4179aa\"", "\"red;run-command\""),
-            PROFILE.replace("text = \"#f3f7fa\"", "text = \"#f3f7fa\"\ncommand = \"nope\""),
+            PROFILE.replace(
+                "text = \"#f3f7fa\"",
+                "text = \"#f3f7fa\"\ncommand = \"nope\"",
+            ),
             PROFILE.replace("name = \"RiceBowl: Classic bottom taskbar\"", "name = \"\""),
         ] {
             assert!(Theme::from_riceprofile_text(&invalid).is_err());

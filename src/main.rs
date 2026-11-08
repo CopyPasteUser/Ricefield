@@ -97,7 +97,8 @@ fn main() -> eframe::Result {
                 theme_file = Some(PathBuf::from(path));
             }
             Some("--check-theme-file") => {
-                let path = args.next()
+                let path = args
+                    .next()
                     .unwrap_or_else(|| invalid_argument("--check-theme-file requires a path"));
                 check_theme_file = Some(PathBuf::from(path));
             }
@@ -118,8 +119,12 @@ fn main() -> eframe::Result {
         }
     }
     if let Some(path) = check_theme_file {
-        if selected_theme.is_some() || theme_file.is_some() || !locations.is_empty()
-            || separate_window || file_manager_service {
+        if selected_theme.is_some()
+            || theme_file.is_some()
+            || !locations.is_empty()
+            || separate_window
+            || file_manager_service
+        {
             invalid_argument("--check-theme-file must be used on its own");
         }
         if let Err(error) = theme::Theme::from_file(&path) {
