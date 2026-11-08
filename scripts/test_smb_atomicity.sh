@@ -47,7 +47,7 @@ cat > "$config" <<CONF
     directory mask = 0777
 CONF
 
-sudo smbd --foreground --no-process-group --configfile="$config" --port=14445 --debuglevel=0 &
+sudo smbd --foreground --configfile="$config" --port=14445 --debuglevel=0 &
 server_pid=$!
 
 smb() {
