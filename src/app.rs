@@ -2807,7 +2807,8 @@ impl Explorer {
         }
         let mut open = true;
         let mut upload = false;
-        let is_sftp = self.remote_upload_target.starts_with("sftp://");
+        let is_sftp = self.remote_upload_target.get(..7)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("sftp://"));
         egui::Window::new(if is_sftp { "Upload to SFTP · safe publication" } else { "Upload to WebDAV · safe publication" })
             .open(&mut open)
             .collapsible(false)
@@ -2867,7 +2868,8 @@ impl Explorer {
             self.remote_upload_busy = true;
             let sender = self.remote_upload_sender.clone();
             thread::spawn(move || {
-                let result = if request.remote_directory.starts_with("sftp://") {
+                let result = if request.remote_directory.get(..7)
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case("sftp://")) {
                     remote_upload_sftp::upload(request, &cancelled)
                 } else {
                     remote_upload::upload(request, &cancelled)

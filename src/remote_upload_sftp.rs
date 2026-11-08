@@ -22,7 +22,11 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
 
 #[derive(Clone)]
 enum Connection {
-    Ssh { host: String, port: Option<u16>, username: Option<String> },
+    Ssh {
+        host: String,
+        port: Option<u16>,
+        username: Option<String>,
+    },
     #[cfg(test)]
     LocalServer(PathBuf),
 }
@@ -55,7 +59,9 @@ fn decode_remote_path(encoded: &str) -> Result<String, String> {
     while index < bytes.len() {
         if bytes[index] == b'%' {
             let text = std::str::from_utf8(
-                bytes.get(index + 1..index + 3).ok_or("Invalid SFTP URI escape")?,
+                bytes
+                    .get(index + 1..index + 3)
+                    .ok_or("Invalid SFTP URI escape")?,
             )
             .map_err(|_| "Invalid SFTP URI escape")?;
             out.push(u8::from_str_radix(text, 16).map_err(|_| "Invalid SFTP URI escape")?);
@@ -76,9 +82,9 @@ fn safe_basename(name: &OsStr) -> Result<&str, String> {
         || name.len() > 255
         || name == "."
         || name == ".."
-        || !name.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_' | b' ')
-        })
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_' | b' '))
     {
         return Err("SFTP upload filenames currently support ASCII letters, digits, spaces, '.', '-' and '_' only".into());
     }
@@ -89,9 +95,9 @@ fn user_token(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
         && !value.starts_with('-')
-        && value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
-        })
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
 }
 
 impl Target {
@@ -118,7 +124,11 @@ impl Target {
         if !user_token(host) {
             return Err("Invalid SFTP hostname".into());
         }
-        let port = if port.is_empty() { None } else { Some(port.parse::<u16>().map_err(|_| "Invalid SFTP port")?) };
+        let port = if port.is_empty() {
+            None
+        } else {
+            Some(port.parse::<u16>().map_err(|_| "Invalid SFTP port")?)
+        };
         if port == Some(0) {
             return Err("Invalid SFTP port".into());
         }
@@ -130,7 +140,7 @@ impl Target {
                 username: (!username.is_empty()).then(|| username.into()),
             },
             path: path.trim_end_matches('/').to_owned(),
-            uri: uri.trim_end_matches('/').to_owned(),
+            uri: format!("sftp://{}", remainder.trim_end_matches('/')),
         })
     }
 
@@ -141,7 +151,11 @@ impl Target {
         let mut cmd = Command::new("sftp");
         cmd.args(["-b", "-"]);
         match &self.connection {
-            Connection::Ssh { host, port, username } => {
+            Connection::Ssh {
+                host,
+                port,
+                username,
+            } => {
                 cmd.args([
                     "-oBatchMode=yes",
                     "-oStrictHostKeyChecking=yes",
@@ -169,7 +183,9 @@ impl Target {
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        let mut child = cmd.spawn().map_err(|error| format!("Cannot start SFTP: {error}"))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|error| format!("Cannot start SFTP: {error}"))?;
         if let Err(error) = child
             .stdin
             .take()
@@ -219,13 +235,19 @@ fn quoted(path: &str) -> String {
 fn put(client: &Target, source: &Path, target: &str, cancelled: &AtomicBool) -> Result<(), String> {
     let local = source.to_str().ok_or("Invalid local snapshot path")?;
     safe_ascii_path(local)?;
-    client.run(&format!("put {} {}\n", quoted(local), quoted(target)), cancelled)
+    client.run(
+        &format!("put {} {}\n", quoted(local), quoted(target)),
+        cancelled,
+    )
 }
 
 fn get(client: &Target, source: &str, target: &Path, cancelled: &AtomicBool) -> Result<(), String> {
     let local = target.to_str().ok_or("Invalid local verification path")?;
     safe_ascii_path(local)?;
-    client.run(&format!("get {} {}\n", quoted(source), quoted(local)), cancelled)
+    client.run(
+        &format!("get {} {}\n", quoted(source), quoted(local)),
+        cancelled,
+    )
 }
 
 fn compare_files(source: &Path, copy: &Path, cancelled: &AtomicBool) -> Result<(), String> {
@@ -237,7 +259,9 @@ fn compare_files(source: &Path, copy: &Path, cancelled: &AtomicBool) -> Result<(
         if cancelled.load(Ordering::Relaxed) {
             return Err("SFTP verification cancelled".into());
         }
-        let count = source.read(&mut source_buffer).map_err(|error| error.to_string())?;
+        let count = source
+            .read(&mut source_buffer)
+            .map_err(|error| error.to_string())?;
         copy.read_exact(&mut copy_buffer[..count])
             .map_err(|error| format!("SFTP staged response is shorter than the source: {error}"))?;
         if source_buffer[..count] != copy_buffer[..count] {
@@ -279,7 +303,8 @@ fn write_private_payload(path: &Path, contents: &[u8]) -> Result<(), String> {
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true).mode(0o600);
     let mut file = options.open(path).map_err(|error| error.to_string())?;
-    file.write_all(contents).map_err(|error| error.to_string())?;
+    file.write_all(contents)
+        .map_err(|error| error.to_string())?;
     file.sync_all().map_err(|error| error.to_string())
 }
 
@@ -317,14 +342,19 @@ fn probe_atomic_hardlink(
             let link_a = format!("ln {} {}\n", quoted(&format!("{dir}/a")), quoted(&target));
             let link_b = format!("ln {} {}\n", quoted(&format!("{dir}/b")), quoted(&target));
             let (result_a, result_b) = if round == 0 {
-                (client.run(&link_a, cancelled), client.run(&link_b, cancelled))
+                (
+                    client.run(&link_a, cancelled),
+                    client.run(&link_b, cancelled),
+                )
             } else {
                 thread::scope(|scope| {
                     let a = scope.spawn(|| client.run(&link_a, cancelled));
                     let b = scope.spawn(|| client.run(&link_b, cancelled));
                     Ok::<_, String>((
-                        a.join().map_err(|_| "SFTP probe worker panicked".to_owned())?,
-                        b.join().map_err(|_| "SFTP probe worker panicked".to_owned())?,
+                        a.join()
+                            .map_err(|_| "SFTP probe worker panicked".to_owned())?,
+                        b.join()
+                            .map_err(|_| "SFTP probe worker panicked".to_owned())?,
                     ))
                 })?
             };
@@ -373,7 +403,10 @@ fn upload_with_client(
     client: &Target,
     journal_override: Option<&Path>,
 ) -> Result<UploadResult, String> {
-    let filename = request.source.file_name().ok_or("Select a regular local file")?;
+    let filename = request
+        .source
+        .file_name()
+        .ok_or("Select a regular local file")?;
     let basename = safe_basename(filename)?;
     let encoded = remote_upload::escape_filename(filename)?;
     let destination = format!("{}/{}", client.path, basename);
@@ -385,7 +418,9 @@ fn upload_with_client(
     let directory = format!("{}/.ricefield-upload-{id}", client.path);
     let stage_uri = format!("{}/.ricefield-upload-{id}", client.uri);
     let pending = match journal_override {
-        Some(path) => remote_upload_journal::PendingUpload::begin_in(path, &stage_uri, &destination_uri),
+        Some(path) => {
+            remote_upload_journal::PendingUpload::begin_in(path, &stage_uri, &destination_uri)
+        }
         None => remote_upload_journal::PendingUpload::begin(&stage_uri, &destination_uri),
     }
     .map_err(|error| format!("Cannot durably record SFTP stage before writing: {error}"))?;
@@ -408,7 +443,10 @@ fn upload_with_client(
         // An uncertain link response must not be retried. Ignore cancellation
         // once the server might have committed the final directory entry.
         let publishing = AtomicBool::new(false);
-        client.run(&format!("ln {} {}\n", quoted(&stage), quoted(&destination)), &publishing)?;
+        client.run(
+            &format!("ln {} {}\n", quoted(&stage), quoted(&destination)),
+            &publishing,
+        )?;
         remove_private_directory(client, &directory, &["payload"], &publishing)
     })();
     result.map_err(error_with_path)?;
@@ -427,7 +465,10 @@ mod tests {
 
     fn server() -> PathBuf {
         let executable = PathBuf::from("/usr/lib/openssh/sftp-server");
-        assert!(executable.is_file(), "install openssh-sftp-server for real SFTP protocol tests");
+        assert!(
+            executable.is_file(),
+            "install openssh-sftp-server for real SFTP protocol tests"
+        );
         executable
     }
 
@@ -444,7 +485,10 @@ mod tests {
                 "ricefield-sftp-test-{}",
                 remote_upload::random_suffix().unwrap()
             ));
-            fs::DirBuilder::new().mode(0o700).create(&directory).unwrap();
+            fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&directory)
+                .unwrap();
             let source = directory.join("example.txt");
             let journal = directory.join("evidence");
             let remote = directory.join("remote");
@@ -484,7 +528,13 @@ mod tests {
 
     #[test]
     fn sftp_path_and_connection_validation_fails_closed() {
-        for input in ["/ok/../bad", "/bad;rm", "/bad\nmkdir /oops", "/bad\\escape", "relative"] {
+        for input in [
+            "/ok/../bad",
+            "/bad;rm",
+            "/bad\nmkdir /oops",
+            "/bad\\escape",
+            "relative",
+        ] {
             assert!(safe_ascii_path(input).is_err(), "{input:?}");
         }
         assert!(Target::parse("sftp://localhost/tmp/folder", "user", "password", "").is_err());
@@ -498,19 +548,54 @@ mod tests {
     fn real_sftp_private_stage_hardlink_publish_and_collision() {
         let fixture = Fixture::new(server());
         let cancel = AtomicBool::new(false);
-        let result = upload_with_client(fixture.request(), &cancel, &fixture.client, Some(&fixture.journal)).unwrap();
+        let result = upload_with_client(
+            fixture.request(),
+            &cancel,
+            &fixture.client,
+            Some(&fixture.journal),
+        )
+        .unwrap();
         assert_eq!(result.bytes, b"pinned-source-content\n".len() as u64);
-        assert_eq!(fs::read(format!("{}/example.txt", fixture.client.path)).unwrap(), b"pinned-source-content\n");
-        assert_eq!(remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap().0.len(), 0);
-        assert_eq!(remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap().1.len(), 0);
+        assert_eq!(
+            fs::read(format!("{}/example.txt", fixture.client.path)).unwrap(),
+            b"pinned-source-content\n"
+        );
+        assert_eq!(
+            remote_upload_journal::inspect_evidence_in(&fixture.journal)
+                .unwrap()
+                .0
+                .len(),
+            0
+        );
+        assert_eq!(
+            remote_upload_journal::inspect_evidence_in(&fixture.journal)
+                .unwrap()
+                .1
+                .len(),
+            0
+        );
 
         // The same target name is deliberately occupied. A second upload is
         // denied by the server-side hardlink, and the existing bytes survive.
-        fs::write(format!("{}/example.txt", fixture.client.path), b"external-winner").unwrap();
-        let error = upload_with_client(fixture.request(), &cancel, &fixture.client, Some(&fixture.journal)).unwrap_err();
+        fs::write(
+            format!("{}/example.txt", fixture.client.path),
+            b"external-winner",
+        )
+        .unwrap();
+        let error = upload_with_client(
+            fixture.request(),
+            &cancel,
+            &fixture.client,
+            Some(&fixture.journal),
+        )
+        .unwrap_err();
         assert!(error.contains("SFTP"));
-        assert_eq!(fs::read(format!("{}/example.txt", fixture.client.path)).unwrap(), b"external-winner");
-        let (uploads, probes) = remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap();
+        assert_eq!(
+            fs::read(format!("{}/example.txt", fixture.client.path)).unwrap(),
+            b"external-winner"
+        );
+        let (uploads, probes) =
+            remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap();
         assert_eq!(uploads.len(), 1, "uncertain staged upload requires review");
         assert!(probes.is_empty(), "successful probe is retired");
     }
@@ -525,15 +610,27 @@ mod tests {
         fs::write(&local_a, b"first").unwrap();
         fs::write(&local_b, b"second").unwrap();
         let winner = format!("{}/winner", client.path);
-        let left = format!("ln {} {}\n", quoted(local_a.to_str().unwrap()), quoted(&winner));
-        let right = format!("ln {} {}\n", quoted(local_b.to_str().unwrap()), quoted(&winner));
+        let left = format!(
+            "ln {} {}\n",
+            quoted(local_a.to_str().unwrap()),
+            quoted(&winner)
+        );
+        let right = format!(
+            "ln {} {}\n",
+            quoted(local_b.to_str().unwrap()),
+            quoted(&winner)
+        );
         let (a, b) = thread::scope(|scope| {
             let a = scope.spawn(|| client.run(&left, &cancel));
             let b = scope.spawn(|| client.run(&right, &cancel));
             (a.join().unwrap(), b.join().unwrap())
         });
         assert_ne!(a.is_ok(), b.is_ok());
-        let expected = if a.is_ok() { b"first".as_slice() } else { b"second".as_slice() };
+        let expected = if a.is_ok() {
+            b"first".as_slice()
+        } else {
+            b"second".as_slice()
+        };
         assert_eq!(fs::read(&winner).unwrap(), expected);
         fs::remove_file(winner).unwrap();
         fs::remove_file(local_a).unwrap();
@@ -553,9 +650,14 @@ mod tests {
         .unwrap_err();
         assert!(error.contains("Private SFTP probe objects"));
         assert!(!Path::new(&format!("{}/example.txt", fixture.client.path)).exists());
-        let (stages, probes) = remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap();
+        let (stages, probes) =
+            remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap();
         assert!(stages.is_empty());
-        assert_eq!(probes.len(), 1, "failed probe must remain visible after restart");
+        assert_eq!(
+            probes.len(),
+            1,
+            "failed probe must remain visible after restart"
+        );
     }
 
     #[test]
@@ -571,7 +673,15 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("SFTP"));
-        assert!(fs::symlink_metadata(&destination).unwrap().file_type().is_symlink());
-        assert_eq!(fs::read(&fixture.source).unwrap(), b"pinned-source-content\n");
+        assert!(
+            fs::symlink_metadata(&destination)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(
+            fs::read(&fixture.source).unwrap(),
+            b"pinned-source-content\n"
+        );
     }
 }
