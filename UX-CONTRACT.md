@@ -231,6 +231,11 @@ not silently rolled back; cancelled/unstarted entries remain explicit.
   The dialog keeps 64 recent session outcomes (completed, cancelled, failed)
   without claiming that earlier successful items in a failed batch rolled back.
 - **Theme:** `Theme::apply` and runtime TOML files; no theme-specific copy/move behavior.
+  RiceBowl may set `RICEBOWL_RICE` or the fallback `RICEBOWL_THEME` for one
+  launch; only known built-in names/aliases are accepted. An explicit CLI
+  `--theme` wins, and neither the CLI nor the environment selection rewrites
+  the saved user theme when other preferences are stored. Explicit selection
+  from RiceField's own UI does persist normally.
   The shared **Open With** dialog uses the desktop MIME registry only for a
   single local file; desktop IDs and MIME types are validated before a
   shell-free GIO launch. Slow/unavailable backends show a cancellable loading

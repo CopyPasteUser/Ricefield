@@ -770,6 +770,9 @@ end-to-end frame latency and resource measurements remain outstanding.
   toolbars; select shell kind, sidebar groups and preview position without
   altering filesystem operations (0.9 alpha.5).
 - [ ] Direct RiceBowl event/theme sync.
+- [x] Support RiceBowl's launch-time `RICEBOWL_RICE`/`RICEBOWL_THEME` selection
+  with recognized aliases and session-only precedence. Live theme-change events
+  and generated RicePack handoff are still separate, unfinished integration work.
 - [ ] Seven distinct shells and matching icons, controls and layouts.
 - [x] Automated structural distinctness for Windows 98, Windows 7 and macOS,
   plus Xvfb screenshot-difference gates and a custom top/bottom composition.

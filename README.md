@@ -70,6 +70,13 @@ ricefield --theme macos
 ricefield --theme-file /path/to/custom-rice.toml
 ```
 
+RiceBowl can also select the initial profile with `RICEBOWL_RICE=windows7 ricefield`
+(or `RICEBOWL_THEME`). Names such as `windows-xp`, `windows10` and
+`frutiger-aero` map to their bundled RiceField shells. An explicit `--theme`
+has priority; unknown RiceBowl names leave the saved appearance unchanged.
+Launcher-selected themes are **session-only**: saving unrelated preferences does
+not replace your chosen default. Selecting a theme inside RiceField still saves it.
+
 ## Safety and known limits
 
 - Remote browsing is **read-only by default**, with explicit bounded no-overwrite downloads. WebDAV single-file upload is available only after a live conditional-MOVE safety probe, private stage and full byte verification. Before its first staging PUT a private credential-free journal durably saves the stage and final target; uncertain attempts can be reviewed after restart under **Review safely…**. Remote cleanup and retries never run automatically. SMB, SFTP, MTP uploads, remote rename and deletion remain disabled pending [backend-specific atomicity guarantees](docs/REMOTE-WRITE-SAFETY.md); the 1.0 network-write gate is still open.

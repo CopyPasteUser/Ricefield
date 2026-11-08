@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — RiceBowl launch-time rice handoff
+
+- Honor `RICEBOWL_RICE` and `RICEBOWL_THEME` for seven known styles and common
+  historical aliases; explicit `--theme` takes precedence and unknown names
+  preserve the saved profile.
+- Keep environment/CLI startup choices session-only, so saving another option
+  cannot silently replace the user's persisted default rice.
+- No compositor service, runtime IPC or additional dependency is required.
+
 ## Unreleased — durable two-directory publication and restart recovery fault tests
 
 - After an atomic no-overwrite stage-to-destination rename, sync **both** the

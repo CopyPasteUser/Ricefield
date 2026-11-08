@@ -1357,6 +1357,10 @@ fn current_theme_reload(
 }
 
 /// First frame must depend only on bundled theme data, never an external path.
+fn startup_theme_id<'a>(saved: &'a str, requested: Option<&'a str>) -> &'a str {
+    requested.unwrap_or(saved)
+}
+
 fn starting_theme(configured: &str, external: bool) -> (Theme, Option<(String, bool)>) {
     match Theme::builtin(configured) {
         Some(theme) => (
@@ -1581,9 +1585,6 @@ impl Explorer {
     ) -> Self {
         let mut config = Config::load();
         let explicit_builtin = selected_theme.is_some();
-        if let Some(name) = selected_theme {
-            config.theme = name;
-        }
         // CLI overrides saved themes; only editor-owned files inside the user
         // config directory are restored automatically on next startup.
         let theme_file = theme_file.or_else(|| {
@@ -1599,7 +1600,10 @@ impl Explorer {
         // Never open a user-selected TOML path during GUI construction: a
         // disconnected mount or hung FUSE file must not block the first frame.
         // Start with an available builtin and load custom content on a worker.
-        let (theme, status) = starting_theme(&config.theme, theme_file.is_some());
+        let (theme, status) = starting_theme(
+            startup_theme_id(&config.theme, selected_theme.as_deref()),
+            theme_file.is_some(),
+        );
         theme.apply(context);
         let theme_file_state = None;
 
@@ -11321,6 +11325,20 @@ mod tests {
         assert!(matches!(status, Some((message, false)) if message.contains("background")));
         let (_, missing) = super::starting_theme("unknown", false);
         assert!(matches!(missing, Some((message, true)) if message.contains("Unknown")));
+    }
+
+    #[test]
+    fn session_only_startup_theme_does_not_change_saved_profile() {
+        let config = Config {
+            theme: "win7".into(),
+            ..Config::default()
+        };
+        let (theme, _) = super::starting_theme(
+            super::startup_theme_id(&config.theme, Some("xp-luna")),
+            false,
+        );
+        assert_eq!(theme.id, "xp-luna");
+        assert_eq!(config.theme, "win7");
     }
 
     #[test]
