@@ -3029,6 +3029,18 @@ fn stage_and_publish_with_sync(
         transfer.phase = "Publishing";
         transfer.report(destination);
         rename_without_overwrite(&staged, destination)?;
+        // Rename crosses from the private staging directory to its parent.
+        // Both directory entries must be synced after the rename: syncing
+        // only the destination parent does not persist removal of `payload`
+        // from the staging directory across a power failure.
+        sync(&staging_dir).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "Copy was published, but staging directory sync failed: {error}. Verify both paths before retrying; source was not removed"
+                ),
+            )
+        })?;
         // A successful rename alone is not a power-loss durability barrier.
         // Report uncertainty if the parent cannot be synced; most importantly,
         // a cross-device Move must not delete its source in this situation.
@@ -4156,6 +4168,43 @@ mod tests {
     }
 
     #[test]
+    fn successful_publication_syncs_both_sides_of_the_rename() {
+        let root = test_root();
+        let source = root.join("source.txt");
+        let destination = root.join("destination.txt");
+        fs::write(&source, b"original is retained").unwrap();
+        let cancelled = AtomicBool::new(false);
+        let mut no_op = |_: Progress| {};
+        let mut transfer = Transfer {
+            cancelled: &cancelled,
+            notify: &mut no_op,
+            transferred: 0,
+            total: 20,
+            last_report: Instant::now(),
+            last_reported_bytes: 0,
+            phase: "Copying",
+        };
+        let mut barriers = Vec::new();
+        let mut sync = |path: &Path| {
+            barriers.push(path.to_path_buf());
+            sync_directory(path)
+        };
+        stage_and_publish_with_sync(&source, &destination, true, &mut transfer, None, &mut sync)
+            .unwrap();
+        assert_eq!(
+            barriers.len(),
+            3,
+            "stage must be synced before and after rename"
+        );
+        assert_eq!(barriers[0], barriers[1]);
+        assert_ne!(barriers[1], barriers[2]);
+        assert_eq!(barriers[2], root);
+        assert_eq!(fs::read(&source).unwrap(), b"original is retained");
+        assert_eq!(fs::read(&destination).unwrap(), b"original is retained");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn journaled_collision_preserves_verified_stage_for_recovery() {
         let root = test_root();
         let source = root.join("source.txt");
@@ -4322,7 +4371,7 @@ mod tests {
         let mut barriers = 0usize;
         let mut sync = |path: &Path| {
             barriers += 1;
-            if barriers == 2 {
+            if barriers == 3 {
                 Err(io::Error::other(
                     "injected destination directory sync error",
                 ))
@@ -4339,7 +4388,7 @@ mod tests {
             &mut sync,
         )
         .unwrap_err();
-        assert_eq!(barriers, 2);
+        assert_eq!(barriers, 3);
         assert!(error.to_string().contains("Destination was published"));
         assert_eq!(fs::read(&source).unwrap(), b"keep original");
         assert_eq!(fs::read(&destination).unwrap(), b"keep original");
@@ -4347,6 +4396,59 @@ mod tests {
         let persisted =
             fs::read_to_string(directory.join(format!("{}.toml", journal.record().id))).unwrap();
         assert!(persisted.contains("state = \"staged_verified\""));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn post_rename_staging_sync_failure_preserves_original_and_journal() {
+        let root = test_root();
+        let source = root.join("original");
+        let destination = root.join("published");
+        fs::write(&source, b"retain these bytes").unwrap();
+        let directory = root.join("journal");
+        let mut journal = Journal::begin_in(&directory, &source, &destination).unwrap();
+        let cancelled = AtomicBool::new(false);
+        let mut no_op = |_: Progress| {};
+        let mut transfer = Transfer {
+            cancelled: &cancelled,
+            notify: &mut no_op,
+            transferred: 0,
+            total: 18,
+            last_report: Instant::now(),
+            last_reported_bytes: 0,
+            phase: "Copying",
+        };
+        let mut barriers = 0;
+        let mut sync = |path: &Path| {
+            barriers += 1;
+            if barriers == 2 {
+                Err(io::Error::other(
+                    "simulated post-rename staging fsync failure",
+                ))
+            } else {
+                sync_directory(path)
+            }
+        };
+        let error = stage_and_publish_with_sync(
+            &source,
+            &destination,
+            true,
+            &mut transfer,
+            Some(&mut journal),
+            &mut sync,
+        )
+        .unwrap_err();
+        assert_eq!(barriers, 2);
+        assert!(error.to_string().contains("staging directory sync failed"));
+        assert_eq!(fs::read(&source).unwrap(), b"retain these bytes");
+        assert_eq!(fs::read(&destination).unwrap(), b"retain these bytes");
+        assert_eq!(journal.record().state, State::StagedVerified);
+        assert!(
+            directory
+                .join(format!("{}.toml", journal.record().id))
+                .exists()
+        );
+        assert!(journal.record().staging.as_ref().unwrap().exists());
         fs::remove_dir_all(root).unwrap();
     }
 
