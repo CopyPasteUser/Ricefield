@@ -11,6 +11,7 @@ use crate::{
 use std::{
     fs::{self, DirBuilder, File, OpenOptions},
     io::{self, Read, Seek, SeekFrom, Write},
+    os::fd::AsRawFd,
     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -221,6 +222,46 @@ fn http_action(
     }
 }
 
+/// A blocking curl stdout read would otherwise prevent Cancel from taking
+/// effect until the remote server sends more bytes or curl times out.
+fn read_with_cancel(
+    reader: &mut (impl Read + AsRawFd),
+    buffer: &mut [u8],
+    cancelled: &AtomicBool,
+) -> io::Result<usize> {
+    loop {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Upload cancelled",
+            ));
+        }
+        let mut ready = libc::pollfd {
+            fd: reader.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: poll borrows one valid file descriptor; the reader owns it
+        // throughout this call. No other thread reads from this pipe.
+        let count = unsafe { libc::poll(&mut ready, 1, 100) };
+        if count > 0 {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "Upload cancelled",
+                ));
+            }
+            return reader.read(buffer);
+        }
+        if count < 0 {
+            let error = io::Error::last_os_error();
+            if error.kind() != io::ErrorKind::Interrupted {
+                return Err(error);
+            }
+        }
+    }
+}
+
 struct Snapshot {
     directory: PathBuf,
     path: PathBuf,
@@ -329,8 +370,7 @@ fn verify_remote_bytes(
             if cancelled.load(Ordering::Relaxed) {
                 return Err("Upload cancelled during remote verification".into());
             }
-            let size = remote
-                .read(&mut network_buffer)
+            let size = read_with_cancel(&mut remote, &mut network_buffer, cancelled)
                 .map_err(|error| format!("Cannot read staged remote file: {error}"))?;
             if size == 0 {
                 break;
@@ -392,14 +432,20 @@ fn verify_probe_contents(
     ]);
     command.arg("--").arg(uri).stdout(Stdio::piped());
     let mut child = launch(command, config)?;
+    let mut remote = child.stdout.take().ok_or("Missing WebDAV probe response")?;
     let mut content = Vec::new();
-    let result = child
-        .stdout
-        .take()
-        .ok_or("Missing WebDAV probe response")?
-        .take(129)
-        .read_to_end(&mut content)
-        .map_err(|error| format!("Cannot verify WebDAV probe contents: {error}"));
+    let result = (|| -> Result<(), String> {
+        let mut buffer = [0_u8; 129];
+        while content.len() < buffer.len() {
+            let size = read_with_cancel(&mut remote, &mut buffer[..129 - content.len()], cancelled)
+                .map_err(|error| format!("Cannot verify WebDAV probe contents: {error}"))?;
+            if size == 0 {
+                break;
+            }
+            content.extend_from_slice(&buffer[..size]);
+        }
+        Ok(())
+    })();
     if result.is_err() || content.len() > 128 {
         let _ = child.kill();
     }
@@ -674,6 +720,7 @@ mod tests {
         ffi::OsStr,
         io::{BufRead, BufReader},
         net::{TcpListener, TcpStream},
+        os::unix::net::UnixStream,
         sync::{Arc, Mutex},
     };
 
@@ -1181,6 +1228,75 @@ mod tests {
         assert_eq!(fs::read(&file).unwrap(), b"verified upload bytes");
         fs::remove_file(file).unwrap();
         fs::remove_dir(folder).unwrap();
+    }
+
+    #[test]
+    fn cancelled_network_read_does_not_wait_for_server_timeout() {
+        let (mut stalled, _server) = UnixStream::pair().unwrap();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancel = Arc::clone(&cancelled);
+        let (started, ready) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            let mut buffer = [0; 8];
+            started.send(()).unwrap();
+            read_with_cancel(&mut stalled, &mut buffer, &worker_cancel)
+        });
+        ready.recv_timeout(Duration::from_secs(2)).unwrap();
+        thread::sleep(Duration::from_millis(120));
+        let cancelled_at = Instant::now();
+        cancelled.store(true, Ordering::Release);
+        let error = worker.join().unwrap().unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+        assert!(cancelled_at.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn webdav_probe_cancels_while_server_stalls_mid_response() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/share/stall", listener.local_addr().unwrap());
+        let (sent, received) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                    break;
+                }
+            }
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 32\r\nConnection: close\r\n\r\nab")
+                .unwrap();
+            sent.send(()).unwrap();
+            let _ = released.recv_timeout(Duration::from_secs(5));
+        });
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancel = Arc::clone(&cancelled);
+        let worker = thread::spawn(move || {
+            verify_probe_contents(
+                &url,
+                &MountCredentials {
+                    username: String::new(),
+                    domain: String::new(),
+                    password: String::new(),
+                },
+                b"ab",
+                &worker_cancel,
+            )
+        });
+        received.recv_timeout(Duration::from_secs(5)).unwrap();
+        thread::sleep(Duration::from_millis(120));
+        let cancelled_at = Instant::now();
+        cancelled.store(true, Ordering::Release);
+        let error = worker.join().unwrap().unwrap_err();
+        assert!(error.contains("cancelled"), "{error}");
+        assert!(cancelled_at.elapsed() < Duration::from_secs(2));
+        release.send(()).unwrap();
+        server.join().unwrap();
     }
 
     #[test]

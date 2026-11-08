@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — prompt cancellation while checking WebDAV bytes
+
+- Wait for curl's verification stream in short poll intervals so cancellation
+  interrupts stalled remote GET/probe reads promptly instead of waiting for
+  curl's network timeout. Cancelled requests kill the child and preserve their
+  source and any uncertain server-side staging for manual review.
+- Add stalled-stream and actual partial-HTTP-response cancellation regressions.
+  No SMB/SFTP/MTP write path is enabled; real WebDAV offline acceptance remains open.
+
 ## Unreleased — RiceBowl launch-time rice handoff
 
 - Honor `RICEBOWL_RICE` and `RICEBOWL_THEME` for seven known styles and common
