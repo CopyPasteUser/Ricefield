@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — cancellable local WebDAV upload snapshots
+
+- Check Cancel before and throughout the bounded 8 GiB local source snapshot,
+  including before its disk sync. Previously a slow disk could keep a cancelled
+  upload copying locally for minutes before the network phase noticed.
+- Remove an interrupted private local snapshot, preserve the original source,
+  and never start a remote PUT when the snapshot is cancelled. Add deterministic
+  cancellation regressions at entry and mid-read.
+
 ## Unreleased — prompt cancellation while checking WebDAV bytes
 
 - Wait for curl's verification stream in short poll intervals so cancellation

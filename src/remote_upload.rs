@@ -262,6 +262,43 @@ fn read_with_cancel(
     }
 }
 
+/// Snapshotting an 8 GiB source may take minutes on a slow drive. Do not
+/// postpone Cancel until after the entire local copy and its disk sync.
+fn copy_snapshot_with_cancel(
+    source: &mut impl Read,
+    destination: &mut impl Write,
+    cancelled: &AtomicBool,
+) -> io::Result<u64> {
+    let mut buffer = [0_u8; 256 * 1024];
+    let mut copied = 0_u64;
+    loop {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Upload cancelled during local snapshot",
+            ));
+        }
+        let size = match source.read(&mut buffer) {
+            Ok(size) => size,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        if size == 0 {
+            return Ok(copied);
+        }
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Upload cancelled during local snapshot",
+            ));
+        }
+        destination.write_all(&buffer[..size])?;
+        copied = copied
+            .checked_add(size as u64)
+            .ok_or_else(|| io::Error::other("Upload snapshot size overflow"))?;
+    }
+}
+
 struct Snapshot {
     directory: PathBuf,
     path: PathBuf,
@@ -270,7 +307,10 @@ struct Snapshot {
 }
 
 impl Snapshot {
-    fn create(source: &Path) -> Result<Self, String> {
+    fn create(source: &Path, cancelled: &AtomicBool) -> Result<Self, String> {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err("Upload cancelled before local snapshot".into());
+        }
         let mut original = OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
@@ -298,8 +338,12 @@ impl Snapshot {
                 .mode(0o600)
                 .open(&path)
                 .map_err(|error| error.to_string())?;
-            let bytes = io::copy(&mut (&mut original).take(MAX_UPLOAD_BYTES + 1), &mut output)
-                .map_err(|error| error.to_string())?;
+            let bytes = copy_snapshot_with_cancel(
+                &mut (&mut original).take(MAX_UPLOAD_BYTES + 1),
+                &mut output,
+                cancelled,
+            )
+            .map_err(|error| error.to_string())?;
             let after = original.metadata().map_err(|error| error.to_string())?;
             if bytes != before.len()
                 || before.len() != after.len()
@@ -309,6 +353,9 @@ impl Snapshot {
                 || before.ctime_nsec() != after.ctime_nsec()
             {
                 return Err("Selected source changed during snapshot; upload refused".into());
+            }
+            if cancelled.load(Ordering::Relaxed) {
+                return Err("Upload cancelled before snapshot disk sync".into());
             }
             output.sync_all().map_err(|error| error.to_string())?;
             let file = File::open(&path).map_err(|error| error.to_string())?;
@@ -644,7 +691,7 @@ fn upload_with_journal_directory(
         } else {
             request.credentials
         };
-    let mut snapshot = Snapshot::create(&request.source)?;
+    let mut snapshot = Snapshot::create(&request.source, cancelled)?;
     probe_no_replace(&base, &credentials, &mut snapshot, cancelled)?;
     let stage = format!(
         "{base}/.ricefield-upload-{}",
@@ -1210,7 +1257,7 @@ mod tests {
         let (folder, source) = fixture_file("source.txt");
         let link = folder.join("link.txt");
         std::os::unix::fs::symlink(&source, &link).unwrap();
-        assert!(Snapshot::create(&link).is_err());
+        assert!(Snapshot::create(&link, &AtomicBool::new(false)).is_err());
         assert_eq!(fs::read(&source).unwrap(), b"verified upload bytes");
         fs::remove_file(link).unwrap();
         fs::remove_file(source).unwrap();
@@ -1228,6 +1275,39 @@ mod tests {
         assert_eq!(fs::read(&file).unwrap(), b"verified upload bytes");
         fs::remove_file(file).unwrap();
         fs::remove_dir(folder).unwrap();
+    }
+
+    #[test]
+    fn cancelled_local_snapshot_stops_before_network_or_source_mutation() {
+        let (folder, file) = fixture_file("local-cancel.txt");
+        let cancelled = AtomicBool::new(true);
+        let error = Snapshot::create(&file, &cancelled).err().unwrap();
+        assert!(error.contains("cancelled"), "{error}");
+        assert_eq!(fs::read(&file).unwrap(), b"verified upload bytes");
+        fs::remove_file(file).unwrap();
+        fs::remove_dir(folder).unwrap();
+    }
+
+    #[test]
+    fn local_snapshot_copy_honors_cancellation_during_a_chunk() {
+        struct CancelDuringRead<'a> {
+            cancelled: &'a AtomicBool,
+        }
+        impl Read for CancelDuringRead<'_> {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                buffer.fill(7);
+                self.cancelled.store(true, Ordering::Release);
+                Ok(buffer.len())
+            }
+        }
+        let cancelled = AtomicBool::new(false);
+        let mut source = CancelDuringRead {
+            cancelled: &cancelled,
+        };
+        let mut output = Vec::new();
+        let error = copy_snapshot_with_cancel(&mut source, &mut output, &cancelled).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+        assert!(output.is_empty(), "cancelled bytes should never be written");
     }
 
     #[test]
