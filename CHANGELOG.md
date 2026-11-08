@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased — two-directory durability for network downloads (P0)
+
+- Persist the private download staging directory before Linux's atomic
+  no-overwrite publication, then sync **both** the staging directory and the
+  destination parent after the rename. A pre-publication sync failure leaves
+  the final path absent; a post-publication sync error explicitly warns that
+  the complete destination may already exist and must be inspected, not
+  silently retried.
+- Add real child-process `SIGKILL` checkpoints before rename and at three
+  points after rename. Verify that a pre-publication crash preserves only
+  private staging, while all post-rename checkpoints expose complete bytes
+  and reject a competing download under the same destination name. Inject a
+  failed staging-directory sync on each side of publication.
+- The tests establish user-process-crash behavior on disposable local storage,
+  **not** sudden power-loss/NAS/USB durability or physical Mint acceptance.
+
 ## Unreleased — actual-process SFTP recovery checkpoints (P0 #84)
 
 - Add isolated OpenSSH-protocol regressions that terminate the uploader with

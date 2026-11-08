@@ -428,23 +428,69 @@ fn publish(
     directory: &Path,
     cancelled: &AtomicBool,
 ) -> Result<(), String> {
+    publish_with_sync(staged_file, final_path, directory, cancelled, &mut |path| {
+        File::open(path)?.sync_all()
+    })
+}
+
+#[cfg(test)]
+fn crash_at(checkpoint: &str) {
+    if std::env::var("RICEFIELD_TEST_DOWNLOAD_CRASH_AT").as_deref() == Ok(checkpoint) {
+        // SAFETY: only the isolated test child sets this checkpoint. The
+        // parent verifies the surviving staging and published objects.
+        unsafe { libc::raise(libc::SIGKILL) };
+        unreachable!("SIGKILL cannot be ignored");
+    }
+}
+
+/// The staging file has already been synced. Persist its directory entry
+/// before publication, and both directories affected by the rename after it.
+/// A failure after rename is explicitly ambiguous, never an invitation to
+/// retry a download over its possibly committed destination.
+fn publish_with_sync(
+    staged_file: &Path,
+    final_path: &Path,
+    directory: &Path,
+    cancelled: &AtomicBool,
+    sync: &mut dyn FnMut(&Path) -> io::Result<()>,
+) -> Result<(), String> {
     if cancelled.load(Ordering::Relaxed) {
         return Err("Network download cancelled; no final file was published".into());
     }
+    let stage_parent = staged_file
+        .parent()
+        .ok_or("Download staging directory is missing")?;
+    sync(stage_parent)
+        .map_err(|error| format!("Cannot sync staged download before publication: {error}"))?;
+    if cancelled.load(Ordering::Relaxed) {
+        return Err("Network download cancelled; no final file was published".into());
+    }
+    #[cfg(test)]
+    crash_at("before-rename");
     // renameat2(RENAME_NOREPLACE) is atomic on Linux, including a competing
     // file/symlink created after preflight; it also works on filesystems
     // without hard-link support.
     filesystem::rename_without_overwrite(staged_file, final_path).map_err(|error| {
         format!("Cannot publish download without overwriting an existing file: {error}")
     })?;
-    File::open(directory)
-        .and_then(|folder| folder.sync_all())
-        .map_err(|error| {
-            format!(
-                "Download is present at {} but directory sync failed: {error}",
-                final_path.display()
-            )
-        })?;
+    #[cfg(test)]
+    crash_at("after-rename");
+    sync(stage_parent).map_err(|error| {
+        format!(
+            "Download may be published at {} but staging directory sync failed: {error}; inspect the destination before retrying",
+            final_path.display()
+        )
+    })?;
+    #[cfg(test)]
+    crash_at("after-stage-sync");
+    sync(directory).map_err(|error| {
+        format!(
+            "Download may be published at {} but destination directory sync failed: {error}; inspect the destination before retrying",
+            final_path.display()
+        )
+    })?;
+    #[cfg(test)]
+    crash_at("after-destination-sync");
     Ok(())
 }
 
@@ -575,6 +621,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::process::ExitStatusExt;
 
     fn request(id: usize) -> DownloadRequest {
         DownloadRequest {
@@ -655,6 +702,156 @@ mod tests {
             std::env::temp_dir().join(format!("ricefield-{label}-{}-{unique}", std::process::id()));
         fs::create_dir(&directory).unwrap();
         directory
+    }
+
+    fn crash_child_if_requested() {
+        let Some(folder) = std::env::var_os("RICEFIELD_TEST_DOWNLOAD_CRASH_ROOT") else {
+            return;
+        };
+        let folder = PathBuf::from(folder);
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "printf 'remote snapshot kept across crash'"]);
+        let outcome = download_with_command(
+            OsString::from("received.txt"),
+            &folder,
+            &AtomicBool::new(false),
+            &Arc::new(AtomicU64::new(0)),
+            cmd,
+        );
+        panic!("Download process-crash checkpoint not reached: {outcome:?}");
+    }
+
+    fn crash_fixture(test_name: &str, checkpoint: &str) -> PathBuf {
+        let folder = private_fixture("download-process-crash");
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .arg(test_name)
+            .arg("--exact")
+            .env("RICEFIELD_TEST_DOWNLOAD_CRASH_ROOT", &folder)
+            .env("RICEFIELD_TEST_DOWNLOAD_CRASH_AT", checkpoint)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("Download did not reach process-crash checkpoint {checkpoint}");
+            }
+            thread::sleep(Duration::from_millis(20));
+        };
+        assert_eq!(
+            status.signal(),
+            Some(libc::SIGKILL),
+            "{checkpoint}: {status}"
+        );
+        folder
+    }
+
+    #[test]
+    fn download_crash_before_publication_keeps_private_staging() {
+        crash_child_if_requested();
+        let folder = crash_fixture(
+            "remote_download::tests::download_crash_before_publication_keeps_private_staging",
+            "before-rename",
+        );
+        assert!(!folder.join("received.txt").exists());
+        let stages = inspect_staging(&folder).unwrap();
+        assert!(!stages.truncated);
+        assert_eq!(stages.directories.len(), 1);
+        assert_eq!(
+            fs::read(stages.directories[0].join("partial")).unwrap(),
+            b"remote snapshot kept across crash"
+        );
+        fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn download_crash_after_rename_never_exposes_partial_target() {
+        crash_child_if_requested();
+        for checkpoint in ["after-rename", "after-stage-sync", "after-destination-sync"] {
+            let folder = crash_fixture(
+                "remote_download::tests::download_crash_after_rename_never_exposes_partial_target",
+                checkpoint,
+            );
+            assert_eq!(
+                fs::read(folder.join("received.txt")).unwrap(),
+                b"remote snapshot kept across crash",
+                "{checkpoint}"
+            );
+            // A concurrent/restarted download must refuse this committed
+            // filename even if the previous process never returned success.
+            let mut cmd = Command::new("sh");
+            cmd.args(["-c", "printf 'competing bytes'"]);
+            assert!(
+                download_with_command(
+                    OsString::from("received.txt"),
+                    &folder,
+                    &AtomicBool::new(false),
+                    &Arc::new(AtomicU64::new(0)),
+                    cmd,
+                )
+                .is_err()
+            );
+            assert_eq!(
+                fs::read(folder.join("received.txt")).unwrap(),
+                b"remote snapshot kept across crash"
+            );
+            fs::remove_dir_all(folder).unwrap();
+        }
+    }
+
+    #[test]
+    fn download_two_directory_sync_errors_distinguish_unpublished_and_ambiguous() {
+        let folder = private_fixture("download-sync-errors");
+        let stage = StagingDirectory::create(&folder).unwrap();
+        let source = stage.0.join("partial");
+        fs::write(&source, b"full download").unwrap();
+        File::open(&source).unwrap().sync_all().unwrap();
+        let destination = folder.join("received.txt");
+        let mut calls = 0;
+        let error = publish_with_sync(
+            &source,
+            &destination,
+            &folder,
+            &AtomicBool::new(false),
+            &mut |_| {
+                calls += 1;
+                Err(io::Error::other("injected prepublication sync failure"))
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("before publication"), "{error}");
+        assert_eq!(calls, 1);
+        assert!(!destination.exists());
+        assert_eq!(fs::read(&source).unwrap(), b"full download");
+
+        let mut calls = 0;
+        let error = publish_with_sync(
+            &source,
+            &destination,
+            &folder,
+            &AtomicBool::new(false),
+            &mut |directory| {
+                calls += 1;
+                if calls == 2 {
+                    Err(io::Error::other("injected stage removal sync failure"))
+                } else {
+                    File::open(directory)?.sync_all()
+                }
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("staging directory sync failed"), "{error}");
+        assert!(error.contains("inspect the destination"));
+        assert_eq!(calls, 2);
+        assert_eq!(fs::read(&destination).unwrap(), b"full download");
+        assert!(!source.exists());
+        fs::remove_dir_all(folder).unwrap();
     }
 
     fn remote_entry(uri: &str, name: &str, is_directory: bool) -> volume::RemoteEntry {

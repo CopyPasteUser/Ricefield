@@ -406,6 +406,11 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   Verify failure behavior with injected staging and publication sync errors.
   Metadata completeness, FUSE/remote behavior and
   power-loss fault injection remain release blockers.
+- [x] Apply the same pre-publication staging-directory and two post-rename
+  directory sync barriers to remote-to-local file/folder downloads, with
+  injected stage-sync failures and four actual child-process `SIGKILL`
+  checkpoints. A post-publication sync error remains explicitly ambiguous;
+  hardware power-loss and NAS-backed destination behavior are not certified.
 - [x] Add a durable cross-device move state journal with a read-only scan on
   startup, a visible warning and manual inspection of unfinished transfers.
   Its record reader now pins regular inodes without following replacement
