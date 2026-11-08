@@ -35,7 +35,7 @@ The details are intentional: 98 has a dense gray menu and tree, XP a blue tasks 
 - **Drag and drop:** copy selected files into folders, other tabs, breadcrumbs, folder-tree entries or split panes; hold Shift to move. Native incoming file drops work locally, while outgoing drops to other apps still use an optional `ripdrag`/`dragon` helper.
 - **Review transfers:** inspect per-file outcomes during a session; after restart, private read-only history keeps up to 24 file-specific diagnostics per operation (failures first), without replay or destructive Undo.
 - **Find and inspect:** search, saved filters, cancellable background filtering/sorting for very large local folders, file-type vector icons, thumbnails, Quick Look, extensionless raster-image detection, local/network UTF-8/UTF-16 text and safe binary/hex fallback, optional PDF/media previews and ZIP/TAR/7z handling.
-- **Reach storage:** SMB, SFTP, WebDAV and MTP discovery/browsing with folders opening in the current or a new tab, navigable breadcrumbs, selectable/sortable file rows, previews, queued downloads and optional credential storage. WebDAV additionally offers a guarded **single-file upload** after a live server collision-safety probe; removable USB and encrypted-volume actions use UDisks2/Polkit.
+- **Reach storage:** SMB, SFTP, WebDAV and MTP discovery/browsing with folders opening in the current or a new tab, navigable breadcrumbs, selectable/sortable file rows, previews, queued downloads and optional credential storage. WebDAV, SFTP and signed SMB2/3 additionally offer narrowly guarded **single-file uploads** only after live server collision-safety probes; removable USB and encrypted-volume actions use UDisks2/Polkit.
 - **Customize:** seven built-in rices plus user TOML files for palettes, spacing, navigation and layout.
 
 **Release status: `1.0.0-rc.20` development candidate.** Automated Rust checks and native Linux GUI smoke tests pass. The 1.0 network-write/recovery code gates **and** physical Linux Mint/NAS/USB acceptance are still open. Keep your existing file manager installed. [Owner acceptance checklist](docs/OWNER-ACCEPTANCE-1.0.md).
@@ -56,6 +56,10 @@ ricefield
 ```
 
 Requires a current stable [Rust toolchain](https://rustup.rs/) when building from source. The installation is user-local and does not replace your default file manager. Release builds and checksums: [Releases](https://github.com/CopyPasteUser/Ricefield/releases) · [Release guide](RELEASE.md).
+
+Optional for the signed SMB upload path: install the distribution's `smbclient`
+package (`sudo apt install smbclient` on Linux Mint/Ubuntu). On servers
+without atomic no-replace hardlinks the upload will remain disabled.
 
 Try a specific rice:
 
@@ -93,7 +97,7 @@ This does **not** make RiceField the default file manager or require RiceBowl.
 
 ## Safety and known limits
 
-- Remote browsing is **read-only by default**, with explicit bounded no-overwrite downloads. WebDAV single-file upload is available only after a live conditional-MOVE safety probe, private stage and full byte verification. Before its first staging PUT a private credential-free journal durably saves the stage and final target; uncertain attempts can be reviewed after restart under **Review safely…**. Remote cleanup and retries never run automatically. SMB, SFTP, MTP uploads, remote rename and deletion remain disabled pending [backend-specific atomicity guarantees](docs/REMOTE-WRITE-SAFETY.md); the 1.0 network-write gate is still open.
+- Remote browsing is **read-only by default**, with explicit bounded no-overwrite downloads. WebDAV, OpenSSH-SFTP and SMB2/3 expose **conditional single-file uploads** after live, independent-client no-overwrite server probes, a pinned local snapshot and full staged-byte verification. SFTP requires trusted SSH keys and an exclusive hardlink; SMB requires `smbclient`, signed authenticated access (credentials piped privately) and an exclusive server-side hardlink. Servers without the verified feature remain read-only. Synced credential-free journals preserve uncertain probes and stages for human review under **Review safely…**, without remote recovery retries or cleanup. SMB stages inherit the NAS share ACLs, so use only a trusted write-restricted share. MTP upload and all remote rename/deletion remain disabled; [physical NAS/disconnect acceptance](docs/REMOTE-WRITE-SAFETY.md) is still an open 1.0 gate.
 - Cross-device moves preserve their sources after verified copies; cleanup requires a separate decision.
 - Completed local copy publication now syncs both the staging and destination directories after the atomic rename. A failed durability barrier retains the source and, for journaled cross-device moves, recovery evidence; this does not replace physical power-loss testing.
 - Batch rename has guarded session-only Undo, not full crash recovery. Inspect any interrupted batch.

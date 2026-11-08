@@ -162,13 +162,19 @@ synced probe-prefix journal reserved before its first safety PUT, plus a
 stage/destination journal reserved before its first upload PUT. Uncertain
 probe and upload results remain available after restart for explicit *local-only* record
 acknowledgement, not automatic server cleanup. This is **partial P0 work**:
-SMB/MTP backend guarantees and actual NAS/offline/crash acceptance are
+MTP backend guarantees and actual NAS/offline/crash acceptance are
 outstanding. A restricted OpenSSH-SFTP single-file path additionally uses
 four server-side `hardlink@openssh.com` safety probes, a `0700` private stage,
 complete byte verification, exclusive hardlink publication and synced
 probe/upload recovery evidence. This is not generic SFTP server acceptance;
 SSH-agent/key authentication, supported paths and server hardlink semantics
 are mandatory. Never substitute generic GIO move for any backend.
+An independent SMB2/3 single-file writer now requires signed `smbclient`
+authentication through a temporary stdin pipe, four no-replace hardlink
+collision rounds, full stage GET verification and a single atomic hardlink
+publication, with synced recovery evidence before remote mutation. This
+is **conditional capability support only**: share ACLs, Synology-specific
+hardlink support and real network interruption remain 1.0 hardware gates.
 The [backend-specific capability matrix](docs/REMOTE-BACKEND-MATRIX.md)
 records each supported/read-only protocol and the actual-process stage-PUT
 crash regression separately from unverified NAS/hardware semantics.

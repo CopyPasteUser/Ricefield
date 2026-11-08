@@ -129,8 +129,8 @@ The address bar and CLI use the same local/remote location parser. A valid
 read-only GIO browsing tabs; an unsupported scheme fails without navigating or
 mutating the current local tab. The desktop launcher accepts URIs via `%U`.
 URI credentials are rejected rather than retained in status messages or tab
-history. The explicitly authorized remote mutations are single-file WebDAV
-and restricted OpenSSH-SFTP uploads, independent of read-only GIO browsing.
+history. The explicitly authorized remote mutations are single-file WebDAV,
+restricted OpenSSH-SFTP and conditional SMB2/3 uploads, independent of read-only GIO browsing.
 WebDAV copies a no-follow local source to a private
 snapshot, probes `If-None-Match: *` and `MOVE Overwrite: F` (including remote
 two-client collisions), compares full staged bytes and requests the server
@@ -138,21 +138,27 @@ to publish without overwrite. SFTP requires configured SSH key/agent login,
 trusted known_hosts and safe ASCII names/paths. It probes four server-side
 hardlink collisions, stages in an exclusive `0700` directory, reads full
 staged bytes back and publishes only via `hardlink@openssh.com`.
-Unsupported SFTP servers, SMB and MTP remain write-disabled; no generic GIO
+SMB requires a signed `smbclient` connection authenticated through a
+short-lived stdin pipe, restricted ASCII paths and a server-side hardlink
+primitive. It probes four no-replace collision rounds, including three
+two-client races, GET-verifies all staged bytes before hardlink publication
+and persists probe/stage evidence before remote mkdir. SMB stage directories
+inherit server ACLs rather than being guaranteed private. Unsupported SMB or
+SFTP servers, and MTP, remain write-disabled; no generic GIO
 fallback, remote rename or delete is allowed.
 Unsuccessful uploads can leave private server-side stages for manual review.
-Before the **first safety-probe PUT or SFTP mkdir**, the uploader durably saves the random
+Before the **first safety-probe PUT or SFTP/SMB mkdir**, the uploader durably saves the random
 probe prefix to private, credential-free evidence. Only after all four probe
 rounds and their server-side cleanup finish may that record be retired.
 Interrupted or refused probes remain in recovery with copyable prefixes and
-round 0–3 object-name guidance (SFTP probes use private directories with
+round 0–3 object-name guidance (SFTP/SMB probes use random directories with
 `a`, `b` and `target-0` through `target-3`); dismissing a record requires confirmation
 and removes local evidence only. Previously orphaned probes from older
-versions cannot be reconstructed. Before the first **actual upload PUT or SFTP mkdir**, the
+versions cannot be reconstructed. Before the first **actual upload PUT or SFTP/SMB mkdir**, the
 uploader durably publishes a private, bounded,
 credential-free evidence journal of the random stage URI and final destination.
 If that fails, no staging PUT or SFTP mkdir occurs. A successful HTTP 201 MOVE
-or confirmed SFTP publication and private-stage cleanup retires the
+or confirmed SFTP/SMB publication and private-stage cleanup retires the
 evidence. Crash/timeout records appear in a background-loaded recovery review
 with copyable URIs and an optional two-step confirmation that discards **only
 the local record** after separate server-side verification. No automatic

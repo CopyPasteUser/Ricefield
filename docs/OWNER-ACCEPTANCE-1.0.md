@@ -134,7 +134,7 @@ automated evidence only; **all boxes below require owner verification**.
   clipboard exchange. Test drag-out when supported; unavailable portal or
   shell functionality must fail honestly instead of losing selection.
 
-## D. NAS, network tabs and guarded WebDAV upload
+## D. NAS, network tabs and guarded single-file uploads
 
 - [ ] **D01 Discovery/login:** discover/connect to the actual disposable NAS
   share and verify explicit authentication and optional Secret Service save.
@@ -155,16 +155,28 @@ automated evidence only; **all boxes below require owner verification**.
   a real NAS outage or deliberate cancel. Inspect the remote final/stage and
   local evidence; RiceField must not automatically retry or delete unknown
   server objects.
-- [ ] **D07 Recovery after restart:** if an uncertain WebDAV attempt leaves
+- [ ] **D07 Recovery after restart:** if an uncertain WebDAV/SFTP/SMB attempt leaves
   a private stage record, restart RiceField. **Review safely…** must show
   stage and destination, copyable independently. Only after *you* inspect
   both server paths should the two-step local-only dismissal be tested.
-- [ ] **D08 Unsupported remote writes:** SMB/SFTP/MTP upload, remote rename
-  and delete are **intentionally unavailable**. A disabled command is a
-  correct safety outcome until its backend earns an atomicity proof.
+- [ ] **D08 Unsupported remote writes:** MTP upload and all remote rename and
+  delete are **intentionally unavailable**. A WebDAV/SFTP/SMB server lacking
+  the required no-replace capability must also refuse the upload.
 - [ ] **D09 Failed authentication/TLS:** reject invalid login, offline host,
   untrusted TLS and plaintext HTTP except a deliberately opted-in test
   endpoint. Never leak a password into error messages or URL history.
+- [ ] **D10 SMB2/3 signed upload:** on a **disposable** Synology test share
+  whose ACLs forbid other users from modifying stages, try a small ASCII-named
+  file. Check SMB signing, no-replace hardlink support, full byte equality,
+  local source preservation and a pre-existing destination that must remain
+  unchanged. Repeat two-client collisions, mid-upload cancel and intentional
+  disconnect; inspect stages and journal without automatic replay or cleanup.
+  If hardlink capability or share isolation is unavailable, leave writes off.
+- [ ] **D11 OpenSSH-SFTP upload:** on a disposable SFTP account with trusted
+  host key and SSH key/agent, check private `0700` probe/stage directories,
+  exclusive hardlink publication, exact bytes and occupied destination;
+  test two-client race, cancellation, offline recovery and local-only evidence
+  dismissal after remote inspection.
 
 ## E. USB, volumes and removable media
 

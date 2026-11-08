@@ -1,4 +1,4 @@
-//! Durable, private evidence for uncertain WebDAV and SFTP publication attempts.
+//! Durable, private evidence for uncertain WebDAV, SFTP and SMB publications.
 //!
 //! Create and sync a record *before* any remote staging PUT/mkdir. Records never
 //! contain credentials and never authorize remote deletion or upload replay.
@@ -67,7 +67,8 @@ impl ProbeRecord {
             && suffix == self.id
             && (parent.starts_with("http://")
                 || parent.starts_with("https://")
-                || parent.starts_with("sftp://"))
+                || parent.starts_with("sftp://")
+                || parent.starts_with("smb://"))
             && parent
                 .split_once("://")
                 .and_then(|(_, rest)| rest.split('/').next())
@@ -94,7 +95,8 @@ impl Record {
             && parent == destination_parent
             && (parent.starts_with("http://")
                 || parent.starts_with("https://")
-                || parent.starts_with("sftp://"))
+                || parent.starts_with("sftp://")
+                || parent.starts_with("smb://"))
             && !parent
                 .split_once("://")
                 .and_then(|(_, rest)| rest.split('/').next())
@@ -585,8 +587,18 @@ fn lock_directory(directory: &Path) -> io::Result<File> {
             "WebDAV journal lock is not private and regular",
         ));
     }
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-        return Err(io::Error::last_os_error());
+    // Several independent uploads can complete probes simultaneously. This
+    // bounded wait is only for local evidence, never remote publication.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            break;
+        }
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(libc::EAGAIN) || std::time::Instant::now() >= deadline {
+            return Err(error);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
     Ok(file)
 }
@@ -652,6 +664,27 @@ mod tests {
         retire_probe_in(&directory, &probe_record).unwrap();
         assert!(scan_in(&directory).unwrap().is_empty());
         assert!(scan_probes_in(&directory).unwrap().is_empty());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn smb_upload_and_probe_evidence_survive_restart_without_secrets() {
+        let directory = isolated_directory();
+        let id = "0123456789abcdef0123456789abcdef";
+        let stage = format!("smb://nas.example/media/.ricefield-upload-{id}");
+        let destination = "smb://nas.example/media/file.txt";
+        let probe = format!("smb://nas.example/media/.ricefield-safety-{id}");
+        let upload = PendingUpload::begin_in(&directory, &stage, destination).unwrap();
+        let safety = PendingProbe::begin_in(&directory, &probe).unwrap();
+        drop(upload);
+        drop(safety);
+        let (uploads, probes) = inspect_evidence_in(&directory).unwrap();
+        assert_eq!(uploads.len(), 1);
+        assert_eq!(uploads[0].destination_uri, destination);
+        assert_eq!(probes.len(), 1);
+        assert_eq!(probes[0].prefix_uri, probe);
+        retire_in(&directory, &uploads[0]).unwrap();
+        retire_probe_in(&directory, &probes[0]).unwrap();
         fs::remove_dir_all(directory).unwrap();
     }
 

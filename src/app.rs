@@ -16,6 +16,7 @@ use crate::{
     metadata, open_with,
     operation_queue::OperationQueue,
     portal, preview, remote_download, remote_upload, remote_upload_journal, remote_upload_sftp,
+    remote_upload_smb,
     shell_components::{self, ToolbarAction},
     shell_renderer::{self, FileCellLayout, shorten},
     theme::{BUILTIN_IDS, ChromeComponent, ShellKind, SidebarPosition, SidebarSection, Theme},
@@ -1441,6 +1442,7 @@ pub struct Explorer {
     remote_upload_username: String,
     remote_upload_domain: String,
     remote_upload_password: String,
+    remote_upload_password_visible: bool,
     remote_upload_allow_http: bool,
     remote_staging_sender: Sender<(PathBuf, Result<remote_download::StagingInspection, String>)>,
     remote_staging_receiver:
@@ -1716,6 +1718,7 @@ impl Explorer {
             remote_upload_username: String::new(),
             remote_upload_domain: String::new(),
             remote_upload_password: String::new(),
+            remote_upload_password_visible: false,
             remote_upload_allow_http: false,
             remote_staging_sender,
             remote_staging_receiver,
@@ -2781,7 +2784,7 @@ impl Explorer {
         if !matches!(Location::parse(target.clone().into()),
             Ok(Location::Remote(location)) if matches!(location.scheme,
                 crate::location::RemoteScheme::Dav | crate::location::RemoteScheme::Davs
-                | crate::location::RemoteScheme::Sftp))
+                | crate::location::RemoteScheme::Sftp | crate::location::RemoteScheme::Smb))
         {
             self.status = Some(("This backend cannot prove an atomic no-replace publish; network writes stay disabled".into(), true));
             return;
@@ -2797,6 +2800,7 @@ impl Explorer {
         self.remote_upload_username.clear();
         self.remote_upload_domain.clear();
         volume::clear_password(&mut self.remote_upload_password);
+        self.remote_upload_password_visible = false;
         self.remote_upload_allow_http = false;
         self.remote_upload_open = true;
     }
@@ -2811,7 +2815,17 @@ impl Explorer {
             .remote_upload_target
             .get(..7)
             .is_some_and(|prefix| prefix.eq_ignore_ascii_case("sftp://"));
-        egui::Window::new(if is_sftp { "Upload to SFTP · safe publication" } else { "Upload to WebDAV · safe publication" })
+        let is_smb = self
+            .remote_upload_target
+            .get(..6)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("smb://"));
+        egui::Window::new(if is_sftp {
+            "Upload to SFTP · safe publication"
+        } else if is_smb {
+            "Upload to SMB · safe publication"
+        } else {
+            "Upload to WebDAV · safe publication"
+        })
             .open(&mut open)
             .collapsible(false)
             .default_width(490.0)
@@ -2821,16 +2835,28 @@ impl Explorer {
                 ui.label("Local regular file (absolute path):");
                 ui.add(egui::TextEdit::singleline(&mut self.remote_upload_source)
                     .desired_width(f32::INFINITY).hint_text("/home/user/Documents/file.txt"));
-                ui.label(if is_sftp { "SSH username (blank = your SSH default):" } else { "Username and password (or leave blank to try a saved login):" });
+                ui.label(if is_sftp {
+                    "SSH username (blank = your SSH default):"
+                } else if is_smb {
+                    "SMB username (required):"
+                } else {
+                    "Username and password (or leave blank to try a saved login):"
+                });
                 ui.add(egui::TextEdit::singleline(&mut self.remote_upload_username)
-                    .desired_width(f32::INFINITY).hint_text(if is_sftp { "SSH username" } else { "WebDAV username" }));
+                    .desired_width(f32::INFINITY).hint_text(if is_sftp { "SSH username" } else if is_smb { "SMB username" } else { "WebDAV username" }));
                 if is_sftp {
                     ui.small("Use a configured SSH key or SSH agent and a trusted known_hosts entry. Password login is unavailable in this safe upload path. Names and paths are restricted to ASCII letters, digits, spaces, dots, dashes and underscores.");
                 } else {
                     ui.add(egui::TextEdit::singleline(&mut self.remote_upload_domain)
                         .desired_width(f32::INFINITY).hint_text("Domain (optional)"));
-                    ui.add(egui::TextEdit::singleline(&mut self.remote_upload_password)
-                        .password(true).desired_width(f32::INFINITY).hint_text("Password"));
+                    ui.horizontal(|ui| {
+                        ui.add(egui::TextEdit::singleline(&mut self.remote_upload_password)
+                            .password(!self.remote_upload_password_visible)
+                            .desired_width(380.0).hint_text("Password"));
+                        if ui.button(if self.remote_upload_password_visible { "Hide" } else { "Show" }).clicked() {
+                            self.remote_upload_password_visible = !self.remote_upload_password_visible;
+                        }
+                    });
                 }
                 if self.remote_upload_target.starts_with("dav://") {
                     ui.checkbox(&mut self.remote_upload_allow_http,
@@ -2840,6 +2866,8 @@ impl Explorer {
                 ui.separator();
                 ui.small(if is_sftp {
                     "RiceField probes OpenSSH hardlink collision safety, uploads into a private directory, reads every byte back, and publishes using an exclusive server-side hardlink. The server must support hardlink@openssh.com. Uncertain stages are recorded for manual review."
+                } else if is_smb {
+                    "RiceField requires SMB2/3, signed client connections and smbclient. It tests server-side no-replace hardlinks with competing clients before uploading a file. It then reads every staged byte back and publishes via a single hardlink. Access details use an ephemeral local pipe, never URL, arguments or disk. Servers lacking this capability remain read-only."
                 } else {
                     "RiceField probes WebDAV overwrite protection, uploads a private stage and verifies every byte. The server must accept Overwrite:F; existing destinations are not replaced. Uncertain stages are recorded for manual review."
                 });
@@ -2876,15 +2904,23 @@ impl Explorer {
                     .is_some_and(|prefix| prefix.eq_ignore_ascii_case("sftp://"))
                 {
                     remote_upload_sftp::upload(request, &cancelled)
+                } else if request
+                    .remote_directory
+                    .get(..6)
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case("smb://"))
+                {
+                    remote_upload_smb::upload(request, &cancelled)
                 } else {
                     remote_upload::upload(request, &cancelled)
                 };
                 let _ = sender.send(result);
             });
             self.remote_upload_open = false;
+            self.remote_upload_password_visible = false;
             self.remote_upload_source.clear();
         } else if !open {
             volume::clear_password(&mut self.remote_upload_password);
+            self.remote_upload_password_visible = false;
             self.remote_upload_open = false;
         }
     }
@@ -4372,8 +4408,8 @@ impl Explorer {
                             ui.monospace(&record.destination_uri);
                             ui.label("Private stage (may or may not exist):");
                             ui.monospace(&record.stage_uri);
-                            if record.stage_uri.starts_with("sftp://") {
-                                ui.small("SFTP stage is a private directory. Inspect its /payload entry before removing anything.");
+                            if record.stage_uri.starts_with("sftp://") || record.stage_uri.starts_with("smb://") {
+                                ui.small("The stage is a uniquely named server directory. Inspect its /payload entry before removing anything. SMB directory permissions depend on the NAS share ACLs.");
                             }
                             ui.horizontal_wrapped(|ui| {
                                 if ui.button("Copy stage URI").clicked() {
@@ -4405,8 +4441,8 @@ impl Explorer {
                             ui.strong(format!("Remote safety probe {}", record.id));
                             ui.label("Private safety-probe prefix:");
                             ui.monospace(&record.prefix_uri);
-                            ui.small(if record.prefix_uri.starts_with("sftp://") {
-                                "The SFTP probe prefix is a private directory. Inspect a, b and target-0 through target-3 inside it. Never assume the directory was cleaned."
+                            ui.small(if record.prefix_uri.starts_with("sftp://") || record.prefix_uri.starts_with("smb://") {
+                                "The SFTP/SMB probe prefix is a uniquely named directory. Inspect a, b and target-0 through target-3. Never assume the directory was cleaned."
                             } else {
                                 "Check rounds 0–3: each prefix may have -ROUND-a, -ROUND-b and -ROUND-destination objects. They contain disposable test data, not the selected upload."
                             });
@@ -9342,7 +9378,7 @@ impl Explorer {
             matches!(Location::parse(uri.clone().into()),
                 Ok(Location::Remote(location)) if matches!(location.scheme,
                     crate::location::RemoteScheme::Dav | crate::location::RemoteScheme::Davs
-                    | crate::location::RemoteScheme::Sftp))
+                    | crate::location::RemoteScheme::Sftp | crate::location::RemoteScheme::Smb))
         });
         let title = match theme.shell_kind() {
             ShellKind::Classic => "Network Neighborhood",

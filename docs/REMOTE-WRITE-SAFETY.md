@@ -87,7 +87,23 @@ checking and configured key/agent authentication; password login, IPv6 literal
 hosts and unsafe/non-ASCII upload names are not accepted by this writer.
 Real-NAS power loss and offline acceptance are still unverified.
 
-SMB and MTP upload, and all remote rename and delete actions remain
+SMB now has a separate, **conditional** `smbclient`-only single-file upload.
+It requires SMB2/3, a signed authenticated connection and server-enforced
+`hardlink` no-overwrite semantics. Before user data is sent, four disposable
+collision tests (one sequential, three competing-client races) must succeed.
+The uploader stages the pinned file in a random directory, GETs and compares
+all bytes, and then sends one hardlink-to-final operation. There is no SMB
+rename, overwrite, generic GIO write or retry after an ambiguous commit.
+Before *any* remote probe or staging mutation, a private synced recovery
+record is saved; failed probes and uncertain uploads require manual review.
+Credentials are supplied to `smbclient` through a short-lived `/dev/stdin`
+authentication pipe, never in argv, environment or an on-disk secret file.
+SMB directories receive the server's ACL defaults, **not** a proven private
+`0700` ACL; only use shares with trusted ACLs. A server that lacks the required
+hardlink support fails closed. The disposable localhost Samba SMB3/signing
+tests are not Synology DS214+ hardware acceptance.
+
+MTP upload, and all remote rename and delete actions remain
 disabled until their own atomic backends pass the same gate. A system-mounted share can be
 browsed as a local path and only supports the local file engine's guarded
 operations where its mount exposes the necessary filesystem primitives.
