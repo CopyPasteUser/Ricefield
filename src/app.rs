@@ -1583,7 +1583,7 @@ impl Explorer {
         separate_window: bool,
         file_manager_service: bool,
     ) -> Self {
-        let mut config = Config::load();
+        let config = Config::load();
         let explicit_builtin = selected_theme.is_some();
         // CLI overrides saved themes; only editor-owned files inside the user
         // config directory are restored automatically on next startup.
