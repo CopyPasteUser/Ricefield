@@ -108,6 +108,12 @@ smb 'hardlink stage-a/payload winner'
 cmp "$test_dir/a" "$test_dir/share/winner"
 signed_smb 'hardlink stage-a/payload signed-winner'
 cmp "$test_dir/a" "$test_dir/share/signed-winner"
+signed_smb 'mkdir "folder with space"'
+signed_smb "put \"$test_dir/a\" \"folder with space/payload\""
+signed_smb "get \"folder with space/payload\" \"$test_dir/signed-download\""
+cmp "$test_dir/a" "$test_dir/signed-download"
+signed_smb 'hardlink "folder with space/payload" "signed space target"'
+cmp "$test_dir/a" "$test_dir/share/signed space target"
 
 printf 'foreign-winner\n' > "$test_dir/share/occupied"
 if smb 'hardlink stage-a/payload occupied'; then

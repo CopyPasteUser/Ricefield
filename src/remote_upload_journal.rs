@@ -595,9 +595,7 @@ fn lock_directory(directory: &Path) -> io::Result<File> {
             break;
         }
         let error = io::Error::last_os_error();
-        if error.raw_os_error() != Some(libc::EAGAIN)
-            || std::time::Instant::now() >= deadline
-        {
+        if error.raw_os_error() != Some(libc::EAGAIN) || std::time::Instant::now() >= deadline {
             return Err(error);
         }
         std::thread::sleep(std::time::Duration::from_millis(10));

@@ -1442,6 +1442,7 @@ pub struct Explorer {
     remote_upload_username: String,
     remote_upload_domain: String,
     remote_upload_password: String,
+    remote_upload_password_visible: bool,
     remote_upload_allow_http: bool,
     remote_staging_sender: Sender<(PathBuf, Result<remote_download::StagingInspection, String>)>,
     remote_staging_receiver:
@@ -1717,6 +1718,7 @@ impl Explorer {
             remote_upload_username: String::new(),
             remote_upload_domain: String::new(),
             remote_upload_password: String::new(),
+            remote_upload_password_visible: false,
             remote_upload_allow_http: false,
             remote_staging_sender,
             remote_staging_receiver,
@@ -2798,6 +2800,7 @@ impl Explorer {
         self.remote_upload_username.clear();
         self.remote_upload_domain.clear();
         volume::clear_password(&mut self.remote_upload_password);
+        self.remote_upload_password_visible = false;
         self.remote_upload_allow_http = false;
         self.remote_upload_open = true;
     }
@@ -2846,8 +2849,14 @@ impl Explorer {
                 } else {
                     ui.add(egui::TextEdit::singleline(&mut self.remote_upload_domain)
                         .desired_width(f32::INFINITY).hint_text("Domain (optional)"));
-                    ui.add(egui::TextEdit::singleline(&mut self.remote_upload_password)
-                        .password(true).desired_width(f32::INFINITY).hint_text("Password"));
+                    ui.horizontal(|ui| {
+                        ui.add(egui::TextEdit::singleline(&mut self.remote_upload_password)
+                            .password(!self.remote_upload_password_visible)
+                            .desired_width(380.0).hint_text("Password"));
+                        if ui.button(if self.remote_upload_password_visible { "Hide" } else { "Show" }).clicked() {
+                            self.remote_upload_password_visible = !self.remote_upload_password_visible;
+                        }
+                    });
                 }
                 if self.remote_upload_target.starts_with("dav://") {
                     ui.checkbox(&mut self.remote_upload_allow_http,
@@ -2907,9 +2916,11 @@ impl Explorer {
                 let _ = sender.send(result);
             });
             self.remote_upload_open = false;
+            self.remote_upload_password_visible = false;
             self.remote_upload_source.clear();
         } else if !open {
             volume::clear_password(&mut self.remote_upload_password);
+            self.remote_upload_password_visible = false;
             self.remote_upload_open = false;
         }
     }

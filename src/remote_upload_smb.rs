@@ -33,10 +33,12 @@ struct Target {
 
 fn safe_path(path: &str) -> Result<(), String> {
     if path.len() > 2048
-        || !path.bytes().all(|c| {
-            c.is_ascii_alphanumeric() || matches!(c, b'/' | b'.' | b'-' | b'_' | b' ')
-        })
-        || path.split('/').any(|segment| segment == "." || segment == "..")
+        || !path
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'/' | b'.' | b'-' | b'_' | b' '))
+        || path
+            .split('/')
+            .any(|segment| segment == "." || segment == "..")
     {
         return Err("SMB path supports only ASCII letters, numbers, space, '.', '-' and '_', without traversal or command metacharacters".into());
     }
@@ -44,13 +46,20 @@ fn safe_path(path: &str) -> Result<(), String> {
 }
 
 fn decode_path(path: &str) -> Result<String, String> {
+    // Encoded separators must not turn an apparent share name into a
+    // different share plus directory after the security and recovery checks.
+    if path.to_ascii_lowercase().contains("%2f") {
+        return Err("Encoded SMB path separators are unsupported".into());
+    }
     let bytes = path.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
     let mut offset = 0;
     while offset < bytes.len() {
         if bytes[offset] == b'%' {
             let hex = std::str::from_utf8(
-                bytes.get(offset + 1..offset + 3).ok_or("Bad SMB percent escape")?,
+                bytes
+                    .get(offset + 1..offset + 3)
+                    .ok_or("Bad SMB percent escape")?,
             )
             .map_err(|_| "Bad SMB percent escape")?;
             decoded.push(u8::from_str_radix(hex, 16).map_err(|_| "Bad SMB percent escape")?);
@@ -88,7 +97,12 @@ fn credential(value: &str, limit: usize) -> bool {
 }
 
 impl Target {
-    fn parse(uri: &str, username: String, password: String, domain: String) -> Result<Self, String> {
+    fn parse(
+        uri: &str,
+        username: String,
+        password: String,
+        domain: String,
+    ) -> Result<Self, String> {
         if !matches!(Location::parse(uri.into()),
             Ok(Location::Remote(remote)) if remote.scheme == RemoteScheme::Smb)
         {
@@ -127,7 +141,7 @@ impl Target {
         }
         let relative = relative.trim_matches('/');
         safe_path(relative)?;
-        let uri = uri.trim_end_matches('/').to_owned();
+        let uri = format!("smb://{}", remainder.trim_end_matches('/'));
         Ok(Self {
             host: host.into(),
             share: share.into(),
@@ -154,7 +168,10 @@ impl Target {
         }
         let mut cmd = Command::new("smbclient");
         cmd.arg(format!("//{}/{}", self.host, self.share))
-            .args(["--max-protocol=SMB3", "--option=client min protocol=SMB2_10"])
+            .args([
+                "--max-protocol=SMB3",
+                "--option=client min protocol=SMB2_10",
+            ])
             .arg("--client-protection=sign")
             .arg("--authentication-file=/dev/stdin")
             .arg("--command")
@@ -224,13 +241,19 @@ fn quoted(path: &str) -> String {
 fn put(target: &Target, local: &Path, remote: &str, cancelled: &AtomicBool) -> Result<(), String> {
     let local = local.to_str().ok_or("Invalid snapshot path")?;
     safe_path(local)?;
-    target.run(&format!("put {} {}", quoted(local), quoted(remote)), cancelled)
+    target.run(
+        &format!("put {} {}", quoted(local), quoted(remote)),
+        cancelled,
+    )
 }
 
 fn get(target: &Target, remote: &str, local: &Path, cancelled: &AtomicBool) -> Result<(), String> {
     let local = local.to_str().ok_or("Invalid verification path")?;
     safe_path(local)?;
-    target.run(&format!("get {} {}", quoted(remote), quoted(local)), cancelled)
+    target.run(
+        &format!("get {} {}", quoted(remote), quoted(local)),
+        cancelled,
+    )
 }
 
 fn compare(source: &Path, copy: &Path, cancelled: &AtomicBool) -> Result<(), String> {
@@ -269,9 +292,17 @@ fn private_payload(path: &Path, bytes: &[u8]) -> Result<(), String> {
     output.sync_all().map_err(|error| error.to_string())
 }
 
-fn cleanup(target: &Target, directory: &str, names: &[&str], cancelled: &AtomicBool) -> Result<(), String> {
+fn cleanup(
+    target: &Target,
+    directory: &str,
+    names: &[&str],
+    cancelled: &AtomicBool,
+) -> Result<(), String> {
     for name in names {
-        target.run(&format!("del {}", quoted(&format!("{directory}/{name}"))), cancelled)?;
+        target.run(
+            &format!("del {}", quoted(&format!("{directory}/{name}"))),
+            cancelled,
+        )?;
     }
     target.run(&format!("rmdir {}", quoted(directory)), cancelled)
 }
@@ -300,33 +331,57 @@ fn safety_probe(
         put(target, &local_b, &format!("{dir}/b"), cancelled)?;
         for round in 0..4 {
             let destination = format!("{dir}/target-{round}");
-            let link_a = format!("hardlink {} {}", quoted(&format!("{dir}/a")), quoted(&destination));
-            let link_b = format!("hardlink {} {}", quoted(&format!("{dir}/b")), quoted(&destination));
+            let link_a = format!(
+                "hardlink {} {}",
+                quoted(&format!("{dir}/a")),
+                quoted(&destination)
+            );
+            let link_b = format!(
+                "hardlink {} {}",
+                quoted(&format!("{dir}/b")),
+                quoted(&destination)
+            );
             let (left, right) = if round == 0 {
-                (target.run(&link_a, cancelled), target.run(&link_b, cancelled))
+                (
+                    target.run(&link_a, cancelled),
+                    target.run(&link_b, cancelled),
+                )
             } else {
                 thread::scope(|scope| {
                     let a = scope.spawn(|| target.run(&link_a, cancelled));
                     let b = scope.spawn(|| target.run(&link_b, cancelled));
                     Ok::<_, String>((
-                        a.join().map_err(|_| "SMB probe worker panicked".to_owned())?,
-                        b.join().map_err(|_| "SMB probe worker panicked".to_owned())?,
+                        a.join()
+                            .map_err(|_| "SMB probe worker panicked".to_owned())?,
+                        b.join()
+                            .map_err(|_| "SMB probe worker panicked".to_owned())?,
                     ))
                 })?
             };
             if left.is_ok() == right.is_ok() {
-                return Err(format!("SMB atomic hardlink safety failed in round {round}: {left:?}, {right:?}"));
+                return Err(format!(
+                    "SMB atomic hardlink safety failed in round {round}: {left:?}, {right:?}"
+                ));
             }
             let local = snapshot.private_file("smb-verify.payload");
             get(target, &destination, &local, cancelled)?;
             let actual = fs::read(&local).map_err(|error| error.to_string())?;
-            let expected: &[u8] = if left.is_ok() { b"ricefield-smb-safe-a" } else { b"ricefield-smb-safe-b" };
+            let expected: &[u8] = if left.is_ok() {
+                b"ricefield-smb-safe-a"
+            } else {
+                b"ricefield-smb-safe-b"
+            };
             if actual != expected {
                 return Err("SMB hardlink target differs from the winning stage".into());
             }
             fs::remove_file(&local).map_err(|error| error.to_string())?;
         }
-        cleanup(target, &dir, &["target-0", "target-1", "target-2", "target-3", "a", "b"], cancelled)
+        cleanup(
+            target,
+            &dir,
+            &["target-0", "target-1", "target-2", "target-3", "a", "b"],
+            cancelled,
+        )
     })();
     result.map_err(|error| format!("{error}. SMB probe objects might remain under {uri}; inspect the recovery journal and server before cleanup"))?;
     pending.finish();
@@ -361,7 +416,9 @@ fn upload_with_target(
     let dir = target.at(&format!(".ricefield-upload-{id}"));
     let stage_uri = format!("{}/.ricefield-upload-{id}", target.uri);
     let pending = match journal_override {
-        Some(path) => remote_upload_journal::PendingUpload::begin_in(path, &stage_uri, &destination_uri),
+        Some(path) => {
+            remote_upload_journal::PendingUpload::begin_in(path, &stage_uri, &destination_uri)
+        }
         None => remote_upload_journal::PendingUpload::begin(&stage_uri, &destination_uri),
     }
     .map_err(|error| format!("Cannot durably record SMB stage before remote writes: {error}"))?;
@@ -379,12 +436,18 @@ fn upload_with_target(
         // Once publication might have reached the server, do not cancel,
         // retry or resolve an ambiguous answer by checking destination state.
         let commit_guard = AtomicBool::new(false);
-        target.run(&format!("hardlink {} {}", quoted(&stage), quoted(&destination)), &commit_guard)?;
+        target.run(
+            &format!("hardlink {} {}", quoted(&stage), quoted(&destination)),
+            &commit_guard,
+        )?;
         cleanup(target, &dir, &["payload"], &commit_guard)
     })();
     result.map_err(|error| format!("{error}. SMB publication may be ambiguous; inspect {stage_uri}/payload and {destination_uri} before discarding local evidence"))?;
     pending.finish();
-    Ok(UploadResult { uri: destination_uri, bytes: snapshot.bytes })
+    Ok(UploadResult {
+        uri: destination_uri,
+        bytes: snapshot.bytes,
+    })
 }
 
 #[cfg(test)]
@@ -393,19 +456,67 @@ mod tests {
 
     #[test]
     fn smb_uri_paths_and_credentials_fail_closed() {
-        assert!(Target::parse("smb://nas.example/media", "user".into(), "secret".into(), "".into()).is_ok());
-        assert!(Target::parse("smb://nas.example/media/a%20b", "user".into(), "secret".into(), "".into()).is_ok());
+        assert!(
+            Target::parse(
+                "smb://nas.example/media",
+                "user".into(),
+                "secret".into(),
+                "".into()
+            )
+            .is_ok()
+        );
+        assert!(
+            Target::parse(
+                "smb://nas.example/media/a%20b",
+                "user".into(),
+                "secret".into(),
+                "".into()
+            )
+            .is_ok()
+        );
         for uri in [
-            "smb://nas.example", "smb://nas.example/media/../file",
-            "smb://nas.example/media/%0Als", "smb://nas.example/media/a%3Bdel",
-            "smb://evil.example@nas.example/share", "smb://[::1]/share",
-            "smb://nas.example/media/a%22b", "smb://nas.example/media/a%5Cb",
+            "smb://nas.example",
+            "smb://nas.example/media/../file",
+            "smb://nas.example/media/%0Als",
+            "smb://nas.example/media/a%3Bdel",
+            "smb://evil.example@nas.example/share",
+            "smb://[::1]/share",
+            "smb://nas.example/media/a%22b",
+            "smb://nas.example/media/a%5Cb",
+            "smb://nas.example/media%2Fprivate",
         ] {
-            assert!(Target::parse(uri, "user".into(), "secret".into(), "".into()).is_err(), "{uri}");
+            assert!(
+                Target::parse(uri, "user".into(), "secret".into(), "".into()).is_err(),
+                "{uri}"
+            );
         }
-        assert!(Target::parse("smb://nas.example/media", "".into(), "secret".into(), "".into()).is_err());
-        assert!(Target::parse("smb://nas.example/media", "user\npassword = hacked".into(), "secret".into(), "".into()).is_err());
-        assert!(Target::parse("smb://nas.example/media", "user".into(), "secret\nuser = hacked".into(), "".into()).is_err());
+        assert!(
+            Target::parse(
+                "smb://nas.example/media",
+                "".into(),
+                "secret".into(),
+                "".into()
+            )
+            .is_err()
+        );
+        assert!(
+            Target::parse(
+                "smb://nas.example/media",
+                "user\npassword = hacked".into(),
+                "secret".into(),
+                "".into()
+            )
+            .is_err()
+        );
+        assert!(
+            Target::parse(
+                "smb://nas.example/media",
+                "user".into(),
+                "secret\nuser = hacked".into(),
+                "".into()
+            )
+            .is_err()
+        );
         assert!(basename(OsStr::new("file;rm.txt")).is_err());
     }
 }
