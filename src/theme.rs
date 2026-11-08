@@ -14,6 +14,26 @@ pub const BUILTIN_IDS: &[&str] = &[
     "macos",
 ];
 
+/// Translate RiceBowl's shared rice names to RiceField's bundled profiles.
+/// Unknown/generated rices must not silently select an unrelated style.
+pub fn ricebowl_id(value: &str) -> Option<&'static str> {
+    match value
+        .trim()
+        .to_ascii_lowercase()
+        .replace(['_', ' '], "-")
+        .as_str()
+    {
+        "windows98" | "windows-98" | "win98" | "98" | "classic98" => Some("win98"),
+        "xp" | "xp-luna" | "windows-xp" | "windowsxp" | "luna" => Some("xp-luna"),
+        "windows7" | "windows-7" | "win7" | "7" => Some("win7"),
+        "windows10" | "windows-10" | "win10" | "10" => Some("win10"),
+        "frutiger-aero" | "frutigeraero" | "aero" => Some("frutiger-aero"),
+        "chromeos" | "chrome-os" | "chrome" => Some("chromeos"),
+        "macos" | "mac-os" | "mac" | "macrice" => Some("macos"),
+        _ => None,
+    }
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Theme {
     pub id: String,
@@ -485,6 +505,25 @@ mod tests {
             assert!(!theme.top_components().is_empty());
             theme.validate().unwrap();
         }
+    }
+
+    #[test]
+    fn ricebowl_names_select_only_real_ricefield_profiles() {
+        for (name, expected) in [
+            ("Windows 98", "win98"),
+            ("windows-xp", "xp-luna"),
+            ("windows7", "win7"),
+            ("Windows_10", "win10"),
+            ("Frutiger Aero", "frutiger-aero"),
+            ("chrome-os", "chromeos"),
+            ("macrice", "macos"),
+        ] {
+            let selected = ricebowl_id(name);
+            assert_eq!(selected, Some(expected));
+            assert!(Theme::builtin(selected.unwrap()).is_some());
+        }
+        assert_eq!(ricebowl_id("custom-generated-rice"), None);
+        assert_eq!(ricebowl_id(""), None);
     }
 
     #[test]

@@ -111,6 +111,18 @@ fn main() -> eframe::Result {
             }
         }
     }
+    // RiceBowl can choose the initial profile for this process without
+    // changing the user's persisted RiceField preferences. Explicit CLI wins.
+    if selected_theme.is_none() {
+        selected_theme = ["RICEBOWL_RICE", "RICEBOWL_THEME"]
+            .into_iter()
+            .find_map(|key| {
+                env::var(key)
+                    .ok()
+                    .and_then(|value| theme::ricebowl_id(&value))
+            })
+            .map(str::to_owned);
+    }
     let icon = image::load_from_memory(include_bytes!("../assets/ricefield.png"))
         .expect("embedded PNG icon")
         .to_rgba8();
