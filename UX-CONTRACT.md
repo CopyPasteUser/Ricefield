@@ -136,7 +136,14 @@ two-client collisions), compares full staged bytes and requests the server
 to publish without overwrite. Incompatible servers and SMB/SFTP/MTP remain
 write-disabled; no generic GIO fallback, remote rename or delete is allowed.
 Unsuccessful uploads can leave private server-side stages for manual review.
-Before the first PUT, the uploader durably publishes a private, bounded,
+Before the **first safety-probe PUT**, the uploader durably saves the random
+probe prefix to private, credential-free evidence. Only after all four probe
+rounds and their server-side cleanup finish may that record be retired.
+Interrupted or refused probes remain in recovery with copyable prefixes and
+round 0–3 object-name guidance; dismissing a record requires confirmation
+and removes local evidence only. Previously orphaned probes from older
+versions cannot be reconstructed. Before the first **actual upload PUT**, the
+uploader durably publishes a private, bounded,
 credential-free evidence journal of the random stage URI and final destination.
 If that fails, no staging PUT occurs. A successful HTTP 201 MOVE retires the
 evidence. Crash/timeout records appear in a background-loaded recovery review

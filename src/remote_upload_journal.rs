@@ -39,6 +39,44 @@ struct StoredRecord {
     created_unix_seconds: u64,
 }
 
+/// Evidence for a server capability test that may have left private probe
+/// objects behind. It never authorizes retrying or deleting those objects.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProbeRecord {
+    pub id: String,
+    pub prefix_uri: String,
+    pub created_unix_seconds: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredProbeRecord {
+    version: u32,
+    id: String,
+    prefix_uri: String,
+    created_unix_seconds: u64,
+}
+
+impl ProbeRecord {
+    fn valid(&self) -> bool {
+        let Some((parent, suffix)) = self.prefix_uri.rsplit_once("/.ricefield-safety-") else {
+            return false;
+        };
+        self.id.len() == 32
+            && self.id.bytes().all(|byte| byte.is_ascii_hexdigit())
+            && suffix == self.id
+            && (parent.starts_with("http://") || parent.starts_with("https://"))
+            && parent
+                .split_once("://")
+                .and_then(|(_, rest)| rest.split('/').next())
+                .is_some_and(|authority| !authority.is_empty() && !authority.contains('@'))
+            && self.prefix_uri.len() <= MAX_URI_BYTES
+            && !self.prefix_uri.chars().any(char::is_control)
+            && self.created_unix_seconds > 0
+            && self.created_unix_seconds <= 32_503_680_000
+    }
+}
+
 impl Record {
     fn valid(&self) -> bool {
         let Some((parent, suffix)) = self.stage_uri.rsplit_once("/.ricefield-upload-") else {
@@ -106,7 +144,7 @@ impl PendingUpload {
         prepare_private_directory(directory)?;
         let _lock = lock_directory(directory)?;
         let existing = scan_in(directory)?;
-        if existing.len() >= MAX_RECORDS {
+        if existing.len() + scan_probes_in(directory)?.len() >= MAX_RECORDS {
             return Err(io::Error::other(
                 "Too many unfinished WebDAV uploads; inspect saved journal evidence",
             ));
@@ -157,6 +195,83 @@ impl PendingUpload {
     }
 }
 
+pub struct PendingProbe {
+    record: ProbeRecord,
+    directory: PathBuf,
+}
+
+impl PendingProbe {
+    /// Persist the complete probe prefix before the first remote PUT. A crash
+    /// can then leave probe objects, but never untraceable probe objects.
+    pub fn begin(prefix_uri: &str) -> io::Result<Self> {
+        Self::begin_in(&journal_directory()?, prefix_uri)
+    }
+
+    pub(crate) fn begin_in(directory: &Path, prefix_uri: &str) -> io::Result<Self> {
+        let id = prefix_uri
+            .rsplit_once("/.ricefield-safety-")
+            .map(|(_, suffix)| suffix.to_owned())
+            .ok_or_else(|| invalid_data("Invalid WebDAV safety-probe URI"))?;
+        let record = ProbeRecord {
+            id,
+            prefix_uri: prefix_uri.to_owned(),
+            created_unix_seconds: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        };
+        if !record.valid() {
+            return Err(invalid_data("Invalid WebDAV safety-probe fields"));
+        }
+        prepare_private_directory(directory)?;
+        let _lock = lock_directory(directory)?;
+        if scan_in(directory)?.len() + scan_probes_in(directory)?.len() >= MAX_RECORDS {
+            return Err(io::Error::other(
+                "Too many unfinished WebDAV operations; inspect saved journal evidence",
+            ));
+        }
+        let path = probe_path(directory, &record.id)?;
+        let temporary = directory.join(format!(".{}.probe.tmp", record.id));
+        let stored = StoredProbeRecord {
+            version: VERSION,
+            id: record.id.clone(),
+            prefix_uri: record.prefix_uri.clone(),
+            created_unix_seconds: record.created_unix_seconds,
+        };
+        let bytes = toml::to_string(&stored).map_err(io::Error::other)?;
+        if bytes.len() as u64 > MAX_RECORD_BYTES {
+            return Err(invalid_data("WebDAV safety-probe record exceeds size limit"));
+        }
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&temporary)?;
+        let result = (|| {
+            file.write_all(bytes.as_bytes())?;
+            file.sync_all()?;
+            fs::hard_link(&temporary, &path)?;
+            File::open(directory)?.sync_all()
+        })();
+        if let Err(error) = fs::remove_file(&temporary) {
+            eprintln!("RiceField: WebDAV probe journal temporary cleanup failed: {error}");
+        }
+        result?;
+        Ok(Self {
+            record,
+            directory: directory.to_path_buf(),
+        })
+    }
+
+    /// Only a completed and cleaned-up capability test may retire evidence.
+    pub fn finish(self) {
+        if let Err(error) = retire_probe_in(&self.directory, &self.record) {
+            eprintln!("RiceField: WebDAV probe finished but journal retirement failed: {error}");
+        }
+    }
+}
+
 pub fn inspect_incomplete() -> io::Result<Vec<Record>> {
     let directory = journal_directory()?;
     match fs::symlink_metadata(&directory) {
@@ -166,10 +281,41 @@ pub fn inspect_incomplete() -> io::Result<Vec<Record>> {
     }
 }
 
+pub fn inspect_incomplete_probes() -> io::Result<Vec<ProbeRecord>> {
+    let directory = journal_directory()?;
+    match fs::symlink_metadata(&directory) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(error),
+        Ok(_) => scan_probes_in(&directory),
+    }
+}
+
+pub fn inspect_evidence() -> io::Result<(Vec<Record>, Vec<ProbeRecord>)> {
+    Ok((inspect_incomplete()?, inspect_incomplete_probes()?))
+}
+
 /// Explicitly discard private evidence only after external verification.
 /// Never interacts with the remote server.
 pub fn acknowledge(record: &Record) -> io::Result<()> {
     retire_in(&journal_directory()?, record)
+}
+
+pub fn acknowledge_probe(record: &ProbeRecord) -> io::Result<()> {
+    retire_probe_in(&journal_directory()?, record)
+}
+
+fn retire_probe_in(directory: &Path, record: &ProbeRecord) -> io::Result<()> {
+    if !record.valid() {
+        return Err(invalid_data("Invalid WebDAV safety-probe record"));
+    }
+    check_private_directory(directory)?;
+    let _lock = lock_directory(directory)?;
+    let path = probe_path(directory, &record.id)?;
+    if read_probe_record(&path)? != *record {
+        return Err(invalid_data("WebDAV probe evidence changed since review"));
+    }
+    fs::remove_file(&path)?;
+    File::open(directory)?.sync_all()
 }
 
 fn retire_in(directory: &Path, record: &Record) -> io::Result<()> {
@@ -208,6 +354,39 @@ fn scan_in(directory: &Path) -> io::Result<Vec<Record>> {
         let record = read_record(&entry.path())?;
         if record.id != id {
             return Err(invalid_data("WebDAV journal filename and record differ"));
+        }
+        records.push(record);
+    }
+    records.sort_by(|left, right| {
+        right
+            .created_unix_seconds
+            .cmp(&left.created_unix_seconds)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    Ok(records)
+}
+
+fn scan_probes_in(directory: &Path) -> io::Result<Vec<ProbeRecord>> {
+    check_private_directory(directory)?;
+    let mut records = Vec::new();
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            return Err(invalid_data("Invalid filename in WebDAV journal directory"));
+        };
+        let Some(id) = name.strip_suffix(".probe") else {
+            continue;
+        };
+        if id.len() != 32 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(invalid_data("Unexpected WebDAV probe journal filename"));
+        }
+        if records.len() >= MAX_RECORDS {
+            return Err(invalid_data("WebDAV probe journal capacity exceeded"));
+        }
+        let record = read_probe_record(&entry.path())?;
+        if record.id != id {
+            return Err(invalid_data("WebDAV probe journal filename and record differ"));
         }
         records.push(record);
     }
@@ -267,11 +446,64 @@ fn read_record(path: &Path) -> io::Result<Record> {
     Ok(record)
 }
 
+fn read_probe_record(path: &Path) -> io::Result<ProbeRecord> {
+    let before = fs::symlink_metadata(path)?;
+    if !before.is_file()
+        || before.len() > MAX_RECORD_BYTES
+        || before.mode() & 0o077 != 0
+        || before.uid() != unsafe { libc::geteuid() }
+    {
+        return Err(invalid_data(
+            "WebDAV probe journal file is not private and regular",
+        ));
+    }
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+        .open(path)?;
+    let current = file.metadata()?;
+    if current.dev() != before.dev() || current.ino() != before.ino() {
+        return Err(invalid_data("WebDAV probe journal was replaced during open"));
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_RECORD_BYTES + 1).read_to_end(&mut bytes)?;
+    let after = fs::symlink_metadata(path)?;
+    if bytes.len() as u64 > MAX_RECORD_BYTES
+        || after.dev() != before.dev()
+        || after.ino() != before.ino()
+        || after.len() != before.len()
+        || after.mtime() != before.mtime()
+        || after.mtime_nsec() != before.mtime_nsec()
+        || after.ctime() != before.ctime()
+        || after.ctime_nsec() != before.ctime_nsec()
+    {
+        return Err(invalid_data("WebDAV probe journal changed during read"));
+    }
+    let text = std::str::from_utf8(&bytes).map_err(io::Error::other)?;
+    let stored: StoredProbeRecord = toml::from_str(text).map_err(io::Error::other)?;
+    let record = ProbeRecord {
+        id: stored.id,
+        prefix_uri: stored.prefix_uri,
+        created_unix_seconds: stored.created_unix_seconds,
+    };
+    if stored.version != VERSION || !record.valid() {
+        return Err(invalid_data("Unsupported or invalid WebDAV probe journal"));
+    }
+    Ok(record)
+}
+
 fn record_path(directory: &Path, id: &str) -> io::Result<PathBuf> {
     if id.len() != 32 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(invalid_data("Invalid WebDAV journal ID"));
     }
     Ok(directory.join(format!("{id}.toml")))
+}
+
+fn probe_path(directory: &Path, id: &str) -> io::Result<PathBuf> {
+    if id.len() != 32 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(invalid_data("Invalid WebDAV safety-probe ID"));
+    }
+    Ok(directory.join(format!("{id}.probe")))
 }
 
 fn journal_directory() -> io::Result<PathBuf> {
@@ -394,6 +626,49 @@ mod tests {
         handle.finish();
         assert!(scan_in(&directory).unwrap().is_empty());
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn safety_probe_evidence_is_durable_before_network_mutation() {
+        let directory = isolated_directory();
+        let prefix =
+            "https://dav.example.test/share/.ricefield-safety-0123456789abcdef0123456789abcdef";
+        let handle = PendingProbe::begin_in(&directory, prefix).unwrap();
+        let records = scan_probes_in(&directory).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].prefix_uri, prefix);
+        let metadata = fs::metadata(directory.join(format!("{}.probe", records[0].id))).unwrap();
+        assert_eq!(metadata.mode() & 0o077, 0);
+        drop(handle); // Simulated interruption: evidence must survive.
+        assert_eq!(scan_probes_in(&directory).unwrap(), records);
+        retire_probe_in(&directory, &records[0]).unwrap();
+        assert!(scan_probes_in(&directory).unwrap().is_empty());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn safety_probe_acknowledgement_rejects_stale_and_unsafe_records() {
+        let directory = isolated_directory();
+        let prefix =
+            "https://dav.example.test/share/.ricefield-safety-0123456789abcdef0123456789abcdef";
+        let handle = PendingProbe::begin_in(&directory, prefix).unwrap();
+        let mut stale = scan_probes_in(&directory).unwrap().remove(0);
+        stale.prefix_uri.push_str("-changed");
+        assert!(retire_probe_in(&directory, &stale).is_err());
+        drop(handle);
+        let path = directory.join("0123456789abcdef0123456789abcdef.probe");
+        fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink("/etc/passwd", &path).unwrap();
+        assert!(scan_probes_in(&directory).is_err());
+        fs::remove_dir_all(directory).unwrap();
+
+        let directory = isolated_directory();
+        assert!(PendingProbe::begin_in(
+            &directory,
+            "https://person:password@dav.example.test/share/.ricefield-safety-0123456789abcdef0123456789abcdef",
+        )
+        .is_err());
+        assert!(!directory.exists());
     }
 
     #[test]

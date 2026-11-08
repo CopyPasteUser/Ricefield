@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased — crash-visible WebDAV safety-probe evidence
+
+- Persist a private, synced, credential-free journal of each random WebDAV
+  collision-probe prefix **before** the first probe PUT. Refuse remote tests
+  when the evidence cannot be stored; retire it only after all four rounds
+  and their cleanup succeed.
+- Failed or interrupted probes remain visible after restart alongside uncertain
+  uploads, with copyable probe prefixes and explicitly confirmed local-only
+  evidence dismissal. Recovery never automatically accesses or deletes server
+  files. Add permission, tampering, unsafe-server and actual child-process
+  SIGKILL-after-probe-PUT regressions.
+- Previously orphaned probes created before this change are not discoverable;
+  real NAS/offline acceptance and protocol-specific SMB/SFTP/MTP writes remain open.
+
 ## Unreleased — cancellable local WebDAV upload snapshots
 
 - Check Cancel before and throughout the bounded 8 GiB local source snapshot,
