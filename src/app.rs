@@ -15,7 +15,7 @@ use crate::{
     location::Location,
     metadata, open_with,
     operation_queue::OperationQueue,
-    portal, preview, remote_download, remote_upload, remote_upload_journal,
+    portal, preview, remote_download, remote_upload, remote_upload_journal, remote_upload_sftp,
     shell_components::{self, ToolbarAction},
     shell_renderer::{self, FileCellLayout, shorten},
     theme::{BUILTIN_IDS, ChromeComponent, ShellKind, SidebarPosition, SidebarSection, Theme},
@@ -2780,7 +2780,8 @@ impl Explorer {
         };
         if !matches!(Location::parse(target.clone().into()),
             Ok(Location::Remote(location)) if matches!(location.scheme,
-                crate::location::RemoteScheme::Dav | crate::location::RemoteScheme::Davs))
+                crate::location::RemoteScheme::Dav | crate::location::RemoteScheme::Davs
+                | crate::location::RemoteScheme::Sftp))
         {
             self.status = Some(("This backend cannot prove an atomic no-replace publish; network writes stay disabled".into(), true));
             return;
@@ -2806,7 +2807,8 @@ impl Explorer {
         }
         let mut open = true;
         let mut upload = false;
-        egui::Window::new("Upload to WebDAV · safe publication")
+        let is_sftp = self.remote_upload_target.starts_with("sftp://");
+        egui::Window::new(if is_sftp { "Upload to SFTP · safe publication" } else { "Upload to WebDAV · safe publication" })
             .open(&mut open)
             .collapsible(false)
             .default_width(490.0)
@@ -2816,20 +2818,28 @@ impl Explorer {
                 ui.label("Local regular file (absolute path):");
                 ui.add(egui::TextEdit::singleline(&mut self.remote_upload_source)
                     .desired_width(f32::INFINITY).hint_text("/home/user/Documents/file.txt"));
-                ui.label("Username and password (or leave blank to try a saved login):");
+                ui.label(if is_sftp { "SSH username (blank = your SSH default):" } else { "Username and password (or leave blank to try a saved login):" });
                 ui.add(egui::TextEdit::singleline(&mut self.remote_upload_username)
-                    .desired_width(f32::INFINITY).hint_text("WebDAV username"));
-                ui.add(egui::TextEdit::singleline(&mut self.remote_upload_domain)
-                    .desired_width(f32::INFINITY).hint_text("Domain (optional)"));
-                ui.add(egui::TextEdit::singleline(&mut self.remote_upload_password)
-                    .password(true).desired_width(f32::INFINITY).hint_text("Password"));
+                    .desired_width(f32::INFINITY).hint_text(if is_sftp { "SSH username" } else { "WebDAV username" }));
+                if is_sftp {
+                    ui.small("Use a configured SSH key or SSH agent and a trusted known_hosts entry. Password login is unavailable in this safe upload path. Names and paths are restricted to ASCII letters, digits, spaces, dots, dashes and underscores.");
+                } else {
+                    ui.add(egui::TextEdit::singleline(&mut self.remote_upload_domain)
+                        .desired_width(f32::INFINITY).hint_text("Domain (optional)"));
+                    ui.add(egui::TextEdit::singleline(&mut self.remote_upload_password)
+                        .password(true).desired_width(f32::INFINITY).hint_text("Password"));
+                }
                 if self.remote_upload_target.starts_with("dav://") {
                     ui.checkbox(&mut self.remote_upload_allow_http,
                         "Allow unencrypted HTTP for this upload")
                         .on_hover_text("HTTP may expose credentials and file contents on the network. Prefer davs:// with a trusted certificate.");
                 }
                 ui.separator();
-                ui.small("Before any file is published, RiceField tests the server's overwrite protection using disposable internal files, uploads a private stage, and compares every byte. The server must accept Overwrite:F; existing destinations are never intentionally replaced. Unsuccessful remote stages are left for manual inspection.");
+                ui.small(if is_sftp {
+                    "RiceField probes OpenSSH hardlink collision safety, uploads into a private directory, reads every byte back, and publishes using an exclusive server-side hardlink. The server must support hardlink@openssh.com. Uncertain stages are recorded for manual review."
+                } else {
+                    "RiceField probes WebDAV overwrite protection, uploads a private stage and verifies every byte. The server must accept Overwrite:F; existing destinations are not replaced. Uncertain stages are recorded for manual review."
+                });
                 upload = ui.add_enabled(!self.remote_upload_busy,
                     egui::Button::new("Verify server and upload")).clicked();
             });
@@ -2857,7 +2867,11 @@ impl Explorer {
             self.remote_upload_busy = true;
             let sender = self.remote_upload_sender.clone();
             thread::spawn(move || {
-                let result = remote_upload::upload(request, &cancelled);
+                let result = if request.remote_directory.starts_with("sftp://") {
+                    remote_upload_sftp::upload(request, &cancelled)
+                } else {
+                    remote_upload::upload(request, &cancelled)
+                };
                 let _ = sender.send(result);
             });
             self.remote_upload_open = false;
@@ -3935,7 +3949,7 @@ impl Explorer {
                 }
                 Err(error) => (
                     format!(
-                        "WebDAV upload not published: {error}. Inspect private server staging if a transfer was interrupted."
+                        "Remote upload needs review: {error}. Inspect any recorded server staging before retrying."
                     ),
                     true,
                 ),
@@ -4110,7 +4124,7 @@ impl Explorer {
                             || !self.remote_probe_records.is_empty()
                         {
                             format!(
-                                "{} unfinished local move(s), {} uncertain WebDAV upload(s), {} safety probe(s) — review before remote cleanup",
+                                "{} unfinished local move(s), {} uncertain remote upload(s), {} safety probe(s) — review before remote cleanup",
                                 self.recovery_records.len(),
                                 self.remote_journal_records.len(),
                                 self.remote_probe_records.len(),
@@ -4338,19 +4352,22 @@ impl Explorer {
                     || self.remote_journal_error.is_some()
                 {
                     ui.separator();
-                    ui.heading("Uncertain WebDAV transfers and safety probes");
-                    ui.label("A timeout or crash may have left private objects on the WebDAV server. RiceField never queries, retries, moves or deletes them during recovery. Review the named paths on the server before discarding local evidence.");
+                    ui.heading("Uncertain remote transfers and safety probes");
+                    ui.label("A timeout or crash may have left private objects on the remote server. RiceField never queries, retries, moves or deletes them during recovery. Review the named paths before discarding local evidence.");
                     if let Some(error) = &self.remote_journal_error {
-                        ui.colored_label(Color32::LIGHT_RED, format!("Cannot inspect WebDAV evidence: {error}"));
+                        ui.colored_label(Color32::LIGHT_RED, format!("Cannot inspect remote evidence: {error}"));
                     }
                     egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
                     for record in &self.remote_journal_records {
                         ui.group(|ui| {
-                            ui.strong(format!("WebDAV upload {}", record.id));
+                            ui.strong(format!("Remote upload {}", record.id));
                             ui.label("Intended destination:");
                             ui.monospace(&record.destination_uri);
                             ui.label("Private stage (may or may not exist):");
                             ui.monospace(&record.stage_uri);
+                            if record.stage_uri.starts_with("sftp://") {
+                                ui.small("SFTP stage is a private directory. Inspect its /payload entry before removing anything.");
+                            }
                             ui.horizontal_wrapped(|ui| {
                                 if ui.button("Copy stage URI").clicked() {
                                     context.copy_text(record.stage_uri.clone());
@@ -4378,10 +4395,14 @@ impl Explorer {
                     }
                     for record in &self.remote_probe_records {
                         ui.group(|ui| {
-                            ui.strong(format!("WebDAV safety probe {}", record.id));
+                            ui.strong(format!("Remote safety probe {}", record.id));
                             ui.label("Private safety-probe prefix:");
                             ui.monospace(&record.prefix_uri);
-                            ui.small("Check rounds 0–3 on the server: each prefix may have -ROUND-a, -ROUND-b and -ROUND-destination objects. These contain only disposable RiceField test data, not the selected upload. Do not assume any object is absent.");
+                            ui.small(if record.prefix_uri.starts_with("sftp://") {
+                                "The SFTP probe prefix is a private directory. Inspect a, b and target-0 through target-3 inside it. Never assume the directory was cleaned."
+                            } else {
+                                "Check rounds 0–3: each prefix may have -ROUND-a, -ROUND-b and -ROUND-destination objects. They contain disposable test data, not the selected upload."
+                            });
                             if ui.button("Copy probe prefix").clicked() {
                                 context.copy_text(record.prefix_uri.clone());
                             }
@@ -4407,7 +4428,7 @@ impl Explorer {
                 if self.remote_journal_loading {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label("Checking private WebDAV evidence…");
+                        ui.label("Checking private remote evidence…");
                     });
                 }
                 ui.separator();
@@ -9310,10 +9331,11 @@ impl Explorer {
 
     fn remote_panel(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme.clone();
-        let remote_webdav = self.current().remote_uri.as_ref().is_some_and(|uri| {
+        let remote_write_safe = self.current().remote_uri.as_ref().is_some_and(|uri| {
             matches!(Location::parse(uri.clone().into()),
                 Ok(Location::Remote(location)) if matches!(location.scheme,
-                    crate::location::RemoteScheme::Dav | crate::location::RemoteScheme::Davs))
+                    crate::location::RemoteScheme::Dav | crate::location::RemoteScheme::Davs
+                    | crate::location::RemoteScheme::Sftp))
         });
         let title = match theme.shell_kind() {
             ShellKind::Classic => "Network Neighborhood",
@@ -9341,7 +9363,7 @@ impl Explorer {
                         ui.horizontal_wrapped(|ui| {
                             ui.heading(title);
                             ui.label(
-                                egui::RichText::new(if remote_webdav {
+                                egui::RichText::new(if remote_write_safe {
                                     "READ-ONLY BROWSE · CONDITIONAL UPLOAD"
                                 } else {
                                     "READ ONLY"
@@ -9403,7 +9425,7 @@ impl Explorer {
                 if self.remote_upload_busy {
                     ui.horizontal_wrapped(|ui| {
                         ui.spinner();
-                        ui.strong("Verifying WebDAV server and staging upload…");
+                        ui.strong("Verifying remote server and staging upload…");
                         if ui.button("Request cancellation").clicked() {
                             self.remote_upload_cancel.store(true, Ordering::Relaxed);
                         }
@@ -9554,9 +9576,9 @@ impl Explorer {
                 }).cloned();
                 let mut selected_action = None;
                 ui.horizontal_wrapped(|ui| {
-                    if ui.add_enabled(remote_webdav && !self.remote_upload_busy,
+                    if ui.add_enabled(remote_write_safe && !self.remote_upload_busy,
                         egui::Button::new("Upload file…"))
-                        .on_hover_text(if remote_webdav {
+                        .on_hover_text(if remote_write_safe {
                             "Check server collision safety, then upload a pinned local file"
                         } else {
                             "This backend cannot guarantee an atomic no-replace publish yet"

@@ -8,7 +8,7 @@ publication; see [the reproduced race](REMOTE-WRITE-SAFETY.md).
 | Route | Browse / preview / download | RiceField remote write | Evidence / code gate | Owner hardware gate |
 | --- | --- | --- | --- | --- |
 | `smb://` (GVfs) | Read-only URI tab, bounded previews and downloads | **Disabled** | No verified server-specific atomic create-and-publish implementation | SMB NAS path, disconnect/reconnect, credentials, collisions |
-| `sftp://` (GVfs) | Read-only URI tab, bounded previews and downloads | **Disabled** | No verified atomic no-replace publication implementation; no generic rename fallback | SFTP account, permission failures, latency and disconnect |
+| `sftp://` (GVfs) | Read-only URI tab, bounded previews and downloads | **Conditional single-file upload via OpenSSH client only** | Private `0700` staging directory; disposable four-round server-side `hardlink@openssh.com` test with independent clients; full staged GET byte comparison; atomic hardlink-to-final that refuses occupied names. Private synced evidence before probe/staging mutation. No rename fallback. | Real SFTP host, SSH host key and agent, hardlink support, permissions, latency/disconnect, storage consistency |
 | `dav://`, `davs://` | Read-only URI tab plus separately authorized single-file upload | **Conditional single-file upload only** | Exclusive random stage PUT, byte-for-byte verification, `MOVE Overwrite: F`, sequential and concurrent two-client collision probes; separate private durable safety-probe evidence before any probe PUT and upload evidence before its own PUT. Reject a server that fails any probe. | Real NAS/WebDAV server, HTTP/TLS/auth, offline/crash, competing clients, manual journal cleanup |
 | `mtp://` (GVfs) | Read-only browsing and supported download | **Disabled** | No verified atomic no-replace server-side commit or predictable recovery | Actual phone/handheld, unplug, permission and reconnect behavior |
 | System-mounted NFS / SMB path | Navigated as a local filesystem | Only operations explicitly accepted by the guarded local engine | Kernel/mount filesystem primitives must actually support local no-overwrite and metadata checks; a network mount is not a blanket atomicity guarantee | NFS/SMB mount with real concurrent clients and disconnect |
@@ -52,11 +52,26 @@ after the mock server stores it but before the client receives its response;
 the probe journal must already be durable and the requested upload must not
 have started.
 
+SFTP tests use **real OpenSSH SFTP protocol traffic**, not GVfs emulation:
+`sftp -D /usr/lib/openssh/sftp-server` runs the isolated local server and
+verifies successful publication, existing-file and symlink collisions, a
+simultaneous two-client hardlink race, unsafe URI rejection and unavailable
+server handling. The production path uses `sftp -b -` with strict host-key
+checking, public-key / SSH-agent authentication and no password injection.
+If OpenSSH hardlink support, remote creation, byte comparison or safety tests
+fail, the upload fails closed; uncertain private probe/stage directories remain
+in the local review journal without automatic server mutations.
+
+SFTP upload paths and filenames currently accept only ASCII letters, digits,
+spaces, dots, underscores and hyphens, without traversal or wildcard syntax.
+IPv6 literal hosts and password-based SFTP upload are not supported. Browsing
+and downloading via GVfs remain independent of these upload restrictions.
+
 Mocks do **not** demonstrate a particular real NAS implementation's semantics,
 storage durability, filesystem driver behavior or physical power-loss safety.
 Those require the owner's disposable NAS/Mint tests before stable 1.0.
 
-The unsupported SMB/SFTP/MTP remote writers are deliberately not claimed as
-implemented. Their read-only scope is a safety decision, not a test pass for
-future remote writes. Track work under
+SMB and MTP remote writers remain disabled. The restricted SFTP writer is
+**not** a blanket claim of safe writes on every SFTP server. Track further
+backend acceptance under
 [P0 issue #84](https://github.com/CopyPasteUser/Ricefield/issues/84).

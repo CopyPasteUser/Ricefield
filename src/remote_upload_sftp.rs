@@ -1,0 +1,577 @@
+//! Key-authenticated SFTP uploads with private staging and server-atomic
+//! `hardlink@openssh.com` publication. Never fall back to SFTP rename.
+
+use crate::{
+    location::{Location, RemoteScheme},
+    remote_upload::{self, Snapshot, UploadRequest, UploadResult},
+    remote_upload_journal,
+};
+use std::{
+    ffi::OsStr,
+    fs::{self, File},
+    io::{Read, Write},
+    os::unix::fs::OpenOptionsExt,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+    sync::atomic::{AtomicBool, Ordering},
+    thread,
+    time::{Duration, Instant},
+};
+
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
+
+#[derive(Clone)]
+enum Connection {
+    Ssh { host: String, port: Option<u16>, username: Option<String> },
+    #[cfg(test)]
+    LocalServer(PathBuf),
+}
+
+#[derive(Clone)]
+struct Target {
+    connection: Connection,
+    path: String,
+    uri: String,
+}
+
+fn safe_ascii_path(value: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > 2048
+        || !value.starts_with('/')
+        || !value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'.' | b'-' | b'_' | b' ')
+        })
+        || value.split('/').any(|part| part == "." || part == "..")
+    {
+        return Err("SFTP upload requires an absolute path with letters, digits, spaces, '.', '-' or '_' only; no traversal or wildcards".into());
+    }
+    Ok(())
+}
+
+fn decode_remote_path(encoded: &str) -> Result<String, String> {
+    let bytes = encoded.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let text = std::str::from_utf8(
+                bytes.get(index + 1..index + 3).ok_or("Invalid SFTP URI escape")?,
+            )
+            .map_err(|_| "Invalid SFTP URI escape")?;
+            out.push(u8::from_str_radix(text, 16).map_err(|_| "Invalid SFTP URI escape")?);
+            index += 3;
+        } else {
+            out.push(bytes[index]);
+            index += 1;
+        }
+    }
+    let decoded = String::from_utf8(out).map_err(|_| "SFTP path must use ASCII characters")?;
+    safe_ascii_path(&decoded)?;
+    Ok(decoded)
+}
+
+fn safe_basename(name: &OsStr) -> Result<&str, String> {
+    let name = name.to_str().ok_or("SFTP filename must be UTF-8")?;
+    if name.is_empty()
+        || name.len() > 255
+        || name == "."
+        || name == ".."
+        || !name.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_' | b' ')
+        })
+    {
+        return Err("SFTP upload filenames currently support ASCII letters, digits, spaces, '.', '-' and '_' only".into());
+    }
+    Ok(name)
+}
+
+fn user_token(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && !value.starts_with('-')
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
+        })
+}
+
+impl Target {
+    fn parse(uri: &str, username: &str, password: &str, domain: &str) -> Result<Self, String> {
+        match Location::parse(uri.into()) {
+            Ok(Location::Remote(remote)) if remote.scheme == RemoteScheme::Sftp => {}
+            _ => return Err("Upload destination must be a validated sftp:// URI".into()),
+        }
+        if !password.is_empty() || !domain.is_empty() {
+            return Err("SFTP safe uploads use your configured SSH key or agent; passwords and domains are not passed to external commands".into());
+        }
+        if !username.is_empty() && !user_token(username) {
+            return Err("Invalid SFTP SSH username".into());
+        }
+        let remainder = uri.split_once("://").unwrap().1;
+        let (authority, raw_path) = remainder
+            .split_once('/')
+            .map(|(authority, path)| (authority, format!("/{path}")))
+            .unwrap_or((remainder, "/".into()));
+        if authority.starts_with('[') {
+            return Err("SFTP safe upload does not yet support IPv6 literal hosts".into());
+        }
+        let (host, port) = authority.split_once(':').unwrap_or((authority, ""));
+        if !user_token(host) {
+            return Err("Invalid SFTP hostname".into());
+        }
+        let port = if port.is_empty() { None } else { Some(port.parse::<u16>().map_err(|_| "Invalid SFTP port")?) };
+        if port == Some(0) {
+            return Err("Invalid SFTP port".into());
+        }
+        let path = decode_remote_path(&raw_path)?;
+        Ok(Self {
+            connection: Connection::Ssh {
+                host: host.into(),
+                port,
+                username: (!username.is_empty()).then(|| username.into()),
+            },
+            path: path.trim_end_matches('/').to_owned(),
+            uri: uri.trim_end_matches('/').to_owned(),
+        })
+    }
+
+    fn run(&self, batch: &str, cancelled: &AtomicBool) -> Result<(), String> {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err("SFTP upload cancelled".into());
+        }
+        let mut cmd = Command::new("sftp");
+        cmd.args(["-b", "-"]);
+        match &self.connection {
+            Connection::Ssh { host, port, username } => {
+                cmd.args([
+                    "-oBatchMode=yes",
+                    "-oStrictHostKeyChecking=yes",
+                    "-oNumberOfPasswordPrompts=0",
+                    "-oConnectionAttempts=1",
+                    "-oConnectTimeout=15",
+                    "-oServerAliveInterval=5",
+                    "-oServerAliveCountMax=2",
+                    "-oForwardAgent=no",
+                    "-oClearAllForwardings=yes",
+                ]);
+                if let Some(port) = port {
+                    cmd.args(["-P", &port.to_string()]);
+                }
+                if let Some(username) = username {
+                    cmd.arg(format!("-oUser={username}"));
+                }
+                cmd.arg(host);
+            }
+            #[cfg(test)]
+            Connection::LocalServer(server) => {
+                cmd.args(["-D", server.to_str().ok_or("Invalid test server path")?]);
+            }
+        }
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut child = cmd.spawn().map_err(|error| format!("Cannot start SFTP: {error}"))?;
+        if let Err(error) = child
+            .stdin
+            .take()
+            .ok_or("Missing SFTP batch input")?
+            .write_all(batch.as_bytes())
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("Cannot deliver SFTP command: {error}"));
+        }
+        let started = Instant::now();
+        loop {
+            if cancelled.load(Ordering::Relaxed) || started.elapsed() > REQUEST_TIMEOUT {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(if cancelled.load(Ordering::Relaxed) {
+                    "SFTP upload cancelled"
+                } else {
+                    "SFTP server timed out"
+                }
+                .into());
+            }
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    return if status.success() {
+                        Ok(())
+                    } else {
+                        Err(format!("SFTP server refused operation (exit {status})"))
+                    };
+                }
+                Ok(None) => thread::sleep(Duration::from_millis(30)),
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!("SFTP process failed: {error}"));
+                }
+            }
+        }
+    }
+}
+fn quoted(path: &str) -> String {
+    // Every input is validated ASCII without quotes, backslashes, glob
+    // metacharacters, newlines or SFTP batch separators.
+    format!("\"{path}\"")
+}
+
+fn put(client: &Target, source: &Path, target: &str, cancelled: &AtomicBool) -> Result<(), String> {
+    let local = source.to_str().ok_or("Invalid local snapshot path")?;
+    safe_ascii_path(local)?;
+    client.run(&format!("put {} {}\n", quoted(local), quoted(target)), cancelled)
+}
+
+fn get(client: &Target, source: &str, target: &Path, cancelled: &AtomicBool) -> Result<(), String> {
+    let local = target.to_str().ok_or("Invalid local verification path")?;
+    safe_ascii_path(local)?;
+    client.run(&format!("get {} {}\n", quoted(source), quoted(local)), cancelled)
+}
+
+fn compare_files(source: &Path, copy: &Path, cancelled: &AtomicBool) -> Result<(), String> {
+    let mut source = File::open(source).map_err(|error| error.to_string())?;
+    let mut copy = File::open(copy).map_err(|error| error.to_string())?;
+    let mut source_buffer = [0_u8; 64 * 1024];
+    let mut copy_buffer = [0_u8; 64 * 1024];
+    loop {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err("SFTP verification cancelled".into());
+        }
+        let count = source.read(&mut source_buffer).map_err(|error| error.to_string())?;
+        copy.read_exact(&mut copy_buffer[..count])
+            .map_err(|error| format!("SFTP staged response is shorter than the source: {error}"))?;
+        if source_buffer[..count] != copy_buffer[..count] {
+            return Err("SFTP staged bytes differ from the pinned local snapshot".into());
+        }
+        if count == 0 {
+            let mut tail = [0_u8; 1];
+            return if copy.read(&mut tail).map_err(|error| error.to_string())? == 0 {
+                Ok(())
+            } else {
+                Err("SFTP staged response exceeds the source length".into())
+            };
+        }
+    }
+}
+
+fn private_directory(client: &Target, path: &str, cancelled: &AtomicBool) -> Result<(), String> {
+    client.run(
+        &format!("mkdir {}\nchmod 700 {}\n", quoted(path), quoted(path)),
+        cancelled,
+    )
+}
+
+fn remove_private_directory(
+    client: &Target,
+    dir: &str,
+    names: &[&str],
+    cancelled: &AtomicBool,
+) -> Result<(), String> {
+    let mut batch = String::new();
+    for name in names {
+        batch.push_str(&format!("rm {}\n", quoted(&format!("{dir}/{name}"))));
+    }
+    batch.push_str(&format!("rmdir {}\n", quoted(dir)));
+    client.run(&batch, cancelled)
+}
+
+fn write_private_payload(path: &Path, contents: &[u8]) -> Result<(), String> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true).mode(0o600);
+    let mut file = options.open(path).map_err(|error| error.to_string())?;
+    file.write_all(contents).map_err(|error| error.to_string())?;
+    file.sync_all().map_err(|error| error.to_string())
+}
+
+fn probe_atomic_hardlink(
+    client: &Target,
+    snapshot: &Snapshot,
+    cancelled: &AtomicBool,
+    journal_override: Option<&Path>,
+) -> Result<(), String> {
+    let id = remote_upload::random_suffix().map_err(|error| error.to_string())?;
+    let dir = format!("{}/.ricefield-safety-{id}", client.path);
+    let uri = format!("{}/.ricefield-safety-{id}", client.uri);
+    let pending = match journal_override {
+        Some(path) => remote_upload_journal::PendingProbe::begin_in(path, &uri),
+        None => remote_upload_journal::PendingProbe::begin(&uri),
+    }
+    .map_err(|error| format!("Cannot durably record SFTP safety probe before writing: {error}"))?;
+    let error_with_path = |message: String| {
+        format!(
+            "{message}. Private SFTP probe objects may remain under {uri}. Review server contents and the local recovery record before manual cleanup"
+        )
+    };
+    let result = (|| {
+        private_directory(client, &dir, cancelled)?;
+        let local_a = snapshot.private_file("probe-a.payload");
+        let local_b = snapshot.private_file("probe-b.payload");
+        let a = b"ricefield-sftp-safe-a";
+        let b = b"ricefield-sftp-safe-b";
+        write_private_payload(&local_a, a)?;
+        write_private_payload(&local_b, b)?;
+        put(client, &local_a, &format!("{dir}/a"), cancelled)?;
+        put(client, &local_b, &format!("{dir}/b"), cancelled)?;
+        for round in 0..4 {
+            let target = format!("{dir}/target-{round}");
+            let link_a = format!("ln {} {}\n", quoted(&format!("{dir}/a")), quoted(&target));
+            let link_b = format!("ln {} {}\n", quoted(&format!("{dir}/b")), quoted(&target));
+            let (result_a, result_b) = if round == 0 {
+                (client.run(&link_a, cancelled), client.run(&link_b, cancelled))
+            } else {
+                thread::scope(|scope| {
+                    let a = scope.spawn(|| client.run(&link_a, cancelled));
+                    let b = scope.spawn(|| client.run(&link_b, cancelled));
+                    Ok::<_, String>((
+                        a.join().map_err(|_| "SFTP probe worker panicked".to_owned())?,
+                        b.join().map_err(|_| "SFTP probe worker panicked".to_owned())?,
+                    ))
+                })?
+            };
+            if result_a.is_ok() == result_b.is_ok() {
+                return Err(format!(
+                    "SFTP atomic hardlink collision failed in round {round}: {result_a:?}, {result_b:?}"
+                ));
+            }
+            if cancelled.load(Ordering::Relaxed) {
+                return Err("SFTP probe cancelled".into());
+            }
+            let verify_path = snapshot.private_file("sftp-verify.payload");
+            get(client, &target, &verify_path, cancelled)?;
+            let verified = fs::read(&verify_path).map_err(|error| error.to_string())?;
+            let expected = if result_a.is_ok() { a } else { b };
+            if verified != expected {
+                return Err("SFTP hardlink target contains unexpected bytes".into());
+            }
+            fs::remove_file(verify_path).map_err(|error| error.to_string())?;
+        }
+        remove_private_directory(
+            client,
+            &dir,
+            &["target-0", "target-1", "target-2", "target-3", "a", "b"],
+            cancelled,
+        )
+    })();
+    result.map_err(error_with_path)?;
+    pending.finish();
+    Ok(())
+}
+
+pub fn upload(request: UploadRequest, cancelled: &AtomicBool) -> Result<UploadResult, String> {
+    let client = Target::parse(
+        &request.remote_directory,
+        &request.credentials.username,
+        &request.credentials.password,
+        &request.credentials.domain,
+    )?;
+    upload_with_client(request, cancelled, &client, None)
+}
+
+fn upload_with_client(
+    request: UploadRequest,
+    cancelled: &AtomicBool,
+    client: &Target,
+    journal_override: Option<&Path>,
+) -> Result<UploadResult, String> {
+    let filename = request.source.file_name().ok_or("Select a regular local file")?;
+    let basename = safe_basename(filename)?;
+    let encoded = remote_upload::escape_filename(filename)?;
+    let destination = format!("{}/{}", client.path, basename);
+    let destination_uri = format!("{}/{}", client.uri, encoded);
+    let snapshot = Snapshot::create(&request.source, cancelled)?;
+    probe_atomic_hardlink(client, &snapshot, cancelled, journal_override)?;
+
+    let id = remote_upload::random_suffix().map_err(|error| error.to_string())?;
+    let directory = format!("{}/.ricefield-upload-{id}", client.path);
+    let stage_uri = format!("{}/.ricefield-upload-{id}", client.uri);
+    let pending = match journal_override {
+        Some(path) => remote_upload_journal::PendingUpload::begin_in(path, &stage_uri, &destination_uri),
+        None => remote_upload_journal::PendingUpload::begin(&stage_uri, &destination_uri),
+    }
+    .map_err(|error| format!("Cannot durably record SFTP stage before writing: {error}"))?;
+    let error_with_path = |message: String| {
+        format!(
+            "{message}. SFTP publication may be ambiguous; inspect {stage_uri}/payload and {destination_uri} before remote cleanup or local journal dismissal"
+        )
+    };
+    let result = (|| {
+        private_directory(client, &directory, cancelled)?;
+        let stage = format!("{directory}/payload");
+        put(client, snapshot.path(), &stage, cancelled)?;
+        let verify_path = snapshot.private_file("sftp-verify.payload");
+        get(client, &stage, &verify_path, cancelled)?;
+        compare_files(snapshot.path(), &verify_path, cancelled)?;
+        fs::remove_file(verify_path).map_err(|error| error.to_string())?;
+        if cancelled.load(Ordering::Relaxed) {
+            return Err("SFTP upload cancelled before publication".into());
+        }
+        // An uncertain link response must not be retried. Ignore cancellation
+        // once the server might have committed the final directory entry.
+        let publishing = AtomicBool::new(false);
+        client.run(&format!("ln {} {}\n", quoted(&stage), quoted(&destination)), &publishing)?;
+        remove_private_directory(client, &directory, &["payload"], &publishing)
+    })();
+    result.map_err(error_with_path)?;
+    pending.finish();
+    Ok(UploadResult {
+        uri: destination_uri,
+        bytes: snapshot.bytes,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::volume::MountCredentials;
+    use std::{os::unix::fs::DirBuilderExt, sync::Arc};
+
+    fn server() -> PathBuf {
+        let executable = PathBuf::from("/usr/lib/openssh/sftp-server");
+        assert!(executable.is_file(), "install openssh-sftp-server for real SFTP protocol tests");
+        executable
+    }
+
+    struct Fixture {
+        directory: PathBuf,
+        source: PathBuf,
+        journal: PathBuf,
+        client: Target,
+    }
+
+    impl Fixture {
+        fn new(server: PathBuf) -> Self {
+            let directory = std::env::temp_dir().join(format!(
+                "ricefield-sftp-test-{}",
+                remote_upload::random_suffix().unwrap()
+            ));
+            fs::DirBuilder::new().mode(0o700).create(&directory).unwrap();
+            let source = directory.join("example.txt");
+            let journal = directory.join("evidence");
+            let remote = directory.join("remote");
+            fs::DirBuilder::new().mode(0o700).create(&remote).unwrap();
+            fs::write(&source, b"pinned-source-content\n").unwrap();
+            Self {
+                client: Target {
+                    connection: Connection::LocalServer(server),
+                    path: remote.to_str().unwrap().to_owned(),
+                    uri: format!("sftp://localhost{}", remote.display()),
+                },
+                source,
+                journal,
+                directory,
+            }
+        }
+
+        fn request(&self) -> UploadRequest {
+            UploadRequest {
+                source: self.source.clone(),
+                remote_directory: self.client.uri.clone(),
+                credentials: MountCredentials {
+                    username: String::new(),
+                    password: String::new(),
+                    domain: String::new(),
+                },
+                allow_insecure_http: false,
+            }
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.directory);
+        }
+    }
+
+    #[test]
+    fn sftp_path_and_connection_validation_fails_closed() {
+        for input in ["/ok/../bad", "/bad;rm", "/bad\nmkdir /oops", "/bad\\escape", "relative"] {
+            assert!(safe_ascii_path(input).is_err(), "{input:?}");
+        }
+        assert!(Target::parse("sftp://localhost/tmp/folder", "user", "password", "").is_err());
+        assert!(Target::parse("sftp://localhost/tmp/folder", "-oInject", "", "").is_err());
+        assert!(Target::parse("sftp://localhost/tmp/a%20b", "", "", "").is_ok());
+        assert!(Target::parse("sftp://localhost/tmp/%2E%2E/file", "", "", "").is_err());
+        assert!(Target::parse("sftp://localhost/tmp/a%0Aecho", "", "", "").is_err());
+    }
+
+    #[test]
+    fn real_sftp_private_stage_hardlink_publish_and_collision() {
+        let fixture = Fixture::new(server());
+        let cancel = AtomicBool::new(false);
+        let result = upload_with_client(fixture.request(), &cancel, &fixture.client, Some(&fixture.journal)).unwrap();
+        assert_eq!(result.bytes, b"pinned-source-content\n".len() as u64);
+        assert_eq!(fs::read(format!("{}/example.txt", fixture.client.path)).unwrap(), b"pinned-source-content\n");
+        assert_eq!(remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap().0.len(), 0);
+        assert_eq!(remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap().1.len(), 0);
+
+        // The same target name is deliberately occupied. A second upload is
+        // denied by the server-side hardlink, and the existing bytes survive.
+        fs::write(format!("{}/example.txt", fixture.client.path), b"external-winner").unwrap();
+        let error = upload_with_client(fixture.request(), &cancel, &fixture.client, Some(&fixture.journal)).unwrap_err();
+        assert!(error.contains("SFTP"));
+        assert_eq!(fs::read(format!("{}/example.txt", fixture.client.path)).unwrap(), b"external-winner");
+        let (uploads, probes) = remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap();
+        assert_eq!(uploads.len(), 1, "uncertain staged upload requires review");
+        assert!(probes.is_empty(), "successful probe is retired");
+    }
+
+    #[test]
+    fn two_real_sftp_clients_never_replace_a_competitor() {
+        let fixture = Fixture::new(server());
+        let client = Arc::new(fixture.client.clone());
+        let cancel = AtomicBool::new(false);
+        let local_a = fixture.directory.join("first.payload");
+        let local_b = fixture.directory.join("second.payload");
+        fs::write(&local_a, b"first").unwrap();
+        fs::write(&local_b, b"second").unwrap();
+        let winner = format!("{}/winner", client.path);
+        let left = format!("ln {} {}\n", quoted(local_a.to_str().unwrap()), quoted(&winner));
+        let right = format!("ln {} {}\n", quoted(local_b.to_str().unwrap()), quoted(&winner));
+        let (a, b) = thread::scope(|scope| {
+            let a = scope.spawn(|| client.run(&left, &cancel));
+            let b = scope.spawn(|| client.run(&right, &cancel));
+            (a.join().unwrap(), b.join().unwrap())
+        });
+        assert_ne!(a.is_ok(), b.is_ok());
+        let expected = if a.is_ok() { b"first".as_slice() } else { b"second".as_slice() };
+        assert_eq!(fs::read(&winner).unwrap(), expected);
+        fs::remove_file(winner).unwrap();
+        fs::remove_file(local_a).unwrap();
+        fs::remove_file(local_b).unwrap();
+    }
+
+    #[test]
+    fn unavailable_sftp_server_never_publishes_and_keeps_probe_evidence() {
+        let fixture = Fixture::new(PathBuf::from("/bin/false"));
+        let cancelled = AtomicBool::new(false);
+        let error = upload_with_client(
+            fixture.request(),
+            &cancelled,
+            &fixture.client,
+            Some(&fixture.journal),
+        )
+        .unwrap_err();
+        assert!(error.contains("Private SFTP probe objects"));
+        assert!(!Path::new(&format!("{}/example.txt", fixture.client.path)).exists());
+        let (stages, probes) = remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap();
+        assert!(stages.is_empty());
+        assert_eq!(probes.len(), 1, "failed probe must remain visible after restart");
+    }
+
+    #[test]
+    fn real_sftp_refuses_a_preexisting_symlink_destination() {
+        let fixture = Fixture::new(server());
+        let destination = PathBuf::from(format!("{}/example.txt", fixture.client.path));
+        std::os::unix::fs::symlink(&fixture.source, &destination).unwrap();
+        let error = upload_with_client(
+            fixture.request(),
+            &AtomicBool::new(false),
+            &fixture.client,
+            Some(&fixture.journal),
+        )
+        .unwrap_err();
+        assert!(error.contains("SFTP"));
+        assert!(fs::symlink_metadata(&destination).unwrap().file_type().is_symlink());
+        assert_eq!(fs::read(&fixture.source).unwrap(), b"pinned-source-content\n");
+    }
+}
