@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.0.0-rc.21 — recoverable network operations (owner acceptance pending)
+
+- Consolidate the narrow conditional SFTP/SMB single-file writers, durable
+  server-probe evidence and cancellation/size limits for remote transfers.
+  Keep MTP and all unverified rename/delete paths read-only.
+- Add real OpenSSH and Samba child-process crash checks, and the signed
+  production Rust SMB uploader to the continuous integration gates. All
+  physical Synology/USB/network-drop/power-loss scenarios remain unverified.
+- Add two-directory durability barriers and actual-process checkpoints for
+  remote-to-local downloads, plus responsive large-folder projections and
+  the guarded Open With/ACL changes detailed below.
+- This is another **development RC**, not a code-freeze declaration or stable
+  `v1.0.0` tag. Run the owner's hardware checklist only after the matching
+  RC CI completes successfully, using disposable media and keeping Thunar.
+
+The following development increments were merged after `rc.20` and are
+included in `rc.21`:
+
 ## Unreleased — signed Samba end-to-end uploader regression (P0)
 
 - Reuse the disposable localhost Samba server in the Rust GitHub Actions job
