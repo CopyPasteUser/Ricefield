@@ -518,16 +518,28 @@ fn probe_no_replace(
     credentials: &MountCredentials,
     snapshot: &mut Snapshot,
     cancelled: &AtomicBool,
+    journal_override: Option<&Path>,
 ) -> Result<(), String> {
     let prefix = format!(
         "{base}/.ricefield-safety-{}",
         random_suffix().map_err(|error| error.to_string())?
     );
+    let pending = match journal_override {
+        Some(directory) => remote_upload_journal::PendingProbe::begin_in(directory, &prefix),
+        None => remote_upload_journal::PendingProbe::begin(&prefix),
+    }
+    .map_err(|error| {
+        format!(
+            "Cannot durably record WebDAV safety probe before PUT: {error}. No remote probe was started"
+        )
+    })?;
     run_probe_rounds(&prefix, credentials, snapshot, cancelled).map_err(|error| {
         format!(
             "{error}. Private WebDAV safety-probe objects may remain under {prefix}- (rounds 0–3; suffixes -a, -b and -destination). Inspect those objects and the target before manual cleanup; RiceField will not retry an uncertain probe"
         )
-    })
+    })?;
+    pending.finish();
+    Ok(())
 }
 
 fn run_probe_rounds(
@@ -692,7 +704,13 @@ fn upload_with_journal_directory(
             request.credentials
         };
     let mut snapshot = Snapshot::create(&request.source, cancelled)?;
-    probe_no_replace(&base, &credentials, &mut snapshot, cancelled)?;
+    probe_no_replace(
+        &base,
+        &credentials,
+        &mut snapshot,
+        cancelled,
+        journal_override,
+    )?;
     let stage = format!(
         "{base}/.ricefield-upload-{}",
         random_suffix().map_err(|error| error.to_string())?
@@ -777,7 +795,16 @@ mod tests {
         running: Arc<AtomicBool>,
         stall_stage_response: Arc<AtomicBool>,
         stage_put_seen: Arc<AtomicBool>,
+        stall_probe_response: Arc<AtomicBool>,
+        probe_put_seen: Arc<AtomicBool>,
         worker: Option<thread::JoinHandle<()>>,
+    }
+
+    struct StallSignals<'a> {
+        stage_response: &'a AtomicBool,
+        stage_seen: &'a AtomicBool,
+        probe_response: &'a AtomicBool,
+        probe_seen: &'a AtomicBool,
     }
 
     impl MockDav {
@@ -791,6 +818,26 @@ mod tests {
             require_auth: bool,
             stall_stage: bool,
         ) -> Self {
+            Self::start_with_stalls(
+                replace_on_move,
+                replace_on_put,
+                require_auth,
+                stall_stage,
+                false,
+            )
+        }
+
+        fn start_with_probe_stall() -> Self {
+            Self::start_with_stalls(false, false, false, false, true)
+        }
+
+        fn start_with_stalls(
+            replace_on_move: bool,
+            replace_on_put: bool,
+            require_auth: bool,
+            stall_stage: bool,
+            stall_probe: bool,
+        ) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
             listener.set_nonblocking(true).unwrap();
             let address = listener.local_addr().unwrap();
@@ -798,10 +845,14 @@ mod tests {
             let running = Arc::new(AtomicBool::new(true));
             let stall_stage_response = Arc::new(AtomicBool::new(stall_stage));
             let stage_put_seen = Arc::new(AtomicBool::new(false));
+            let stall_probe_response = Arc::new(AtomicBool::new(stall_probe));
+            let probe_put_seen = Arc::new(AtomicBool::new(false));
             let files = Arc::clone(&state);
             let alive = Arc::clone(&running);
             let stage_stall = Arc::clone(&stall_stage_response);
             let put_seen = Arc::clone(&stage_put_seen);
+            let probe_stall = Arc::clone(&stall_probe_response);
+            let probe_seen = Arc::clone(&probe_put_seen);
             let worker = thread::spawn(move || {
                 while alive.load(Ordering::Relaxed) {
                     match listener.accept() {
@@ -809,6 +860,8 @@ mod tests {
                             let files = Arc::clone(&files);
                             let stage_stall = Arc::clone(&stage_stall);
                             let put_seen = Arc::clone(&put_seen);
+                            let probe_stall = Arc::clone(&probe_stall);
+                            let probe_seen = Arc::clone(&probe_seen);
                             thread::spawn(move || {
                                 handle_dav(
                                     stream,
@@ -816,8 +869,12 @@ mod tests {
                                     replace_on_move,
                                     replace_on_put,
                                     require_auth,
-                                    &stage_stall,
-                                    &put_seen,
+                                    StallSignals {
+                                        stage_response: stage_stall.as_ref(),
+                                        stage_seen: put_seen.as_ref(),
+                                        probe_response: probe_stall.as_ref(),
+                                        probe_seen: probe_seen.as_ref(),
+                                    },
                                 )
                             });
                         }
@@ -834,6 +891,8 @@ mod tests {
                 running,
                 stall_stage_response,
                 stage_put_seen,
+                stall_probe_response,
+                probe_put_seen,
                 worker: Some(worker),
             }
         }
@@ -852,6 +911,7 @@ mod tests {
         fn drop(&mut self) {
             self.running.store(false, Ordering::Relaxed);
             self.stall_stage_response.store(false, Ordering::Release);
+            self.stall_probe_response.store(false, Ordering::Release);
             if let Some(worker) = self.worker.take() {
                 worker.join().unwrap();
             }
@@ -864,8 +924,7 @@ mod tests {
         weak_move: bool,
         weak_put: bool,
         require_auth: bool,
-        stall_stage_response: &AtomicBool,
-        stage_put_seen: &AtomicBool,
+        stalls: StallSignals<'_>,
     ) {
         let mut reader = BufReader::new(stream.try_clone().unwrap());
         let mut request_line = String::new();
@@ -959,8 +1018,14 @@ mod tests {
         // An actual child process can be killed after the server has stored
         // the private stage, while its HTTP request is still incomplete.
         if method == "PUT" && path.contains("/.ricefield-upload-") && status == 201 {
-            stage_put_seen.store(true, Ordering::Release);
-            while stall_stage_response.load(Ordering::Acquire) {
+            stalls.stage_seen.store(true, Ordering::Release);
+            while stalls.stage_response.load(Ordering::Acquire) {
+                thread::sleep(Duration::from_millis(5));
+            }
+        }
+        if method == "PUT" && path.contains("/.ricefield-safety-") && status == 201 {
+            stalls.probe_seen.store(true, Ordering::Release);
+            while stalls.probe_response.load(Ordering::Acquire) {
                 thread::sleep(Duration::from_millis(5));
             }
         }
@@ -1052,7 +1117,12 @@ mod tests {
             fs::read_dir(&journals)
                 .unwrap()
                 .filter_map(Result::ok)
-                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "toml"))
+                .filter(|entry| {
+                    entry
+                        .path()
+                        .extension()
+                        .is_some_and(|ext| ext == "toml" || ext == "probe")
+                })
                 .count(),
             0,
         );
@@ -1099,7 +1169,8 @@ mod tests {
                 .lock()
                 .unwrap()
                 .keys()
-                .any(|path| path.contains(".ricefield-upload-"))
+                .any(|path| path.contains(".ricefield-upload-")
+                    || path.contains(".ricefield-safety-"))
         );
         fs::remove_file(not_a_directory).unwrap();
         fs::remove_file(file).unwrap();
@@ -1187,14 +1258,118 @@ mod tests {
     }
 
     #[test]
+    fn abrupt_process_kill_during_probe_put_preserves_restart_evidence() {
+        const CHILD_SERVER: &str = "RICEFIELD_TEST_CRASH_PROBE_SERVER";
+        const CHILD_SOURCE: &str = "RICEFIELD_TEST_CRASH_PROBE_SOURCE";
+        const CHILD_JOURNAL: &str = "RICEFIELD_TEST_CRASH_PROBE_JOURNAL";
+        if let Ok(url) = std::env::var(CHILD_SERVER) {
+            let request = UploadRequest {
+                source: PathBuf::from(std::env::var_os(CHILD_SOURCE).unwrap()),
+                remote_directory: url,
+                credentials: MountCredentials {
+                    username: "tester".into(),
+                    domain: String::new(),
+                    password: "secret".into(),
+                },
+                allow_insecure_http: false,
+            };
+            let directory = PathBuf::from(std::env::var_os(CHILD_JOURNAL).unwrap());
+            let _ = super::upload_with_journal_directory(
+                request,
+                &AtomicBool::new(false),
+                Some(&directory),
+            );
+            panic!("probe crash fixture must be killed while the response is withheld");
+        }
+
+        let server = MockDav::start_with_probe_stall();
+        let (folder, file) = fixture_file("crash-probe.txt");
+        let journals = folder.join("probe-state");
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("remote_upload::tests::abrupt_process_kill_during_probe_put_preserves_restart_evidence")
+            .arg("--exact")
+            .env(CHILD_SERVER, &server.url)
+            .env(CHILD_SOURCE, &file)
+            .env(CHILD_JOURNAL, &journals)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !server.probe_put_seen.load(Ordering::Acquire) && Instant::now() < deadline {
+            if let Some(status) = child.try_wait().unwrap() {
+                panic!("probe fixture exited before its first PUT: {status}");
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        if !server.probe_put_seen.load(Ordering::Acquire) {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("probe fixture did not reach its first PUT");
+        }
+        child.kill().unwrap();
+        assert!(!child.wait().unwrap().success());
+        server.stall_probe_response.store(false, Ordering::Release);
+
+        let entries: Vec<_> = fs::read_dir(&journals)
+            .unwrap()
+            .map(Result::unwrap)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "probe"))
+            .collect();
+        assert_eq!(entries.len(), 1, "crashed probe lost its durable evidence");
+        let saved = fs::read_to_string(entries[0].path()).unwrap();
+        let probes: Vec<_> = server
+            .state
+            .lock()
+            .unwrap()
+            .keys()
+            .filter(|path| path.contains("/.ricefield-safety-"))
+            .cloned()
+            .collect();
+        assert_eq!(
+            probes.len(),
+            1,
+            "server did not retain the interrupted probe"
+        );
+        let prefix_path = probes[0].trim_end_matches("-0-a");
+        assert!(saved.contains(prefix_path), "journal lost the probe prefix");
+        assert!(!saved.contains("secret"));
+        assert!(server.path("crash-probe.txt").is_empty());
+        assert_eq!(fs::read(&file).unwrap(), b"verified upload bytes");
+        fs::remove_dir_all(journals).unwrap();
+        fs::remove_file(file).unwrap();
+        fs::remove_dir(folder).unwrap();
+    }
+
+    #[test]
     fn server_that_ignores_move_preconditions_is_blocked_before_publication() {
         let server = MockDav::start(true, false, false);
         let (folder, file) = fixture_file("critical.txt");
-        let result = upload(request(file.clone(), &server), &AtomicBool::new(false)).unwrap_err();
+        let journals = folder.join("safety-journals");
+        let result = super::upload_with_journal_directory(
+            request(file.clone(), &server),
+            &AtomicBool::new(false),
+            Some(&journals),
+        )
+        .unwrap_err();
         assert!(result.contains("unsafe"), "{result}");
         assert!(result.contains(".ricefield-safety-"), "{result}");
         assert!(server.path("critical.txt").is_empty());
+        let evidence: Vec<_> = fs::read_dir(&journals)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "probe"))
+            .collect();
+        assert_eq!(
+            evidence.len(),
+            1,
+            "failed probe must retain restart evidence"
+        );
+        let saved = fs::read_to_string(evidence[0].path()).unwrap();
+        assert!(saved.contains(".ricefield-safety-"));
+        assert!(!saved.contains("secret"));
         assert_eq!(fs::read(&file).unwrap(), b"verified upload bytes");
+        fs::remove_dir_all(journals).unwrap();
         fs::remove_file(file).unwrap();
         fs::remove_dir(folder).unwrap();
     }

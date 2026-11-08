@@ -47,6 +47,11 @@ const MAX_CLOSED_TABS: usize = 16;
 // Small folders update immediately; expensive 100k-entry sorts never run in egui.
 const BACKGROUND_VIEW_THRESHOLD: usize = 8_192;
 
+type WebdavEvidence = (
+    Vec<remote_upload_journal::Record>,
+    Vec<remote_upload_journal::ProbeRecord>,
+);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RemoteSort {
     Name,
@@ -1521,10 +1526,11 @@ pub struct Explorer {
     recovery_comparisons: HashMap<String, (bool, journal::Comparison)>,
     recovery_resolution_confirm: Option<String>,
     recovery_resolution_active: bool,
-    remote_journal_sender: Sender<(u64, Result<Vec<remote_upload_journal::Record>, String>)>,
-    remote_journal_receiver: Receiver<(u64, Result<Vec<remote_upload_journal::Record>, String>)>,
+    remote_journal_sender: Sender<(u64, Result<WebdavEvidence, String>)>,
+    remote_journal_receiver: Receiver<(u64, Result<WebdavEvidence, String>)>,
     remote_journal_generation: u64,
     remote_journal_records: Vec<remote_upload_journal::Record>,
+    remote_probe_records: Vec<remote_upload_journal::ProbeRecord>,
     remote_journal_error: Option<String>,
     remote_journal_loading: bool,
     remote_journal_rescan_requested: bool,
@@ -1798,6 +1804,7 @@ impl Explorer {
             remote_journal_receiver,
             remote_journal_generation: 0,
             remote_journal_records: Vec::new(),
+            remote_probe_records: Vec::new(),
             remote_journal_error: None,
             remote_journal_loading: false,
             remote_journal_rescan_requested: false,
@@ -2002,7 +2009,7 @@ impl Explorer {
         let sender = self.remote_journal_sender.clone();
         thread::spawn(move || {
             let result =
-                remote_upload_journal::inspect_incomplete().map_err(|error| error.to_string());
+                remote_upload_journal::inspect_evidence().map_err(|error| error.to_string());
             let _ = sender.send((generation, result));
         });
     }
@@ -2017,7 +2024,23 @@ impl Explorer {
         let sender = self.remote_journal_sender.clone();
         thread::spawn(move || {
             let result = remote_upload_journal::acknowledge(&record)
-                .and_then(|()| remote_upload_journal::inspect_incomplete())
+                .and_then(|()| remote_upload_journal::inspect_evidence())
+                .map_err(|error| error.to_string());
+            let _ = sender.send((generation, result));
+        });
+    }
+
+    fn acknowledge_webdav_probe(&mut self, record: remote_upload_journal::ProbeRecord) {
+        if self.remote_journal_loading {
+            return;
+        }
+        self.remote_journal_generation = self.remote_journal_generation.wrapping_add(1);
+        let generation = self.remote_journal_generation;
+        self.remote_journal_loading = true;
+        let sender = self.remote_journal_sender.clone();
+        thread::spawn(move || {
+            let result = remote_upload_journal::acknowledge_probe(&record)
+                .and_then(|()| remote_upload_journal::inspect_evidence())
                 .map_err(|error| error.to_string());
             let _ = sender.send((generation, result));
         });
@@ -3602,8 +3625,9 @@ impl Explorer {
             }
             self.remote_journal_loading = false;
             match result {
-                Ok(records) => {
+                Ok((records, probes)) => {
                     self.remote_journal_records = records;
+                    self.remote_probe_records = probes;
                     self.remote_journal_error = None;
                     self.remote_journal_confirm = None;
                 }
@@ -4065,6 +4089,7 @@ impl Explorer {
         if self.recovery_records.is_empty()
             && self.recovery_error.is_none()
             && self.remote_journal_records.is_empty()
+            && self.remote_probe_records.is_empty()
             && self.remote_journal_error.is_none()
         {
             return;
@@ -4081,11 +4106,14 @@ impl Explorer {
                         Color32::WHITE,
                         if self.recovery_error.is_some() || self.remote_journal_error.is_some() {
                             "File transfer recovery records need attention".to_owned()
-                        } else if !self.remote_journal_records.is_empty() {
+                        } else if !self.remote_journal_records.is_empty()
+                            || !self.remote_probe_records.is_empty()
+                        {
                             format!(
-                                "{} unfinished local move(s), {} uncertain WebDAV upload(s) — review before remote cleanup",
+                                "{} unfinished local move(s), {} uncertain WebDAV upload(s), {} safety probe(s) — review before remote cleanup",
                                 self.recovery_records.len(),
                                 self.remote_journal_records.len(),
+                                self.remote_probe_records.len(),
                             )
                         } else {
                             format!(
@@ -4111,6 +4139,7 @@ impl Explorer {
         let mut browse_parent = None;
         let mut prepare_copy = None;
         let mut acknowledge_webdav = None;
+        let mut acknowledge_probe = None;
         let mut confirm_webdav = self.remote_journal_confirm.clone();
         #[cfg(unix)]
         let mut resolve = None;
@@ -4304,10 +4333,13 @@ impl Explorer {
                         });
                     }
                 });
-                if !self.remote_journal_records.is_empty() || self.remote_journal_error.is_some() {
+                if !self.remote_journal_records.is_empty()
+                    || !self.remote_probe_records.is_empty()
+                    || self.remote_journal_error.is_some()
+                {
                     ui.separator();
-                    ui.heading("Uncertain WebDAV uploads");
-                    ui.label("These records were saved before uploading. A timeout or crash may have left the stage, final file, both, or neither on the server. RiceField does not query, retry, move or delete these remote files during recovery.");
+                    ui.heading("Uncertain WebDAV transfers and safety probes");
+                    ui.label("A timeout or crash may have left private objects on the WebDAV server. RiceField never queries, retries, moves or deletes them during recovery. Review the named paths on the server before discarding local evidence.");
                     if let Some(error) = &self.remote_journal_error {
                         ui.colored_label(Color32::LIGHT_RED, format!("Cannot inspect WebDAV evidence: {error}"));
                     }
@@ -4344,6 +4376,32 @@ impl Explorer {
                             }
                         });
                     }
+                    for record in &self.remote_probe_records {
+                        ui.group(|ui| {
+                            ui.strong(format!("WebDAV safety probe {}", record.id));
+                            ui.label("Private safety-probe prefix:");
+                            ui.monospace(&record.prefix_uri);
+                            ui.small("Check rounds 0–3 on the server: each prefix may have -ROUND-a, -ROUND-b and -ROUND-destination objects. These contain only disposable RiceField test data, not the selected upload. Do not assume any object is absent.");
+                            if ui.button("Copy probe prefix").clicked() {
+                                context.copy_text(record.prefix_uri.clone());
+                            }
+                            let confirm_key = format!("probe:{}", record.id);
+                            if confirm_webdav.as_deref() == Some(confirm_key.as_str()) {
+                                ui.colored_label(Color32::LIGHT_YELLOW, "Have you independently checked the named probe objects on the server and handled any leftovers? Confirming removes ONLY this local evidence record, not server files.");
+                                ui.horizontal_wrapped(|ui| {
+                                    if ui.add_enabled(!self.remote_journal_loading, egui::Button::new("Confirm discard probe record")).clicked() {
+                                        acknowledge_probe = Some(record.clone());
+                                        confirm_webdav = None;
+                                    }
+                                    if ui.button("Cancel").clicked() {
+                                        confirm_webdav = None;
+                                    }
+                                });
+                            } else if ui.add_enabled(!self.remote_journal_loading, egui::Button::new("I reviewed the probe objects; discard record…")).clicked() {
+                                confirm_webdav = Some(confirm_key);
+                            }
+                        });
+                    }
                     });
                 }
                 if self.remote_journal_loading {
@@ -4361,6 +4419,9 @@ impl Explorer {
         self.remote_journal_confirm = confirm_webdav;
         if let Some(record) = acknowledge_webdav {
             self.acknowledge_webdav_upload(record);
+        }
+        if let Some(record) = acknowledge_probe {
+            self.acknowledge_webdav_probe(record);
         }
         #[cfg(unix)]
         {

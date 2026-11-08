@@ -158,8 +158,9 @@ At baseline commit `214e585`, `main` and
 
 WebDAV has a conditional `PUT`/`MOVE Overwrite: F` implementation with a
 disposable live server race probe, staged byte verification and a private,
-synced stage/destination journal reserved before its first upload PUT. Uncertain
-results remain available after restart for explicit *local-only* record
+synced probe-prefix journal reserved before its first safety PUT, plus a
+stage/destination journal reserved before its first upload PUT. Uncertain
+probe and upload results remain available after restart for explicit *local-only* record
 acknowledgement, not automatic server cleanup. This is **partial P0 work**:
 SMB/SFTP/MTP backend guarantees and actual NAS/offline/crash acceptance are
 outstanding. Never substitute generic GIO move for any of them.
