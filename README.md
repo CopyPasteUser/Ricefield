@@ -68,6 +68,7 @@ ricefield --theme frutiger-aero ~/Pictures
 ricefield --theme chromeos ~/Downloads
 ricefield --theme macos
 ricefield --theme-file /path/to/custom-rice.toml
+ricefield --check-theme-file /path/to/custom-rice.toml
 ```
 
 RiceBowl can also select the initial profile with `RICEBOWL_RICE=windows7 ricefield`
@@ -76,6 +77,19 @@ RiceBowl can also select the initial profile with `RICEBOWL_RICE=windows7 ricefi
 has priority; unknown RiceBowl names leave the saved appearance unchanged.
 Launcher-selected themes are **session-only**: saving unrelated preferences does
 not replace your chosen default. Selecting a theme inside RiceField still saves it.
+
+**RiceProfile v1 (optional Wayland integration):** In an opt-in RiceBowl labwc
+session, compatible RiceField installations may receive
+`RICEBOWL_RICEFIELD_THEME_FILE=/absolute/session/ricefield.riceprofile.toml`.
+RiceField validates the owner-private, data-only TOML and reloads accepted
+changes while running (normally within three seconds); rejected updates keep
+the last working theme. `ricefield --check-theme-file PATH` performs the same
+validation without opening a window. The supported v1 fields are
+`format_version = 1`, `name`, an existing `base_theme` ID and the
+`[appearance]` fields `accent`, `surface`, `text` (hex colors). Unknown fields,
+base themes and versions are rejected. Explicit `--theme`/`--theme-file` wins;
+outside RiceBowl the standalone themes and persisted preferences are unchanged.
+This does **not** make RiceField the default file manager or require RiceBowl.
 
 ## Safety and known limits
 

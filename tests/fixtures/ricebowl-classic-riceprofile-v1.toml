@@ -1,0 +1,8 @@
+format_version = 1
+name = "RiceBowl: Classic bottom taskbar"
+base_theme = "win7"
+
+[appearance]
+accent = "#4179aa"
+surface = "#203c59"
+text = "#f3f7fa"
