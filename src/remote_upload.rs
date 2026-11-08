@@ -231,7 +231,10 @@ fn read_with_cancel(
 ) -> io::Result<usize> {
     loop {
         if cancelled.load(Ordering::Relaxed) {
-            return Err(io::Error::new(io::ErrorKind::Interrupted, "Upload cancelled"));
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Upload cancelled",
+            ));
         }
         let mut ready = libc::pollfd {
             fd: reader.as_raw_fd(),
@@ -243,7 +246,10 @@ fn read_with_cancel(
         let count = unsafe { libc::poll(&mut ready, 1, 100) };
         if count > 0 {
             if cancelled.load(Ordering::Relaxed) {
-                return Err(io::Error::new(io::ErrorKind::Interrupted, "Upload cancelled"));
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "Upload cancelled",
+                ));
             }
             return reader.read(buffer);
         }
@@ -431,12 +437,8 @@ fn verify_probe_contents(
     let result = (|| -> Result<(), String> {
         let mut buffer = [0_u8; 129];
         while content.len() < buffer.len() {
-            let size = read_with_cancel(
-                &mut remote,
-                &mut buffer[..129 - content.len()],
-                cancelled,
-            )
-            .map_err(|error| format!("Cannot verify WebDAV probe contents: {error}"))?;
+            let size = read_with_cancel(&mut remote, &mut buffer[..129 - content.len()], cancelled)
+                .map_err(|error| format!("Cannot verify WebDAV probe contents: {error}"))?;
             if size == 0 {
                 break;
             }
