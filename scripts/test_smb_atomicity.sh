@@ -10,7 +10,8 @@ cleanup() {
     sudo kill "$server_pid" 2>/dev/null || true
     wait "$server_pid" 2>/dev/null || true
   fi
-  rm -rf -- "$test_dir"
+  # smbd creates root-owned IPC sockets and lock directories here.
+  sudo rm -rf -- "$test_dir"
 }
 trap cleanup EXIT
 
