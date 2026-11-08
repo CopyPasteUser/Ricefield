@@ -11,12 +11,15 @@ use std::{
     fs::{self, File},
     io::{Read, Write},
     os::unix::fs::OpenOptionsExt,
-    path::{Path, PathBuf},
+    path::Path,
     process::{Command, Stdio},
     sync::atomic::{AtomicBool, Ordering},
     thread,
     time::{Duration, Instant},
 };
+
+#[cfg(test)]
+use std::path::PathBuf;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
 
