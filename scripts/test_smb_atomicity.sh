@@ -23,6 +23,7 @@ cat > "$config" <<CONF
 [global]
     server role = standalone server
     security = user
+    passdb backend = smbpasswd:$test_dir/auth-passdb
     map to guest = Bad User
     guest account = nobody
     interfaces = 127.0.0.1
@@ -46,7 +47,16 @@ cat > "$config" <<CONF
     force user = nobody
     create mask = 0666
     directory mask = 0777
+[authenticated]
+    path = $test_dir/share
+    guest ok = no
+    read only = no
+    valid users = nobody
+    force user = nobody
 CONF
+
+# This account and password DB live only inside the isolated Samba fixture.
+printf 'ricefield-test-secret\nricefield-test-secret\n' | sudo smbpasswd -c "$config" -a -s nobody >/dev/null
 
 sudo smbd --foreground --configfile="$config" --port=14445 --debuglevel=0 &
 server_pid=$!
@@ -71,6 +81,20 @@ if [[ "$connected" != 1 ]]; then
   exit 1
 fi
 
+# Exercise the exact production auth transport: no password in argv,
+# process environment or an on-disk credentials file; require SMB signing.
+signed_smb() {
+  printf 'username = nobody\npassword = ricefield-test-secret\ndomain = WORKGROUP\n' |
+    timeout 20s smbclient //127.0.0.1/authenticated --port=14445 \
+      --authentication-file=/dev/stdin --client-protection=sign \
+      --max-protocol=SMB3 --option='client min protocol=SMB2_10' \
+      --command="$1" >/dev/null 2>&1
+}
+if ! signed_smb 'ls'; then
+  echo 'SMB authenticated stdin-pipe + signed SMB3 gate failed' >&2
+  exit 1
+fi
+
 printf 'smb-snapshot-a\n' > "$test_dir/a"
 printf 'smb-snapshot-b\n' > "$test_dir/b"
 smb 'mkdir stage-a'
@@ -82,6 +106,8 @@ cmp "$test_dir/a" "$test_dir/download-a"
 
 smb 'hardlink stage-a/payload winner'
 cmp "$test_dir/a" "$test_dir/share/winner"
+signed_smb 'hardlink stage-a/payload signed-winner'
+cmp "$test_dir/a" "$test_dir/share/signed-winner"
 
 printf 'foreign-winner\n' > "$test_dir/share/occupied"
 if smb 'hardlink stage-a/payload occupied'; then

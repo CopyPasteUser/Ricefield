@@ -393,6 +393,9 @@ impl Drop for Snapshot {
         let _ = fs::remove_file(self.directory.join("probe-a.payload"));
         let _ = fs::remove_file(self.directory.join("probe-b.payload"));
         let _ = fs::remove_file(self.directory.join("sftp-verify.payload"));
+        let _ = fs::remove_file(self.directory.join("smb-probe-a.payload"));
+        let _ = fs::remove_file(self.directory.join("smb-probe-b.payload"));
+        let _ = fs::remove_file(self.directory.join("smb-verify.payload"));
         let _ = fs::remove_dir(&self.directory);
     }
 }

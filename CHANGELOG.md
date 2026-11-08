@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased — signed SMB2/3 no-replace publication (partial P0 #84)
+
+- Implement a restricted SMB single-file uploader with ephemeral stdin-pipe
+  credentials, required SMB signing, isolated staging and full byte readback.
+- Before using the selected source, require one sequential and three
+  independent-client server-atomic SMB `hardlink` collision rounds.
+- Persist synced local probe and stage evidence before every remote mkdir;
+  preserve uncertain outcomes for explicit local-only recovery review.
+  There is no rename/overwrite/GIO writer fallback.
+- Add a disposable Samba protocol CI job with signed authenticated access,
+  existing-target and concurrent-client regression. Actual Synology SMB
+  hardware and crash/disconnect acceptance remain open; SMB stage ACLs are
+  controlled by the server, not presumed to be private.
+- Bound competing journal writers' local lock wait to prevent spurious test
+  failure while preserving fail-closed behavior under sustained contention.
+
 ## Unreleased — restricted safe SFTP publication (partial P0 #84)
 
 - Add an independent OpenSSH SFTP writer using private upload directories,

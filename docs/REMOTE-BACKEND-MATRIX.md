@@ -7,7 +7,7 @@ publication; see [the reproduced race](REMOTE-WRITE-SAFETY.md).
 
 | Route | Browse / preview / download | RiceField remote write | Evidence / code gate | Owner hardware gate |
 | --- | --- | --- | --- | --- |
-| `smb://` (GVfs) | Read-only URI tab, bounded previews and downloads | **Disabled** | No verified server-specific atomic create-and-publish implementation | SMB NAS path, disconnect/reconnect, credentials, collisions |
+| `smb://` (GVfs) | Read-only URI tab, bounded previews and downloads | **Conditional single-file upload via signed `smbclient` only** | SMB2/3 + `hardlink` no-replace; four rounds with independent-client races; unpredictable stage, full staged byte comparison, one server-side hardlink to final. Private durable probe and upload recovery evidence. `/dev/stdin` authentication, no GIO/rename fallback. SMB stage ACL privacy remains server-configured. | Real Synology SMB share, share ACLs, credentials, collisions, latency, unplug/disconnect and crash recovery |
 | `sftp://` (GVfs) | Read-only URI tab, bounded previews and downloads | **Conditional single-file upload via OpenSSH client only** | Private `0700` staging directory; disposable four-round server-side `hardlink@openssh.com` test with independent clients; full staged GET byte comparison; atomic hardlink-to-final that refuses occupied names. Private synced evidence before probe/staging mutation. No rename fallback. | Real SFTP host, SSH host key and agent, hardlink support, permissions, latency/disconnect, storage consistency |
 | `dav://`, `davs://` | Read-only URI tab plus separately authorized single-file upload | **Conditional single-file upload only** | Exclusive random stage PUT, byte-for-byte verification, `MOVE Overwrite: F`, sequential and concurrent two-client collision probes; separate private durable safety-probe evidence before any probe PUT and upload evidence before its own PUT. Reject a server that fails any probe. | Real NAS/WebDAV server, HTTP/TLS/auth, offline/crash, competing clients, manual journal cleanup |
 | `mtp://` (GVfs) | Read-only browsing and supported download | **Disabled** | No verified atomic no-replace server-side commit or predictable recovery | Actual phone/handheld, unplug, permission and reconnect behavior |
@@ -71,7 +71,13 @@ Mocks do **not** demonstrate a particular real NAS implementation's semantics,
 storage durability, filesystem driver behavior or physical power-loss safety.
 Those require the owner's disposable NAS/Mint tests before stable 1.0.
 
-SMB and MTP remote writers remain disabled. The restricted SFTP writer is
-**not** a blanket claim of safe writes on every SFTP server. Track further
+The SMB3 protocol CI starts an isolated Samba server and verifies signed
+pipe-based authentication, staged byte retrieval, an occupied destination
+remaining unchanged and a two-client race with exactly one winner. The Rust
+SMB path additionally validates URI/credential restrictions and persists
+restart-visible recovery records. Hardware sign-off is still required.
+
+MTP remote writes remain disabled. The restricted SMB and SFTP writers are
+**not** blanket claims of safe writes on every NAS or SFTP server. Track further
 backend acceptance under
 [P0 issue #84](https://github.com/CopyPasteUser/Ricefield/issues/84).
