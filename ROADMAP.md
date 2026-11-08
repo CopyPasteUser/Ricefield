@@ -736,7 +736,12 @@ marking 0.7 stable. The 0.6 NAS/mount acceptance is still blocked separately.
 
 **Gate:** 100k-entry folders and recursive searches remain responsive.
 Automated synthetic sorting/glob stress covers 100,000 entries without
-touching disk; real HDD and UI responsiveness measurements remain outstanding.
+touching disk. Subsequent large-folder projection work shares immutable scan
+entries across cancellable background workers, pre-folds names during scanning,
+debounces filename queries, and rejects stale results from closed/changed tabs;
+small folders keep immediate synchronous updates. A dedicated 100k-entry
+projection test exercises the same filtering/sorting used by the UI. Real HDD,
+end-to-end frame latency and resource measurements remain outstanding.
 
 ### 0.9 — RiceBowl and Linux desktop integration
 
