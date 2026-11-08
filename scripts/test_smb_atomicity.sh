@@ -141,3 +141,13 @@ else
 fi
 
 echo 'SMB2/3 real-server no-replace hardlink protocol gate passed.'
+
+if [[ "${RICEFIELD_RUST_SMB_CHECK:-0}" == 1 ]]; then
+  # The full Rust uploader is deliberately exercised against this same
+  # disposable, signed/authenticated Samba endpoint. Test credentials exist
+  # only for this local fixture; production credentials remain stdin-only.
+  RICEFIELD_TEST_SMB_ROOT="$test_dir" timeout -k 5s 240s \
+    cargo test --locked --all-targets real_samba_rust_uploader_ \
+      -- --ignored --test-threads=1 --nocapture
+  echo 'Signed SMB Rust uploader publication, collision and process-crash checks passed.'
+fi

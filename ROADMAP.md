@@ -175,6 +175,10 @@ collision rounds, full stage GET verification and a single atomic hardlink
 publication, with synced recovery evidence before remote mutation. This
 is **conditional capability support only**: share ACLs, Synology-specific
 hardlink support and real network interruption remain 1.0 hardware gates.
+An additional isolated Samba CI fixture drives the production Rust uploader
+end-to-end and kills its process after a live probe or stage upload, checking
+persisted evidence and the unchanged source. The fixture cannot certify NAS
+share ACLs or actual network interruption.
 The [backend-specific capability matrix](docs/REMOTE-BACKEND-MATRIX.md)
 records each supported/read-only protocol and the actual-process stage-PUT
 crash regression separately from unverified NAS/hardware semantics.

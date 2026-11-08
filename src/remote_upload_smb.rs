@@ -21,6 +21,16 @@ use std::{
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
 
+#[cfg(test)]
+fn kill_test_process_at(checkpoint: &str) {
+    if std::env::var("RICEFIELD_TEST_SMB_CRASH_AT").as_deref() == Ok(checkpoint) {
+        // SAFETY: test-only checkpoint. The parent process independently
+        // inspects the Samba share and persisted recovery records.
+        unsafe { libc::raise(libc::SIGKILL) };
+        unreachable!("SIGKILL cannot be ignored");
+    }
+}
+
 struct Target {
     host: String,
     share: String,
@@ -369,6 +379,8 @@ fn safety_probe(
         private_payload(&local_a, b"ricefield-smb-safe-a")?;
         private_payload(&local_b, b"ricefield-smb-safe-b")?;
         put(target, &local_a, &format!("{dir}/a"), cancelled)?;
+        #[cfg(test)]
+        kill_test_process_at("probe-first-put");
         put(target, &local_b, &format!("{dir}/b"), cancelled)?;
         for round in 0..4 {
             let destination = format!("{dir}/target-{round}");
@@ -467,6 +479,8 @@ fn upload_with_target(
         target.run(&format!("mkdir {}", quoted(&dir)), cancelled)?;
         let stage = format!("{dir}/payload");
         put(target, snapshot.path(), &stage, cancelled)?;
+        #[cfg(test)]
+        kill_test_process_at("stage-put");
         let verify = snapshot.private_file("smb-verify.payload");
         get(target, &stage, &verify, snapshot.bytes, cancelled)?;
         compare(snapshot.path(), &verify, cancelled)?;
@@ -494,6 +508,170 @@ fn upload_with_target(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::volume::MountCredentials;
+    use std::{os::unix::process::ExitStatusExt, path::PathBuf};
+
+    fn samba_root() -> PathBuf {
+        PathBuf::from(
+            std::env::var_os("RICEFIELD_TEST_SMB_ROOT")
+                .expect("Run through scripts/test_smb_atomicity.sh with the Rust integration flag"),
+        )
+    }
+
+    fn samba_target() -> Target {
+        Target::parse(
+            "smb://127.0.0.1:14445/authenticated",
+            "nobody".into(),
+            "ricefield-test-secret".into(),
+            "WORKGROUP".into(),
+        )
+        .unwrap()
+    }
+
+    fn samba_request(root: &Path, name: &str) -> UploadRequest {
+        UploadRequest {
+            source: root.join(name),
+            remote_directory: "smb://127.0.0.1:14445/authenticated".into(),
+            credentials: MountCredentials {
+                username: "nobody".into(),
+                password: "ricefield-test-secret".into(),
+                domain: "WORKGROUP".into(),
+            },
+            allow_insecure_http: false,
+        }
+    }
+
+    #[test]
+    #[ignore = "requires disposable signed Samba on port 14445"]
+    fn real_samba_rust_uploader_publishes_and_refuses_existing_target() {
+        let root = samba_root();
+        let name = format!("rust-smb-{}.txt", remote_upload::random_suffix().unwrap());
+        let source = root.join(&name);
+        fs::write(&source, b"signed SMB Rust uploader snapshot\n").unwrap();
+        let target = samba_target();
+        let journal = root.join("rust-smb-uploader-evidence");
+        let request = samba_request(&root, &name);
+        let uploaded =
+            upload_with_target(request, &AtomicBool::new(false), &target, Some(&journal)).unwrap();
+        assert_eq!(
+            uploaded.bytes,
+            b"signed SMB Rust uploader snapshot\n".len() as u64
+        );
+        assert_eq!(
+            fs::read(root.join("share").join(&name)).unwrap(),
+            fs::read(&source).unwrap()
+        );
+        let (uploads, probes) = remote_upload_journal::inspect_evidence_in(&journal).unwrap();
+        assert!(uploads.is_empty() && probes.is_empty());
+
+        fs::write(root.join("share").join(&name), b"foreign winner").unwrap();
+        let error = upload_with_target(
+            samba_request(&root, &name),
+            &AtomicBool::new(false),
+            &target,
+            Some(&journal),
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("SMB publication may be ambiguous"),
+            "{error}"
+        );
+        assert_eq!(
+            fs::read(root.join("share").join(&name)).unwrap(),
+            b"foreign winner"
+        );
+        assert_eq!(
+            fs::read(&source).unwrap(),
+            b"signed SMB Rust uploader snapshot\n"
+        );
+        let (uploads, probes) = remote_upload_journal::inspect_evidence_in(&journal).unwrap();
+        assert_eq!(
+            uploads.len(),
+            1,
+            "collision retains manual recovery evidence"
+        );
+        assert!(probes.is_empty());
+    }
+
+    fn run_samba_crash_child_if_requested() {
+        let Ok(case) = std::env::var("RICEFIELD_TEST_SMB_CRASH_CASE") else {
+            return;
+        };
+        let root = samba_root();
+        let name = format!("rust-smb-crash-{case}.txt");
+        let journal = root.join(format!("rust-smb-crash-journal-{case}"));
+        let result = upload_with_target(
+            samba_request(&root, &name),
+            &AtomicBool::new(false),
+            &samba_target(),
+            Some(&journal),
+        );
+        panic!("SMB child-process crash checkpoint not reached: {result:?}");
+    }
+
+    #[test]
+    #[ignore = "requires disposable signed Samba on port 14445"]
+    fn real_samba_rust_uploader_crash_keeps_server_and_journal_evidence() {
+        run_samba_crash_child_if_requested();
+        let root = samba_root();
+        for (case, checkpoint) in [("probe", "probe-first-put"), ("stage", "stage-put")] {
+            let name = format!("rust-smb-crash-{case}.txt");
+            let source = root.join(&name);
+            fs::write(&source, b"signed SMB crash source retained\n").unwrap();
+            let mut child = Command::new(std::env::current_exe().unwrap())
+                .arg("remote_upload_smb::tests::real_samba_rust_uploader_crash_keeps_server_and_journal_evidence")
+                .arg("--exact")
+                .arg("--ignored")
+                .env("RICEFIELD_TEST_SMB_CRASH_CASE", case)
+                .env("RICEFIELD_TEST_SMB_CRASH_AT", checkpoint)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(80);
+            let status = loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    break status;
+                }
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("SMB crash fixture never reached {checkpoint}");
+                }
+                thread::sleep(Duration::from_millis(30));
+            };
+            assert_eq!(
+                status.signal(),
+                Some(libc::SIGKILL),
+                "{checkpoint}: {status}"
+            );
+            let journal = root.join(format!("rust-smb-crash-journal-{case}"));
+            let (uploads, probes) = remote_upload_journal::inspect_evidence_in(&journal).unwrap();
+            if case == "probe" {
+                assert!(uploads.is_empty());
+                assert_eq!(probes.len(), 1);
+                let stage = root
+                    .join("share")
+                    .join(format!(".ricefield-safety-{}", probes[0].id));
+                assert_eq!(fs::read(stage.join("a")).unwrap(), b"ricefield-smb-safe-a");
+            } else {
+                assert!(probes.is_empty());
+                assert_eq!(uploads.len(), 1);
+                let stage = root
+                    .join("share")
+                    .join(format!(".ricefield-upload-{}", uploads[0].id));
+                assert_eq!(
+                    fs::read(stage.join("payload")).unwrap(),
+                    b"signed SMB crash source retained\n"
+                );
+            }
+            assert!(!root.join("share").join(&name).exists());
+            assert_eq!(
+                fs::read(&source).unwrap(),
+                b"signed SMB crash source retained\n"
+            );
+        }
+    }
 
     #[test]
     fn smb_uri_paths_and_credentials_fail_closed() {
