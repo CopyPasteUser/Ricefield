@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased — signed Samba end-to-end uploader regression (P0)
+
+- Reuse the disposable localhost Samba server in the Rust GitHub Actions job
+  to exercise **the production Rust SMB upload path**, rather than testing
+  only hand-written `smbclient` commands. The integration fixture verifies
+  signed stdin-pipe authentication, server capability probes, verified
+  publication, existing-target preservation and persisted recovery evidence.
+- Add two real child-process `SIGKILL` checkpoints after the Samba server has
+  stored the first probe file and the private upload payload, respectively.
+  After each crash, independently inspect the real Samba share, local journal,
+  absent destination and unchanged source.
+- The test uses a deliberately writable throwaway localhost share; **it does
+  not prove private SMB stage ACLs, Synology behavior, power loss or unplugged
+  network recovery**. Unsupported servers remain fail-closed.
+
 ## Unreleased — two-directory durability for network downloads (P0)
 
 - Persist the private download staging directory before Linux's atomic

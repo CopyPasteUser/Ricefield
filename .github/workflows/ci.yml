@@ -35,7 +35,7 @@ jobs:
                # No recommended Ghostscript/font bundles: ImageMagick's `import`
                # captures Xvfb windows without them. Hosted mirror downloads of
                # the optional 11 MB font bundle have repeatedly timed out.
-               timeout 180s sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libgl1-mesa-dev libarchive13t64 xvfb xauth xdotool imagemagick libgl1-mesa-dri libxkbcommon-x11-0 openssh-client openssh-sftp-server; then
+               timeout 180s sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libgl1-mesa-dev libarchive13t64 xvfb xauth xdotool imagemagick libgl1-mesa-dri libxkbcommon-x11-0 openssh-client openssh-sftp-server samba smbclient; then
               exit 0
             fi
             echo "Graphics dependencies failed on attempt $attempt; retrying if possible" >&2
@@ -51,6 +51,8 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked --all-targets
+      - name: Complete Rust SMB uploader against disposable signed Samba
+        run: RICEFIELD_RUST_SMB_CHECK=1 timeout -k 10s 6m bash scripts/test_smb_atomicity.sh
       - name: Native FileManager1 protocol on a private session bus
         run: dbus-run-session -- env RICEFIELD_TEST_BUS=1 cargo test --locked desktop::tests::private_bus_roundtrip_and_existing_owner_are_respected -- --ignored --exact
       - run: cargo build --locked --release
