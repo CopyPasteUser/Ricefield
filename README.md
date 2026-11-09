@@ -21,6 +21,7 @@ A customizable **Rust + egui** file manager for Linux, usable standalone or alon
 ## Features
 
 - **Everyday file management:** tabs, split view, bookmarks, search, previews, drag-and-drop, copy/move/rename/trash and `Open With`.
+- **Desktop integration:** `Ctrl+Shift+D` launches installed `ripdrag`/`dragon` for outbound file drag; `--xwayland-dnd` opts into XWayland incoming XDND. [Usage](docs/USAGE.md).
 - **Guarded operations:** no-overwrite conflict previews, transfer history, selective session Undo and recovery diagnostics.
 - **Archives:** browse and extract ZIP, TAR, 7z and RAR with libarchive.
 - **Network and devices:** browse SMB, SFTP, WebDAV and MTP; manage removable media through UDisks2/Polkit.

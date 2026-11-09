@@ -2561,6 +2561,23 @@ impl Explorer {
         self.run_action(action);
     }
 
+    fn start_external_drag(&mut self) {
+        if self.current().remote_uri.is_some() {
+            self.status = Some((
+                "External drag only supports local files; download remote files first".into(),
+                true,
+            ));
+            return;
+        }
+        self.status = Some(match crate::external_drag::launch(&self.selected_paths()) {
+            Ok(helper) => (
+                format!("Opened native {helper} drag source; drag into the target app"),
+                false,
+            ),
+            Err(error) => (error, true),
+        });
+    }
+
     fn spawn_window(&mut self) {
         if self.current().remote_uri.is_some() {
             self.status = Some((
@@ -2913,60 +2930,60 @@ impl Explorer {
             .remote_upload_target
             .get(..6)
             .is_some_and(|prefix| prefix.eq_ignore_ascii_case("smb://"));
-        egui::Window::new(if is_sftp {
+        egui::Window::new(i18n::tr(if is_sftp {
             "Upload to SFTP · safe publication"
         } else if is_smb {
             "Upload to SMB · safe publication"
         } else {
             "Upload to WebDAV · safe publication"
-        })
+        }))
             .open(&mut open)
             .collapsible(false)
             .default_width(490.0)
             .show(context, |ui| {
-                ui.label("Destination directory:");
+                ui.label(i18n::tr("Destination directory:"));
                 ui.monospace(&self.remote_upload_target);
-                ui.label("Local regular file (absolute path):");
+                ui.label(i18n::tr("Local regular file (absolute path):"));
                 ui.add(egui::TextEdit::singleline(&mut self.remote_upload_source)
                     .desired_width(f32::INFINITY).hint_text("/home/user/Documents/file.txt"));
-                ui.label(if is_sftp {
+                ui.label(i18n::tr(if is_sftp {
                     "SSH username (blank = your SSH default):"
                 } else if is_smb {
                     "SMB username (required):"
                 } else {
                     "Username and password (or leave blank to try a saved login):"
-                });
+                }));
                 ui.add(egui::TextEdit::singleline(&mut self.remote_upload_username)
-                    .desired_width(f32::INFINITY).hint_text(if is_sftp { "SSH username" } else if is_smb { "SMB username" } else { "WebDAV username" }));
+                    .desired_width(f32::INFINITY).hint_text(i18n::tr(if is_sftp { "SSH username" } else if is_smb { "SMB username" } else { "WebDAV username" })));
                 if is_sftp {
-                    ui.small("Use a configured SSH key or SSH agent and a trusted known_hosts entry. Password login is unavailable in this safe upload path. Names and paths are restricted to ASCII letters, digits, spaces, dots, dashes and underscores.");
+                    ui.small(i18n::tr("Use a configured SSH key or SSH agent and a trusted known_hosts entry. Password login is unavailable in this safe upload path. Names and paths are restricted to ASCII letters, digits, spaces, dots, dashes and underscores."));
                 } else {
                     ui.add(egui::TextEdit::singleline(&mut self.remote_upload_domain)
-                        .desired_width(f32::INFINITY).hint_text("Domain (optional)"));
+                        .desired_width(f32::INFINITY).hint_text(i18n::tr("Domain (optional)")));
                     ui.horizontal(|ui| {
                         ui.add(egui::TextEdit::singleline(&mut self.remote_upload_password)
                             .password(!self.remote_upload_password_visible)
-                            .desired_width(380.0).hint_text("Password"));
-                        if ui.button(if self.remote_upload_password_visible { "Hide" } else { "Show" }).clicked() {
+                            .desired_width(380.0).hint_text(i18n::tr("Password")));
+                        if ui.button(i18n::tr(if self.remote_upload_password_visible { "Hide" } else { "Show" })).clicked() {
                             self.remote_upload_password_visible = !self.remote_upload_password_visible;
                         }
                     });
                 }
                 if self.remote_upload_target.starts_with("dav://") {
                     ui.checkbox(&mut self.remote_upload_allow_http,
-                        "Allow unencrypted HTTP for this upload")
-                        .on_hover_text("HTTP may expose credentials and file contents on the network. Prefer davs:// with a trusted certificate.");
+                        i18n::tr("Allow unencrypted HTTP for this upload"))
+                        .on_hover_text(i18n::tr("HTTP may expose credentials and file contents on the network. Prefer davs:// with a trusted certificate."));
                 }
                 ui.separator();
-                ui.small(if is_sftp {
+                ui.small(i18n::tr(if is_sftp {
                     "RiceField probes OpenSSH hardlink collision safety, uploads into a private directory, reads every byte back, and publishes using an exclusive server-side hardlink. The server must support hardlink@openssh.com. Uncertain stages are recorded for manual review."
                 } else if is_smb {
                     "RiceField requires SMB2/3, signed client connections and smbclient. It tests server-side no-replace hardlinks with competing clients before uploading a file. It then reads every staged byte back and publishes via a single hardlink. Access details use an ephemeral local pipe, never URL, arguments or disk. Servers lacking this capability remain read-only."
                 } else {
                     "RiceField probes WebDAV overwrite protection, uploads a private stage and verifies every byte. The server must accept Overwrite:F; existing destinations are not replaced. Uncertain stages are recorded for manual review."
-                });
+                }));
                 upload = ui.add_enabled(!self.remote_upload_busy,
-                    egui::Button::new("Verify server and upload")).clicked();
+                    egui::Button::new(i18n::tr("Verify server and upload"))).clicked();
             });
         if upload {
             let source = PathBuf::from(self.remote_upload_source.trim());
@@ -3123,25 +3140,32 @@ impl Explorer {
         let mut connect = None;
         let mut browse = None;
         let mut browse_new_tab = None;
-        egui::Window::new("Discover network computers")
+        egui::Window::new(i18n::tr("Discover network computers"))
             .open(&mut open)
             .resizable(true)
             .default_width(440.0)
             .show(context, |ui| {
-                ui.label("Nearby advertised SMB/NAS servers (no automatic connections):");
+                ui.label(i18n::tr(
+                    "Nearby advertised SMB/NAS servers (no automatic connections):",
+                ));
                 ui.horizontal(|ui| {
                     retry = ui
-                        .add_enabled(!self.discovery_busy, egui::Button::new("Scan again"))
+                        .add_enabled(
+                            !self.discovery_busy,
+                            egui::Button::new(i18n::tr("Scan again")),
+                        )
                         .clicked();
                     if self.discovery_busy {
                         ui.spinner();
-                        ui.label("Looking for network shares…");
+                        ui.label(i18n::tr("Looking for network shares…"));
                     }
                 });
                 if let Some(error) = &self.discovery_error {
                     ui.colored_label(Color32::LIGHT_RED, error);
                 } else if !self.discovery_busy && self.discovery_hosts.is_empty() {
-                    ui.label("No NAS was advertised. You can still connect using its address.");
+                    ui.label(i18n::tr(
+                        "No NAS was advertised. You can still connect using its address.",
+                    ));
                 }
                 egui::ScrollArea::vertical()
                     .max_height(280.0)
@@ -3153,24 +3177,24 @@ impl Explorer {
                                     ui.small(format!("{} · {}", host.uri, host.source));
                                 });
                                 if ui
-                                    .button("Browse shares")
-                                    .on_hover_text(
+                                    .button(i18n::tr("Browse shares"))
+                                    .on_hover_text(i18n::tr(
                                         "List shares using GVfs; sign in when a share requires it",
-                                    )
+                                    ))
                                     .clicked()
                                 {
                                     browse = Some(host.uri.clone());
                                 }
                                 if ui
-                                    .button("New tab")
-                                    .on_hover_text(
+                                    .button(i18n::tr("New tab"))
+                                    .on_hover_text(i18n::tr(
                                         "Browse this server without replacing the current folder",
-                                    )
+                                    ))
                                     .clicked()
                                 {
                                     browse_new_tab = Some(host.uri.clone());
                                 }
-                                if ui.button("Sign in").clicked() {
+                                if ui.button(i18n::tr("Sign in")).clicked() {
                                     connect = Some(host.uri.clone());
                                 }
                             });
@@ -4321,23 +4345,23 @@ impl Explorer {
         let mut discard_staged = None;
         #[cfg(unix)]
         let mut confirm_resolution = self.recovery_resolution_confirm.clone();
-        egui::Window::new("File transfer recovery")
+        egui::Window::new(i18n::tr("File transfer recovery"))
             .open(&mut open)
             .default_width(610.0)
             .default_height(340.0)
             .resizable(true)
             .show(context, |ui| {
-                ui.label("Recovery never deletes original files or overwrites destinations. Confirmed actions can publish a verified private stage, discard only an unpublished private stage, or retire a verified publication record. No action runs automatically.");
-                ui.label("Compare file contents on demand (maximum 512 MiB and 10,000 entries). A match is only a snapshot, never authorization to delete a source.");
-                ui.small("You can prepare a new Copy with a full preview. For v1 records without saved source identity, this uses only the current source path after a separate warning. Neither route completes the interrupted Move or clears its journal.");
+                ui.label(i18n::tr("Recovery never deletes original files or overwrites destinations. Confirmed actions can publish a verified private stage, discard only an unpublished private stage, or retire a verified publication record. No action runs automatically."));
+                ui.label(i18n::tr("Compare file contents on demand (maximum 512 MiB and 10,000 entries). A match is only a snapshot, never authorization to delete a source."));
+                ui.small(i18n::tr("You can prepare a new Copy with a full preview. For v1 records without saved source identity, this uses only the current source path after a separate warning. Neither route completes the interrupted Move or clears its journal."));
                 if let Some(error) = &self.recovery_error {
-                    ui.colored_label(Color32::LIGHT_RED, format!("Cannot read all journal records: {error}"));
+                    ui.colored_label(Color32::LIGHT_RED, i18n::template("Cannot read all journal records: {error}", &[("error", error.clone())]));
                 }
                 if self.recovery_loading {
                     ui.spinner();
-                    ui.label("Checking operation records…");
+                    ui.label(i18n::tr("Checking operation records…"));
                     if self.recovery_resolution_active
-                        && ui.button("Cancel verification").clicked()
+                        && ui.button(i18n::tr("Cancel verification")).clicked()
                     {
                         self.recovery_comparison_cancel.store(true, Ordering::Relaxed);
                     }
@@ -4348,36 +4372,24 @@ impl Explorer {
                         let record = &inspection.record;
                         ui.group(|ui| {
                             ui.strong(format!("{} — {:?}", record.id, record.state));
-                            ui.label(format!("Source: {}", record.source.display()));
-                            ui.small(format!("Current source: {}", inspection.source.label()));
-                            ui.small(format!(
-                                "Source identity: {}",
-                                inspection.source_identity.label()
-                            ));
-                            ui.label(format!("Destination: {}", record.destination.display()));
-                            ui.small(format!(
-                                "Current destination: {}",
-                                inspection.destination.label()
-                            ));
-                            ui.small(format!(
-                                "Destination identity: {}",
-                                inspection.destination_identity.label()
-                            ));
-                            ui.small(format!(
-                                "Staging → publication: {}",
-                                inspection.publication_evidence.label()
-                            ));
+                            ui.label(i18n::template("Source: {path}", &[("path", record.source.display().to_string())]));
+                            ui.small(i18n::template("Current source: {status}", &[("status", inspection.source.label().to_string())]));
+                            ui.small(i18n::template("Source identity: {status}", &[("status", inspection.source_identity.label().to_string())]));
+                            ui.label(i18n::template("Destination: {path}", &[("path", record.destination.display().to_string())]));
+                            ui.small(i18n::template("Current destination: {status}", &[("status", inspection.destination.label().to_string())]));
+                            ui.small(i18n::template("Destination identity: {status}", &[("status", inspection.destination_identity.label().to_string())]));
+                            ui.small(i18n::template("Staging → publication: {status}", &[("status", inspection.publication_evidence.label().to_string())]));
                             if let Some(staging) = &record.staging {
-                                ui.label(format!("Staging: {}", staging.display()));
+                                ui.label(i18n::template("Staging: {path}", &[("path", staging.display().to_string())]));
                             }
                             if let Some(staging) = &inspection.staging {
-                                ui.small(format!("Current staging: {}", staging.label()));
+                                ui.small(i18n::template("Current staging: {status}", &[("status", staging.label().to_string())]));
                             }
                             ui.horizontal_wrapped(|ui| {
-                                if ui.button("Browse source folder").clicked() {
+                                if ui.button(i18n::tr("Browse source folder")).clicked() {
                                     browse_parent = record.source.parent().map(Path::to_path_buf);
                                 }
-                                if ui.button("Browse destination folder").clicked() {
+                                if ui.button(i18n::tr("Browse destination folder")).clicked() {
                                     browse_parent = record.destination.parent().map(Path::to_path_buf);
                                 }
                                 if let Some(staging) = &record.staging
@@ -4385,7 +4397,7 @@ impl Explorer {
                                         inspection.staging.as_ref(),
                                         Some(journal::PathStatus::Directory)
                                     )
-                                    && ui.button("Browse staging folder").clicked()
+                                    && ui.button(i18n::tr("Browse staging folder")).clicked()
                                 {
                                     browse_parent = Some(staging.clone());
                                 }
@@ -4393,8 +4405,8 @@ impl Explorer {
                             if ui.add_enabled(
                                 inspection.can_offer_fresh_copy()
                                     && record.destination.parent().is_some(),
-                                egui::Button::new("Prepare separate Copy (keep both)…"),
-                            ).on_hover_text("Start a new copy preview only; keep the original source and recovery record. Unavailable if the saved source identity changed or cannot be checked.").clicked()
+                                egui::Button::new(i18n::tr("Prepare separate Copy (keep both)…")),
+                            ).on_hover_text(i18n::tr("Start a new copy preview only; keep the original source and recovery record. Unavailable if the saved source identity changed or cannot be checked.")).clicked()
                                 && let Some(parent) = record.destination.parent()
                             {
                                 prepare_copy = Some((record.source.clone(), parent.to_path_buf()));
@@ -4406,19 +4418,19 @@ impl Explorer {
                             {
                                 let confirmation = format!("legacy-copy:{}", record.id);
                                 if confirm_resolution.as_deref() == Some(confirmation.as_str()) {
-                                    ui.colored_label(Color32::LIGHT_YELLOW, "This old journal did not save the original inode. The current source path may contain a DIFFERENT file. Prepare a completely NEW Keep Both copy preview from what exists now? Nothing is deleted or replayed, and this journal remains open.");
+                                    ui.colored_label(Color32::LIGHT_YELLOW, i18n::tr("This old journal did not save the original inode. The current source path may contain a DIFFERENT file. Prepare a completely NEW Keep Both copy preview from what exists now? Nothing is deleted or replayed, and this journal remains open."));
                                     ui.horizontal(|ui| {
-                                        if ui.button("Confirm new Copy preview").clicked() {
+                                        if ui.button(i18n::tr("Confirm new Copy preview")).clicked() {
                                             if let Some(parent) = record.destination.parent() {
                                                 prepare_copy = Some((record.source.clone(), parent.to_path_buf()));
                                             }
                                             confirm_resolution = None;
                                         }
-                                        if ui.button("Cancel").clicked() {
+                                        if ui.button(i18n::tr("Cancel")).clicked() {
                                             confirm_resolution = None;
                                         }
                                     });
-                                } else if ui.button("New Copy from unproven legacy path…").clicked() {
+                                } else if ui.button(i18n::tr("New Copy from unproven legacy path…")).clicked() {
                                     confirm_resolution = Some(confirmation);
                                 }
                             }
@@ -4430,13 +4442,13 @@ impl Explorer {
                                 JournalState::StageDiscarded => "Private stage was discarded; original retained.",
                                 JournalState::Completed => "Verified copy completed; original retained.",
                             };
-                            ui.small(guidance);
+                            ui.small(i18n::tr(guidance));
                             ui.colored_label(Color32::LIGHT_YELLOW, inspection.guidance());
                             if self.recovery_comparison_active.as_deref() == Some(record.id.as_str()) {
                                 ui.horizontal(|ui| {
                                     ui.spinner();
-                                    ui.label("Comparing bytes in background…");
-                                    if ui.button("Cancel comparison").clicked() {
+                                    ui.label(i18n::tr("Comparing bytes in background…"));
+                                    if ui.button(i18n::tr("Cancel comparison")).clicked() {
                                         self.recovery_comparison_cancel
                                             .store(true, Ordering::Relaxed);
                                     }
@@ -4448,7 +4460,7 @@ impl Explorer {
                                     if ui
                                         .add_enabled(
                                             enabled,
-                                            egui::Button::new("Compare source and destination"),
+                                            egui::Button::new(i18n::tr("Compare source and destination")),
                                         )
                                         .clicked()
                                     {
@@ -4462,7 +4474,7 @@ impl Explorer {
                                         && ui
                                             .add_enabled(
                                                 enabled,
-                                                egui::Button::new("Compare source and staged copy"),
+                                                egui::Button::new(i18n::tr("Compare source and staged copy")),
                                             )
                                             .clicked()
                                     {
@@ -4471,11 +4483,11 @@ impl Explorer {
                                 });
                             }
                             if let Some((staged, result)) = self.recovery_comparisons.get(&record.id) {
-                                ui.small(if *staged {
+                                ui.small(i18n::tr(if *staged {
                                     "Read-only comparison against staged payload:"
                                 } else {
                                     "Read-only comparison against destination:"
-                                });
+                                }));
                                 let color = match result {
                                     journal::Comparison::Identical { .. } => Color32::LIGHT_GREEN,
                                     journal::Comparison::Different(_) => Color32::LIGHT_RED,
@@ -4491,17 +4503,17 @@ impl Explorer {
                                 {
                                     let confirmation = format!("adopt:{}", record.id);
                                     if confirm_resolution.as_deref() == Some(confirmation.as_str()) {
-                                        ui.colored_label(Color32::LIGHT_YELLOW, "Re-verify this legacy v2 private stage and save NEW current inode evidence? The old journal cannot prove historical stage provenance. No files are moved, published or deleted. A later publication or discard requires its own confirmation and fresh verification.");
+                                        ui.colored_label(Color32::LIGHT_YELLOW, i18n::tr("Re-verify this legacy v2 private stage and save NEW current inode evidence? The old journal cannot prove historical stage provenance. No files are moved, published or deleted. A later publication or discard requires its own confirmation and fresh verification."));
                                         ui.horizontal(|ui| {
-                                            if ui.button("Confirm verify and adopt").clicked() {
+                                            if ui.button(i18n::tr("Confirm verify and adopt")).clicked() {
                                                 adopt_staged = Some(record.id.clone());
                                                 confirm_resolution = None;
                                             }
-                                            if ui.button("Cancel").clicked() {
+                                            if ui.button(i18n::tr("Cancel")).clicked() {
                                                 confirm_resolution = None;
                                             }
                                         });
-                                    } else if ui.button("Verify and adopt legacy private stage…").clicked() {
+                                    } else if ui.button(i18n::tr("Verify and adopt legacy private stage…")).clicked() {
                                         confirm_resolution = Some(confirmation);
                                     }
                                 }
@@ -4514,17 +4526,17 @@ impl Explorer {
                                 {
                                     let confirmation = format!("publish:{}", record.id);
                                     if confirm_resolution.as_deref() == Some(confirmation.as_str()) {
-                                        ui.colored_label(Color32::LIGHT_YELLOW, "Publish this verified staged copy to the currently vacant destination? The original remains untouched. The operation will recheck source, stage, nested metadata and target and refuse a collision; an interrupted publication may require another recovery review.");
+                                        ui.colored_label(Color32::LIGHT_YELLOW, i18n::tr("Publish this verified staged copy to the currently vacant destination? The original remains untouched. The operation will recheck source, stage, nested metadata and target and refuse a collision; an interrupted publication may require another recovery review."));
                                         ui.horizontal(|ui| {
-                                            if ui.button("Confirm safe publication").clicked() {
+                                            if ui.button(i18n::tr("Confirm safe publication")).clicked() {
                                                 publish_staged = Some(record.id.clone());
                                                 confirm_resolution = None;
                                             }
-                                            if ui.button("Cancel").clicked() {
+                                            if ui.button(i18n::tr("Cancel")).clicked() {
                                                 confirm_resolution = None;
                                             }
                                         });
-                                    } else if ui.button("Publish verified staged copy…").clicked() {
+                                    } else if ui.button(i18n::tr("Publish verified staged copy…")).clicked() {
                                         confirm_resolution = Some(confirmation);
                                     }
                                 }
@@ -4537,17 +4549,17 @@ impl Explorer {
                                 {
                                     let confirmation = format!("discard:{}", record.id);
                                     if confirm_resolution.as_deref() == Some(confirmation.as_str()) {
-                                        ui.colored_label(Color32::LIGHT_YELLOW, "Discard this unpublished private staged copy? This permanently removes ONLY the staging payload after a fresh byte/identity check; the original and destination remain untouched. An interruption leaves a durable cleanup record, never an auto-retry.");
+                                        ui.colored_label(Color32::LIGHT_YELLOW, i18n::tr("Discard this unpublished private staged copy? This permanently removes ONLY the staging payload after a fresh byte/identity check; the original and destination remain untouched. An interruption leaves a durable cleanup record, never an auto-retry."));
                                         ui.horizontal(|ui| {
-                                            if ui.button("Confirm discard private stage").clicked() {
+                                            if ui.button(i18n::tr("Confirm discard private stage")).clicked() {
                                                 discard_staged = Some(record.id.clone());
                                                 confirm_resolution = None;
                                             }
-                                            if ui.button("Cancel").clicked() {
+                                            if ui.button(i18n::tr("Cancel")).clicked() {
                                                 confirm_resolution = None;
                                             }
                                         });
-                                    } else if ui.button("Discard verified private stage…").clicked() {
+                                    } else if ui.button(i18n::tr("Discard verified private stage…")).clicked() {
                                         confirm_resolution = Some(confirmation);
                                     }
                                 }
@@ -4560,17 +4572,17 @@ impl Explorer {
                                     && self.recovery_comparison_active.is_none()
                                 {
                                     if confirm_resolution.as_deref() == Some(record.id.as_str()) {
-                                        ui.colored_label(Color32::LIGHT_YELLOW, "Confirm retiring this journal record? Both files are kept. A fresh identity and byte comparison will run again; failures leave the record intact.");
+                                        ui.colored_label(Color32::LIGHT_YELLOW, i18n::tr("Confirm retiring this journal record? Both files are kept. A fresh identity and byte comparison will run again; failures leave the record intact."));
                                         ui.horizontal(|ui| {
-                                            if ui.button("Confirm journal resolution").clicked() {
+                                            if ui.button(i18n::tr("Confirm journal resolution")).clicked() {
                                                 resolve = Some(record.id.clone());
                                                 confirm_resolution = None;
                                             }
-                                            if ui.button("Cancel").clicked() {
+                                            if ui.button(i18n::tr("Cancel")).clicked() {
                                                 confirm_resolution = None;
                                             }
                                         });
-                                    } else if ui.button("Resolve verified copy…").clicked() {
+                                    } else if ui.button(i18n::tr("Resolve verified copy…")).clicked() {
                                         confirm_resolution = Some(record.id.clone());
                                     }
                                 }
@@ -4582,17 +4594,17 @@ impl Explorer {
                             {
                                 let confirmation = format!("continue-discard:{}", record.id);
                                 if confirm_resolution.as_deref() == Some(confirmation.as_str()) {
-                                    ui.colored_label(Color32::LIGHT_YELLOW, "Continue removal of the SAME recorded private stage only? Its payload may already be incomplete. RiceField rechecks the original, vacant destination and pinned staging inode, and refuses substitutions. The original is never removed.");
+                                    ui.colored_label(Color32::LIGHT_YELLOW, i18n::tr("Continue removal of the SAME recorded private stage only? Its payload may already be incomplete. RiceField rechecks the original, vacant destination and pinned staging inode, and refuses substitutions. The original is never removed."));
                                     ui.horizontal(|ui| {
-                                        if ui.button("Confirm continue private cleanup").clicked() {
+                                        if ui.button(i18n::tr("Confirm continue private cleanup")).clicked() {
                                             discard_staged = Some(record.id.clone());
                                             confirm_resolution = None;
                                         }
-                                        if ui.button("Cancel").clicked() {
+                                        if ui.button(i18n::tr("Cancel")).clicked() {
                                             confirm_resolution = None;
                                         }
                                     });
-                                } else if ui.button("Continue interrupted stage discard…").clicked() {
+                                } else if ui.button(i18n::tr("Continue interrupted stage discard…")).clicked() {
                                     confirm_resolution = Some(confirmation);
                                 }
                             }
@@ -4605,14 +4617,14 @@ impl Explorer {
                     || self.remote_journal_error.is_some()
                 {
                     ui.separator();
-                    ui.heading("Uncertain remote transfers and safety probes");
-                    ui.label("A timeout or crash may have left private objects on the remote server. RiceField never queries, retries, moves or deletes them during recovery. Review the named paths before discarding local evidence.");
+                    ui.heading(i18n::tr("Uncertain remote transfers and safety probes"));
+                    ui.label(i18n::tr("A timeout or crash may have left private objects on the remote server. RiceField never queries, retries, moves or deletes them during recovery. Review the named paths before discarding local evidence."));
                     if let Some(error) = &self.remote_journal_error {
-                        ui.colored_label(Color32::LIGHT_RED, format!("Cannot inspect remote evidence: {error}"));
+                        ui.colored_label(Color32::LIGHT_RED, i18n::template("Cannot inspect remote evidence: {error}", &[("error", error.clone())]));
                     }
                     if !self.remote_journal_warnings.is_empty() {
                         ui.colored_label(Color32::LIGHT_YELLOW,
-                            "Some recovery artifacts are unreadable or incomplete. Valid records remain visible; no remote objects or local evidence were deleted. Upload admission still uses strict journal validation.");
+                            i18n::tr("Some recovery artifacts are unreadable or incomplete. Valid records remain visible; no remote objects or local evidence were deleted. Upload admission still uses strict journal validation."));
                         for warning in &self.remote_journal_warnings {
                             ui.small(warning);
                         }
@@ -4620,67 +4632,67 @@ impl Explorer {
                     egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
                     for record in &self.remote_journal_records {
                         ui.group(|ui| {
-                            ui.strong(format!("Remote upload {}", record.id));
-                            ui.colored_label(Color32::LIGHT_YELLOW, "State: UNKNOWN / NOT SERVER-VERIFIED — publication and cleanup may have succeeded or failed");
-                            ui.label("Intended destination:");
+                            ui.strong(i18n::template("Remote upload {id}", &[("id", record.id.clone())]));
+                            ui.colored_label(Color32::LIGHT_YELLOW, i18n::tr("State: UNKNOWN / NOT SERVER-VERIFIED — publication and cleanup may have succeeded or failed"));
+                            ui.label(i18n::tr("Intended destination:"));
                             ui.monospace(&record.destination_uri);
-                            ui.label("Private stage (may or may not exist):");
+                            ui.label(i18n::tr("Private stage (may or may not exist):"));
                             ui.monospace(&record.stage_uri);
                             if record.stage_uri.starts_with("sftp://") || record.stage_uri.starts_with("smb://") {
-                                ui.small("The stage is a uniquely named server directory. Inspect its /payload entry before removing anything. SMB directory permissions depend on the NAS share ACLs.");
+                                ui.small(i18n::tr("The stage is a uniquely named server directory. Inspect its /payload entry before removing anything. SMB directory permissions depend on the NAS share ACLs."));
                             }
                             ui.horizontal_wrapped(|ui| {
-                                if ui.button("Copy stage URI").clicked() {
+                                if ui.button(i18n::tr("Copy stage URI")).clicked() {
                                     context.copy_text(record.stage_uri.clone());
                                 }
-                                if ui.button("Copy destination URI").clicked() {
+                                if ui.button(i18n::tr("Copy destination URI")).clicked() {
                                     context.copy_text(record.destination_uri.clone());
                                 }
                             });
-                            ui.small("Inspect both server-side paths independently and retain any ambiguous data. The record does not prove whether publication succeeded.");
+                            ui.small(i18n::tr("Inspect both server-side paths independently and retain any ambiguous data. The record does not prove whether publication succeeded."));
                             if confirm_webdav.as_deref() == Some(record.id.as_str()) {
-                                ui.colored_label(Color32::LIGHT_YELLOW, "Have you independently verified the remote stage and destination, and handled any retained data? Confirming removes ONLY this local journal record, not server files.");
+                                ui.colored_label(Color32::LIGHT_YELLOW, i18n::tr("Have you independently verified the remote stage and destination, and handled any retained data? Confirming removes ONLY this local journal record, not server files."));
                                 ui.horizontal_wrapped(|ui| {
-                                    if ui.add_enabled(!self.remote_journal_loading, egui::Button::new("Confirm discard local record")).clicked() {
+                                    if ui.add_enabled(!self.remote_journal_loading, egui::Button::new(i18n::tr("Confirm discard local record"))).clicked() {
                                         acknowledge_webdav = Some(record.clone());
                                         confirm_webdav = None;
                                     }
-                                    if ui.button("Cancel").clicked() {
+                                    if ui.button(i18n::tr("Cancel")).clicked() {
                                         confirm_webdav = None;
                                     }
                                 });
-                            } else if ui.add_enabled(!self.remote_journal_loading, egui::Button::new("I reviewed the server; discard record…")).clicked() {
+                            } else if ui.add_enabled(!self.remote_journal_loading, egui::Button::new(i18n::tr("I reviewed the server; discard record…"))).clicked() {
                                 confirm_webdav = Some(record.id.clone());
                             }
                         });
                     }
                     for record in &self.remote_probe_records {
                         ui.group(|ui| {
-                            ui.strong(format!("Remote safety probe {}", record.id));
-                            ui.colored_label(Color32::LIGHT_YELLOW, "State: PROBE UNCERTAIN — inspect the prefix independently; this is not a user file");
-                            ui.label("Private safety-probe prefix:");
+                            ui.strong(i18n::template("Remote safety probe {id}", &[("id", record.id.clone())]));
+                            ui.colored_label(Color32::LIGHT_YELLOW, i18n::tr("State: PROBE UNCERTAIN — inspect the prefix independently; this is not a user file"));
+                            ui.label(i18n::tr("Private safety-probe prefix:"));
                             ui.monospace(&record.prefix_uri);
-                            ui.small(if record.prefix_uri.starts_with("sftp://") || record.prefix_uri.starts_with("smb://") {
+                            ui.small(i18n::tr(if record.prefix_uri.starts_with("sftp://") || record.prefix_uri.starts_with("smb://") {
                                 "The SFTP/SMB probe prefix is a uniquely named directory. Inspect a, b and target-0 through target-3. Never assume the directory was cleaned."
                             } else {
                                 "Check rounds 0–3: each prefix may have -ROUND-a, -ROUND-b and -ROUND-destination objects. They contain disposable test data, not the selected upload."
-                            });
-                            if ui.button("Copy probe prefix").clicked() {
+                            }));
+                            if ui.button(i18n::tr("Copy probe prefix")).clicked() {
                                 context.copy_text(record.prefix_uri.clone());
                             }
                             let confirm_key = format!("probe:{}", record.id);
                             if confirm_webdav.as_deref() == Some(confirm_key.as_str()) {
-                                ui.colored_label(Color32::LIGHT_YELLOW, "Have you independently checked the named probe objects on the server and handled any leftovers? Confirming removes ONLY this local evidence record, not server files.");
+                                ui.colored_label(Color32::LIGHT_YELLOW, i18n::tr("Have you independently checked the named probe objects on the server and handled any leftovers? Confirming removes ONLY this local evidence record, not server files."));
                                 ui.horizontal_wrapped(|ui| {
-                                    if ui.add_enabled(!self.remote_journal_loading, egui::Button::new("Confirm discard probe record")).clicked() {
+                                    if ui.add_enabled(!self.remote_journal_loading, egui::Button::new(i18n::tr("Confirm discard probe record"))).clicked() {
                                         acknowledge_probe = Some(record.clone());
                                         confirm_webdav = None;
                                     }
-                                    if ui.button("Cancel").clicked() {
+                                    if ui.button(i18n::tr("Cancel")).clicked() {
                                         confirm_webdav = None;
                                     }
                                 });
-                            } else if ui.add_enabled(!self.remote_journal_loading, egui::Button::new("I reviewed the probe objects; discard record…")).clicked() {
+                            } else if ui.add_enabled(!self.remote_journal_loading, egui::Button::new(i18n::tr("I reviewed the probe objects; discard record…"))).clicked() {
                                 confirm_webdav = Some(confirm_key);
                             }
                         });
@@ -4690,11 +4702,11 @@ impl Explorer {
                 if self.remote_journal_loading {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label("Checking private remote evidence…");
+                        ui.label(i18n::tr("Checking private remote evidence…"));
                     });
                 }
                 ui.separator();
-                if ui.button("Rescan records").clicked() {
+                if ui.button(i18n::tr("Rescan records")).clicked() {
                     rescan = true;
                 }
             });
@@ -4907,34 +4919,34 @@ impl Explorer {
         let mut undo_request = None;
         let mut review_unstarted = None;
         let mut inspect_location = None;
-        egui::Window::new("Transfers")
+        egui::Window::new(i18n::tr("Transfers"))
             .open(&mut open)
             .default_width(440.0)
             .resizable(true)
             .show(context, |ui| {
                 if let Some((id, label)) = &self.active_operation {
-                    ui.strong(format!("Running #{id}: {label}"));
+                    ui.strong(i18n::template("Running #{id}: {label}", &[("id", id.to_string()), ("label", label.clone())]));
                     if let Some(progress) = &self.progress {
                         ui.label(format!("{}: {}", progress.phase, progress.current.display()));
                         if let Some(started) = self.active_started {
                             ui.small(transfer_progress_details(progress, started.elapsed()));
                         }
                     }
-                    if ui.button("Cancel running transfer").clicked() {
+                    if ui.button(i18n::tr("Cancel running transfer")).clicked() {
                         self.cancel.store(true, Ordering::Relaxed);
                     }
-                    ui.small("Cancellation stops future work; already completed items are not undone.");
+                    ui.small(i18n::tr("Cancellation stops future work; already completed items are not undone."));
                 } else {
-                    ui.label("No transfer is running.");
+                    ui.label(i18n::tr("No transfer is running."));
                 }
                 ui.separator();
-                ui.strong(format!("Waiting ({})", self.operation_queue.len()));
-                ui.small("Only copy requests can wait. Removing a waiting job makes no filesystem changes.");
+                ui.strong(i18n::template("Waiting ({count})", &[("count", self.operation_queue.len().to_string())]));
+                ui.small(i18n::tr("Only copy requests can wait. Removing a waiting job makes no filesystem changes."));
                 if !self.operation_queue.is_empty() {
                     let label = if self.queue_paused {
-                        "Resume waiting copies"
+                        i18n::tr("Resume waiting copies")
                     } else {
-                        "Pause waiting copies"
+                        i18n::tr("Pause waiting copies")
                     };
                     if ui.button(label).clicked() {
                         self.queue_paused = !self.queue_paused;
@@ -4953,21 +4965,21 @@ impl Explorer {
                     for job in self.operation_queue.iter() {
                         ui.horizontal_wrapped(|ui| {
                             ui.label(format!("#{} {}", job.id, job.label));
-                            if ui.button("Remove").clicked() {
+                            if ui.button(i18n::tr("Remove")).clicked() {
                                 remove = Some(job.id);
                             }
                         });
                     }
                 });
                 ui.separator();
-                ui.strong(format!("Recent results ({})", self.recent_operations.len()));
-                ui.small("Inspect any uncertain result before retrying. Earlier sessions keep read-only per-file results; history never enables Undo or replay.");
+                ui.strong(i18n::template("Recent results ({count})", &[("count", self.recent_operations.len().to_string())]));
+                ui.small(i18n::tr("Inspect any uncertain result before retrying. Earlier sessions keep read-only per-file results; history never enables Undo or replay."));
                 egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
                     for entry in &self.recent_operations {
                         let outcome = match entry.outcome {
-                            OperationOutcome::Succeeded => "Completed",
-                            OperationOutcome::Cancelled => "Cancelled",
-                            OperationOutcome::Failed => "Failed",
+                            OperationOutcome::Succeeded => i18n::tr("Completed"),
+                            OperationOutcome::Cancelled => i18n::tr("Cancelled"),
+                            OperationOutcome::Failed => i18n::tr("Failed"),
                         };
                         ui.horizontal_wrapped(|ui| {
                             ui.strong(if entry.from_history {
@@ -4984,7 +4996,7 @@ impl Explorer {
                                         !self.busy
                                             && !self.queue_paused
                                             && self.operation_queue.is_empty(),
-                                        egui::Button::new("Undo rename"),
+                                        egui::Button::new(i18n::tr("Undo rename")),
                                     )
                                     .on_hover_text("Restore the previous name if this entry is unchanged and the original name is still free. Never overwrites another file; available only in this session.")
                                     .clicked()
@@ -4997,7 +5009,7 @@ impl Explorer {
                                         !self.busy
                                             && !self.queue_paused
                                             && self.operation_queue.is_empty(),
-                                        egui::Button::new("Undo batch rename"),
+                                        egui::Button::new(i18n::tr("Undo batch rename")),
                                     )
                                     .on_hover_text("Restore every original filename in this completed batch only if all renamed entries still match their post-rename snapshots. Never overwrite unrelated entries; session-only.")
                                     .clicked()
@@ -5010,7 +5022,7 @@ impl Explorer {
                                         !self.busy
                                             && !self.queue_paused
                                             && self.operation_queue.is_empty(),
-                                        egui::Button::new("Undo new item"),
+                                        egui::Button::new(i18n::tr("Undo new item")),
                                     )
                                     .on_hover_text("Only an unchanged empty file or folder can be undone. Files go to Trash; folders are removed only if empty. Available in this session.")
                                     .clicked()
@@ -5036,7 +5048,7 @@ impl Explorer {
                                         !self.busy
                                             && !self.queue_paused
                                             && self.operation_queue.is_empty(),
-                                        egui::Button::new("Review unstarted items"),
+                                        egui::Button::new(i18n::tr("Review unstarted items")),
                                     )
                                     .on_hover_text("Open a new safety preview for files never attempted. Failed, cancelled and completed files are excluded because their state may be uncertain. No transfer runs automatically.")
                                     .clicked()
@@ -5083,14 +5095,14 @@ impl Explorer {
                                                 ui.horizontal(|ui| {
                                                     let state = match item.state {
                                                         filesystem::ItemState::NotStarted => {
-                                                            "Not started"
+                                                            i18n::tr("Not started")
                                                         }
-                                                        filesystem::ItemState::Completed => "Done",
-                                                        filesystem::ItemState::CopiedSourceRetained => "Copied — source kept",
-                                                        filesystem::ItemState::Skipped => "Skipped",
-                                                        filesystem::ItemState::Failed => "Failed",
+                                                        filesystem::ItemState::Completed => i18n::tr("Done"),
+                                                        filesystem::ItemState::CopiedSourceRetained => i18n::tr("Copied — source kept"),
+                                                        filesystem::ItemState::Skipped => i18n::tr("Skipped"),
+                                                        filesystem::ItemState::Failed => i18n::tr("Failed"),
                                                         filesystem::ItemState::Cancelled => {
-                                                            "Cancelled"
+                                                            i18n::tr("Cancelled")
                                                         }
                                                     };
                                                     ui.small(state);
@@ -5106,7 +5118,7 @@ impl Explorer {
                                                         details.push_str(&format!("\n{error}"));
                                                     }
                                                     let path = item.target.as_ref().unwrap_or(&item.source);
-                                                    if ui.small_button("Inspect")
+                                                    if ui.small_button(i18n::tr("Inspect"))
                                                         .on_hover_text(format!("Open the containing folder in a new tab: {}. No files are changed.", path.display()))
                                                         .clicked()
                                                     {
@@ -5962,7 +5974,9 @@ impl Explorer {
             if ctrl && z && !shift && !alt {
                 self.undo_latest();
             }
-            if ctrl && d {
+            if ctrl && shift && d {
+                self.start_external_drag();
+            } else if ctrl && d {
                 let sources = self.selected_paths();
                 if !sources.is_empty() {
                     self.run_action(Action::Copy {
@@ -10442,17 +10456,20 @@ impl Explorer {
                 self.copy_selected_paths(ui.ctx());
                 ui.close();
             }
-            if ui.button("Drag to another app…").clicked() {
+            if ui
+                .add_enabled(
+                    self.current().remote_uri.is_none(),
+                    egui::Button::new("Drag to another app…"),
+                )
+                .on_hover_text(
+                    "Native X11/Wayland drag source via ripdrag or dragon · Ctrl+Shift+D",
+                )
+                .clicked()
+            {
                 if !self.current().selected.contains(&entry.path) {
                     self.select_entry(entry, index, Modifiers::default());
                 }
-                self.status = Some(match crate::external_drag::launch(&self.selected_paths()) {
-                    Ok(helper) => (
-                        format!("Opened {helper} drag source; drop files into the other app."),
-                        false,
-                    ),
-                    Err(error) => (error, true),
-                });
+                self.start_external_drag();
                 ui.close();
             }
             if ui.button("Cut").clicked() {
@@ -10677,8 +10694,8 @@ impl Explorer {
         let mut cancel = false;
         let mut requested = None;
         let title = match dialog.mode {
-            ArchiveMode::Browse { .. } => "Archive browser · 0.5 preview",
-            ArchiveMode::Create { .. } => "Create archive · 0.5 preview",
+            ArchiveMode::Browse { .. } => i18n::tr("Archive browser · 0.5 preview"),
+            ArchiveMode::Create { .. } => i18n::tr("Create archive · 0.5 preview"),
         };
         egui::Window::new(title)
             .open(&mut open)
@@ -10689,13 +10706,13 @@ impl Explorer {
             .show(context, |ui| {
                 match &mut dialog.mode {
                     ArchiveMode::Browse { path, destination, entries, selected, folder_name, password } => {
-                        ui.label(format!("Source: {}", path.display()));
-                        ui.label("All paths are checked for traversal, links and special files before extraction.");
+                        ui.label(i18n::template("Source: {path}", &[("path", path.display().to_string())]));
+                        ui.label(i18n::tr("All paths are checked for traversal, links and special files before extraction."));
                         ui.horizontal(|ui| {
-                            ui.label("Password (if encrypted):");
+                            ui.label(i18n::tr("Password (if encrypted):"));
                             ui.add_sized([245.0, 24.0], egui::TextEdit::singleline(password)
-                                .password(true).hint_text("Session only · never saved"));
-                            if ui.add_enabled(!dialog.running, egui::Button::new("Reload list")).clicked() {
+                                .password(true).hint_text(i18n::tr("Session only · never saved")));
+                            if ui.add_enabled(!dialog.running, egui::Button::new(i18n::tr("Reload list"))).clicked() {
                                 *entries = None;
                                 selected.clear();
                                 requested = Some(ArchiveOperation::List {
@@ -10704,12 +10721,12 @@ impl Explorer {
                                 });
                             }
                         });
-                        ui.small("Encrypted ZIP and supported 7z/RAR archives may need a password; ZIP filenames can be listed while contents remain locked.");
+                        ui.small(i18n::tr("Encrypted ZIP and supported 7z/RAR archives may need a password; ZIP filenames can be listed while contents remain locked."));
                         if let Some(entries) = entries {
                             ui.horizontal(|ui| {
-                                ui.label(format!("{} entries", entries.len()));
-                                if ui.small_button("Select all").clicked() { *selected = (0..entries.len()).collect(); }
-                                if ui.small_button("Select none").clicked() { selected.clear(); }
+                                ui.label(i18n::template("{count} entries", &[("count", entries.len().to_string())]));
+                                if ui.small_button(i18n::tr("Select all")).clicked() { *selected = (0..entries.len()).collect(); }
+                                if ui.small_button(i18n::tr("Select none")).clicked() { selected.clear(); }
                             });
                             egui::ScrollArea::vertical().max_height(300.0)
                                 .show_rows(ui, 23.0, entries.len(), |ui, range| {
@@ -10723,68 +10740,68 @@ impl Explorer {
                                             let label = entry.path.display().to_string();
                                             ui.label(shorten(&label, 68)).on_hover_text(label);
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                if entry.directory { ui.small("folder"); }
+                                                if entry.directory { ui.small(i18n::tr("folder")); }
                                                 else { ui.small(filesystem::human_size(entry.bytes)); }
                                             });
                                         });
                                     }
                                 });
                             ui.horizontal(|ui| {
-                                ui.label("Extract into new folder:");
+                                ui.label(i18n::tr("Extract into new folder:"));
                                 ui.add_sized([245.0, 24.0], egui::TextEdit::singleline(folder_name));
                             });
-                            ui.small(format!("Parent: {} · Existing destinations will not be overwritten", destination.display()));
+                            ui.small(i18n::template("Parent: {path} · Existing destinations will not be overwritten", &[("path", destination.display().to_string())]));
                             ui.horizontal(|ui| {
-                                if ui.add_enabled(!dialog.running, egui::Button::new("Verify integrity")).clicked() {
+                                if ui.add_enabled(!dialog.running, egui::Button::new(i18n::tr("Verify integrity"))).clicked() {
                                     requested = Some(ArchiveOperation::Verify { path: path.clone(),
                                         password: (!password.is_empty()).then(|| password.clone()) });
                                 }
                                 if ui.add_enabled(!dialog.running,
-                                    egui::Button::new("Extract all")).on_hover_text("Unpack every entry into the named new folder; never overwrite an existing folder.").clicked() {
+                                    egui::Button::new(i18n::tr("Extract all"))).on_hover_text(i18n::tr("Unpack every entry into the named new folder; never overwrite an existing folder.")).clicked() {
                                     requested = Some(ArchiveOperation::Extract { path: path.clone(),
                                         destination: destination.clone(), folder: folder_name.clone(),
                                         selected: Vec::new(),
                                         password: (!password.is_empty()).then(|| password.clone()) });
                                 }
                                 if ui.add_enabled(!dialog.running && !selected.is_empty(),
-                                    egui::Button::new(format!("Extract {} selected", selected.len()))).clicked() {
+                                    egui::Button::new(i18n::template("Extract {count} selected", &[("count", selected.len().to_string())]))).clicked() {
                                     requested = Some(ArchiveOperation::Extract { path: path.clone(),
                                         destination: destination.clone(), folder: folder_name.clone(),
                                         selected: selected.iter().map(|&index| entries[index].path.clone()).collect(),
                                         password: (!password.is_empty()).then(|| password.clone()) });
                                 }
                             });
-                        } else if dialog.running { ui.spinner(); ui.label("Reading archive directory…"); }
-                        else { ui.label("Enter a password and select Reload list if this archive is locked."); }
+                        } else if dialog.running { ui.spinner(); ui.label(i18n::tr("Reading archive directory…")); }
+                        else { ui.label(i18n::tr("Enter a password and select Reload list if this archive is locked.")); }
                     }
                     ArchiveMode::Create { sources, destination, stem, format, encrypt, password } => {
-                        ui.label(format!("{} selected source(s)", sources.len()));
-                        ui.label(format!("Destination folder: {}", destination.display()));
+                        ui.label(i18n::template("{count} selected source(s)", &[("count", sources.len().to_string())]));
+                        ui.label(i18n::template("Destination folder: {path}", &[("path", destination.display().to_string())]));
                         ui.horizontal(|ui| {
-                            ui.label("Archive name:");
+                            ui.label(i18n::tr("Archive name:"));
                             ui.add_sized([250.0, 24.0], egui::TextEdit::singleline(stem));
                         });
-                        egui::ComboBox::from_label("Format")
+                        egui::ComboBox::from_label(i18n::tr("Format"))
                             .selected_text(format.extension())
                             .show_ui(ui, |ui| {
                                 for candidate in archive::Format::ALL {
                                     ui.selectable_value(format, candidate, candidate.extension());
                                 }
                             });
-                        ui.checkbox(encrypt, "Encrypt ZIP with AES-256");
+                        ui.checkbox(encrypt, i18n::tr("Encrypt ZIP with AES-256"));
                         if *encrypt {
                             ui.horizontal(|ui| {
-                                ui.label("Password:");
+                                ui.label(i18n::tr("Password:"));
                                 ui.add_sized([260.0, 24.0], egui::TextEdit::singleline(password)
-                                    .password(true).hint_text("Session only · never saved"));
+                                    .password(true).hint_text(i18n::tr("Session only · never saved")));
                             });
                             if *format != archive::Format::Zip {
-                                ui.colored_label(Color32::LIGHT_RED, "Encryption is available only for ZIP archives.");
+                                ui.colored_label(Color32::LIGHT_RED, i18n::tr("Encryption is available only for ZIP archives."));
                             }
                         }
-                        ui.small(format!("Output: {}.{} · will never overwrite", stem, format.extension()));
+                        ui.small(i18n::template("Output: {name}.{extension} · will never overwrite", &[("name", stem.clone()), ("extension", format.extension().to_owned())]));
                         if ui.add_enabled(!dialog.running && (!*encrypt || (*format == archive::Format::Zip && !password.is_empty())),
-                            egui::Button::new("Create archive")).clicked() {
+                            egui::Button::new(i18n::tr("Create archive"))).clicked() {
                             requested = Some(ArchiveOperation::Create { sources: sources.clone(),
                                 destination: destination.clone(), stem: stem.clone(), format: *format,
                                 password: (*encrypt).then(|| password.clone()) });
@@ -10795,8 +10812,8 @@ impl Explorer {
                     ui.separator();
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label(format!("Working · {} processed", filesystem::human_size(dialog.transferred)));
-                        if ui.button("Cancel").clicked() { cancel = true; }
+                        ui.label(i18n::template("Working · {bytes} processed", &[("bytes", filesystem::human_size(dialog.transferred))]));
+                        if ui.button(i18n::tr("Cancel")).clicked() { cancel = true; }
                     });
                     if !dialog.current_file.is_empty() { ui.small(shorten(&dialog.current_file, 95)); }
                 }
@@ -10818,7 +10835,10 @@ impl Explorer {
             // Do not lose the cancellation handshake: the worker must finish
             // cleaning its private stage before other file mutations start.
             if dialog.running {
-                dialog.message = Some(("Cancelling; waiting for archive cleanup…".into(), false));
+                dialog.message = Some((
+                    i18n::tr("Cancelling; waiting for archive cleanup…").into(),
+                    false,
+                ));
                 self.archive_dialog = Some(dialog);
             } else {
                 self.archive_generation = self.archive_generation.wrapping_add(1);

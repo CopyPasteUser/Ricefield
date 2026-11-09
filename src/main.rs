@@ -51,6 +51,12 @@ fn invalid_argument(message: &str) -> ! {
     std::process::exit(2)
 }
 
+fn xwayland_dnd_available(wayland: bool, x11: bool) -> bool {
+    // X11's native XDND receive path is available via XWayland on desktops
+    // where winit 0.30's Wayland backend cannot deliver dropped files.
+    wayland && x11
+}
+
 fn main() -> eframe::Result {
     let mut selected_theme = None;
     let mut theme_file = None;
@@ -58,12 +64,13 @@ fn main() -> eframe::Result {
     let mut locations = Vec::<location::Location>::new();
     let mut separate_window = false;
     let mut file_manager_service = false;
+    let mut xwayland_dnd = false;
     let mut args = env::args_os().skip(1);
     while let Some(arg) = args.next() {
         match arg.to_str() {
             Some("--help" | "-h") => {
                 println!(
-                    "RiceField {}\nUsage: ricefield [--theme ID] [--theme-file FILE] [LOCATION ...]\n       ricefield --check-theme-file FILE\n\n--version        Show the package version\n--list-themes    Show bundled profiles\n--theme ID       Select a RiceBowl visual profile\n--theme-file FILE  Load an external editable TOML theme or RiceProfile v1\n--check-theme-file FILE  Validate an external theme/RiceProfile without opening a GUI\n--separate-window  Open a secondary window without saving its tab session\n--file-manager-service  Offer FileManager1 on the session bus (opt-in; existing owner wins)\n--benchmark      Measure disposable 100k-entry and verified-copy fixtures\n\nLocations accept local paths, file://, smb://, sftp://, dav(s):// and mtp:// URIs. Network tabs offer read-only browsing, previews and explicit local downloads. WebDAV, SFTP and SMB offer conditional single-file uploads after server-specific atomic no-replace probes; unsupported servers fail closed and MTP writes remain disabled. Credentials belong in RiceField's connection prompt, never in command-line URIs.\n\nLocal Archive menu: browse, verify, extract selected, and create ZIP/tar.gz/tar.xz/tar.zst/7z (system libarchive required); masked password prompts and optional AES-256 ZIP creation. Encrypted 7z/RAR support depends on the system backend.\n\nKeyboard: F3 two-folder split view, Ctrl+Shift+N separate window, Ctrl+L path, Ctrl+F search, Ctrl+T/W open/close tab, Ctrl+Shift+T reopen, Ctrl+Shift+PageUp/PageDown reorder; Ctrl+C/X/V copy/cut/paste, F2 rename, Delete trash, Shift+Delete permanent delete, Ctrl+A select all, Ctrl+D duplicate file, Alt+Enter properties, Space preview, Ctrl+H hidden, Ctrl+R refresh.",
+                    "RiceField {}\nUsage: ricefield [--theme ID] [--theme-file FILE] [LOCATION ...]\n       ricefield --check-theme-file FILE\n\n--version        Show the package version\n--list-themes    Show bundled profiles\n--theme ID       Select a RiceBowl visual profile\n--theme-file FILE  Load an external editable TOML theme or RiceProfile v1\n--check-theme-file FILE  Validate an external theme/RiceProfile without opening a GUI\n--separate-window  Open a secondary window without saving its tab session\n--file-manager-service  Offer FileManager1 on the session bus (opt-in; existing owner wins)\n--xwayland-dnd  Use XWayland/XDND for incoming external file drops (requires both displays)\n--benchmark      Measure disposable 100k-entry and verified-copy fixtures\n\nLocations accept local paths, file://, smb://, sftp://, dav(s):// and mtp:// URIs. Network tabs offer read-only browsing, previews and explicit local downloads. WebDAV, SFTP and SMB offer conditional single-file uploads after server-specific atomic no-replace probes; unsupported servers fail closed and MTP writes remain disabled. Credentials belong in RiceField's connection prompt, never in command-line URIs.\n\nLocal Archive menu: browse, verify, extract selected, and create ZIP/tar.gz/tar.xz/tar.zst/7z (system libarchive required); masked password prompts and optional AES-256 ZIP creation. Encrypted 7z/RAR support depends on the system backend.\n\nKeyboard: F3 two-folder split view, Ctrl+Shift+N separate window, Ctrl+L path, Ctrl+F search, Ctrl+T/W open/close tab, Ctrl+Shift+T reopen, Ctrl+Shift+PageUp/PageDown reorder; Ctrl+C/X/V copy/cut/paste, Ctrl+Shift+D native external drag helper, F2 rename, Delete trash, Shift+Delete permanent delete, Ctrl+A select all, Ctrl+D duplicate file, Alt+Enter properties, Space preview, Ctrl+H hidden, Ctrl+R refresh.",
                     env!("CARGO_PKG_VERSION")
                 );
                 return Ok(());
@@ -80,6 +87,7 @@ fn main() -> eframe::Result {
             }
             Some("--separate-window") => separate_window = true,
             Some("--file-manager-service") => file_manager_service = true,
+            Some("--xwayland-dnd") => xwayland_dnd = true,
             Some("--benchmark") => {
                 if let Err(error) = benchmark::run() {
                     eprintln!("ricefield benchmark: {error}");
@@ -128,6 +136,7 @@ fn main() -> eframe::Result {
             || !locations.is_empty()
             || separate_window
             || file_manager_service
+            || xwayland_dnd
         {
             invalid_argument("--check-theme-file must be used on its own");
         }
@@ -153,6 +162,18 @@ fn main() -> eframe::Result {
                     .and_then(|value| theme::ricebowl_id(&value))
             })
             .map(str::to_owned);
+    }
+    if xwayland_dnd {
+        if !xwayland_dnd_available(
+            env::var_os("WAYLAND_DISPLAY").is_some(),
+            env::var_os("DISPLAY").is_some(),
+        ) {
+            invalid_argument("--xwayland-dnd requires WAYLAND_DISPLAY and DISPLAY (XWayland)");
+        }
+        // SAFETY: performed on the main thread before eframe creates the
+        // event loop or any background threads. winit 0.30 documents this as
+        // its supported Linux backend selection mechanism.
+        unsafe { env::remove_var("WAYLAND_DISPLAY") };
     }
     let icon = image::load_from_memory(include_bytes!("../assets/ricefield.png"))
         .expect("embedded PNG icon")
@@ -190,6 +211,14 @@ fn main() -> eframe::Result {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn xwayland_drag_mode_requires_both_backend_displays() {
+        assert!(xwayland_dnd_available(true, true));
+        assert!(!xwayland_dnd_available(true, false));
+        assert!(!xwayland_dnd_available(false, true));
+        assert!(!xwayland_dnd_available(false, false));
+    }
 
     #[test]
     fn local_file_uris_preserve_paths() {

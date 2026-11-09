@@ -2,7 +2,7 @@
 //! A visual change regenerates TOML; manual edits require validation first.
 
 use crate::{
-    config,
+    config, i18n,
     theme::{
         ChromeComponent, ShellKind, SidebarPosition, SidebarSection, SidebarSectionMode, Theme,
     },
@@ -72,21 +72,21 @@ impl ThemeEditor {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) -> Option<Outcome> {
-        ui.small("Customize independently of file operations. Saved themes stay private to your user account.");
+        ui.small(i18n::tr("Customize independently of file operations. Saved themes stay private to your user account."));
         ui.horizontal(|ui| {
-            ui.label("Import TOML path:");
+            ui.label(i18n::tr("Import TOML path:"));
             ui.add_sized(
                 [275.0, 23.0],
                 egui::TextEdit::singleline(&mut self.import_path),
             );
-            if ui.button("Import").clicked() {
+            if ui.button(i18n::tr("Import")).clicked() {
                 let path = Path::new(self.import_path.trim());
                 match import(path) {
                     Ok((source, theme)) => {
                         self.source = source;
                         self.preview = Some(theme);
                         self.message = Some((
-                            "Theme imported into editor; original file unchanged".into(),
+                            i18n::tr("Theme imported into editor; original file unchanged").into(),
                             false,
                         ));
                     }
@@ -97,16 +97,25 @@ impl ThemeEditor {
 
         ui.separator();
         ui.horizontal(|ui| {
-            ui.strong("Theme TOML");
-            if ui.button("Validate").clicked() {
+            ui.strong(i18n::tr("Theme TOML"));
+            if ui.button(i18n::tr("Validate")).clicked() {
                 match Theme::from_text(&self.source) {
                     Ok(theme) => {
                         self.preview = Some(theme);
-                        self.message = Some(("Valid TOML · visual controls enabled".into(), false));
+                        self.message = Some((
+                            i18n::tr("Valid TOML · visual controls enabled").into(),
+                            false,
+                        ));
                     }
                     Err(error) => {
                         self.preview = None;
-                        self.message = Some((format!("Invalid theme: {error}"), true));
+                        self.message = Some((
+                            i18n::template(
+                                "Invalid theme: {error}",
+                                &[("error", error.to_string())],
+                            ),
+                            true,
+                        ));
                     }
                 }
             }
@@ -118,14 +127,14 @@ impl ThemeEditor {
         if ui.add(editor).changed() {
             self.preview = None;
             self.message = Some((
-                "TOML changed · validate before saving or visual editing".into(),
+                i18n::tr("TOML changed · validate before saving or visual editing").into(),
                 false,
             ));
         }
 
         if let Some(theme) = &mut self.preview {
             ui.separator();
-            ui.strong("Visual editor");
+            ui.strong(i18n::tr("Visual editor"));
             let mut changed = false;
             egui::Grid::new("theme_editor_colors")
                 .num_columns(4)
@@ -143,7 +152,7 @@ impl ThemeEditor {
                     .into_iter()
                     .enumerate()
                     {
-                        ui.label(label);
+                        ui.label(i18n::tr(label));
                         let mut color = crate::theme::parse_color(value).unwrap_or(Color32::BLACK);
                         if ui.color_edit_button_srgba(&mut color).changed() {
                             *value =
@@ -156,18 +165,21 @@ impl ThemeEditor {
                     }
                 });
             changed |= ui
-                .add(egui::Slider::new(&mut theme.metrics.icon_size, 12.0..=64.0).text("Icon size"))
+                .add(
+                    egui::Slider::new(&mut theme.metrics.icon_size, 12.0..=64.0)
+                        .text(i18n::tr("Icon size")),
+                )
                 .changed();
             changed |= ui
                 .add(
                     egui::Slider::new(&mut theme.metrics.row_height, 24.0..=80.0)
-                        .text("Row height"),
+                        .text(i18n::tr("Row height")),
                 )
                 .changed();
             changed |= ui
                 .add(
                     egui::Slider::new(&mut theme.metrics.sidebar_width, 120.0..=420.0)
-                        .text("Sidebar width"),
+                        .text(i18n::tr("Sidebar width")),
                 )
                 .changed();
             if changed {
@@ -177,12 +189,14 @@ impl ThemeEditor {
             if changed {
                 self.update_source();
                 self.message = Some((
-                    "Visual changes written to TOML (comments may be reformatted)".into(),
+                    i18n::tr("Visual changes written to TOML (comments may be reformatted)").into(),
                     false,
                 ));
             }
         } else {
-            ui.small("Validate the TOML to unlock color and layout controls.");
+            ui.small(i18n::tr(
+                "Validate the TOML to unlock color and layout controls.",
+            ));
         }
 
         if let Some((message, error)) = &self.message {
@@ -197,19 +211,19 @@ impl ThemeEditor {
         }
         ui.separator();
         ui.horizontal(|ui| {
-            ui.label("Save as:");
+            ui.label(i18n::tr("Save as:"));
             ui.add_sized(
                 [180.0, 23.0],
                 egui::TextEdit::singleline(&mut self.save_name),
             );
-            ui.label(".toml (a new private file; no overwrites)");
+            ui.label(i18n::tr(".toml (a new private file; no overwrites)"));
         });
         let mut outcome = None;
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(
                     self.preview.is_some(),
-                    egui::Button::new("Save & use theme"),
+                    egui::Button::new(i18n::tr("Save & use theme")),
                 )
                 .clicked()
             {
@@ -225,7 +239,7 @@ impl ThemeEditor {
                     Err(error) => self.message = Some((error, true)),
                 }
             }
-            if ui.button("Cancel").clicked() {
+            if ui.button(i18n::tr("Cancel")).clicked() {
                 outcome = Some(Outcome::Close);
             }
         });
@@ -309,10 +323,10 @@ fn shift_component(theme: &mut Theme, component: ChromeComponent, direction: i8)
 
 fn shell_composer(ui: &mut egui::Ui, theme: &mut Theme) -> bool {
     let mut changed = false;
-    egui::CollapsingHeader::new("Shell composer · component layout")
+    egui::CollapsingHeader::new(i18n::tr("Shell composer · component layout"))
         .default_open(false)
         .show(ui, |ui| {
-            ui.small("Move actual toolbars between top and bottom; ↑/↓ changes the render order. Navigation is required.");
+            ui.small(i18n::tr("Move actual toolbars between top and bottom; ↑/↓ changes the render order. Navigation is required."));
             let mut kind = theme.shell_kind();
             egui::ComboBox::from_id_salt("editor_shell_kind")
                 .selected_text(format!("{:?}", kind))
@@ -345,61 +359,61 @@ fn shell_composer(ui: &mut egui::Ui, theme: &mut Theme) -> bool {
             .enumerate()
             {
                 ui.horizontal(|ui| {
-                    ui.label(label);
+                    ui.label(i18n::tr(label));
                     let original = component_region(theme, component);
                     let mut region = original;
                     egui::ComboBox::from_id_salt(("editor_component", index))
                         .selected_text(match region {
-                            Region::Top => "Top",
-                            Region::Bottom => "Bottom",
-                            Region::Off => "Off",
+                            Region::Top => i18n::tr("Top"),
+                            Region::Bottom => i18n::tr("Bottom"),
+                            Region::Off => i18n::tr("Off"),
                         })
                         .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut region, Region::Top, "Top");
-                            ui.selectable_value(&mut region, Region::Bottom, "Bottom");
+                            ui.selectable_value(&mut region, Region::Top, i18n::tr("Top"));
+                            ui.selectable_value(&mut region, Region::Bottom, i18n::tr("Bottom"));
                             if component != ChromeComponent::Navigation {
-                                ui.selectable_value(&mut region, Region::Off, "Off");
+                                ui.selectable_value(&mut region, Region::Off, i18n::tr("Off"));
                             }
                         });
                     if region != original {
                         set_component_region(theme, component, region);
                         changed = true;
                     }
-                    if ui.small_button("↑").on_hover_text("Move earlier").clicked() {
+                    if ui.small_button("↑").on_hover_text(i18n::tr("Move earlier")).clicked() {
                         changed |= shift_component(theme, component, -1);
                     }
-                    if ui.small_button("↓").on_hover_text("Move later").clicked() {
+                    if ui.small_button("↓").on_hover_text(i18n::tr("Move later")).clicked() {
                         changed |= shift_component(theme, component, 1);
                     }
                 });
             }
 
             ui.separator();
-            ui.strong("Sidebar & preview");
+            ui.strong(i18n::tr("Sidebar & preview"));
             let mut sidebar_position = theme.sidebar_position();
             let mut preview_position = theme.preview_position();
             ui.horizontal(|ui| {
-                ui.label("Sidebar");
+                ui.label(i18n::tr("Sidebar"));
                 egui::ComboBox::from_id_salt("editor_sidebar_position")
                     .selected_text(if sidebar_position == SidebarPosition::Left {
-                        "Left"
+                        i18n::tr("Left")
                     } else {
-                        "Right"
+                        i18n::tr("Right")
                     })
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut sidebar_position, SidebarPosition::Left, "Left");
-                        ui.selectable_value(&mut sidebar_position, SidebarPosition::Right, "Right");
+                        ui.selectable_value(&mut sidebar_position, SidebarPosition::Left, i18n::tr("Left"));
+                        ui.selectable_value(&mut sidebar_position, SidebarPosition::Right, i18n::tr("Right"));
                     });
-                ui.label("Preview pane");
+                ui.label(i18n::tr("Preview pane"));
                 egui::ComboBox::from_id_salt("editor_preview_position")
                     .selected_text(if preview_position == SidebarPosition::Left {
-                        "Left"
+                        i18n::tr("Left")
                     } else {
-                        "Right"
+                        i18n::tr("Right")
                     })
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut preview_position, SidebarPosition::Left, "Left");
-                        ui.selectable_value(&mut preview_position, SidebarPosition::Right, "Right");
+                        ui.selectable_value(&mut preview_position, SidebarPosition::Left, i18n::tr("Left"));
+                        ui.selectable_value(&mut preview_position, SidebarPosition::Right, i18n::tr("Right"));
                     });
             });
             if sidebar_position != theme.sidebar_position() {
@@ -423,7 +437,7 @@ fn shell_composer(ui: &mut egui::Ui, theme: &mut Theme) -> bool {
                     if ui
                         .add_enabled(
                             !enabled || sections.len() > 1,
-                            egui::Checkbox::new(&mut enabled, label),
+                            egui::Checkbox::new(&mut enabled, i18n::tr(label)),
                         )
                         .changed()
                     {
@@ -441,7 +455,7 @@ fn shell_composer(ui: &mut egui::Ui, theme: &mut Theme) -> bool {
             }
 
             let mut collapsible = theme.sidebar_section_mode() == SidebarSectionMode::Collapsible;
-            if ui.checkbox(&mut collapsible, "Collapsible sidebar groups").changed() {
+            if ui.checkbox(&mut collapsible, i18n::tr("Collapsible sidebar groups")).changed() {
                 theme.shell.sidebar.mode = Some(if collapsible {
                     SidebarSectionMode::Collapsible
                 } else {
@@ -450,7 +464,7 @@ fn shell_composer(ui: &mut egui::Ui, theme: &mut Theme) -> bool {
                 changed = true;
             }
             let mut status_bar = theme.shell.status_bar.unwrap_or(true);
-            if ui.checkbox(&mut status_bar, "Status bar").changed() {
+            if ui.checkbox(&mut status_bar, i18n::tr("Status bar")).changed() {
                 theme.shell.status_bar = Some(status_bar);
                 changed = true;
             }

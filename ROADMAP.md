@@ -97,12 +97,18 @@ and live-disconnect owner gate remains open even when software CI passes.
   interoperability on X11 and Wayland; retain safe helper fallback. The
   eframe 0.37/winit 0.30 native Wayland outbound-data-source limitation is
   still a real framework blocker; helper drag-out is not native in-process.
+  Ctrl+Shift+D now starts the existing safe helper, and `--xwayland-dnd`
+  opts into winit's X11/XWayland XDND receiving backend when both displays
+  are present. Direct tile-to-desktop outgoing drag still needs framework
+  support and Mint X11/Wayland hardware verification.
 - [ ] Validate file-manager registration, Open With, mounts/Unlock/Eject,
   focus, keyboard navigation and screen-reader behaviors in all seven rices.
 - [ ] Finish direct RiceBowl theme/event integration without making RiceBowl
   mandatory. Profile filesystem events now work; a separate direct RiceBowl
-  bus protocol is not defined by RiceBowl yet. Finish complete German/English
-  coverage in remaining non-core settings, recovery, and specialist dialogs.
+  bus protocol is not defined by RiceBowl yet. German coverage now includes
+  transfer history, archive browser/creation, theme customization and local/
+  remote recovery warnings; broader shell settings and other display-only
+  strings still use English fallback.
 
 **Exit:** file manager works independently and retains its Linux desktop
 contract across rices, with no functional regressions from visual polish.
@@ -825,6 +831,8 @@ wider hostile corpora and real Mint device acceptance are open for stable 0.5.
   Alpha.6 adds a context-menu bridge to optional installed `ripdrag` or
   `dragon` native drag-source helpers. Direct tile-to-app dragging still
   needs framework support; eframe 0.37 / winit 0.30.13 cannot initiate it.
+  Outbound helper can be started using Ctrl+Shift+D; opt-in
+  `--xwayland-dnd` uses X11's incoming XDND path under XWayland.
   X11/Wayland compositor acceptance is open.
 - [x] Alpha.2 adds a lazy symlink-safe folder tree, clickable details headers,
   existing list/grid layouts, natural/lexical sorting and type filters.
