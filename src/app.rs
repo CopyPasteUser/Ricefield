@@ -9021,7 +9021,8 @@ impl Explorer {
                                 ui.collapsing(i18n::tr("More locations"), |ui| {
                                     for (label, path) in secondary {
                                         let selected = self.current().path == path;
-                                        let response = if theme.shell_kind() == ShellKind::Chromeos {
+                                        let response = if theme.shell_kind() == ShellKind::Chromeos
+                                        {
                                             let icon = match label {
                                                 "Music" => FilesNavIcon::Music,
                                                 "Videos" => FilesNavIcon::Video,
