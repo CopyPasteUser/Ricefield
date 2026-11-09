@@ -275,7 +275,7 @@ struct Tab {
     back: Vec<Location>,
     forward: Vec<Location>,
     entries: Arc<Vec<Entry>>,
-    folded_names: Arc<Vec<String>>,
+    folded_names: Arc<file_view::FoldedNames>,
     visible: Vec<usize>,
     view_revision: u64,
     view_pending: bool,
@@ -314,7 +314,7 @@ impl Tab {
             back: Vec::new(),
             forward: Vec::new(),
             entries: Arc::new(Vec::new()),
-            folded_names: Arc::new(Vec::new()),
+            folded_names: Arc::new(file_view::FoldedNames::default()),
             visible: Vec::new(),
             view_revision: 0,
             view_pending: false,
@@ -416,7 +416,7 @@ impl Tab {
         self.remote_selected_uri = None;
         self.cancel_view();
         self.entries = Arc::new(Vec::new());
-        self.folded_names = Arc::new(Vec::new());
+        self.folded_names = Arc::new(file_view::FoldedNames::default());
         self.visible.clear();
         self.selected.clear();
         self.pending_reveal.clear();
@@ -536,7 +536,7 @@ fn commit_local_view(tab: &mut Tab, visible: Vec<usize>) -> usize {
 /// filtering and natural sorting must never touch disk or mutate a tab.
 fn project_local_view(
     entries: &[Entry],
-    folded_names: &[String],
+    folded_names: &file_view::FoldedNames,
     query: &str,
     content_search: bool,
     config: &Config,
@@ -721,7 +721,7 @@ struct ScanResult {
     path: PathBuf,
     reveal: Option<PathBuf>,
     result: std::io::Result<filesystem::FolderScan>,
-    folded_names: Vec<String>,
+    folded_names: file_view::FoldedNames,
     dir_mtime: Option<SystemTime>,
 }
 
@@ -2721,7 +2721,7 @@ impl Explorer {
                         path: task.2,
                         reveal: None,
                         result: Err(error),
-                        folded_names: Vec::new(),
+                        folded_names: file_view::FoldedNames::default(),
                         dir_mtime: None,
                     });
                     return;
@@ -2750,12 +2750,7 @@ impl Explorer {
             }
             let folded_names = result
                 .as_ref()
-                .map(|scan| {
-                    scan.entries
-                        .iter()
-                        .map(|entry| entry.name.to_lowercase())
-                        .collect()
-                })
+                .map(|scan| file_view::FoldedNames::from_entries(&scan.entries))
                 .unwrap_or_default();
             let _ = sender.send(ScanResult {
                 tab: task.0,
@@ -4261,7 +4256,7 @@ impl Explorer {
                     Err(error) => {
                         tab.cancel_view();
                         tab.entries = Arc::new(Vec::new());
-                        tab.folded_names = Arc::new(Vec::new());
+                        tab.folded_names = Arc::new(file_view::FoldedNames::default());
                         tab.visible.clear();
                         tab.selected.clear();
                         tab.pending_reveal.clear();
@@ -12450,7 +12445,6 @@ mod tests {
     #[test]
     fn large_folder_projection_sorts_100k_without_disk_access() {
         let mut entries = Vec::with_capacity(100_000);
-        let mut folded = Vec::with_capacity(100_000);
         for index in (0..100_000).rev() {
             let name = format!("file{index}.txt");
             entries.push(crate::filesystem::Entry {
@@ -12461,9 +12455,9 @@ mod tests {
                 size: index,
                 modified: None,
             });
-            folded.push(name);
         }
         let entries = Arc::new(entries);
+        let folded = crate::file_view::FoldedNames::from_entries(&entries);
         let shared = Arc::clone(&entries);
         assert!(
             Arc::ptr_eq(&entries, &shared),

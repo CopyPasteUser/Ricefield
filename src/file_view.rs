@@ -4,8 +4,53 @@ use crate::filesystem::Entry;
 use std::{
     cmp::Ordering,
     collections::HashMap,
+    ops::Index,
     time::{Duration, SystemTime},
 };
+
+/// Case-folded filenames share one allocation instead of retaining one
+/// `String` allocation (and a 24-byte header) for every directory entry.
+/// Boundaries use native indices so even unusually large directories cannot
+/// overflow a fixed-width offset. This is immutable and cheap to share with
+/// cancellable view workers through `Arc`.
+#[derive(Default)]
+pub struct FoldedNames {
+    data: String,
+    ends: Vec<usize>,
+}
+
+impl FoldedNames {
+    pub fn from_entries(entries: &[Entry]) -> Self {
+        let mut data = String::with_capacity(entries.iter().map(|entry| entry.name.len()).sum());
+        let mut ends = Vec::with_capacity(entries.len());
+        for entry in entries {
+            // Use full Unicode string folding. Lowercasing individual chars
+            // would change context-sensitive mappings (e.g. Greek sigma).
+            data.push_str(&entry.name.to_lowercase());
+            ends.push(data.len());
+        }
+        Self { data, ends }
+    }
+
+    pub fn len(&self) -> usize {
+        self.ends.len()
+    }
+
+    /// Exact owned heap footprint, excluding allocator metadata.
+    pub fn heap_capacity_bytes(&self) -> usize {
+        self.data.capacity() + self.ends.capacity() * std::mem::size_of::<usize>()
+    }
+}
+
+impl Index<usize> for FoldedNames {
+    type Output = str;
+
+    fn index(&self, index: usize) -> &str {
+        let end = self.ends[index];
+        let start = if index == 0 { 0 } else { self.ends[index - 1] };
+        &self.data[start..end]
+    }
+}
 
 /// Natural comparison without integer parsing/overflow (file2 < file10).
 /// Inputs are already folded for case-insensitive comparisons by the scanner.
@@ -242,8 +287,8 @@ pub fn matches_custom_ranges(
 #[cfg(test)]
 mod tests {
     use super::{
-        CompiledGlob, matches_custom_ranges, matches_filter, matches_glob, matches_modified,
-        matches_size, natural_cmp,
+        CompiledGlob, FoldedNames, matches_custom_ranges, matches_filter, matches_glob,
+        matches_modified, matches_size, natural_cmp,
     };
     use crate::filesystem::Entry;
     use std::{
@@ -251,6 +296,49 @@ mod tests {
         path::PathBuf,
         time::{Duration, SystemTime},
     };
+
+    #[test]
+    fn compact_folded_names_preserve_unicode_and_reclaim_per_entry_allocations() {
+        let mut entries = ["", "Résumé.JPG", "ΣΟΣ", "File10", "file2"]
+            .into_iter()
+            .map(|name| Entry {
+                path: PathBuf::from(name),
+                name: name.into(),
+                is_dir: false,
+                is_symlink: false,
+                size: 0,
+                modified: None,
+            })
+            .collect::<Vec<_>>();
+        let names = FoldedNames::from_entries(&entries);
+        assert_eq!(names.len(), entries.len());
+        for (index, entry) in entries.iter().enumerate() {
+            assert_eq!(&names[index], entry.name.to_lowercase().as_str());
+        }
+        assert_eq!(FoldedNames::default().len(), 0);
+
+        for index in 0..100_000 {
+            entries.push(Entry {
+                path: PathBuf::from(format!("file-{index}.txt")),
+                name: format!("file-{index}.txt"),
+                is_dir: false,
+                is_symlink: false,
+                size: 0,
+                modified: None,
+            });
+        }
+        let names = FoldedNames::from_entries(&entries);
+        let legacy = entries
+            .iter()
+            .map(|entry| entry.name.to_lowercase())
+            .collect::<Vec<_>>();
+        let legacy_bytes = legacy.capacity() * std::mem::size_of::<String>()
+            + legacy.iter().map(String::capacity).sum::<usize>();
+        let compact_bytes = names.heap_capacity_bytes();
+        eprintln!("100k folded names: compact={compact_bytes} B legacy={legacy_bytes} B");
+        assert!(compact_bytes < legacy_bytes * 3 / 4);
+        assert_eq!(&names[100_004], "file-99999.txt");
+    }
 
     #[test]
     fn filename_regex_handles_unicode_errors_and_pathological_input() {
