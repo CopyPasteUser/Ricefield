@@ -542,6 +542,10 @@ fn project_local_view(
     config: &Config,
     cancelled: &AtomicBool,
 ) -> Option<Vec<usize>> {
+    // Empty folders need neither filter compilation nor a sort allocation.
+    if entries.is_empty() && folded_names.is_empty() {
+        return (!cancelled.load(Ordering::Relaxed)).then_some(Vec::new());
+    }
     if entries.len() != folded_names.len() {
         return None;
     }
@@ -12440,6 +12444,20 @@ mod tests {
         assert_eq!(tab.selected.len(), 1);
         assert!(tab.selected.contains(&tab.entries[1].path));
         assert!(!tab.selected.contains(&tab.entries[0].path));
+    }
+
+    #[test]
+    fn empty_folder_view_does_not_need_name_index_or_filter_allocations() {
+        let names = crate::file_view::FoldedNames::default();
+        let config = Config::default();
+        assert!(
+            project_local_view(&[], &names, "", false, &config, &AtomicBool::new(false))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            project_local_view(&[], &names, "", false, &config, &AtomicBool::new(true)).is_none()
+        );
     }
 
     #[test]
