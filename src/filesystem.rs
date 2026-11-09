@@ -1922,16 +1922,17 @@ fn perform_with_progress_and_items(
     };
     let mut estimated: Vec<u64> = Vec::with_capacity(sources.len());
     for (index, source) in sources.iter().enumerate() {
-        let estimate =
-            match action {
-                Action::Copy { .. } | Action::CopyAs { .. } | Action::CopyWithRules { .. } => {
-                    estimate_bytes(source, cancelled, 0)
-                }
-                Action::Move { .. } | Action::MoveWithRules { .. } => fs::symlink_metadata(source).map(|metadata| {
+        let estimate = match action {
+            Action::Copy { .. } | Action::CopyAs { .. } | Action::CopyWithRules { .. } => {
+                estimate_bytes(source, cancelled, 0)
+            }
+            Action::Move { .. } | Action::MoveWithRules { .. } => fs::symlink_metadata(source).map(
+                |metadata| {
                     if metadata.is_dir() { 0 } else { metadata.len() }
-                }),
-                _ => break,
-            };
+                },
+            ),
+            _ => break,
+        };
         match estimate {
             Ok(bytes) => estimated.push(bytes),
             Err(error) => {
@@ -2644,9 +2645,7 @@ pub fn preview_copy_with_rules_cancellable(
     rules: &[TransferRule],
     cancelled: &AtomicBool,
 ) -> io::Result<TransferPlan> {
-    preview_transfer_with_rules_cancellable(
-        sources, destination, conflict, false, rules, cancelled,
-    )
+    preview_transfer_with_rules_cancellable(sources, destination, conflict, false, rules, cancelled)
 }
 
 /// Read-only preflight shared by copy and move. Exact target names are copy-only.
@@ -6071,8 +6070,14 @@ mod tests {
         assert_eq!(report.items[1].state, ItemState::Completed);
         assert_eq!(fs::read(skip).unwrap(), b"skip me");
         assert!(!keep.exists());
-        assert_eq!(fs::read(destination.join("same.txt")).unwrap(), b"destination is safe");
-        assert_eq!(fs::read(destination.join("same (copy).txt")).unwrap(), b"move me");
+        assert_eq!(
+            fs::read(destination.join("same.txt")).unwrap(),
+            b"destination is safe"
+        );
+        assert_eq!(
+            fs::read(destination.join("same (copy).txt")).unwrap(),
+            b"move me"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -6095,15 +6100,17 @@ mod tests {
             vec![TransferRule::Global],
         ];
         for rules in invalid_cases {
-            assert!(preview_transfer_with_rules_cancellable(
-                &sources,
-                &destination,
-                ConflictPolicy::KeepBoth,
-                true,
-                &rules,
-                &AtomicBool::new(false),
-            )
-            .is_err());
+            assert!(
+                preview_transfer_with_rules_cancellable(
+                    &sources,
+                    &destination,
+                    ConflictPolicy::KeepBoth,
+                    true,
+                    &rules,
+                    &AtomicBool::new(false),
+                )
+                .is_err()
+            );
             let report = perform_with_report(
                 &Action::MoveWithRules {
                     sources: sources.clone(),
@@ -6115,12 +6122,20 @@ mod tests {
                 &mut |_| {},
             );
             assert!(report.result.is_err());
-            assert!(report.items.iter().all(|item| item.state != ItemState::Completed));
+            assert!(
+                report
+                    .items
+                    .iter()
+                    .all(|item| item.state != ItemState::Completed)
+            );
             for source in &sources {
                 assert_eq!(fs::read(source).unwrap(), b"original intact");
             }
             assert!(!destination.join("first.txt").exists());
-            assert_eq!(fs::read(destination.join("second.txt")).unwrap(), b"existing destination");
+            assert_eq!(
+                fs::read(destination.join("second.txt")).unwrap(),
+                b"existing destination"
+            );
         }
         fs::remove_dir_all(root).unwrap();
     }

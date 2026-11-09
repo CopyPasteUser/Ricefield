@@ -11398,11 +11398,12 @@ impl eframe::App for Explorer {
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, CLIPBOARD_WAIT, Clipboard, Dialog, Explorer, ItemCounts, NameMode, PasteMode, PendingPaste,
-        PropertyResult, PropertySnapshot, Tab, TabSnapshot, ViewResult, accept_property_result,
-        active_after_swap, choose_paste_clipboard, commit_local_view, drop_action, elapsed_label,
-        next_search_repaint_delay, project_local_view, read_property_snapshot, remaining_cut_paths,
-        resolve_split_tabs, retain_visible_selection, transfer_progress_details,
+        Action, CLIPBOARD_WAIT, Clipboard, Dialog, Explorer, ItemCounts, NameMode, PasteMode,
+        PendingPaste, PropertyResult, PropertySnapshot, Tab, TabSnapshot, ViewResult,
+        accept_property_result, active_after_swap, choose_paste_clipboard, commit_local_view,
+        drop_action, elapsed_label, next_search_repaint_delay, project_local_view,
+        read_property_snapshot, remaining_cut_paths, resolve_split_tabs, retain_visible_selection,
+        transfer_progress_details,
     };
     use crate::clipboard;
     use crate::config::Config;
@@ -11419,7 +11420,10 @@ mod tests {
     #[test]
     fn individual_move_choices_dispatch_as_move_and_global_choices_keep_legacy_path() {
         let clipboard = Clipboard {
-            paths: vec![PathBuf::from("/source/first"), PathBuf::from("/source/second")],
+            paths: vec![
+                PathBuf::from("/source/first"),
+                PathBuf::from("/source/second"),
+            ],
             cut: true,
         };
         let destination = PathBuf::from("/target");
@@ -11429,8 +11433,10 @@ mod tests {
             ConflictPolicy::AbortOnConflict,
             &[TransferRule::SkipExisting, TransferRule::KeepBoth],
         );
-        assert!(matches!(action, Action::MoveWithRules { sources, destination: target, rules, .. }
-            if sources == clipboard.paths && target == destination && rules.len() == 2));
+        assert!(
+            matches!(action, Action::MoveWithRules { sources, destination: target, rules, .. }
+            if sources == clipboard.paths && target == destination && rules.len() == 2)
+        );
         let action = Explorer::paste_action_with_rules(
             clipboard,
             destination,
