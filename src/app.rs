@@ -11443,197 +11443,197 @@ impl Explorer {
                             egui::ScrollArea::vertical()
                                 .max_height(body_height)
                                 .show(ui, |ui| {
-                                match details {
-                                    Some(Ok(snapshot)) => {
-                                        for (name, value) in &snapshot.lines {
-                                            ui.horizontal_wrapped(|ui| {
-                                                ui.strong(format!("{name}:"));
-                                                ui.label(value);
+                                    match details {
+                                        Some(Ok(snapshot)) => {
+                                            for (name, value) in &snapshot.lines {
+                                                ui.horizontal_wrapped(|ui| {
+                                                    ui.strong(format!("{name}:"));
+                                                    ui.label(value);
+                                                });
+                                            }
+                                        }
+                                        Some(Err(error)) => {
+                                            ui.colored_label(
+                                                Color32::RED,
+                                                format!("Cannot read properties: {error}"),
+                                            );
+                                        }
+                                        None => {
+                                            ui.horizontal(|ui| {
+                                                ui.spinner();
+                                                ui.label(i18n::tr("Reading file properties…"));
                                             });
                                         }
                                     }
-                                    Some(Err(error)) => {
-                                        ui.colored_label(
-                                            Color32::RED,
-                                            format!("Cannot read properties: {error}"),
-                                        );
-                                    }
-                                    None => {
-                                        ui.horizontal(|ui| {
-                                            ui.spinner();
-                                            ui.label(i18n::tr("Reading file properties…"));
-                                        });
-                                    }
-                                }
-                                #[cfg(unix)]
-                                if let Some(Ok(snapshot)) = details.as_ref()
-                                    && !snapshot.is_symlink
-                                {
-                                    ui.separator();
-                                    let name = if snapshot.is_dir {
-                                        "Calculate folder size"
-                                    } else {
-                                        "Calculate SHA-256"
-                                    };
-                                    if ui
-                                        .add_enabled(!analysis_busy, egui::Button::new(name))
-                                        .clicked()
+                                    #[cfg(unix)]
+                                    if let Some(Ok(snapshot)) = details.as_ref()
+                                        && !snapshot.is_symlink
                                     {
-                                        *analysis = None;
-                                        requested_analysis = Some((path.clone(), *generation));
-                                    }
-                                    if analysis_busy {
-                                        ui.horizontal(|ui| {
-                                            ui.spinner();
-                                            ui.label("Analysing in background…");
-                                        });
-                                    }
-                                    if let Some(result) = analysis {
-                                        match result {
-                                            Ok(result) => {
-                                                ui.label(
-                                                    egui::RichText::new(result.as_str()).monospace(),
-                                                );
-                                            }
-                                            Err(error) => {
-                                                ui.colored_label(Color32::RED, error.as_str());
-                                            }
-                                        }
-                                    }
-                                }
-                                #[cfg(unix)]
-                                if let Some(Ok(snapshot)) = details.as_ref() {
-                                    ui.separator();
-                                    if snapshot.is_symlink {
-                                        ui.label("Symlink permissions cannot be changed here.");
-                                    }
-                                    ui.horizontal(|ui| {
-                                        ui.label("Mode (octal):");
-                                        ui.add_sized([100.0, 25.0], egui::TextEdit::singleline(mode));
-                                        let parsed = u32::from_str_radix(mode.trim(), 8)
-                                            .ok()
-                                            .filter(|number| *number <= 0o777);
+                                        ui.separator();
+                                        let name = if snapshot.is_dir {
+                                            "Calculate folder size"
+                                        } else {
+                                            "Calculate SHA-256"
+                                        };
                                         if ui
-                                            .add_enabled(
-                                                parsed.is_some() && !snapshot.is_symlink,
-                                                egui::Button::new("Apply"),
-                                            )
+                                            .add_enabled(!analysis_busy, egui::Button::new(name))
                                             .clicked()
                                         {
-                                            action = Some(Action::SetMode {
-                                                path: path.clone(),
-                                                mode: parsed
-                                                    .expect("button only enabled for valid mode"),
-                                                expected: snapshot.metadata.clone(),
-                                            });
-                                            dismiss = true;
+                                            *analysis = None;
+                                            requested_analysis = Some((path.clone(), *generation));
                                         }
-                                    });
-                                    #[cfg(target_os = "linux")]
-                                    ui.horizontal_wrapped(|ui| {
-                                        use std::os::unix::fs::MetadataExt;
-                                        ui.label("Owner UID:");
-                                        ui.add_sized([84.0, 25.0], egui::TextEdit::singleline(owner));
-                                        ui.label("Group GID:");
-                                        ui.add_sized([84.0, 25.0], egui::TextEdit::singleline(group));
-                                        let parsed = owner
+                                        if analysis_busy {
+                                            ui.horizontal(|ui| {
+                                                ui.spinner();
+                                                ui.label("Analysing in background…");
+                                            });
+                                        }
+                                        if let Some(result) = analysis {
+                                            match result {
+                                                Ok(result) => {
+                                                    ui.label(
+                                                        egui::RichText::new(result.as_str()).monospace(),
+                                                    );
+                                                }
+                                                Err(error) => {
+                                                    ui.colored_label(Color32::RED, error.as_str());
+                                                }
+                                            }
+                                        }
+                                    }
+                                    #[cfg(unix)]
+                                    if let Some(Ok(snapshot)) = details.as_ref() {
+                                        ui.separator();
+                                        if snapshot.is_symlink {
+                                            ui.label("Symlink permissions cannot be changed here.");
+                                        }
+                                        ui.horizontal(|ui| {
+                                            ui.label("Mode (octal):");
+                                            ui.add_sized([100.0, 25.0], egui::TextEdit::singleline(mode));
+                                            let parsed = u32::from_str_radix(mode.trim(), 8)
+                                                .ok()
+                                                .filter(|number| *number <= 0o777);
+                                            if ui
+                                                .add_enabled(
+                                                    parsed.is_some() && !snapshot.is_symlink,
+                                                    egui::Button::new("Apply"),
+                                                )
+                                                .clicked()
+                                            {
+                                                action = Some(Action::SetMode {
+                                                    path: path.clone(),
+                                                    mode: parsed
+                                                        .expect("button only enabled for valid mode"),
+                                                    expected: snapshot.metadata.clone(),
+                                                });
+                                                dismiss = true;
+                                            }
+                                        });
+                                        #[cfg(target_os = "linux")]
+                                        ui.horizontal_wrapped(|ui| {
+                                            use std::os::unix::fs::MetadataExt;
+                                            ui.label("Owner UID:");
+                                            ui.add_sized([84.0, 25.0], egui::TextEdit::singleline(owner));
+                                            ui.label("Group GID:");
+                                            ui.add_sized([84.0, 25.0], egui::TextEdit::singleline(group));
+                                            let parsed = owner
+                                                .trim()
+                                                .parse::<u32>()
+                                                .ok()
+                                                .filter(|uid| *uid != u32::MAX)
+                                                .zip(
+                                                    group
+                                                        .trim()
+                                                        .parse::<u32>()
+                                                        .ok()
+                                                        .filter(|gid| *gid != u32::MAX),
+                                                );
+                                            let changed = parsed.is_some_and(|(uid, gid)| {
+                                                uid != snapshot.metadata.uid()
+                                                    || gid != snapshot.metadata.gid()
+                                            });
+                                            if ui
+                                                .add_enabled(
+                                                    changed && !snapshot.is_symlink,
+                                                    egui::Button::new("Apply owner/group"),
+                                                )
+                                                .clicked()
+                                            {
+                                                let (uid, gid) =
+                                                    parsed.expect("owner/group button requires valid IDs");
+                                                action = Some(Action::SetOwnership {
+                                                    path: path.clone(),
+                                                    uid,
+                                                    gid,
+                                                    expected: snapshot.metadata.clone(),
+                                                });
+                                                dismiss = true;
+                                            }
+                                        });
+                                        #[cfg(target_os = "linux")]
+                                    ui.small("Ownership changes follow your account's Linux permissions; no sudo or privilege escalation.");
+                                        #[cfg(target_os = "linux")]
+                                    ui.vertical(|ui| {
+                                        ui.separator();
+                                        ui.label("Create a POSIX access ACL for one additional user:");
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.label("User UID:");
+                                            ui.add_sized([100.0, 25.0], egui::TextEdit::singleline(acl_user));
+                                            ui.label("Rights (rwx):");
+                                            ui.add_sized([75.0, 25.0], egui::TextEdit::singleline(acl_permissions));
+                                        });
+                                        let parsed = acl_user
                                             .trim()
                                             .parse::<u32>()
                                             .ok()
                                             .filter(|uid| *uid != u32::MAX)
-                                            .zip(
-                                                group
-                                                    .trim()
-                                                    .parse::<u32>()
-                                                    .ok()
-                                                    .filter(|gid| *gid != u32::MAX),
-                                            );
-                                        let changed = parsed.is_some_and(|(uid, gid)| {
-                                            uid != snapshot.metadata.uid()
-                                                || gid != snapshot.metadata.gid()
-                                        });
+                                            .zip(filesystem::parse_acl_rwx(acl_permissions));
                                         if ui
                                             .add_enabled(
-                                                changed && !snapshot.is_symlink,
-                                                egui::Button::new("Apply owner/group"),
+                                                parsed.is_some() && !snapshot.is_symlink,
+                                                egui::Button::new("Create ACL entry"),
                                             )
                                             .clicked()
                                         {
-                                            let (uid, gid) =
-                                                parsed.expect("owner/group button requires valid IDs");
-                                            action = Some(Action::SetOwnership {
+                                            let (uid, permissions) = parsed.expect("ACL button requires a valid UID and rights");
+                                            action = Some(Action::CreateNamedUserAcl {
                                                 path: path.clone(),
                                                 uid,
-                                                gid,
+                                                permissions,
                                                 expected: snapshot.metadata.clone(),
                                             });
                                             dismiss = true;
                                         }
+                                        ui.small("Creates an ACL only if none is found. Group rights are preserved. Avoid simultaneous ACL edits from other programs: Linux does not guarantee atomic no-replace for this attribute. Requires filesystem ACL support and ordinary Linux permissions.");
                                     });
-                                    #[cfg(target_os = "linux")]
-                                ui.small("Ownership changes follow your account's Linux permissions; no sudo or privilege escalation.");
-                                    #[cfg(target_os = "linux")]
-                                ui.vertical(|ui| {
-                                    ui.separator();
-                                    ui.label("Create a POSIX access ACL for one additional user:");
-                                    ui.horizontal_wrapped(|ui| {
-                                        ui.label("User UID:");
-                                        ui.add_sized([100.0, 25.0], egui::TextEdit::singleline(acl_user));
-                                        ui.label("Rights (rwx):");
-                                        ui.add_sized([75.0, 25.0], egui::TextEdit::singleline(acl_permissions));
-                                    });
-                                    let parsed = acl_user
-                                        .trim()
-                                        .parse::<u32>()
-                                        .ok()
-                                        .filter(|uid| *uid != u32::MAX)
-                                        .zip(filesystem::parse_acl_rwx(acl_permissions));
-                                    if ui
-                                        .add_enabled(
-                                            parsed.is_some() && !snapshot.is_symlink,
-                                            egui::Button::new("Create ACL entry"),
-                                        )
-                                        .clicked()
-                                    {
-                                        let (uid, permissions) = parsed.expect("ACL button requires a valid UID and rights");
-                                        action = Some(Action::CreateNamedUserAcl {
-                                            path: path.clone(),
-                                            uid,
-                                            permissions,
-                                            expected: snapshot.metadata.clone(),
+                                        #[cfg(target_os = "linux")]
+                                    ui.vertical(|ui| {
+                                        ui.separator();
+                                        ui.label("Add an extended attribute (existing values are never overwritten):");
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.label("Name:");
+                                            ui.add_sized([170.0, 25.0], egui::TextEdit::singleline(attribute_name));
+                                            ui.label("Text value:");
+                                            ui.add_sized([170.0, 25.0], egui::TextEdit::singleline(attribute_value));
                                         });
-                                        dismiss = true;
-                                    }
-                                    ui.small("Creates an ACL only if none is found. Group rights are preserved. Avoid simultaneous ACL edits from other programs: Linux does not guarantee atomic no-replace for this attribute. Requires filesystem ACL support and ordinary Linux permissions.");
-                                });
-                                    #[cfg(target_os = "linux")]
-                                ui.vertical(|ui| {
-                                    ui.separator();
-                                    ui.label("Add an extended attribute (existing values are never overwritten):");
-                                    ui.horizontal_wrapped(|ui| {
-                                        ui.label("Name:");
-                                        ui.add_sized([170.0, 25.0], egui::TextEdit::singleline(attribute_name));
-                                        ui.label("Text value:");
-                                        ui.add_sized([170.0, 25.0], egui::TextEdit::singleline(attribute_value));
+                                        let valid = attribute_name.starts_with("user.")
+                                            && attribute_name.len() > 5
+                                            && attribute_name.len() <= 255
+                                            && !attribute_name.as_bytes().contains(&0)
+                                            && attribute_value.len() <= 4096
+                                            && !snapshot.is_symlink;
+                                        if ui.add_enabled(valid, egui::Button::new("Create attribute")).clicked() {
+                                            action = Some(Action::CreateUserAttribute {
+                                                path: path.clone(),
+                                                name: attribute_name.clone(),
+                                                value: attribute_value.clone(),
+                                                expected: snapshot.metadata.clone(),
+                                            });
+                                            dismiss = true;
+                                        }
+                                        ui.small("Only user.* names and up to 4 KiB of UTF-8 text. A conflicting attribute is left untouched.");
                                     });
-                                    let valid = attribute_name.starts_with("user.")
-                                        && attribute_name.len() > 5
-                                        && attribute_name.len() <= 255
-                                        && !attribute_name.as_bytes().contains(&0)
-                                        && attribute_value.len() <= 4096
-                                        && !snapshot.is_symlink;
-                                    if ui.add_enabled(valid, egui::Button::new("Create attribute")).clicked() {
-                                        action = Some(Action::CreateUserAttribute {
-                                            path: path.clone(),
-                                            name: attribute_name.clone(),
-                                            value: attribute_value.clone(),
-                                            expected: snapshot.metadata.clone(),
-                                        });
-                                        dismiss = true;
                                     }
-                                    ui.small("Only user.* names and up to 4 KiB of UTF-8 text. A conflicting attribute is left untouched.");
-                                });
-                                }
                                 });
                             ui.separator();
                             if ui.button(i18n::tr("Close")).clicked() {
