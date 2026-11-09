@@ -80,6 +80,15 @@ Copy jobs. Any current transfer continues to completion or explicit
 cancellation; the pause does not suspend file I/O, lock changing sources,
 persist across restarts, or provide Undo.
 
+For a failed or cancelled **local** Copy/Move batch, Transfers may offer
+**Review unstarted items** in the same session. Only `NotStarted` source
+identities and their original per-item conflict policies are carried into a
+fresh, asynchronous Paste-with-options preview. The user must explicitly
+approve a new operation; worker preflight rechecks everything. Failed,
+cancelled, completed and source-retained items are excluded because publication
+or cleanup may be uncertain. Queued transfers must finish or be removed first;
+restored history never exposes the action or a replay button.
+
 Completed single-item Renames may carry a one-time Undo action in the same
 session's Transfers history. Undo dispatches through the canonical filesystem
 worker, checks the post-rename inode/metadata snapshot and uses atomic

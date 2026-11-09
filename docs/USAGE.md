@@ -43,6 +43,12 @@ replace it. Corrupt, unsupported or symlinked history files are preserved, not
 silently rewritten. If another RiceField process owns the history lock, this
 instance can read but not overwrite it.
 
+After a failed or cancelled local Copy/Move batch, **Review unstarted items**
+can reopen Paste with options for items that never began. Review the current
+paths and choices, then explicitly start a new transfer if safe. Failed or
+already processed items are excluded because their destination may require
+manual inspection. This button is session-only and cannot replay history.
+
 A same-filesystem Move renames. A cross-filesystem Move publishes a verified
 copy and **retains the original for separate manual cleanup**. Source metadata
 that cannot be preserved can make verification fail. Review every item after a
