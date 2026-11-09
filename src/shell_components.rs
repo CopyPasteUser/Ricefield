@@ -740,7 +740,7 @@ pub fn sidebar_section(
     } else if theme.shell_kind() == ShellKind::Aero {
         match section {
             SidebarSection::Tasks => "File tasks",
-            SidebarSection::Places => "Libraries",
+            SidebarSection::Places => "Places",
             SidebarSection::Favorites => "Favorites",
             SidebarSection::Volumes => "Computer & Network",
         }

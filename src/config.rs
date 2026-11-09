@@ -188,6 +188,62 @@ pub fn home() -> PathBuf {
         .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from("/")))
 }
 
+/// XDG user-dirs may be localized or moved (e.g. ~/Dokumente instead of
+/// ~/Documents). Parse only literal absolute paths and $HOME expansions:
+/// user-dirs.dirs is configuration data, not a shell script to execute.
+fn xdg_user_dir(home: &Path, config: &str, key: &str) -> Option<PathBuf> {
+    let value = config.lines().find_map(|line| {
+        let (name, value) = line.trim().split_once('=')?;
+        (name.trim() == key).then_some(value.trim())
+    })?;
+    let value = value.strip_prefix('"')?.strip_suffix('"')?;
+    let path = if value == "$HOME" {
+        home.to_path_buf()
+    } else if let Some(relative) = value.strip_prefix("$HOME/") {
+        home.join(relative)
+    } else if value.starts_with('/') {
+        PathBuf::from(value)
+    } else {
+        return None;
+    };
+    // Reject unexpanded shell syntax rather than ever interpreting it.
+    (!value.contains(['`', '\\', '"'])
+        && !value.trim_start_matches("$HOME").contains('$'))
+    .then_some(path)
+}
+
+fn sidebar_places_from_config(home: &Path, user_dirs: &str) -> Vec<(&'static str, PathBuf)> {
+    let mut places = vec![("Home", home.to_path_buf())];
+    for (label, key, fallback) in [
+        ("Desktop", "XDG_DESKTOP_DIR", "Desktop"),
+        ("Documents", "XDG_DOCUMENTS_DIR", "Documents"),
+        ("Downloads", "XDG_DOWNLOAD_DIR", "Downloads"),
+        ("Pictures", "XDG_PICTURES_DIR", "Pictures"),
+        ("Music", "XDG_MUSIC_DIR", "Music"),
+        ("Videos", "XDG_VIDEOS_DIR", "Videos"),
+    ] {
+        let configured = xdg_user_dir(home, user_dirs, key);
+        let path = configured
+            .filter(|path| path.is_dir())
+            .unwrap_or_else(|| home.join(fallback));
+        if path.is_dir() && !places.iter().any(|(_, existing)| existing == &path) {
+            places.push((label, path));
+        }
+    }
+    places.push(("Filesystem", PathBuf::from("/")));
+    places
+}
+
+/// Called by the existing background inventory worker, never by UI painting.
+pub fn sidebar_places() -> Vec<(&'static str, PathBuf)> {
+    let home = home();
+    let config_dir = env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".config"));
+    let contents = fs::read_to_string(config_dir.join("user-dirs.dirs")).unwrap_or_default();
+    sidebar_places_from_config(&home, &contents)
+}
+
 pub fn config_file() -> PathBuf {
     let root = env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
@@ -498,6 +554,39 @@ fn decode_history(history: &[String]) -> Vec<Location> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn standard_places_follow_localized_xdg_user_directories() {
+        let home = std::env::temp_dir().join(format!(
+            "ricefield-places-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(home.join("Schreibtisch")).unwrap();
+        fs::create_dir_all(home.join("Dokumente")).unwrap();
+        fs::create_dir_all(home.join("Downloads")).unwrap();
+        let configured = concat!(
+            "XDG_DESKTOP_DIR=\"$HOME/Schreibtisch\"\n",
+            "XDG_DOCUMENTS_DIR=\"$HOME/Dokumente\"\n",
+            "XDG_DOWNLOAD_DIR=\"$HOME/Downloads\"\n",
+            "XDG_MUSIC_DIR=\"$HOME\"\n",
+            "XDG_PICTURES_DIR=\"$(invalid command)\"\n",
+        );
+        let places = sidebar_places_from_config(&home, configured);
+        assert_eq!(places[0], ("Home", home.clone()));
+        assert!(places.contains(&("Desktop", home.join("Schreibtisch"))));
+        assert!(places.contains(&("Documents", home.join("Dokumente"))));
+        assert!(places.contains(&("Downloads", home.join("Downloads"))));
+        assert!(sidebar_places_from_config(&home, "")
+            .contains(&("Downloads", home.join("Downloads"))));
+        assert!(!places.iter().any(|(name, _)| *name == "Music"));
+        assert!(!places.iter().any(|(name, _)| *name == "Pictures"));
+        assert_eq!(places.last().unwrap(), &("Filesystem", PathBuf::from("/")));
+        fs::remove_dir_all(home).unwrap();
+    }
 
     #[test]
     fn background_preference_writer_is_bounded_and_keeps_the_latest_snapshot() {

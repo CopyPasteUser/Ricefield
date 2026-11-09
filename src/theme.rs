@@ -748,6 +748,28 @@ mod tests {
     }
 
     #[test]
+    fn finder_sidebar_keeps_standard_places_and_collapsed_locations() {
+        let sections = Theme::builtin("macos").unwrap().sidebar_sections();
+        assert_eq!(
+            sections,
+            vec![
+                SidebarSection::Places,
+                SidebarSection::Favorites,
+                SidebarSection::Volumes,
+            ]
+        );
+        for id in BUILTIN_IDS {
+            assert!(
+                Theme::builtin(id)
+                    .unwrap()
+                    .sidebar_sections()
+                    .contains(&SidebarSection::Places),
+                "{id} must expose standard Places",
+            );
+        }
+    }
+
+    #[test]
     fn shell_regions_support_real_layout_recomposition() {
         let mut theme = Theme::builtin("win7").unwrap();
         theme.shell.top = None;
