@@ -375,7 +375,7 @@ mod tests {
         {
             std::os::unix::fs::symlink(&root, root.join("loop")).unwrap();
             let output = deep_analysis(&root, &AtomicBool::new(false)).unwrap();
-            assert!(output.contains("5 bytes across 1 files"));
+            assert!(output.contains("5 B across 1 files"));
         }
         fs::remove_dir_all(root).unwrap();
     }
