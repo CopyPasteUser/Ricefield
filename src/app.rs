@@ -10484,9 +10484,11 @@ impl Explorer {
         }
         let tab_id = self.tabs[tab_index].id;
         let scan_generation = self.tabs[tab_index].generation;
-        if self.marquee.as_ref().is_some_and(|drag| {
-            drag.tab_id == tab_id && drag.scan_generation != scan_generation
-        }) {
+        if self
+            .marquee
+            .as_ref()
+            .is_some_and(|drag| drag.tab_id == tab_id && drag.scan_generation != scan_generation)
+        {
             self.marquee = None;
         }
 
@@ -10572,9 +10574,11 @@ impl Explorer {
                     });
                 }
             });
-        if let Some(drag) = self.marquee.as_mut().filter(|drag| {
-            drag.tab_id == tab_id && drag.scan_generation == scan_generation
-        }) {
+        if let Some(drag) = self
+            .marquee
+            .as_mut()
+            .filter(|drag| drag.tab_id == tab_id && drag.scan_generation == scan_generation)
+        {
             drag.apply(&mut self.tabs[tab_index], hits);
             if drag.rect().intersects(output.inner_rect) {
                 let selection = drag.rect().intersect(output.inner_rect);
@@ -12116,12 +12120,13 @@ impl eframe::App for Explorer {
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, CLIPBOARD_WAIT, Clipboard, Dialog, Explorer, ItemCounts, MarqueeSelection, NameMode, PasteMode,
-        PendingPaste, PropertyResult, PropertySnapshot, Tab, TabSnapshot, ViewResult,
-        accept_property_result, active_after_swap, choose_paste_clipboard, commit_local_view,
-        drop_action, elapsed_label, next_search_repaint_delay, project_local_view,
-        properties_dialog_limits, read_property_snapshot, remaining_cut_paths, resolve_split_tabs,
-        retain_visible_selection, retry_unstarted_items, transfer_progress_details,
+        Action, CLIPBOARD_WAIT, Clipboard, Dialog, Explorer, ItemCounts, MarqueeSelection,
+        NameMode, PasteMode, PendingPaste, PropertyResult, PropertySnapshot, Tab, TabSnapshot,
+        ViewResult, accept_property_result, active_after_swap, choose_paste_clipboard,
+        commit_local_view, drop_action, elapsed_label, next_search_repaint_delay,
+        project_local_view, properties_dialog_limits, read_property_snapshot, remaining_cut_paths,
+        resolve_split_tabs, retain_visible_selection, retry_unstarted_items,
+        transfer_progress_details,
     };
     use crate::clipboard;
     use crate::config::Config;
