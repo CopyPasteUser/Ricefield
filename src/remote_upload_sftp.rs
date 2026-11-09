@@ -21,6 +21,8 @@ use std::{
 
 #[cfg(test)]
 use std::path::PathBuf;
+#[cfg(test)]
+use std::os::unix::fs::PermissionsExt;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
 
@@ -508,6 +510,15 @@ fn upload_with_client(
             &format!("ln {} {}\n", quoted(&stage), quoted(&destination)),
             &publishing,
         )?;
+        #[cfg(test)]
+        kill_test_process_at("post-publish");
+        #[cfg(test)]
+        if std::env::var_os("RICEFIELD_TEST_SFTP_DENY_CLEANUP").is_some() {
+            // Real OpenSSH sftp-server must reject unlink in a non-writable
+            // directory after the hardlink has already been published.
+            fs::set_permissions(&directory, fs::Permissions::from_mode(0o500))
+                .map_err(|error| error.to_string())?;
+        }
         remove_private_directory(client, &directory, &["payload"], &publishing)
     })();
     result.map_err(error_with_path)?;
@@ -614,6 +625,11 @@ mod tests {
             &client,
             Some(&root.join("evidence")),
         );
+        if std::env::var_os("RICEFIELD_TEST_SFTP_DENY_CLEANUP").is_some() {
+            let error = result.expect_err("OpenSSH cleanup must fail without write permission");
+            assert!(error.contains("SFTP"), "{error}");
+            return;
+        }
         panic!("SFTP crash checkpoint was not reached: {result:?}");
     }
 
@@ -816,6 +832,59 @@ mod tests {
             fs::read(&fixture.source).unwrap(),
             b"pinned-source-content\n"
         );
+    }
+
+    #[test]
+    fn real_sftp_crash_after_publication_never_hides_the_published_destination() {
+        run_crash_child_if_requested();
+        let fixture = process_crash_fixture(
+            "remote_upload_sftp::tests::real_sftp_crash_after_publication_never_hides_the_published_destination",
+            "post-publish",
+        );
+        let (uploads, probes) =
+            remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap();
+        assert!(probes.is_empty());
+        assert_eq!(uploads.len(), 1, "unacknowledged cleanup keeps evidence");
+        let stage = PathBuf::from(&fixture.client.path)
+            .join(format!(".ricefield-upload-{}", uploads[0].id));
+        assert_eq!(fs::read(stage.join("payload")).unwrap(), b"pinned-source-content\n");
+        assert_eq!(
+            fs::read(format!("{}/example.txt", fixture.client.path)).unwrap(),
+            b"pinned-source-content\n"
+        );
+        assert_eq!(fs::read(&fixture.source).unwrap(), b"pinned-source-content\n");
+        assert!(uploads[0].destination_uri.ends_with("/example.txt"));
+    }
+
+    #[test]
+    fn real_sftp_denied_cleanup_after_publication_retains_recovery_evidence() {
+        run_crash_child_if_requested();
+        let fixture = Fixture::new(server());
+        let status = Command::new(std::env::current_exe().unwrap())
+            .arg("remote_upload_sftp::tests::real_sftp_denied_cleanup_after_publication_retains_recovery_evidence")
+            .arg("--exact")
+            .env("RICEFIELD_TEST_SFTP_CRASH_ROOT", &fixture.directory)
+            .env("RICEFIELD_TEST_SFTP_DENY_CLEANUP", "1")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "child must observe a denied remote cleanup");
+        let (uploads, probes) =
+            remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap();
+        assert!(probes.is_empty());
+        assert_eq!(uploads.len(), 1);
+        let stage = PathBuf::from(&fixture.client.path)
+            .join(format!(".ricefield-upload-{}", uploads[0].id));
+        assert_eq!(fs::read(stage.join("payload")).unwrap(), b"pinned-source-content\n");
+        assert_eq!(
+            fs::read(format!("{}/example.txt", fixture.client.path)).unwrap(),
+            b"pinned-source-content\n"
+        );
+        assert_eq!(fs::read(&fixture.source).unwrap(), b"pinned-source-content\n");
+        // Restore the disposable test fixture; the application itself never
+        // performs cleanup when publication or its aftermath is uncertain.
+        fs::set_permissions(&stage, fs::Permissions::from_mode(0o700)).unwrap();
     }
 
     #[test]

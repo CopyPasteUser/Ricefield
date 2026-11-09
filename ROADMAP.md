@@ -26,8 +26,15 @@ operations disabled rather than relaxing no-overwrite requirements.
 - [ ] Extend real-protocol interruption fixtures for cancellation, occupied
   destinations, lost replies and reconnects across WebDAV, OpenSSH-SFTP and
   signed SMB, including a **failed cleanup after successful publication**.
-- [ ] Provide an actionable manual recovery checklist and explicit state
-  labels for uncertain server stages; never infer success from a timeout.
+  **In progress:** existing collision, cancellation and pre-publish kill
+  fixtures are joined by a WebDAV lost-`MOVE`-reply fixture, real OpenSSH-SFTP
+  and signed-SMB post-publication process kills, and an SFTP server refusing
+  private-stage cleanup after a successful hardlink. Physical disconnect,
+  reconnect and Synology ACL validation remain unverified.
+- [x] Provide an actionable [manual remote recovery checklist](docs/REMOTE-RECOVERY-RUNBOOK.md)
+  and explicit `UNKNOWN` / `PROBE UNCERTAIN` review labels, plus independent
+  server-state classification for stages and destinations. Never infer success
+  from a timeout.
 
 **Exit:** an interrupted upload cannot silently overwrite, lose source data,
 or conceal inspectable recovery evidence. Hardware NAS/offline validation is

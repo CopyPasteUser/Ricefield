@@ -1,5 +1,12 @@
 # RiceField UX contract
 
+Remote upload recovery displays `UNKNOWN / NOT SERVER-VERIFIED` for an
+unfinished transfer and `PROBE UNCERTAIN` for an unfinished capability probe;
+these are journal states, **not** conclusions about current server contents.
+The [manual review procedure](docs/REMOTE-RECOVERY-RUNBOOK.md) separates
+stage-only, destination-only, both-present, absent, conflicting and
+unreachable server outcomes. Nothing runs against the server in Recovery.
+
 ## Scope
 
 Linux desktop file management for RiceBowl users. v0.1 interface English; runtime GUI built in egui. Visual language is owned by [DESIGN.md](DESIGN.md) and `themes/*.toml`. The filesystem module is the canonical owner for file mutation.
