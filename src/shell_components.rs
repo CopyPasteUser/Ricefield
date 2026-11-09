@@ -196,6 +196,17 @@ pub fn luna_toggle_panel(ctx: &egui::Context, panel: LunaPanel) {
 /// Task-pane hyperlink with original vector artwork, no platform icon assets.
 /// egui's regular Button keeps keyboard focus and activation behavior.
 pub fn luna_link(ui: &mut egui::Ui, label: &str, enabled: bool, icon: LunaLinkIcon) -> bool {
+    luna_link_response(ui, label, enabled, icon).clicked()
+}
+
+/// Full response for Places context menus; other Luna links keep their
+/// existing bool-returning API and visual presentation.
+pub fn luna_link_response(
+    ui: &mut egui::Ui,
+    label: &str,
+    enabled: bool,
+    icon: LunaLinkIcon,
+) -> egui::Response {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         let (rect, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
@@ -310,7 +321,6 @@ pub fn luna_link(ui: &mut egui::Ui, label: &str, enabled: bool, icon: LunaLinkIc
             )
             .frame(false),
         )
-        .clicked()
     })
     .inner
 }
@@ -416,6 +426,20 @@ pub fn aero_sidebar_link(
     selected: bool,
     icon: AeroNavIcon,
 ) -> bool {
+    let response = aero_sidebar_response(ui, label, selected, icon);
+    response.clicked()
+        || (response.has_focus()
+            && ui.input(|input| {
+                input.key_pressed(egui::Key::Enter) || input.key_pressed(egui::Key::Space)
+            }))
+}
+
+pub fn aero_sidebar_response(
+    ui: &mut egui::Ui,
+    label: &str,
+    selected: bool,
+    icon: AeroNavIcon,
+) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(
         Vec2::new(ui.available_width().max(80.0), 26.0),
         Sense::click(),
@@ -480,13 +504,7 @@ pub fn aero_sidebar_link(
         FontId::proportional(12.5),
         Color32::from_rgb(36, 55, 72),
     );
-    let activated = response.clicked()
-        || (response.has_focus()
-            && ui.input(|input| {
-                input.key_pressed(egui::Key::Enter) || input.key_pressed(egui::Key::Space)
-            }));
-    response.on_hover_text(label);
-    activated
+    response.on_hover_text(label)
 }
 
 #[derive(Clone, Copy)]

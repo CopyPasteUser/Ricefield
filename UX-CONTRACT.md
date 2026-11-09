@@ -97,6 +97,29 @@ changed or the original name is occupied, Undo fails without replacing files;
 the control remains available for a deliberate retry. The action is not
 persisted across restarts and is not a general rollback guarantee.
 
+The Edit menu and `Ctrl+Z` offer Undo **only for the latest completed
+operation**, if it has a safe session candidate. Transfers continues to show
+earlier individual candidates without replaying persistent history. Newly
+created empty files and folders may also be undone while their inode and
+post-creation metadata remain unchanged: folders require an atomic empty
+`rmdir`, while empty files move to desktop Trash for recoverability. Changes,
+replacements, nonempty directories or files, active/queued transfers and old
+sessions refuse Undo. Copy, deletion, extraction and cross-volume moves do
+not claim automatic Undo. No undo state is persisted across restarts.
+
+Every local Places row in each rice shares the same navigation behavior:
+left-click/Enter opens in the current tab; right-click reveals Open, Open in
+new tab, Open in new window and Copy path. Shift+Enter on a focused row opens
+the specific folder in a new tab. Windows launch another `--separate-window`
+RiceField process with the selected local path, not the current tab path.
+
+Archive files expose Browse / extract in their file context menu as well as
+the Archive menu. The existing bounded, asynchronous archive browser adds
+**Extract all** next to selected-entry extraction. Both require a distinct
+new output folder, stage privately, validate archive paths and never replace
+an existing destination. ZIP, tar, tar.gz, tar.xz, tar.zst, 7z and RAR support
+still depends on installed libarchive capabilities and decryption backends.
+
 Cross-device Move (implemented as source-retaining Copy) refuses a selected source tree with hardlinks to names
 outside the selected tree, or a hardlinked symlink, before it stages output.
 Copy may produce independent inodes; the conservative Move pathway does not silently sever surviving

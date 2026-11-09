@@ -873,6 +873,7 @@ struct CompletedOperation {
     counts: ItemCounts,
     rename_undo: Option<Box<filesystem::RenameUndo>>,
     batch_rename_undo: Option<Box<filesystem::BatchRenameUndo>>,
+    creation_undo: Option<Box<filesystem::CreationUndo>>,
     retry_unstarted: Option<RetryProposal>,
     from_history: bool,
 }
@@ -952,6 +953,7 @@ impl CompletedOperation {
                 .collect(),
             rename_undo: None,
             batch_rename_undo: None,
+            creation_undo: None,
             retry_unstarted: None,
             from_history: true,
         }
@@ -2558,6 +2560,10 @@ impl Explorer {
             ));
             return;
         }
+        self.spawn_window_for(self.current().path.clone());
+    }
+
+    fn spawn_window_for(&mut self, path: PathBuf) {
         let program = match std::env::current_exe() {
             Ok(path) => path,
             Err(error) => {
@@ -2572,7 +2578,7 @@ impl Explorer {
         } else {
             command.arg("--theme").arg(&self.theme.id);
         }
-        command.arg("--").arg(&self.current().path);
+        command.arg("--").arg(&path);
         match command.spawn() {
             Ok(_) => self.status = Some(("Opened a separate Explorer window".into(), false)),
             Err(error) => self.status = Some((format!("Cannot open window: {error}"), true)),
@@ -4094,6 +4100,7 @@ impl Explorer {
                     let undo_succeeded = report.result.is_ok();
                     let rename_undo = report.rename_undo;
                     let batch_rename_undo = report.batch_rename_undo;
+                    let creation_undo = report.creation_undo;
                     if let Some(origin_id) = self.pending_undo_origin.take()
                         && undo_succeeded
                         && let Some(entry) = self
@@ -4103,6 +4110,7 @@ impl Explorer {
                     {
                         entry.rename_undo = None;
                         entry.batch_rename_undo = None;
+                        entry.creation_undo = None;
                     }
                     self.busy = false;
                     let label = self
@@ -4179,6 +4187,7 @@ impl Explorer {
                         items: report.items,
                         rename_undo,
                         batch_rename_undo,
+                        creation_undo,
                         retry_unstarted,
                         from_history: false,
                     };
@@ -4804,6 +4813,52 @@ impl Explorer {
             });
     }
 
+    fn latest_undo(&self) -> Option<(u64, Action)> {
+        let entry = self.recent_operations.front()?;
+        if entry.from_history || entry.outcome != OperationOutcome::Succeeded {
+            return None;
+        }
+        entry
+            .rename_undo
+            .as_ref()
+            .map(|candidate| candidate.action())
+            .or_else(|| {
+                entry
+                    .batch_rename_undo
+                    .as_ref()
+                    .map(|candidate| candidate.action())
+            })
+            .or_else(|| {
+                entry
+                    .creation_undo
+                    .as_ref()
+                    .map(|candidate| candidate.action())
+            })
+            .map(|action| (entry.id, action))
+    }
+
+    fn start_undo(&mut self, origin_id: u64, action: Action) {
+        if self.busy || self.queue_paused || !self.operation_queue.is_empty() {
+            self.status = Some(("Finish or clear pending transfers before Undo".into(), true));
+            return;
+        }
+        self.run_action(action);
+        if self.busy {
+            self.pending_undo_origin = Some(origin_id);
+        }
+    }
+
+    fn undo_latest(&mut self) {
+        if let Some((origin_id, action)) = self.latest_undo() {
+            self.start_undo(origin_id, action);
+        } else {
+            self.status = Some((
+                "The latest operation has no safe Undo (copies, deletes and earlier sessions cannot be replayed)".into(),
+                true,
+            ));
+        }
+    }
+
     fn transfer_dialog(&mut self, context: &egui::Context) {
         if !self.show_operations {
             return;
@@ -4909,6 +4964,19 @@ impl Explorer {
                             {
                                 undo_request = Some((entry.id, candidate.action()));
                             }
+                            if let Some(candidate) = &entry.creation_undo
+                                && ui
+                                    .add_enabled(
+                                        !self.busy
+                                            && !self.queue_paused
+                                            && self.operation_queue.is_empty(),
+                                        egui::Button::new("Undo new item"),
+                                    )
+                                    .on_hover_text("Only an unchanged empty file or folder can be undone. Files go to Trash; folders are removed only if empty. Available in this session.")
+                                    .clicked()
+                            {
+                                undo_request = Some((entry.id, candidate.action()));
+                            }
                             if let Some(proposal) = &entry.retry_unstarted
                                 && ui
                                     .add_enabled(
@@ -5006,10 +5074,7 @@ impl Explorer {
             }
         }
         if let Some((origin_id, action)) = undo_request {
-            self.run_action(action);
-            if self.busy {
-                self.pending_undo_origin = Some(origin_id);
-            }
+            self.start_undo(origin_id, action);
         }
         if let Some(proposal) = review_unstarted {
             let preview_generation = self.request_paste_preview(
@@ -5701,6 +5766,7 @@ impl Explorer {
         let c = key == Key::C;
         let x = key == Key::X;
         let v = key == Key::V;
+        let z = key == Key::Z;
         let h = key == Key::H;
         let r = key == Key::R;
         let n = key == Key::N;
@@ -5827,6 +5893,9 @@ impl Explorer {
             }
             if ctrl && v {
                 self.file_command(FileCommand::Paste);
+            }
+            if ctrl && z && !shift && !alt {
+                self.undo_latest();
             }
             if ctrl && d {
                 let sources = self.selected_paths();
@@ -6229,6 +6298,20 @@ impl Explorer {
                 }
             });
             ui.menu_button(egui::RichText::new("Edit").color(menu_text), |ui| {
+                if ui
+                    .add_enabled(
+                        self.latest_undo().is_some()
+                            && !self.busy
+                            && !self.queue_paused
+                            && self.operation_queue.is_empty(),
+                        egui::Button::new("Undo last reversible action  Ctrl+Z"),
+                    )
+                    .clicked()
+                {
+                    self.undo_latest();
+                    ui.close();
+                }
+                ui.separator();
                 if ui.button("Copy  Ctrl+C").clicked() {
                     self.copy_selection(false);
                     ui.close();
@@ -7681,6 +7764,48 @@ impl Explorer {
         }
     }
 
+    /// One canonical Places interaction regardless of the selected rice.
+    /// Renderers only draw the row; navigation and window spawning live here.
+    fn place_response(&mut self, ui: &mut egui::Ui, response: egui::Response, path: PathBuf) {
+        let new_tab_shortcut = response.has_focus()
+            && ui.input(|input| input.modifiers.shift && input.key_pressed(egui::Key::Enter));
+        let open_here = response.clicked()
+            || (response.has_focus()
+                && !new_tab_shortcut
+                && ui.input(|input| {
+                    input.key_pressed(egui::Key::Enter) || input.key_pressed(egui::Key::Space)
+                }));
+        response
+            .on_hover_text(format!(
+                "{}\nRight-click for Places actions · Shift+Enter: new tab",
+                path.display()
+            ))
+            .context_menu(|ui| {
+                if ui.button("Open").clicked() {
+                    self.navigate(path.clone());
+                    ui.close();
+                }
+                if ui.button("Open in new tab").clicked() {
+                    self.new_tab(path.clone());
+                    ui.close();
+                }
+                if ui.button("Open in new window").clicked() {
+                    self.spawn_window_for(path.clone());
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("Copy path").clicked() {
+                    ui.ctx().copy_text(path.display().to_string());
+                    ui.close();
+                }
+            });
+        if new_tab_shortcut {
+            self.new_tab(path);
+        } else if open_here {
+            self.navigate(path);
+        }
+    }
+
     fn sidebar(&mut self, ui: &mut egui::Ui) {
         if !self.config.show_sidebar {
             return;
@@ -7760,15 +7885,14 @@ impl Explorer {
                             SidebarSection::Places => {
                                 if theme.shell_kind() == ShellKind::Chromeos {
                                     let home = config::home();
-                                    if chromeos::sidebar_link(
+                                    let response = chromeos::sidebar_response(
                                         ui,
                                         &theme,
                                         "My files",
                                         self.current().path == home,
                                         FilesNavIcon::Home,
-                                    ) {
-                                        self.navigate(home.clone());
-                                    }
+                                    );
+                                    self.place_response(ui, response, home.clone());
                                     for (name, icon) in [
                                         ("Downloads", FilesNavIcon::Download),
                                         ("Documents", FilesNavIcon::Folder),
@@ -7782,15 +7906,15 @@ impl Explorer {
                                             .places
                                             .iter()
                                             .any(|(_, available)| available == &path)
-                                            && chromeos::sidebar_link(
+                                        {
+                                            let response = chromeos::sidebar_response(
                                                 ui,
                                                 &theme,
                                                 name,
                                                 self.current().path == path,
                                                 icon,
-                                            )
-                                        {
-                                            self.navigate(path);
+                                            );
+                                            self.place_response(ui, response, path);
                                         }
                                     }
                                     return;
@@ -7810,9 +7934,7 @@ impl Explorer {
                                             self.current().path == path,
                                             icon,
                                         );
-                                        if classic98::activated(ui, &response) {
-                                            self.navigate(path);
-                                        }
+                                        self.place_response(ui, response, path);
                                     }
                                     ui.collapsing("Browse folders", |ui| self.folder_tree_root(ui));
                                     return;
@@ -7824,15 +7946,14 @@ impl Explorer {
                                         } else {
                                             FinderNavIcon::Home
                                         };
-                                        if finder::sidebar_link(
+                                        let response = finder::sidebar_response(
                                             ui,
                                             &theme,
                                             name,
                                             self.current().path == path,
                                             icon,
-                                        ) {
-                                            self.navigate(path);
-                                        }
+                                        );
+                                        self.place_response(ui, response, path);
                                     }
                                     ui.collapsing("Folder tree", |ui| self.folder_tree_root(ui));
                                     return;
@@ -7851,15 +7972,14 @@ impl Explorer {
                                         } else {
                                             aqua::AquaNavIcon::Folder
                                         };
-                                        if aqua::sidebar_link(
+                                        let response = aqua::sidebar_response(
                                             ui,
                                             &theme,
                                             label,
                                             self.current().path == path,
                                             icon,
-                                        ) {
-                                            self.navigate(path);
-                                        }
+                                        );
+                                        self.place_response(ui, response, path);
                                     }
                                     ui.add_space(5.0);
                                     ui.collapsing("Browse folders", |ui| self.folder_tree_root(ui));
@@ -7872,7 +7992,7 @@ impl Explorer {
                                         } else {
                                             name
                                         };
-                                        if shell_components::win10_sidebar_link(
+                                        let response = shell_components::win10_sidebar_response(
                                             ui,
                                             &theme,
                                             label,
@@ -7882,9 +8002,8 @@ impl Explorer {
                                             } else {
                                                 shell_components::Win10NavIcon::Folder
                                             },
-                                        ) {
-                                            self.navigate(path);
-                                        }
+                                        );
+                                        self.place_response(ui, response, path);
                                     }
                                     ui.collapsing("Folders", |ui| self.folder_tree_root(ui));
                                     return;
@@ -7897,7 +8016,7 @@ impl Explorer {
                                         } else {
                                             label
                                         };
-                                        if luna_link(
+                                        let response = shell_components::luna_link_response(
                                             ui,
                                             title,
                                             true,
@@ -7906,9 +8025,8 @@ impl Explorer {
                                             } else {
                                                 Icon::Folder
                                             },
-                                        ) {
-                                            self.navigate(path);
-                                        }
+                                        );
+                                        self.place_response(ui, response, path);
                                     }
                                     if luna_link(ui, "Network Places", true, Icon::Computer) {
                                         self.discovery_open = true;
@@ -7926,14 +8044,13 @@ impl Explorer {
                                         ) {
                                             continue;
                                         }
-                                        if shell_components::aero_sidebar_link(
+                                        let response = shell_components::aero_sidebar_response(
                                             ui,
                                             name,
                                             self.current().path == path,
                                             shell_components::AeroNavIcon::Library,
-                                        ) {
-                                            self.navigate(path);
-                                        }
+                                        );
+                                        self.place_response(ui, response, path);
                                     }
                                     // The folder tree stays available for directories that
                                     // are not one of the conventional user libraries.
@@ -7943,16 +8060,12 @@ impl Explorer {
                                 }
                                 ui.add_space(8.0);
                                 for (label, path) in self.places.clone() {
-                                    if ui
-                                        .add_sized(
-                                            [ui.available_width(), 29.0],
-                                            egui::Button::new(label)
-                                                .selected(self.current().path == path),
-                                        )
-                                        .clicked()
-                                    {
-                                        self.navigate(path);
-                                    }
+                                    let response = ui.add_sized(
+                                        [ui.available_width(), 29.0],
+                                        egui::Button::new(label)
+                                            .selected(self.current().path == path),
+                                    );
+                                    self.place_response(ui, response, path);
                                 }
                                 ui.separator();
                                 ui.strong("FOLDER TREE");
@@ -10231,6 +10344,14 @@ impl Explorer {
                 self.choose_open_with_path(entry.path.clone());
                 ui.close();
             }
+            if !entry.is_dir
+                && self.current().remote_uri.is_none()
+                && archive::Format::is_archive(&entry.path)
+                && ui.button("Browse / extract archive…").clicked()
+            {
+                self.open_archive_browse(entry.path.clone());
+                ui.close();
+            }
             if ui.button("Preview").clicked() {
                 self.open_preview(entry.path.clone());
                 ui.close();
@@ -10551,6 +10672,13 @@ impl Explorer {
                             ui.horizontal(|ui| {
                                 if ui.add_enabled(!dialog.running, egui::Button::new("Verify integrity")).clicked() {
                                     requested = Some(ArchiveOperation::Verify { path: path.clone(),
+                                        password: (!password.is_empty()).then(|| password.clone()) });
+                                }
+                                if ui.add_enabled(!dialog.running,
+                                    egui::Button::new("Extract all")).on_hover_text("Unpack every entry into the named new folder; never overwrite an existing folder.").clicked() {
+                                    requested = Some(ArchiveOperation::Extract { path: path.clone(),
+                                        destination: destination.clone(), folder: folder_name.clone(),
+                                        selected: Vec::new(),
                                         password: (!password.is_empty()).then(|| password.clone()) });
                                 }
                                 if ui.add_enabled(!dialog.running && !selected.is_empty(),

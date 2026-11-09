@@ -948,6 +948,34 @@ mod tests {
     }
 
     #[test]
+    fn empty_selection_extracts_all_entries_without_overwriting_any_folder() {
+        let fixture = Fixture::new();
+        let first = fixture.0.join("first.txt");
+        let second = fixture.0.join("second.txt");
+        fs::write(&first, b"one").unwrap();
+        fs::write(&second, b"two").unwrap();
+        let cancel = AtomicBool::new(false);
+        for format in [Format::Zip, Format::TarGz, Format::SevenZip] {
+            let name = format!("all-{}", format.extension().replace('.', "-"));
+            let archive = create(
+                &[first.clone(), second.clone()],
+                &fixture.0,
+                &name,
+                format,
+                &cancel,
+                |_| {},
+            )
+            .unwrap();
+            let folder = format!("{name}-unpacked");
+            let target = extract(&archive, &fixture.0, &folder, &[], &cancel, |_| {}).unwrap();
+            assert_eq!(fs::read(target.join("first.txt")).unwrap(), b"one");
+            assert_eq!(fs::read(target.join("second.txt")).unwrap(), b"two");
+            assert!(extract(&archive, &fixture.0, &folder, &[], &cancel, |_| {}).is_err());
+            assert_eq!(fs::read(target.join("first.txt")).unwrap(), b"one");
+        }
+    }
+
+    #[test]
     fn all_formats_roundtrip_and_selected_extraction() {
         let fixture = Fixture::new();
         let input = fixture.0.join("hello.txt");

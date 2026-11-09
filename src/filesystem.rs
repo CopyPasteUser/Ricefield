@@ -50,6 +50,27 @@ pub struct OperationReport {
     pub items: Vec<ItemResult>,
     pub rename_undo: Option<Box<RenameUndo>>,
     pub batch_rename_undo: Option<Box<BatchRenameUndo>>,
+    pub creation_undo: Option<Box<CreationUndo>>,
+}
+
+/// A newly created empty object can be reversed in-session only while its
+/// inode and metadata match. An empty folder is removed with atomic rmdir;
+/// an empty file is sent to Trash so even a same-user race is recoverable.
+#[derive(Clone)]
+pub struct CreationUndo {
+    pub path: PathBuf,
+    pub snapshot: fs::Metadata,
+    pub directory: bool,
+}
+
+impl CreationUndo {
+    pub fn action(&self) -> Action {
+        Action::UndoCreation {
+            path: self.path.clone(),
+            snapshot: self.snapshot.clone(),
+            directory: self.directory,
+        }
+    }
 }
 
 /// Session-only rename reversal. The original name is preserved as raw OS
@@ -671,6 +692,11 @@ pub enum Action {
     NewFile {
         parent: PathBuf,
         name: String,
+    },
+    UndoCreation {
+        path: PathBuf,
+        snapshot: fs::Metadata,
+        directory: bool,
     },
     Rename {
         source: PathBuf,
@@ -1769,11 +1795,36 @@ pub fn perform_with_report(
     } else {
         None
     };
+    let creation_undo = if result.is_ok() {
+        match action {
+            Action::NewFolder { parent, name } | Action::NewFile { parent, name } => {
+                let directory = matches!(action, Action::NewFolder { .. });
+                let path = parent.join(name);
+                fs::symlink_metadata(&path).ok().and_then(|snapshot| {
+                    let supported = if directory {
+                        snapshot.is_dir()
+                            && fs::read_dir(&path).is_ok_and(|mut items| items.next().is_none())
+                    } else {
+                        snapshot.is_file() && snapshot.len() == 0 && snapshot.nlink() == 1
+                    };
+                    supported.then_some(Box::new(CreationUndo {
+                        path,
+                        snapshot,
+                        directory,
+                    }))
+                })
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
     OperationReport {
         result,
         items,
         rename_undo,
         batch_rename_undo,
+        creation_undo,
     }
 }
 
@@ -1995,6 +2046,39 @@ fn perform_with_progress_and_items(
                 .create_new(true)
                 .open(parent.join(name))?;
             Ok(format!("Created file {name}"))
+        }
+        Action::UndoCreation {
+            path,
+            snapshot,
+            directory,
+        } => {
+            transfer.check()?;
+            ensure_same_source(path, snapshot)?;
+            if *directory {
+                if !snapshot.is_dir() {
+                    return Err(invalid_name());
+                }
+                // rmdir is atomic with the emptiness requirement. A folder
+                // that acquired even one child can never be removed here.
+                fs::remove_dir(path)?;
+            } else {
+                let current = fs::symlink_metadata(path)?;
+                if !snapshot.is_file()
+                    || !current.is_file()
+                    || current.len() != 0
+                    || current.nlink() != 1
+                {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Only an unchanged empty created file can be undone",
+                    ));
+                }
+                ensure_same_source(path, snapshot)?;
+                // Preserve recoverability even if another process races
+                // with the final pathname lookup inside the Trash backend.
+                trash::delete(path).map_err(io::Error::other)?;
+            }
+            Ok(format!("Undid creation of {}", path.display()))
         }
         Action::Rename { source, name } => {
             transfer.check()?;
@@ -6902,6 +6986,79 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
         assert!(!valid_name("../test"));
         assert!(!valid_name("."));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn new_folder_undo_requires_the_original_inode_and_an_empty_folder() {
+        let root = test_root();
+        let operation = Action::NewFolder {
+            parent: root.clone(),
+            name: "created".into(),
+        };
+        let report = perform_with_report(&operation, &AtomicBool::new(false), &mut |_| {});
+        assert!(report.result.is_ok());
+        let undo = report
+            .creation_undo
+            .expect("new empty folder should offer Undo");
+        let folder = root.join("created");
+        fs::write(folder.join("keep.txt"), b"important").unwrap();
+        assert!(perform(&undo.action()).is_err());
+        assert_eq!(fs::read(folder.join("keep.txt")).unwrap(), b"important");
+        let report = perform_with_report(
+            &Action::NewFolder {
+                parent: root.clone(),
+                name: "untouched".into(),
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        let fresh_undo = report.creation_undo.unwrap();
+        assert!(perform(&fresh_undo.action()).is_ok());
+        assert!(!root.join("untouched").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn new_folder_undo_refuses_substituted_inode() {
+        let root = test_root();
+        let report = perform_with_report(
+            &Action::NewFolder {
+                parent: root.clone(),
+                name: "created".into(),
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        let undo = report.creation_undo.unwrap();
+        fs::rename(root.join("created"), root.join("moved")).unwrap();
+        fs::create_dir(root.join("created")).unwrap();
+        assert!(perform(&undo.action()).is_err());
+        assert!(root.join("created").exists());
+        assert!(root.join("moved").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn new_file_undo_refuses_content_changes() {
+        let root = test_root();
+        let report = perform_with_report(
+            &Action::NewFile {
+                parent: root.clone(),
+                name: "created.txt".into(),
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        let undo = report
+            .creation_undo
+            .expect("empty new file should offer Undo");
+        fs::write(root.join("created.txt"), b"content from another action").unwrap();
+        assert!(perform(&undo.action()).is_err());
+        assert_eq!(
+            fs::read(root.join("created.txt")).unwrap(),
+            b"content from another action"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

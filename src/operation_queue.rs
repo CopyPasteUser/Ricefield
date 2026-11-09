@@ -86,6 +86,7 @@ pub fn describe(action: &Action) -> String {
         Action::UndoBatchRename { items } => format!("Undo batch rename {} item(s)", items.len()),
         Action::NewFolder { .. } => "New folder".into(),
         Action::NewFile { .. } => "New file".into(),
+        Action::UndoCreation { .. } => "Undo new item".into(),
         Action::SetMode { .. } => "Change permissions".into(),
         Action::SetOwnership { .. } => "Change owner/group".into(),
         Action::CreateUserAttribute { .. } => "Create extended attribute".into(),
