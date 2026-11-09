@@ -39,11 +39,18 @@ pub fn run() -> io::Result<()> {
     let fixture_ms = started.elapsed().as_secs_f64() * 1000.0;
     let cancelled = AtomicBool::new(false);
     let started = Instant::now();
-    let scan = filesystem::scan_cancellable(&folder, &cancelled)?;
+    let mut scan = filesystem::scan_cancellable(&folder, &cancelled)?;
     let scan_ms = started.elapsed().as_secs_f64() * 1000.0;
     if scan.entries.len() != 100_000 || scan.unreadable != 0 {
         return Err(io::Error::other("Benchmark directory scan was incomplete"));
     }
+    // Match the scan worker's compact-before-handoff behavior. Report only
+    // retained vector storage, not a fictitious process-wide RSS reduction.
+    let spare_entry_bytes_before =
+        (scan.entries.capacity() - scan.entries.len()) * std::mem::size_of::<filesystem::Entry>();
+    scan.compact();
+    let spare_entry_bytes_after =
+        (scan.entries.capacity() - scan.entries.len()) * std::mem::size_of::<filesystem::Entry>();
     let compact_names = file_view::FoldedNames::from_entries(&scan.entries);
     let folded_name_index_bytes = compact_names.heap_capacity_bytes();
     let mut names: Vec<_> = scan
@@ -112,7 +119,7 @@ pub fn run() -> io::Result<()> {
         ));
     }
     println!(
-        "version = {:?}\nentries = 100000\nfixture_ms = {fixture_ms:.3}\nscan_ms = {scan_ms:.3}\nfolded_name_index_bytes = {folded_name_index_bytes}\nlegacy_folded_names_bytes = {legacy_folded_names_bytes}\nnatural_sort_ms = {sort_ms:.3}\nglob_ms = {filter_ms:.3}\nglob_matches = {matches}\nsearch_ms = {search_ms:.3}\nsearch_matches = {}\nsearch_incomplete = {}\ncopy_bytes = 67108864\ncopy_ms = {copy_ms:.3}\ncopy_verified = true\nsource_retained = true",
+        "version = {:?}\nentries = 100000\nfixture_ms = {fixture_ms:.3}\nscan_ms = {scan_ms:.3}\nspare_entry_bytes_before = {spare_entry_bytes_before}\nspare_entry_bytes_after = {spare_entry_bytes_after}\nfolded_name_index_bytes = {folded_name_index_bytes}\nlegacy_folded_names_bytes = {legacy_folded_names_bytes}\nnatural_sort_ms = {sort_ms:.3}\nglob_ms = {filter_ms:.3}\nglob_matches = {matches}\nsearch_ms = {search_ms:.3}\nsearch_matches = {}\nsearch_incomplete = {}\ncopy_bytes = 67108864\ncopy_ms = {copy_ms:.3}\ncopy_verified = true\nsource_retained = true",
         env!("CARGO_PKG_VERSION"),
         search.entries.len(),
         search.notice.is_some(),

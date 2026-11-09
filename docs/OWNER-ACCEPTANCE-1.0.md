@@ -234,6 +234,15 @@ only on a new isolated test share, never on the production `medien` library.
   unchanged. Repeat two-client collisions, mid-upload cancel and intentional
   disconnect; inspect stages and journal without automatic replay or cleanup.
   If hardlink capability or share isolation is unavailable, leave writes off.
+- [ ] **D10a Reported SMB upload failure (open, owner reproduction):** share
+  browsing works and a directory can be created, but uploading a regular file
+  fails. Determine whether this is an OS-mounted SMB location or RiceField's
+  direct `smb://` network tab. On a **disposable** test share compare create-
+  directory, create-file, write/close and no-overwrite publication permissions;
+  record the exact UI error and NAS ACLs for files versus directories. For
+  direct SMB, inspect signing, exclusive-hardlink capability and private stage
+  isolation separately. A server that fails these guards must remain read-only
+  for uploads; never bypass the safe-publication gate to mask this symptom.
 - [ ] **D11 OpenSSH-SFTP upload:** on a disposable SFTP account with trusted
   host key and SSH key/agent, check private `0700` probe/stage directories,
   exclusive hardlink publication, exact bytes and occupied destination;
