@@ -11913,7 +11913,7 @@ mod tests {
         PendingPaste, PropertyResult, PropertySnapshot, Tab, TabSnapshot, ViewResult,
         accept_property_result, active_after_swap, choose_paste_clipboard, commit_local_view,
         drop_action, elapsed_label, next_search_repaint_delay, project_local_view,
-        read_property_snapshot, remaining_cut_paths, resolve_split_tabs, retain_visible_selection,
+        properties_dialog_limits, read_property_snapshot, remaining_cut_paths, resolve_split_tabs, retain_visible_selection,
         retry_unstarted_items, transfer_progress_details,
     };
     use crate::clipboard;
@@ -11922,6 +11922,7 @@ mod tests {
     use crate::location::Location;
     use crate::transfer_history;
     use crate::volume::RemoteEntry;
+    use eframe::egui::Vec2;
     use std::collections::BTreeSet;
     use std::fs;
     use std::path::{Path, PathBuf};
