@@ -43,18 +43,23 @@ still a separate release gate.
 
 ### Step 2 — P0: Complete the declared remote write contract
 
-- [ ] Audit each supported server and operation against server-enforced
-  atomic no-replace publication, private staging, verified bytes and crash
-  evidence. Add concurrent-client protocol tests before enabling mutations.
-- [ ] Implement safe additional remote operations only where a real backend
-  proves its guarantees. Keep remote rename/delete and MTP write disabled
-  until proven; any permanent read-only limitation needs an explicit 1.0 scope
-  decision rather than an implicit checklist pass.
+- [x] Audit supported write backends against server-enforced atomic no-replace
+  publication, private staging, verified bytes and crash evidence. Add
+  independent **full-uploader** concurrent-client regressions for WebDAV,
+  real OpenSSH-SFTP and signed disposable Samba, plus directory collision
+  checks, above their existing low-level capability probes. See the
+  [backend acceptance contract](docs/REMOTE-1.0-SCOPE.md).
+- [x] Explicitly resolve the 1.0 scope of unverified remote operations:
+  **no additional remote mutations are enabled** without proved backend
+  guarantees. Remote rename, delete, directory writes, arbitrary multi-file
+  writes and MTP writes remain disabled for 1.0, not accidentally omitted from
+  the checklist. See the [1.0 scope decision](docs/REMOTE-1.0-SCOPE.md).
 - [ ] Verify Synology SMB permissions and disconnection behavior on disposable
   user-owned shares, with no operations against the media library.
 
 **Exit:** every advertised write backend has a tested capability/failure
-matrix; unsupported servers fail closed and report why.
+matrix; unsupported servers fail closed and report why. The Synology hardware
+and live-disconnect owner gate remains open even when software CI passes.
 
 ### Step 3 — P0/P1: Local recovery, moves and Undo
 

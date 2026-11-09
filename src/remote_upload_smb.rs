@@ -596,6 +596,85 @@ mod tests {
         assert!(probes.is_empty());
     }
 
+    #[test]
+    #[ignore = "requires disposable signed Samba on port 14445"]
+    fn real_samba_rust_uploader_two_clients_compete_without_replacement() {
+        let root = samba_root();
+        let name = format!(
+            "rust-smb-race-{}.txt",
+            remote_upload::random_suffix().unwrap()
+        );
+        let original = root.join(&name);
+        let second_directory = root.join(format!(
+            "second-client-{}",
+            remote_upload::random_suffix().unwrap()
+        ));
+        fs::create_dir(&second_directory).unwrap();
+        let competitor = second_directory.join(&name);
+        fs::write(&original, b"first-smb-client\n").unwrap();
+        fs::write(&competitor, b"second-smb-client\n").unwrap();
+        let first_request = samba_request(&root, &name);
+        let mut second_request = samba_request(&root, &name);
+        second_request.source = competitor.clone();
+        let target = samba_target();
+        let journal = root.join("rust-smb-race-evidence");
+        let cancelled = AtomicBool::new(false);
+
+        let (first, second) = thread::scope(|scope| {
+            let first = scope
+                .spawn(|| upload_with_target(first_request, &cancelled, &target, Some(&journal)));
+            let second = scope
+                .spawn(|| upload_with_target(second_request, &cancelled, &target, Some(&journal)));
+            (first.join().unwrap(), second.join().unwrap())
+        });
+        assert_ne!(
+            first.is_ok(),
+            second.is_ok(),
+            "SMB must publish exactly once"
+        );
+        let expected = if first.is_ok() {
+            b"first-smb-client\n".as_slice()
+        } else {
+            b"second-smb-client\n".as_slice()
+        };
+        assert_eq!(fs::read(root.join("share").join(&name)).unwrap(), expected);
+        assert_eq!(fs::read(&original).unwrap(), b"first-smb-client\n");
+        assert_eq!(fs::read(&competitor).unwrap(), b"second-smb-client\n");
+        let (uploads, probes) = remote_upload_journal::inspect_evidence_in(&journal).unwrap();
+        assert_eq!(uploads.len(), 1, "losing SMB publication stays reviewable");
+        assert!(probes.is_empty());
+    }
+
+    #[test]
+    #[ignore = "requires disposable signed Samba on port 14445"]
+    fn real_samba_rust_uploader_refuses_directory_collision() {
+        let root = samba_root();
+        let name = format!(
+            "rust-smb-folder-{}.txt",
+            remote_upload::random_suffix().unwrap()
+        );
+        let source = root.join(&name);
+        fs::write(&source, b"source-unchanged\n").unwrap();
+        let target = samba_target();
+        target
+            .run(&format!("mkdir {}", quoted(&name)), &AtomicBool::new(false))
+            .unwrap();
+        let journal = root.join("rust-smb-folder-evidence");
+        let error = upload_with_target(
+            samba_request(&root, &name),
+            &AtomicBool::new(false),
+            &target,
+            Some(&journal),
+        )
+        .unwrap_err();
+        assert!(error.contains("SMB publication may be ambiguous"));
+        assert!(root.join("share").join(&name).is_dir());
+        assert_eq!(fs::read(&source).unwrap(), b"source-unchanged\n");
+        let (uploads, probes) = remote_upload_journal::inspect_evidence_in(&journal).unwrap();
+        assert_eq!(uploads.len(), 1);
+        assert!(probes.is_empty());
+    }
+
     fn run_samba_crash_child_if_requested() {
         let Ok(case) = std::env::var("RICEFIELD_TEST_SMB_CRASH_CASE") else {
             return;
