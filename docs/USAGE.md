@@ -26,6 +26,9 @@ conflict previews; **Keep both** chooses a new name, **Skip existing** leaves
 collisions untouched, and **Require no conflicts** refuses known collisions.
 **Skip only matching contents** checks contents first and aborts on differences
 or unreadable entries. Existing destinations are never silently replaced.
+**Paste with options** also allows an exact target name for each copied or
+moved source. An occupied name aborts the whole batch before any transfer;
+moving to a different name in the same folder performs a guarded rename.
 
 **Transfers** shows active progress, elapsed time, estimated speed/remaining
 time when measurable, and per-file results. Up to 32 Copy jobs can wait in the

@@ -543,7 +543,7 @@ pub enum ConflictPolicy {
 }
 
 /// A single source's explicit choice in a copy or move batch. `ExactName`
-/// is only available when copying, and always requires a free target.
+/// always requires a free target, except a move to its own unchanged name.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum TransferRule {
     #[default]
@@ -2649,7 +2649,7 @@ pub fn preview_copy_with_rules_cancellable(
     preview_transfer_with_rules_cancellable(sources, destination, conflict, false, rules, cancelled)
 }
 
-/// Read-only preflight shared by copy and move. Exact target names are copy-only.
+/// Read-only preflight shared by copy and move, including exact target names.
 /// The worker revalidates the complete plan immediately before publication.
 pub fn preview_transfer_with_rules_cancellable(
     sources: &[PathBuf],
@@ -2756,15 +2756,6 @@ fn plan_transfer_with_rules(
             )));
         }
         for (index, rule) in rules.iter().enumerate() {
-            if moving && matches!(rule, TransferRule::ExactName(_)) {
-                return Err(PlanFailure::at(
-                    index,
-                    io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "Exact target names are only supported for copy operations",
-                    ),
-                ));
-            }
             if let TransferRule::ExactName(name) = rule
                 && !valid_exact_name(name)
             {
@@ -2873,18 +2864,21 @@ fn plan_transfer_with_rules(
         let conflict = rule.map_or(conflict, |rule| rule.conflict(conflict));
         let exact_name = matches!(rule, Some(TransferRule::ExactName(_)));
         let intended = destination.join(name);
-        // A move into its own parent is a deliberate no-op, regardless of the
-        // collision policy; never rename the original to a "copy" name.
+        // An ordinary move into its own parent is a no-op. An explicit new
+        // name, however, is an intentional rename and must still be guarded
+        // by the no-overwrite preflight and atomic rename.
         let same_parent = moving && normalized.parent() == Some(canonical_destination.as_path());
-        if !same_parent {
+        let unchanged_move = same_parent && (!exact_name || name == original_name);
+        if !unchanged_move {
             ensure_outside_source(source, &intended).map_err(|e| PlanFailure::at(index, e))?;
         }
-        let collision = reserved.contains(&intended)
-            || occupied(&intended).map_err(|e| PlanFailure::at(index, e))?;
+        let collision = !unchanged_move
+            && (reserved.contains(&intended)
+                || occupied(&intended).map_err(|e| PlanFailure::at(index, e))?);
         if collision {
             plan.collisions += 1;
         }
-        let (target, disposition) = if same_parent {
+        let (target, disposition) = if unchanged_move {
             (source.clone(), PlannedDisposition::Skip)
         } else if collision && exact_name {
             return Err(PlanFailure::at(
@@ -6083,7 +6077,137 @@ mod tests {
     }
 
     #[test]
-    fn batch_move_rules_reject_conflicts_and_copy_only_names_before_any_move() {
+    fn exact_name_move_renames_in_place_and_unchanged_name_is_a_noop() {
+        let root = test_root();
+        let source = root.join("before.txt");
+        let target = root.join("after.txt");
+        fs::write(&source, b"important data").unwrap();
+        let rules = vec![TransferRule::ExactName(OsString::from("after.txt"))];
+        let plan = preview_transfer_with_rules_cancellable(
+            std::slice::from_ref(&source),
+            &root,
+            ConflictPolicy::KeepBoth,
+            true,
+            &rules,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(plan.renamed, 1);
+        assert_eq!(plan.items[0].target, target);
+        let report = perform_with_report(
+            &Action::MoveWithRules {
+                sources: vec![source.clone()],
+                destination: root.clone(),
+                conflict: ConflictPolicy::KeepBoth,
+                rules,
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert!(report.result.is_ok(), "{:?}", report.result);
+        assert_eq!(report.items[0].state, ItemState::Completed);
+        assert!(!source.exists());
+        assert_eq!(fs::read(&target).unwrap(), b"important data");
+
+        let report = perform_with_report(
+            &Action::MoveWithRules {
+                sources: vec![target.clone()],
+                destination: root.clone(),
+                conflict: ConflictPolicy::AbortOnConflict,
+                rules: vec![TransferRule::ExactName(OsString::from("after.txt"))],
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert!(report.result.is_ok(), "{:?}", report.result);
+        assert_eq!(report.items[0].state, ItemState::Skipped);
+        assert_eq!(fs::read(&target).unwrap(), b"important data");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn exact_name_moves_validate_entire_batch_before_mutation() {
+        let root = test_root();
+        let destination = root.join("out");
+        fs::create_dir(&destination).unwrap();
+        let sources = vec![root.join("first.txt"), root.join("second.txt")];
+        for source in &sources {
+            fs::write(source, b"source remains").unwrap();
+        }
+        let cases = [
+            vec![TransferRule::ExactName(OsString::from("same.txt")); 2],
+            vec![
+                TransferRule::Global,
+                TransferRule::ExactName(OsString::from("../bad")),
+            ],
+            vec![TransferRule::Global],
+        ];
+        for rules in cases {
+            let report = perform_with_report(
+                &Action::MoveWithRules {
+                    sources: sources.clone(),
+                    destination: destination.clone(),
+                    conflict: ConflictPolicy::KeepBoth,
+                    rules,
+                },
+                &AtomicBool::new(false),
+                &mut |_| {},
+            );
+            assert!(report.result.is_err());
+            assert!(
+                report
+                    .items
+                    .iter()
+                    .all(|item| item.state != ItemState::Completed)
+            );
+            assert_eq!(fs::read_dir(&destination).unwrap().count(), 0);
+            for source in &sources {
+                assert_eq!(fs::read(source).unwrap(), b"source remains");
+            }
+        }
+
+        let rules = vec![
+            TransferRule::Global,
+            TransferRule::ExactName(OsString::from("chosen.txt")),
+        ];
+        preview_transfer_with_rules_cancellable(
+            &sources,
+            &destination,
+            ConflictPolicy::KeepBoth,
+            true,
+            &rules,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        fs::write(destination.join("chosen.txt"), b"racing writer").unwrap();
+        let report = perform_with_report(
+            &Action::MoveWithRules {
+                sources: sources.clone(),
+                destination: destination.clone(),
+                conflict: ConflictPolicy::KeepBoth,
+                rules,
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert_eq!(
+            report.result.unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(report.items[0].state, ItemState::NotStarted);
+        assert_eq!(
+            fs::read(destination.join("chosen.txt")).unwrap(),
+            b"racing writer"
+        );
+        assert!(!destination.join("first.txt").exists());
+        for source in sources {
+            assert_eq!(fs::read(source).unwrap(), b"source remains");
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn batch_move_rules_reject_conflicts_and_invalid_names_before_any_move() {
         let root = test_root();
         let destination = root.join("out");
         fs::create_dir(&destination).unwrap();
@@ -6096,7 +6220,7 @@ mod tests {
             vec![TransferRule::Global, TransferRule::AbortOnConflict],
             vec![
                 TransferRule::Global,
-                TransferRule::ExactName(OsString::from("custom.txt")),
+                TransferRule::ExactName(OsString::from("../unsafe")),
             ],
             vec![TransferRule::Global],
         ];
