@@ -133,21 +133,29 @@ from selection before subsequent file actions.
 ## Network shares and saved logins
 
 Install GIO/GVfs support as listed in the [README](../README.md#installation).
-Choose **Connect to network…** in Volumes or enter a supported URI:
+Choose **Connect to NAS** from the sidebar, then enter the server's IP address or
+hostname (for example, `192.168.178.66` or `nas.local`). Enter a share name
+such as `medien` to connect directly, or leave it blank and choose
+**Browse shares** to select from the NAS. **Find NAS on network** uses existing
+GVfs/Avahi advertisements; it never scans the network or logs in automatically.
+A NAS that does not advertise can always be added manually. You can paste
+`smb://server/share` or a Windows-style `\\\\server\\share` path in the
+server field. Spaces in the share name are encoded automatically.
+
+The **Other protocols** tab retains full-URI entry for SFTP, WebDAV and MTP:
 
 ```text
-smb://server/share
 sftp://example.org/home
 davs://example.org/drive
 mtp://[usb:001,008]/
 ```
 
-Addresses must be valid URIs with percent-encoded spaces. Credentials belong in the connection prompt,
-never in the URI or command line. Mounted system NFS paths use local navigation.
-
-**Discover NAS on network…** searches advertisements through GVfs/Avahi. Select
-**Browse shares** or **Sign in** for a discovered server. If the server does not
-advertise, enter its URI once. Successful connections add URI-only favorites.
+Enter a username and password only when a particular share needs them.
+The domain/workgroup and optional Linux keyring controls live under
+**Advanced login options**. Credentials never appear in URIs or logs.
+Successful connections save URI-only favorites. The Places sidebar shows
+Home, Downloads, Documents and Pictures first; extra locations remain
+available in **More locations**, the address bar and folder tree.
 
 **Remember login in Linux keyring** is opt-in and saves credentials in Secret
 Service after a successful mount. **Use saved login** retrieves them on demand;
@@ -229,8 +237,9 @@ contents. Larger binary files are explicitly marked truncated. This applies
 to local files, not network URI previews. PDF first-page preview needs
 `pdftoppm`, and media metadata needs `ffprobe`. Actual media playback uses Open.
 
-Properties loads metadata in a worker. **Calculate folder size** and
-**Calculate SHA-256** are explicit bounded analyses. Extended-attribute names
+Properties loads metadata in a worker and displays human-readable KiB/MiB/GiB
+sizes. Directories do not misleadingly show their inode size; **Calculate folder
+size** and **Calculate SHA-256** are explicit bounded analyses. Extended-attribute names
 and ACL presence can be displayed; this is not a full ACL editor.
 
 ## Themes and shell composition
