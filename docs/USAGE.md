@@ -153,9 +153,11 @@ mtp://[usb:001,008]/
 Enter a username and password only when a particular share needs them.
 The domain/workgroup and optional Linux keyring controls live under
 **Advanced login options**. Credentials never appear in URIs or logs.
-Successful connections save URI-only favorites. The Places sidebar shows
-Home, Downloads, Documents and Pictures first; extra locations remain
-available in **More locations**, the address bar and folder tree.
+Successful connections save URI-only favorites. **Places** lists the usual local folders directly, including Desktop, Music,
+Videos and Filesystem. The separate **Locations** section (drives and network)
+starts collapsed to keep the left sidebar compact. Expand it when needed for
+mounted volumes or connecting to NAS; saved connections and inactive devices
+have their own expandable groups.
 
 **Remember login in Linux keyring** is opt-in and saves credentials in Secret
 Service after a successful mount. **Use saved login** retrieves them on demand;
