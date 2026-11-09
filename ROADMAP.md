@@ -528,7 +528,9 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
 - [ ] Cancel, safe pause/resume where possible, undo for reversible actions.
   Individual completed Rename actions and fully completed Batch Rename actions
   now offer session-only Undo in Transfers, guarded by post-rename snapshots,
-  complete preflight and no-overwrite semantics. Broader Undo (especially
+  complete preflight and no-overwrite semantics. The Edit menu and Ctrl+Z
+  now dispatch the latest eligible guarded Undo; unchanged empty newly
+  created files/folders have individual session-only Undo too. Broader Undo (especially
   partial batches, copies, cross-device moves and permanent delete) remains
   open and cannot rely on stale history.
 - [x] Implement bounded 2–256 item batch rename with a live prefix/suffix

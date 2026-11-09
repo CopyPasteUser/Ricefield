@@ -77,6 +77,10 @@ all boxes below still require owner verification.
 
 - [ ] **B01 Tabs/session:** create, reorder, close, reopen and restore local
   tabs. Verify Back/Forward, breadcrumbs, editable path and recent locations.
+- [ ] **B01b Places context:** across all seven rices, right-click Home and
+  another visible Places row. Verify Open, Open in new tab, Open in new window
+  (with the *clicked* path, not current folder) and Copy path. Focus a row and
+  try Shift+Enter. Check that normal left-click still navigates once.
 - [ ] **B02 Split/tree/views:** switch split panes, folder tree, icon/list
   views, sorting, natural names, hidden files and selection. Both panes keep
   independent context.
@@ -91,6 +95,16 @@ all boxes below still require owner verification.
 - [ ] **B06 Cancellation/partial batch:** cancel a multi-file transfer;
   completed items and uncompleted items are identified separately. No
   partially written final name is shown as completed.
+- [ ] **B06b Session Undo:** create a disposable empty folder/file and undo via
+  Ctrl+Z or Edit; check the empty folder disappears and the empty file goes to
+  Trash. Repeat after adding content: Undo must refuse to discard the data.
+  Rename a disposable file then Undo; occupy its original name and confirm
+  Undo cannot overwrite it. Previous-session transfer history offers no Undo.
+- [ ] **B06c Archive extraction:** right-click disposable ZIP, tar.gz and 7z
+  archives, open the browser and Extract all into a new folder. Check nested
+  contents, selected-only extraction, refusal to overwrite the chosen output
+  name, cancellation and password errors. Never test hostile files outside a
+  disposable sandbox.
 - [ ] **B07 Symlinks/hardlinks:** try ordinary relative symlinks and a
   hardlinked pair inside a disposable directory. Verify links and relevant
   metadata survive supported operations; unsafe loops/special files fail
