@@ -390,6 +390,10 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   Completed links are not automatically rolled back or undone.
 - [ ] Finish advanced conflict choices (verified replace/compare, rename
   manually, per-item overrides) and recoverable user-facing error decisions.
+  An additional one-item copy option now accepts an exact UTF-8 destination
+  name with asynchronous preview and worker-side no-overwrite revalidation;
+  an occupied name aborts rather than silently replacing or suffixing it.
+  Batch per-item name overrides and guarded verified replacement are still open.
   The additional content-verified **Skip only matching contents** policy now
   compares existing files, nested folders and symlink targets on a bounded
   background preflight, aborts if contents differ or cannot be checked, and

@@ -667,6 +667,13 @@ pub enum Action {
         destination: PathBuf,
         conflict: ConflictPolicy,
     },
+    /// One explicit incoming name. A colliding target aborts the copy, never
+    /// changes the existing file and never falls back to a surprise suffix.
+    CopyAs {
+        source: PathBuf,
+        destination: PathBuf,
+        name: OsString,
+    },
     Move {
         sources: Vec<PathBuf>,
         destination: PathBuf,
@@ -1639,6 +1646,7 @@ pub fn perform_with_report(
         Action::Copy { sources, .. }
         | Action::Move { sources, .. }
         | Action::Link { sources, .. } => sources.clone(),
+        Action::CopyAs { source, .. } => vec![source.clone()],
         Action::BatchRename { changes } => {
             changes.iter().map(|(source, _)| source.clone()).collect()
         }
@@ -1743,6 +1751,7 @@ fn perform_with_progress_and_items(
         Action::Copy { sources, .. }
         | Action::Move { sources, .. }
         | Action::Link { sources, .. } => sources,
+        Action::CopyAs { source, .. } => std::slice::from_ref(source),
         Action::Trash { paths } | Action::Delete { paths } => paths,
         _ => &[],
     };
@@ -1782,6 +1791,23 @@ fn perform_with_progress_and_items(
                 }
             }
         }
+        Action::CopyAs {
+            source,
+            destination,
+            name,
+        } => match plan_copy_as(source, destination, name, cancelled) {
+            Ok(plan) => Some(plan),
+            Err(failure) => {
+                on_item(ItemUpdate::error(0, None, &failure.error));
+                return Err(io::Error::new(
+                    failure.error.kind(),
+                    format!(
+                        "Named copy preflight failed: {}. No files were processed",
+                        failure.error
+                    ),
+                ));
+            }
+        },
         _ => None,
     };
     let removal_snapshots = match action {
@@ -1810,7 +1836,9 @@ fn perform_with_progress_and_items(
     for (index, source) in sources.iter().enumerate() {
         let estimate =
             match action {
-                Action::Copy { .. } => estimate_bytes(source, cancelled, 0),
+                Action::Copy { .. } | Action::CopyAs { .. } => {
+                    estimate_bytes(source, cancelled, 0)
+                }
                 Action::Move { .. } => fs::symlink_metadata(source).map(|metadata| {
                     if metadata.is_dir() { 0 } else { metadata.len() }
                 }),
@@ -1922,7 +1950,7 @@ fn perform_with_progress_and_items(
             apply_batch_rename(&changes, Some(&evidence), &mut transfer, on_item)
                 .map(|_| format!("Restored {} original names", items.len()))
         }
-        Action::Copy { sources, .. } => {
+        Action::Copy { .. } | Action::CopyAs { .. } => {
             if sources.is_empty() {
                 return Ok("Nothing to copy".into());
             }
@@ -2485,6 +2513,56 @@ pub fn preview_transfer(
             },
         )
     })
+}
+
+/// Read-only preview of a single copy with an explicitly chosen final name.
+/// The same preflight runs again on the worker immediately before copying.
+pub fn preview_copy_as(source: &Path, destination: &Path, name: &OsStr) -> io::Result<TransferPlan> {
+    plan_copy_as(source, destination, name, &AtomicBool::new(false))
+        .map_err(|failure| failure.error)
+}
+
+fn plan_copy_as(
+    source: &Path,
+    destination: &Path,
+    name: &OsStr,
+    cancelled: &AtomicBool,
+) -> Result<TransferPlan, PlanFailure> {
+    if !valid_os_name(name) || name.as_encoded_bytes().len() > 255 {
+        return Err(PlanFailure::global(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Choose a valid filename of at most 255 bytes",
+        )));
+    }
+    // Reuse the full source, overlap, directory and metadata preflight. Its
+    // auto-generated KeepBoth name is advisory and is never published here.
+    let mut plan = plan_transfer(
+        &[source.to_path_buf()],
+        destination,
+        ConflictPolicy::KeepBoth,
+        false,
+        cancelled,
+    )?;
+    let target = destination.join(name);
+    ensure_outside_source(source, &target).map_err(|error| PlanFailure::at(0, error))?;
+    if occupied(&target).map_err(|error| PlanFailure::at(0, error))? {
+        return Err(PlanFailure::at(
+            0,
+            io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("The chosen destination already exists: {}", target.display()),
+            ),
+        ));
+    }
+    let original_name = source.file_name().ok_or_else(|| PlanFailure::at(0, invalid_name()))?;
+    let renamed = name != original_name;
+    let item = &mut plan.items[0];
+    item.target = target;
+    item.collision = false;
+    item.renamed = renamed;
+    plan.collisions = 0;
+    plan.renamed = usize::from(renamed);
+    Ok(plan)
 }
 
 fn plan_transfer(
@@ -5477,6 +5555,79 @@ mod tests {
         assert_eq!(fs::read(destination.join("same.txt")).unwrap(), b"existing");
         assert_eq!(fs::read(plan.items[0].target.clone()).unwrap(), b"first");
         assert_eq!(fs::read(plan.items[1].target.clone()).unwrap(), b"second");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn named_copy_uses_exact_free_name_even_if_original_name_is_occupied() {
+        let root = test_root();
+        let destination = root.join("out");
+        fs::create_dir(&destination).unwrap();
+        let source = root.join("photo.txt");
+        fs::write(&source, b"original source").unwrap();
+        fs::write(destination.join("photo.txt"), b"unrelated existing file").unwrap();
+
+        let plan = preview_copy_as(&source, &destination, OsStr::new("holiday.txt")).unwrap();
+        assert_eq!(plan.items.len(), 1);
+        assert_eq!(plan.items[0].target, destination.join("holiday.txt"));
+        assert_eq!(plan.renamed, 1);
+        assert_eq!(plan.collisions, 0);
+        assert!(!destination.join("holiday.txt").exists());
+
+        let report = perform_with_report(
+            &Action::CopyAs {
+                source: source.clone(),
+                destination: destination.clone(),
+                name: OsString::from("holiday.txt"),
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert!(report.result.is_ok());
+        assert_eq!(report.items[0].state, ItemState::Completed);
+        assert_eq!(report.items[0].target, Some(destination.join("holiday.txt")));
+        assert_eq!(fs::read(destination.join("holiday.txt")).unwrap(), b"original source");
+        assert_eq!(fs::read(destination.join("photo.txt")).unwrap(), b"unrelated existing file");
+        assert_eq!(fs::read(source).unwrap(), b"original source");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn named_copy_preflight_refuses_occupied_invalid_and_raced_targets() {
+        let root = test_root();
+        let destination = root.join("out");
+        fs::create_dir(&destination).unwrap();
+        let source = root.join("source.txt");
+        fs::write(&source, b"source remains").unwrap();
+        for invalid in ["", ".", "..", "sub/path", "name\0extra"] {
+            assert!(preview_copy_as(&source, &destination, OsStr::new(invalid)).is_err());
+        }
+        assert!(preview_copy_as(&source, &destination, OsStr::new(&"x".repeat(256))).is_err());
+        let name = OsString::from("chosen.txt");
+        let target = destination.join(&name);
+        assert!(preview_copy_as(&source, &destination, &name).is_ok());
+
+        // Another writer creates the exact name after the UI's preflight.
+        fs::write(&target, b"another writer").unwrap();
+        assert_eq!(
+            preview_copy_as(&source, &destination, &name)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        let report = perform_with_report(
+            &Action::CopyAs {
+                source: source.clone(),
+                destination: destination.clone(),
+                name,
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert_eq!(report.result.unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(report.items[0].state, ItemState::Failed);
+        assert_eq!(fs::read(&target).unwrap(), b"another writer");
+        assert_eq!(fs::read(source).unwrap(), b"source remains");
         fs::remove_dir_all(root).unwrap();
     }
 
