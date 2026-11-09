@@ -3397,13 +3397,9 @@ impl Explorer {
                                     .as_ref()
                                     .is_some_and(|loaded| loaded != &self.volume_connect_uri)
                             {
-                                if self.volume_connect_uri != previous_uri
-                                    || self.keyring_loaded_uri.is_some()
-                                {
-                                    volume::clear_password(&mut self.volume_connect_password);
-                                    self.keyring_loaded_uri = None;
-                                    self.volume_connect_remember = false;
-                                }
+                                volume::clear_password(&mut self.volume_connect_password);
+                                self.keyring_loaded_uri = None;
+                                self.volume_connect_remember = false;
                             }
                             match &target {
                                 Ok(uri) => {
@@ -8262,10 +8258,11 @@ impl Explorer {
                                 }
                                 if theme.shell_kind() == ShellKind::Finder {
                                     for (name, path) in primary_places.clone() {
-                                        let icon = if path == Path::new("/") {
-                                            FinderNavIcon::Computer
-                                        } else {
-                                            FinderNavIcon::Home
+                                        let icon = match name {
+                                            "Downloads" => FinderNavIcon::Downloads,
+                                            "Pictures" => FinderNavIcon::Pictures,
+                                            _ if path == Path::new("/") => FinderNavIcon::Computer,
+                                            _ => FinderNavIcon::Home,
                                         };
                                         let response = finder::sidebar_response(
                                             ui,
@@ -8678,7 +8675,7 @@ impl Explorer {
                                         ui,
                                         "Connect to network",
                                         !self.volume_busy,
-                                        shell_components::LunaLinkIcon::Computer,
+                                        shell_components::LunaLinkIcon::Drive,
                                     )
                                 } else {
                                     ui.add_enabled(
@@ -9019,11 +9016,32 @@ impl Explorer {
                             if !secondary.is_empty() {
                                 ui.collapsing(i18n::tr("More locations"), |ui| {
                                     for (label, path) in secondary {
-                                        let response = ui.add_sized(
-                                            [ui.available_width(), 25.0],
-                                            egui::Button::new(label)
-                                                .selected(self.current().path == path),
-                                        );
+                                        let selected = self.current().path == path;
+                                        let response = if theme.shell_kind() == ShellKind::Chromeos {
+                                            let icon = match label {
+                                                "Music" => FilesNavIcon::Music,
+                                                "Videos" => FilesNavIcon::Video,
+                                                _ => FilesNavIcon::Folder,
+                                            };
+                                            chromeos::sidebar_response(
+                                                ui, &theme, label, selected, icon,
+                                            )
+                                        } else if theme.shell_kind() == ShellKind::Finder {
+                                            let icon = match label {
+                                                "Music" => FinderNavIcon::Music,
+                                                "Downloads" => FinderNavIcon::Downloads,
+                                                "Pictures" => FinderNavIcon::Pictures,
+                                                _ => FinderNavIcon::Folder,
+                                            };
+                                            finder::sidebar_response(
+                                                ui, &theme, label, selected, icon,
+                                            )
+                                        } else {
+                                            ui.add_sized(
+                                                [ui.available_width(), 25.0],
+                                                egui::Button::new(label).selected(selected),
+                                            )
+                                        };
                                         self.place_response(ui, response, path);
                                     }
                                 });
