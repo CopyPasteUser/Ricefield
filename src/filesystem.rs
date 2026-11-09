@@ -6136,7 +6136,10 @@ mod tests {
         }
         let cases = [
             vec![TransferRule::ExactName(OsString::from("same.txt")); 2],
-            vec![TransferRule::Global, TransferRule::ExactName(OsString::from("../bad"))],
+            vec![
+                TransferRule::Global,
+                TransferRule::ExactName(OsString::from("../bad")),
+            ],
             vec![TransferRule::Global],
         ];
         for rules in cases {
@@ -6151,7 +6154,12 @@ mod tests {
                 &mut |_| {},
             );
             assert!(report.result.is_err());
-            assert!(report.items.iter().all(|item| item.state != ItemState::Completed));
+            assert!(
+                report
+                    .items
+                    .iter()
+                    .all(|item| item.state != ItemState::Completed)
+            );
             assert_eq!(fs::read_dir(&destination).unwrap().count(), 0);
             for source in &sources {
                 assert_eq!(fs::read(source).unwrap(), b"source remains");
@@ -6163,9 +6171,14 @@ mod tests {
             TransferRule::ExactName(OsString::from("chosen.txt")),
         ];
         preview_transfer_with_rules_cancellable(
-            &sources, &destination, ConflictPolicy::KeepBoth, true, &rules,
+            &sources,
+            &destination,
+            ConflictPolicy::KeepBoth,
+            true,
+            &rules,
             &AtomicBool::new(false),
-        ).unwrap();
+        )
+        .unwrap();
         fs::write(destination.join("chosen.txt"), b"racing writer").unwrap();
         let report = perform_with_report(
             &Action::MoveWithRules {
@@ -6177,9 +6190,15 @@ mod tests {
             &AtomicBool::new(false),
             &mut |_| {},
         );
-        assert_eq!(report.result.unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            report.result.unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
         assert_eq!(report.items[0].state, ItemState::NotStarted);
-        assert_eq!(fs::read(destination.join("chosen.txt")).unwrap(), b"racing writer");
+        assert_eq!(
+            fs::read(destination.join("chosen.txt")).unwrap(),
+            b"racing writer"
+        );
         assert!(!destination.join("first.txt").exists());
         for source in sources {
             assert_eq!(fs::read(source).unwrap(), b"source remains");
