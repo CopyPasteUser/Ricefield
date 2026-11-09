@@ -21,8 +21,8 @@ use crate::{
     shell_components::{self, ToolbarAction},
     shell_renderer::{self, FileCellLayout, shorten},
     theme::{BUILTIN_IDS, ChromeComponent, ShellKind, SidebarPosition, SidebarSection, Theme},
-    theme_events,
     theme_editor::{self, ThemeEditor},
+    theme_events,
     thumbnail::ThumbnailManager,
     transfer_history,
     volume::{self, MountCredentials, VolumeAction},
@@ -3346,26 +3346,36 @@ impl Explorer {
         if let Some(action) = self.volume_confirm.clone() {
             let mut approve = false;
             let mut dismiss = false;
-            egui::Window::new(i18n::template("Confirm {action}", &[("action", i18n::tr(action.label()).into())]))
-                .collapsible(false)
-                .resizable(false)
-                .show(context, |ui| {
-                    if matches!(action, VolumeAction::LockEncrypted(_)) {
-                        ui.label(i18n::tr("Unmount all decrypted filesystems before locking this volume."));
-                        ui.label(i18n::tr("UDisks2 will refuse to lock a busy encrypted mapping."));
-                    } else {
-                        ui.label(
-                            i18n::tr("Open files or transfers on this volume may fail after disconnecting it."),
-                        );
-                        ui.label(i18n::tr("Make sure writes are complete before continuing."));
-                    }
-                    ui.horizontal(|ui| {
-                        approve = ui
-                            .add_enabled(!self.volume_busy, egui::Button::new(i18n::tr(action.label())))
-                            .clicked();
-                        dismiss = ui.button(i18n::tr("Cancel")).clicked();
-                    });
+            egui::Window::new(i18n::template(
+                "Confirm {action}",
+                &[("action", i18n::tr(action.label()).into())],
+            ))
+            .collapsible(false)
+            .resizable(false)
+            .show(context, |ui| {
+                if matches!(action, VolumeAction::LockEncrypted(_)) {
+                    ui.label(i18n::tr(
+                        "Unmount all decrypted filesystems before locking this volume.",
+                    ));
+                    ui.label(i18n::tr(
+                        "UDisks2 will refuse to lock a busy encrypted mapping.",
+                    ));
+                } else {
+                    ui.label(i18n::tr(
+                        "Open files or transfers on this volume may fail after disconnecting it.",
+                    ));
+                    ui.label(i18n::tr("Make sure writes are complete before continuing."));
+                }
+                ui.horizontal(|ui| {
+                    approve = ui
+                        .add_enabled(
+                            !self.volume_busy,
+                            egui::Button::new(i18n::tr(action.label())),
+                        )
+                        .clicked();
+                    dismiss = ui.button(i18n::tr("Cancel")).clicked();
                 });
+            });
             if approve {
                 self.start_volume_action(action, false);
             }
@@ -10849,47 +10859,56 @@ impl Explorer {
                     );
                 }
                 Dialog::OpenWith { path, apps, .. } => {
-                    shell_components::show_dialog(context, i18n::tr("Open With"), true, Some(450.0), |ui| {
-                        ui.label(i18n::template("Choose an installed app for {path}", &[("path", path.display().to_string())]));
-                        match apps {
-                            None => {
-                                ui.horizontal(|ui| {
-                                    ui.spinner();
-                                    ui.label(i18n::tr("Looking up MIME handlers…"));
-                                });
-                            }
-                            Some(Err(error)) => {
-                                ui.colored_label(Color32::RED, error.as_str());
-                            }
-                            Some(Ok(handlers)) => {
-                                egui::ScrollArea::vertical()
-                                    .max_height(260.0)
-                                    .show(ui, |ui| {
-                                        for desktop_id in handlers.iter() {
-                                            if ui
-                                                .button(desktop_id.trim_end_matches(".desktop"))
-                                                .on_hover_text(desktop_id)
-                                                .clicked()
-                                            {
-                                                open_with_launch =
-                                                    Some((desktop_id.clone(), path.clone()));
-                                                dismiss = true;
-                                            }
-                                        }
+                    shell_components::show_dialog(
+                        context,
+                        i18n::tr("Open With"),
+                        true,
+                        Some(450.0),
+                        |ui| {
+                            ui.label(i18n::template(
+                                "Choose an installed app for {path}",
+                                &[("path", path.display().to_string())],
+                            ));
+                            match apps {
+                                None => {
+                                    ui.horizontal(|ui| {
+                                        ui.spinner();
+                                        ui.label(i18n::tr("Looking up MIME handlers…"));
                                     });
+                                }
+                                Some(Err(error)) => {
+                                    ui.colored_label(Color32::RED, error.as_str());
+                                }
+                                Some(Ok(handlers)) => {
+                                    egui::ScrollArea::vertical()
+                                        .max_height(260.0)
+                                        .show(ui, |ui| {
+                                            for desktop_id in handlers.iter() {
+                                                if ui
+                                                    .button(desktop_id.trim_end_matches(".desktop"))
+                                                    .on_hover_text(desktop_id)
+                                                    .clicked()
+                                                {
+                                                    open_with_launch =
+                                                        Some((desktop_id.clone(), path.clone()));
+                                                    dismiss = true;
+                                                }
+                                            }
+                                        });
+                                }
                             }
-                        }
-                        if ui
-                            .button(i18n::tr("Choose another app with system dialog…"))
-                            .clicked()
-                        {
-                            open_with_portal = Some(path.clone());
-                            dismiss = true;
-                        }
-                        if ui.button(i18n::tr("Cancel")).clicked() {
-                            dismiss = true;
-                        }
-                    });
+                            if ui
+                                .button(i18n::tr("Choose another app with system dialog…"))
+                                .clicked()
+                            {
+                                open_with_portal = Some(path.clone());
+                                dismiss = true;
+                            }
+                            if ui.button(i18n::tr("Cancel")).clicked() {
+                                dismiss = true;
+                            }
+                        },
+                    );
                 }
                 Dialog::Duplicates { result, .. } => {
                     shell_components::show_dialog(
@@ -10963,7 +10982,11 @@ impl Explorer {
                             ui.label(i18n::template(
                                 "{action} {count} item(s) into {destination}",
                                 &[
-                                    ("action", i18n::tr(if clipboard.cut { "Move" } else { "Copy" }).into()),
+                                    (
+                                        "action",
+                                        i18n::tr(if clipboard.cut { "Move" } else { "Copy" })
+                                            .into(),
+                                    ),
                                     ("count", clipboard.paths.len().to_string()),
                                     ("destination", destination.display().to_string()),
                                 ],
@@ -10979,7 +11002,9 @@ impl Explorer {
                                 .radio_value(
                                     conflict,
                                     ConflictPolicy::KeepBoth,
-                                    i18n::tr("Keep both — rename incoming items when names collide"),
+                                    i18n::tr(
+                                        "Keep both — rename incoming items when names collide",
+                                    ),
                                 )
                                 .changed();
                             policy_changed |= ui.radio_value(
@@ -11139,7 +11164,10 @@ impl Explorer {
                                     dismiss = true;
                                 }
                                 if ui
-                                    .add_enabled(can_start, egui::Button::new(i18n::tr("Start transfer")))
+                                    .add_enabled(
+                                        can_start,
+                                        egui::Button::new(i18n::tr("Start transfer")),
+                                    )
                                     .clicked()
                                 {
                                     action = Some(Self::paste_action_with_rules(
@@ -11177,7 +11205,9 @@ impl Explorer {
                             if ui.button(i18n::tr("Cancel")).clicked() {
                                 dismiss = true;
                             }
-                            if ui.add_enabled(valid, egui::Button::new(i18n::tr("Save"))).clicked()
+                            if ui
+                                .add_enabled(valid, egui::Button::new(i18n::tr("Save")))
+                                .clicked()
                                 || (valid
                                     && input.lost_focus()
                                     && ui.input(|i| i.key_pressed(Key::Enter)))
@@ -11202,11 +11232,16 @@ impl Explorer {
                 } => {
                     shell_components::show_dialog(
                         context,
-                        i18n::template("Batch rename ({count} items)", &[("count", paths.len().to_string())]),
+                        i18n::template(
+                            "Batch rename ({count} items)",
+                            &[("count", paths.len().to_string())],
+                        ),
                         true,
                         Some(580.0),
                         |ui| {
-                            ui.label(i18n::tr("Preview every new name before applying the changes."));
+                            ui.label(i18n::tr(
+                                "Preview every new name before applying the changes.",
+                            ));
                             ui.horizontal(|ui| {
                                 ui.label(i18n::tr("Prefix:"));
                                 ui.add_sized([220.0, 26.0], egui::TextEdit::singleline(prefix));
@@ -11294,22 +11329,33 @@ impl Explorer {
                     );
                 }
                 Dialog::Trash(paths) => {
-                    shell_components::show_dialog(context, i18n::tr("Move to Trash?"), false, None, |ui| {
-                        ui.label(i18n::template("Move {count} selected item(s) to Trash?", &[("count", paths.len().to_string())]));
-                        ui.label(i18n::tr("The items can usually be restored from your desktop Trash."));
-                        removal_confirmation_paths(ui, paths);
-                        ui.horizontal(|ui| {
-                            if ui.button(i18n::tr("Cancel")).clicked() {
-                                dismiss = true;
-                            }
-                            if ui.button(i18n::tr("Move to Trash")).clicked() {
-                                action = Some(Action::Trash {
-                                    paths: paths.clone(),
-                                });
-                                dismiss = true;
-                            }
-                        });
-                    });
+                    shell_components::show_dialog(
+                        context,
+                        i18n::tr("Move to Trash?"),
+                        false,
+                        None,
+                        |ui| {
+                            ui.label(i18n::template(
+                                "Move {count} selected item(s) to Trash?",
+                                &[("count", paths.len().to_string())],
+                            ));
+                            ui.label(i18n::tr(
+                                "The items can usually be restored from your desktop Trash.",
+                            ));
+                            removal_confirmation_paths(ui, paths);
+                            ui.horizontal(|ui| {
+                                if ui.button(i18n::tr("Cancel")).clicked() {
+                                    dismiss = true;
+                                }
+                                if ui.button(i18n::tr("Move to Trash")).clicked() {
+                                    action = Some(Action::Trash {
+                                        paths: paths.clone(),
+                                    });
+                                    dismiss = true;
+                                }
+                            });
+                        },
+                    );
                 }
                 Dialog::Delete(paths) => {
                     shell_components::show_dialog(
@@ -11320,7 +11366,10 @@ impl Explorer {
                         |ui| {
                             ui.colored_label(
                                 Color32::RED,
-                                i18n::template("Delete {count} item(s) permanently?", &[("count", paths.len().to_string())]),
+                                i18n::template(
+                                    "Delete {count} item(s) permanently?",
+                                    &[("count", paths.len().to_string())],
+                                ),
                             );
                             ui.label(i18n::tr("This bypasses Trash. There is no undo."));
                             removal_confirmation_paths(ui, paths);
@@ -11352,133 +11401,142 @@ impl Explorer {
                     generation,
                     ..
                 } => {
-                    shell_components::show_dialog(context, i18n::tr("Properties"), true, Some(460.0), |ui| {
-                        match details {
-                            Some(Ok(snapshot)) => {
-                                for (name, value) in &snapshot.lines {
-                                    ui.horizontal_wrapped(|ui| {
-                                        ui.strong(format!("{name}:"));
-                                        ui.label(value);
-                                    });
-                                }
-                            }
-                            Some(Err(error)) => {
-                                ui.colored_label(
-                                    Color32::RED,
-                                    format!("Cannot read properties: {error}"),
-                                );
-                            }
-                            None => {
-                                ui.horizontal(|ui| {
-                                    ui.spinner();
-                                    ui.label(i18n::tr("Reading file properties…"));
-                                });
-                            }
-                        }
-                        #[cfg(unix)]
-                        if let Some(Ok(snapshot)) = details.as_ref()
-                            && !snapshot.is_symlink
-                        {
-                            ui.separator();
-                            let name = if snapshot.is_dir {
-                                "Calculate folder size"
-                            } else {
-                                "Calculate SHA-256"
-                            };
-                            if ui
-                                .add_enabled(!analysis_busy, egui::Button::new(name))
-                                .clicked()
-                            {
-                                *analysis = None;
-                                requested_analysis = Some((path.clone(), *generation));
-                            }
-                            if analysis_busy {
-                                ui.horizontal(|ui| {
-                                    ui.spinner();
-                                    ui.label("Analysing in background…");
-                                });
-                            }
-                            if let Some(result) = analysis {
-                                match result {
-                                    Ok(result) => {
-                                        ui.label(egui::RichText::new(result.as_str()).monospace());
-                                    }
-                                    Err(error) => {
-                                        ui.colored_label(Color32::RED, error.as_str());
+                    shell_components::show_dialog(
+                        context,
+                        i18n::tr("Properties"),
+                        true,
+                        Some(460.0),
+                        |ui| {
+                            match details {
+                                Some(Ok(snapshot)) => {
+                                    for (name, value) in &snapshot.lines {
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.strong(format!("{name}:"));
+                                            ui.label(value);
+                                        });
                                     }
                                 }
-                            }
-                        }
-                        #[cfg(unix)]
-                        if let Some(Ok(snapshot)) = details.as_ref() {
-                            ui.separator();
-                            if snapshot.is_symlink {
-                                ui.label("Symlink permissions cannot be changed here.");
-                            }
-                            ui.horizontal(|ui| {
-                                ui.label("Mode (octal):");
-                                ui.add_sized([100.0, 25.0], egui::TextEdit::singleline(mode));
-                                let parsed = u32::from_str_radix(mode.trim(), 8)
-                                    .ok()
-                                    .filter(|number| *number <= 0o777);
-                                if ui
-                                    .add_enabled(
-                                        parsed.is_some() && !snapshot.is_symlink,
-                                        egui::Button::new("Apply"),
-                                    )
-                                    .clicked()
-                                {
-                                    action = Some(Action::SetMode {
-                                        path: path.clone(),
-                                        mode: parsed.expect("button only enabled for valid mode"),
-                                        expected: snapshot.metadata.clone(),
-                                    });
-                                    dismiss = true;
-                                }
-                            });
-                            #[cfg(target_os = "linux")]
-                            ui.horizontal_wrapped(|ui| {
-                                use std::os::unix::fs::MetadataExt;
-                                ui.label("Owner UID:");
-                                ui.add_sized([84.0, 25.0], egui::TextEdit::singleline(owner));
-                                ui.label("Group GID:");
-                                ui.add_sized([84.0, 25.0], egui::TextEdit::singleline(group));
-                                let parsed = owner
-                                    .trim()
-                                    .parse::<u32>()
-                                    .ok()
-                                    .filter(|uid| *uid != u32::MAX)
-                                    .zip(
-                                        group
-                                            .trim()
-                                            .parse::<u32>()
-                                            .ok()
-                                            .filter(|gid| *gid != u32::MAX),
+                                Some(Err(error)) => {
+                                    ui.colored_label(
+                                        Color32::RED,
+                                        format!("Cannot read properties: {error}"),
                                     );
-                                let changed = parsed.is_some_and(|(uid, gid)| {
-                                    uid != snapshot.metadata.uid() || gid != snapshot.metadata.gid()
-                                });
+                                }
+                                None => {
+                                    ui.horizontal(|ui| {
+                                        ui.spinner();
+                                        ui.label(i18n::tr("Reading file properties…"));
+                                    });
+                                }
+                            }
+                            #[cfg(unix)]
+                            if let Some(Ok(snapshot)) = details.as_ref()
+                                && !snapshot.is_symlink
+                            {
+                                ui.separator();
+                                let name = if snapshot.is_dir {
+                                    "Calculate folder size"
+                                } else {
+                                    "Calculate SHA-256"
+                                };
                                 if ui
-                                    .add_enabled(
-                                        changed && !snapshot.is_symlink,
-                                        egui::Button::new("Apply owner/group"),
-                                    )
+                                    .add_enabled(!analysis_busy, egui::Button::new(name))
                                     .clicked()
                                 {
-                                    let (uid, gid) =
-                                        parsed.expect("owner/group button requires valid IDs");
-                                    action = Some(Action::SetOwnership {
-                                        path: path.clone(),
-                                        uid,
-                                        gid,
-                                        expected: snapshot.metadata.clone(),
-                                    });
-                                    dismiss = true;
+                                    *analysis = None;
+                                    requested_analysis = Some((path.clone(), *generation));
                                 }
-                            });
-                            #[cfg(target_os = "linux")]
+                                if analysis_busy {
+                                    ui.horizontal(|ui| {
+                                        ui.spinner();
+                                        ui.label("Analysing in background…");
+                                    });
+                                }
+                                if let Some(result) = analysis {
+                                    match result {
+                                        Ok(result) => {
+                                            ui.label(
+                                                egui::RichText::new(result.as_str()).monospace(),
+                                            );
+                                        }
+                                        Err(error) => {
+                                            ui.colored_label(Color32::RED, error.as_str());
+                                        }
+                                    }
+                                }
+                            }
+                            #[cfg(unix)]
+                            if let Some(Ok(snapshot)) = details.as_ref() {
+                                ui.separator();
+                                if snapshot.is_symlink {
+                                    ui.label("Symlink permissions cannot be changed here.");
+                                }
+                                ui.horizontal(|ui| {
+                                    ui.label("Mode (octal):");
+                                    ui.add_sized([100.0, 25.0], egui::TextEdit::singleline(mode));
+                                    let parsed = u32::from_str_radix(mode.trim(), 8)
+                                        .ok()
+                                        .filter(|number| *number <= 0o777);
+                                    if ui
+                                        .add_enabled(
+                                            parsed.is_some() && !snapshot.is_symlink,
+                                            egui::Button::new("Apply"),
+                                        )
+                                        .clicked()
+                                    {
+                                        action = Some(Action::SetMode {
+                                            path: path.clone(),
+                                            mode: parsed
+                                                .expect("button only enabled for valid mode"),
+                                            expected: snapshot.metadata.clone(),
+                                        });
+                                        dismiss = true;
+                                    }
+                                });
+                                #[cfg(target_os = "linux")]
+                                ui.horizontal_wrapped(|ui| {
+                                    use std::os::unix::fs::MetadataExt;
+                                    ui.label("Owner UID:");
+                                    ui.add_sized([84.0, 25.0], egui::TextEdit::singleline(owner));
+                                    ui.label("Group GID:");
+                                    ui.add_sized([84.0, 25.0], egui::TextEdit::singleline(group));
+                                    let parsed = owner
+                                        .trim()
+                                        .parse::<u32>()
+                                        .ok()
+                                        .filter(|uid| *uid != u32::MAX)
+                                        .zip(
+                                            group
+                                                .trim()
+                                                .parse::<u32>()
+                                                .ok()
+                                                .filter(|gid| *gid != u32::MAX),
+                                        );
+                                    let changed = parsed.is_some_and(|(uid, gid)| {
+                                        uid != snapshot.metadata.uid()
+                                            || gid != snapshot.metadata.gid()
+                                    });
+                                    if ui
+                                        .add_enabled(
+                                            changed && !snapshot.is_symlink,
+                                            egui::Button::new("Apply owner/group"),
+                                        )
+                                        .clicked()
+                                    {
+                                        let (uid, gid) =
+                                            parsed.expect("owner/group button requires valid IDs");
+                                        action = Some(Action::SetOwnership {
+                                            path: path.clone(),
+                                            uid,
+                                            gid,
+                                            expected: snapshot.metadata.clone(),
+                                        });
+                                        dismiss = true;
+                                    }
+                                });
+                                #[cfg(target_os = "linux")]
                             ui.small("Ownership changes follow your account's Linux permissions; no sudo or privilege escalation.");
-                            #[cfg(target_os = "linux")]
+                                #[cfg(target_os = "linux")]
                             ui.vertical(|ui| {
                                 ui.separator();
                                 ui.label("Create a POSIX access ACL for one additional user:");
@@ -11512,7 +11570,7 @@ impl Explorer {
                                 }
                                 ui.small("Creates an ACL only if none is found. Group rights are preserved. Avoid simultaneous ACL edits from other programs: Linux does not guarantee atomic no-replace for this attribute. Requires filesystem ACL support and ordinary Linux permissions.");
                             });
-                            #[cfg(target_os = "linux")]
+                                #[cfg(target_os = "linux")]
                             ui.vertical(|ui| {
                                 ui.separator();
                                 ui.label("Add an extended attribute (existing values are never overwritten):");
@@ -11539,11 +11597,12 @@ impl Explorer {
                                 }
                                 ui.small("Only user.* names and up to 4 KiB of UTF-8 text. A conflicting attribute is left untouched.");
                             });
-                        }
-                        if ui.button("Close").clicked() {
-                            dismiss = true;
-                        }
-                    });
+                            }
+                            if ui.button("Close").clicked() {
+                                dismiss = true;
+                            }
+                        },
+                    );
                 }
             }
         }
@@ -11653,7 +11712,11 @@ impl eframe::App for Explorer {
                 .as_deref()
                 .and_then(|path| theme_events::Watcher::start(path, &context));
         }
-        if self.theme_watcher.as_ref().is_some_and(theme_events::Watcher::changed) {
+        if self
+            .theme_watcher
+            .as_ref()
+            .is_some_and(theme_events::Watcher::changed)
+        {
             // The event itself is evidence of a change; don't depend on a
             // network/filesystem's inode or timestamp precision here.
             self.reload_theme_file(&context, true);

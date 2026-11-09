@@ -10,7 +10,11 @@ use std::{
     ffi::CString,
     os::{fd::FromRawFd, unix::ffi::OsStrExt},
     path::Path,
-    sync::{Arc, atomic::{AtomicBool, Ordering}, mpsc::{self, Receiver}},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver},
+    },
 };
 
 pub struct Watcher {
@@ -54,9 +58,7 @@ impl Watcher {
                 if result <= 0 {
                     continue;
                 }
-                let length = unsafe {
-                    libc::read(fd, buffer.as_mut_ptr().cast(), buffer.len())
-                };
+                let length = unsafe { libc::read(fd, buffer.as_mut_ptr().cast(), buffer.len()) };
                 if length <= 0 {
                     continue;
                 }
@@ -86,12 +88,22 @@ fn contains_profile_event(buffer: &[u8], filename: &[u8]) -> bool {
     let mut offset = 0;
     while let Some(bytes) = buffer.get(offset..offset + header) {
         // SAFETY: bounds checked; read_unaligned handles the byte buffer.
-        let event = unsafe { bytes.as_ptr().cast::<libc::inotify_event>().read_unaligned() };
-        let end = offset.saturating_add(header).saturating_add(event.len as usize);
+        let event = unsafe {
+            bytes
+                .as_ptr()
+                .cast::<libc::inotify_event>()
+                .read_unaligned()
+        };
+        let end = offset
+            .saturating_add(header)
+            .saturating_add(event.len as usize);
         if end > buffer.len() {
             break;
         }
-        if event.mask & (libc::IN_Q_OVERFLOW | libc::IN_IGNORED | libc::IN_DELETE_SELF | libc::IN_MOVE_SELF) != 0 {
+        if event.mask
+            & (libc::IN_Q_OVERFLOW | libc::IN_IGNORED | libc::IN_DELETE_SELF | libc::IN_MOVE_SELF)
+            != 0
+        {
             return true;
         }
         let name = &buffer[offset + header..end];
@@ -106,23 +118,49 @@ fn contains_profile_event(buffer: &[u8], filename: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, time::{Duration, Instant, SystemTime}};
+    use std::{
+        fs,
+        time::{Duration, Instant, SystemTime},
+    };
 
     #[test]
     fn only_target_profile_events_trigger_reload() {
         fn event(name: &[u8], mask: u32) -> Vec<u8> {
             let padded = (name.len() + 1 + 3) & !3;
-            let raw = libc::inotify_event { wd: 1, mask, cookie: 0, len: padded as u32 };
+            let raw = libc::inotify_event {
+                wd: 1,
+                mask,
+                cookie: 0,
+                len: padded as u32,
+            };
             let mut result = vec![0; std::mem::size_of::<libc::inotify_event>() + padded];
-            unsafe { result.as_mut_ptr().cast::<libc::inotify_event>().write_unaligned(raw) };
-            result[std::mem::size_of::<libc::inotify_event>()..][..name.len()].copy_from_slice(name);
+            unsafe {
+                result
+                    .as_mut_ptr()
+                    .cast::<libc::inotify_event>()
+                    .write_unaligned(raw)
+            };
+            result[std::mem::size_of::<libc::inotify_event>()..][..name.len()]
+                .copy_from_slice(name);
             result
         }
         let target = b"ricefield.riceprofile.toml";
-        assert!(contains_profile_event(&event(target, libc::IN_MOVED_TO), target));
-        assert!(contains_profile_event(&event(target, libc::IN_CLOSE_WRITE), target));
-        assert!(!contains_profile_event(&event(b"taskotto.ricepack.toml", libc::IN_MOVED_TO), target));
-        assert!(contains_profile_event(&event(b"", libc::IN_Q_OVERFLOW), target));
+        assert!(contains_profile_event(
+            &event(target, libc::IN_MOVED_TO),
+            target
+        ));
+        assert!(contains_profile_event(
+            &event(target, libc::IN_CLOSE_WRITE),
+            target
+        ));
+        assert!(!contains_profile_event(
+            &event(b"taskotto.ricepack.toml", libc::IN_MOVED_TO),
+            target
+        ));
+        assert!(contains_profile_event(
+            &event(b"", libc::IN_Q_OVERFLOW),
+            target
+        ));
         assert!(!contains_profile_event(&[0; 3], target));
     }
 

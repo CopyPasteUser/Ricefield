@@ -313,9 +313,15 @@ mod tests {
 
     #[test]
     fn parses_gnome_cut_and_uri_list() {
-        assert!(parse_files("cut\nfile:///tmp/a%20b\n", ClipboardFormat::Gnome).unwrap().cut);
+        assert!(
+            parse_files("cut\nfile:///tmp/a%20b\n", ClipboardFormat::Gnome)
+                .unwrap()
+                .cut
+        );
         assert_eq!(
-            parse_files("# comment\nfile:///tmp/a\n", ClipboardFormat::UriList).unwrap().paths,
+            parse_files("# comment\nfile:///tmp/a\n", ClipboardFormat::UriList)
+                .unwrap()
+                .paths,
             vec![PathBuf::from("/tmp/a")]
         );
     }
@@ -324,15 +330,14 @@ mod tests {
     fn uri_list_fallback_is_copy_only_and_keeps_native_targets_first() {
         let candidates = paste_handlers();
         assert_eq!(candidates.len(), 4);
-        assert!(
-            candidates[..2]
-                .iter()
-                .all(|(format, args)| { *format == ClipboardFormat::Gnome && args.contains(&"x-special/gnome-copied-files") })
-        );
+        assert!(candidates[..2].iter().all(|(format, args)| {
+            *format == ClipboardFormat::Gnome && args.contains(&"x-special/gnome-copied-files")
+        }));
         assert!(
             candidates[2..]
                 .iter()
-                .all(|(format, args)| *format == ClipboardFormat::UriList && args.contains(&"text/uri-list"))
+                .all(|(format, args)| *format == ClipboardFormat::UriList
+                    && args.contains(&"text/uri-list"))
         );
         let files = parse_files(
             "# URI list from another file manager\r\nfile:///tmp/first%20file\r\nfile:///tmp/second\r\n",
@@ -347,10 +352,16 @@ mod tests {
                 PathBuf::from("/tmp/second")
             ]
         );
-        assert!(parse_files("https://example.invalid/file\r\n", ClipboardFormat::UriList).is_none());
+        assert!(
+            parse_files("https://example.invalid/file\r\n", ClipboardFormat::UriList).is_none()
+        );
         // A malformed URI-list must never convert a paste into a destructive
         // move merely because it contains the GNOME word "cut".
-        assert!(!parse_files("cut\nfile:///tmp/a\n", ClipboardFormat::UriList).unwrap().cut);
+        assert!(
+            !parse_files("cut\nfile:///tmp/a\n", ClipboardFormat::UriList)
+                .unwrap()
+                .cut
+        );
         assert!(parse_files("file:///tmp/a\n", ClipboardFormat::Gnome).is_none());
     }
 
