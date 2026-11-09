@@ -8686,150 +8686,178 @@ impl Explorer {
                                 if self.volume_busy {
                                     ui.small("Device operation in progress…");
                                 }
-                                for volume in self.device_volumes.clone() {
-                                    if !volume.mount_paths.is_empty() {
-                                        continue;
-                                    }
-                                    let title = format!(
-                                        "{}: {}",
-                                        if volume.removable { "Removable" } else { "USB" },
-                                        volume.label
-                                    );
-                                    let action_label = if volume.encrypted {
-                                        if volume.unlocked {
-                                            format!("Lock {title}…")
-                                        } else {
-                                            format!("Unlock {title}…")
+                                let inactive_devices = self
+                                    .device_volumes
+                                    .iter()
+                                    .filter(|device| device.mount_paths.is_empty())
+                                    .cloned()
+                                    .collect::<Vec<_>>();
+                                if !inactive_devices.is_empty() {
+                                    ui.collapsing(
+                                        format!(
+                                            "{} ({})",
+                                            i18n::tr("Other devices"),
+                                            inactive_devices.len()
+                                        ),
+                                        |ui| {
+                                    for volume in inactive_devices {
+                                        if !volume.mount_paths.is_empty() {
+                                            continue;
                                         }
-                                    } else {
-                                        format!("Mount {title}")
-                                    };
-                                    let response = ui
-                                        .add_enabled(
-                                            !self.volume_busy,
-                                            egui::Button::new(action_label),
-                                        )
-                                        .on_hover_text(format!(
-                                            "{} · UDisks2/Polkit removable-device operation",
-                                            volume.device
-                                        ));
-                                    if response.clicked() {
-                                        if volume.encrypted {
-                                            if volume.unlocked {
-                                                self.volume_confirm =
-                                                    Some(VolumeAction::LockEncrypted(
-                                                        volume.object_path.clone(),
-                                                    ));
-                                            } else {
-                                                volume::clear_password(
-                                                    &mut self.volume_unlock_password,
-                                                );
-                                                self.volume_unlock_target = Some((
-                                                    volume.object_path.clone(),
-                                                    title.clone(),
-                                                ));
-                                            }
-                                        } else {
-                                            self.start_volume_action(
-                                                VolumeAction::MountDevice(
-                                                    volume.object_path.clone(),
-                                                ),
-                                                false,
-                                            );
-                                        }
-                                    }
-                                    if volume.ejectable || volume.can_power_off {
-                                        response.context_menu(|ui| {
-                                            if volume.ejectable
-                                                && ui
-                                                    .add_enabled(
-                                                        !self.volume_busy,
-                                                        egui::Button::new("Eject drive…"),
-                                                    )
-                                                    .clicked()
-                                            {
-                                                self.volume_confirm =
-                                                    Some(VolumeAction::EjectDrive(
-                                                        volume.drive_path.clone(),
-                                                    ));
-                                                ui.close();
-                                            }
-                                            if volume.can_power_off
-                                                && ui
-                                                    .add_enabled(
-                                                        !self.volume_busy,
-                                                        egui::Button::new(
-                                                            "Safely power off USB drive…",
-                                                        ),
-                                                    )
-                                                    .clicked()
-                                            {
-                                                self.volume_confirm =
-                                                    Some(VolumeAction::PowerOffDrive(
-                                                        volume.drive_path.clone(),
-                                                    ));
-                                                ui.close();
-                                            }
-                                        });
-                                    }
-                                }
-                                for uri in self.config.remote_favorites.clone() {
-                                    if !matches!(
-                                        Location::parse(uri.clone().into()),
-                                        Ok(Location::Remote(_))
-                                    ) {
-                                        continue;
-                                    }
-                                    let display = network_favorite_label(&uri);
-                                    let remote_clicked = if chromeos_shell {
-                                        chromeos::sidebar_link(
-                                            ui,
-                                            &theme,
-                                            &shorten(&display, 24),
-                                            false,
-                                            FilesNavIcon::Network,
-                                        )
-                                    } else if classic_shell {
-                                        let response = classic98::tree_link(
-                                            ui,
-                                            &shorten(&display, 25),
-                                            false,
-                                            TreeIcon::Network,
+                                        let title = format!(
+                                            "{}: {}",
+                                            if volume.removable { "Removable" } else { "USB" },
+                                            volume.label
                                         );
-                                        classic98::activated(ui, &response)
-                                    } else if finder_shell {
-                                        finder::sidebar_link(
-                                            ui,
-                                            &theme,
-                                            &shorten(&display, 24),
-                                            false,
-                                            FinderNavIcon::Network,
-                                        )
-                                    } else if aqua_shell {
-                                        aqua::sidebar_link(
-                                            ui,
-                                            &theme,
-                                            &shorten(&display, 24),
-                                            false,
-                                            aqua::AquaNavIcon::Network,
-                                        )
-                                    } else {
-                                        ui.button(if aero {
-                                            format!("    {}", shorten(&display, 24))
+                                        let action_label = if volume.encrypted {
+                                            if volume.unlocked {
+                                                format!("Lock {title}…")
+                                            } else {
+                                                format!("Unlock {title}…")
+                                            }
                                         } else {
-                                            format!("NAS: {}", shorten(&display, 27))
-                                        })
-                                        .on_hover_text(&uri)
-                                        .clicked()
-                                    };
-                                    if remote_clicked {
-                                        self.navigate_remote(uri);
+                                            format!("Mount {title}")
+                                        };
+                                        let response = ui
+                                            .add_enabled(
+                                                !self.volume_busy,
+                                                egui::Button::new(action_label),
+                                            )
+                                            .on_hover_text(format!(
+                                                "{} · UDisks2/Polkit removable-device operation",
+                                                volume.device
+                                            ));
+                                        if response.clicked() {
+                                            if volume.encrypted {
+                                                if volume.unlocked {
+                                                    self.volume_confirm =
+                                                        Some(VolumeAction::LockEncrypted(
+                                                            volume.object_path.clone(),
+                                                        ));
+                                                } else {
+                                                    volume::clear_password(
+                                                        &mut self.volume_unlock_password,
+                                                    );
+                                                    self.volume_unlock_target = Some((
+                                                        volume.object_path.clone(),
+                                                        title.clone(),
+                                                    ));
+                                                }
+                                            } else {
+                                                self.start_volume_action(
+                                                    VolumeAction::MountDevice(
+                                                        volume.object_path.clone(),
+                                                    ),
+                                                    false,
+                                                );
+                                            }
+                                        }
+                                        if volume.ejectable || volume.can_power_off {
+                                            response.context_menu(|ui| {
+                                                if volume.ejectable
+                                                    && ui
+                                                        .add_enabled(
+                                                            !self.volume_busy,
+                                                            egui::Button::new("Eject drive…"),
+                                                        )
+                                                        .clicked()
+                                                {
+                                                    self.volume_confirm =
+                                                        Some(VolumeAction::EjectDrive(
+                                                            volume.drive_path.clone(),
+                                                        ));
+                                                    ui.close();
+                                                }
+                                                if volume.can_power_off
+                                                    && ui
+                                                        .add_enabled(
+                                                            !self.volume_busy,
+                                                            egui::Button::new(
+                                                                "Safely power off USB drive…",
+                                                            ),
+                                                        )
+                                                        .clicked()
+                                                {
+                                                    self.volume_confirm =
+                                                        Some(VolumeAction::PowerOffDrive(
+                                                            volume.drive_path.clone(),
+                                                        ));
+                                                    ui.close();
+                                                }
+                                            });
+                                        }
                                     }
+                                        },
+                                    );
+                                }
+                                let saved_networks = self.config.remote_favorites.clone();
+                                if !saved_networks.is_empty() {
+                                    ui.collapsing(
+                                        format!(
+                                            "{} ({})",
+                                            i18n::tr("Saved network connections"),
+                                            saved_networks.len()
+                                        ),
+                                        |ui| {
+                                    for uri in saved_networks {
+                                        if !matches!(
+                                            Location::parse(uri.clone().into()),
+                                            Ok(Location::Remote(_))
+                                        ) {
+                                            continue;
+                                        }
+                                        let display = network_favorite_label(&uri);
+                                        let remote_clicked = if chromeos_shell {
+                                            chromeos::sidebar_link(
+                                                ui,
+                                                &theme,
+                                                &shorten(&display, 24),
+                                                false,
+                                                FilesNavIcon::Network,
+                                            )
+                                        } else if classic_shell {
+                                            let response = classic98::tree_link(
+                                                ui,
+                                                &shorten(&display, 25),
+                                                false,
+                                                TreeIcon::Network,
+                                            );
+                                            classic98::activated(ui, &response)
+                                        } else if finder_shell {
+                                            finder::sidebar_link(
+                                                ui,
+                                                &theme,
+                                                &shorten(&display, 24),
+                                                false,
+                                                FinderNavIcon::Network,
+                                            )
+                                        } else if aqua_shell {
+                                            aqua::sidebar_link(
+                                                ui,
+                                                &theme,
+                                                &shorten(&display, 24),
+                                                false,
+                                                aqua::AquaNavIcon::Network,
+                                            )
+                                        } else {
+                                            ui.button(if aero {
+                                                format!("    {}", shorten(&display, 24))
+                                            } else {
+                                                format!("NAS: {}", shorten(&display, 27))
+                                            })
+                                            .on_hover_text(&uri)
+                                            .clicked()
+                                        };
+                                        if remote_clicked {
+                                            self.navigate_remote(uri);
+                                        }
+                                    }
+                                        },
+                                    );
                                 }
                                 for volume in self.volumes.clone() {
                                     let path = volume.path;
-                                    // Root is always accessible under More locations.
-                                    // Do not waste a persistent device row on it.
+                                    // Root remains in Places; avoid a duplicate device row.
                                     if path == Path::new("/") {
                                         continue;
                                     }
