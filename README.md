@@ -31,14 +31,14 @@ The details are intentional: 98 has a dense gray menu and tree, XP a blue tasks 
 ## File management
 
 - **Browse:** tabs, split panes, bookmarks, folder tree, list/grid views and session restore.
-- **Organize:** copy, move, rename, cycle-safe batch rename, trash, file permissions, guarded new POSIX named-user ACL grants, progress and conflict previews. Open With can use installed MIME handlers or the desktop's application chooser portal when available.
+- **Organize:** copy, move, rename, cycle-safe batch rename, trash, file permissions, guarded new POSIX named-user ACL grants, progress and conflict previews. **Paste with options** provides per-file keep-both, skip-existing, require-free and skip-identical choices for both copies and moves, with exact custom names for copies only; no option overwrites a destination. Open With can use installed MIME handlers or the desktop's application chooser portal when available.
 - **Drag and drop:** copy selected files into folders, other tabs, breadcrumbs, folder-tree entries or split panes; hold Shift to move. Native incoming file drops work locally, while outgoing drops to other apps still use an optional `ripdrag`/`dragon` helper.
 - **Review transfers:** inspect per-file outcomes during a session; after restart, private read-only history keeps up to 24 file-specific diagnostics per operation (failures first), without replay or destructive Undo.
 - **Find and inspect:** search, saved filters, cancellable background filtering/sorting for very large local folders, file-type vector icons, thumbnails, Quick Look, extensionless raster-image detection, local/network UTF-8/UTF-16 text and safe binary/hex fallback, optional PDF/media previews and ZIP/TAR/7z handling.
 - **Reach storage:** SMB, SFTP, WebDAV and MTP discovery/browsing with folders opening in the current or a new tab, navigable breadcrumbs, selectable/sortable file rows, previews, queued downloads and optional credential storage. WebDAV, SFTP and signed SMB2/3 additionally offer narrowly guarded **single-file uploads** only after live server collision-safety probes; removable USB and encrypted-volume actions use UDisks2/Polkit.
 - **Customize:** seven built-in rices plus user TOML files for palettes, spacing, navigation and layout.
 
-**Release status: `1.0.0-rc.21` development candidate.** Automated Rust checks and native Linux GUI smoke tests pass for the preceding source snapshot; this candidate also requires its own green CI run. The 1.0 network-write/recovery code gates **and** physical Linux Mint/NAS/USB acceptance are still open. Keep your existing file manager installed. [Owner acceptance checklist](docs/OWNER-ACCEPTANCE-1.0.md).
+**Release status: `1.0.0-rc.21` development candidate, not stable 1.0.** The latest `main` code, including safe per-source copy/move rules, passed [Rust/GUI/benchmark CI](https://github.com/CopyPasteUser/Ricefield/actions/runs/42567134024) and [signed SMB safety CI](https://github.com/CopyPasteUser/Ricefield/actions/runs/42567134038). Remote write/recovery support remains intentionally limited to independently verified protocols, and physical Linux Mint/NAS/USB acceptance is still open. Keep your existing file manager installed. [Owner acceptance checklist](docs/OWNER-ACCEPTANCE-1.0.md).
 
 ## Install
 
