@@ -499,8 +499,16 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   comparison (including nested metadata and hardlinks for directories),
   private-stage inode checks and atomic no-overwrite rename; sync and verify
   the published result, retain the source and fail closed on any uncertainty.
-  Oversized/unverifiable trees, rollback, power-loss and larger copy verification
+  Oversized/unverifiable trees, general rollback, power-loss and larger copy verification
   remain outstanding.
+- [x] Add a separate two-step Linux **discard unpublished private stage**
+  decision for byte-verified files, dangling symlinks and bounded trees.
+  Durably transition to `DiscardingStage` before cleanup, pin the private
+  stage inode, refuse occupied targets and source changes, and continue only
+  that explicitly chosen cleanup after a restart. Twelve real child-process
+  crash cases prove the stage is never republished or the source removed.
+  This is not rollback of an already-published copy or legacy Move, and
+  cannot prove protection from hostile same-user writers or device power loss.
 - [ ] Complete durable content provenance and safe restart resume/rollback
   for legacy Move journals; a matching read-only scan is insufficient.
   New cross-volume transfers do not automatically delete the original.

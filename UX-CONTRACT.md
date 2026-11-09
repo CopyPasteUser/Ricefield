@@ -126,6 +126,18 @@ recovery, source deletion, overwriting or general rollback exists.
 Older journal versions without staged inode evidence remain inspectable and
 explicitly marked as unproven.
 
+On Linux, a separate two-step recovery action may **discard only an unpublished,
+fully compared private stage** while the recorded original remains unchanged and
+the destination name is vacant. This is an irreversible cleanup of private
+copy bytes, not a Move Undo or deletion of an original. Its journal first
+enters durable `DiscardingStage` with the private directory inode recorded.
+After an interruption that state can only offer a separately confirmed
+continuation of guarded private cleanup; the partially removed payload is
+never eligible for publication, even if its filename still exists. Missing
+mounts, changed sources, substituted stage directories, unexpected stage
+entries and occupied destinations keep the journal for manual review.
+Neither staged cleanup nor source deletion runs automatically on startup.
+
 Copy/cut immediately updates the internal file clipboard and synchronizes
 the desktop clipboard in a worker. Outstanding desktop writes coalesce to the
 latest selection. Paste reads the desktop clipboard asynchronously and never

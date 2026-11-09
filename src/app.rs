@@ -2154,6 +2154,11 @@ impl Explorer {
         self.run_recovery_action(id, journal::publish_verified_stage);
     }
 
+    #[cfg(target_os = "linux")]
+    fn discard_recovery_stage(&mut self, id: String) {
+        self.run_recovery_action(id, journal::discard_verified_stage);
+    }
+
     #[cfg(unix)]
     fn run_recovery_action(
         &mut self,
@@ -4273,6 +4278,8 @@ impl Explorer {
         let mut resolve = None;
         #[cfg(target_os = "linux")]
         let mut publish_staged = None;
+        #[cfg(target_os = "linux")]
+        let mut discard_staged = None;
         #[cfg(unix)]
         let mut confirm_resolution = self.recovery_resolution_confirm.clone();
         egui::Window::new("File transfer recovery")
@@ -4281,7 +4288,7 @@ impl Explorer {
             .default_height(340.0)
             .resizable(true)
             .show(context, |ui| {
-                ui.label("Recovery never deletes original files or overwrites destinations. An explicit confirmed action can publish a verified local staged copy to a free destination or retire a verified publication journal. No action runs automatically.");
+                ui.label("Recovery never deletes original files or overwrites destinations. Confirmed actions can publish a verified private stage, discard only an unpublished private stage, or retire a verified publication record. No action runs automatically.");
                 ui.label("Compare file contents on demand (maximum 512 MiB and 10,000 entries). A match is only a snapshot, never authorization to delete a source.");
                 ui.small("If the original source identity still matches, you can separately prepare a new Copy with a full preview. This does not complete the interrupted Move or clear its journal.");
                 if let Some(error) = &self.recovery_error {
@@ -4357,6 +4364,8 @@ impl Explorer {
                                 JournalState::Prepared => "Copy may be incomplete or may not have started.",
                                 JournalState::StagedVerified => "Staged data was verified; final publication may have occurred.",
                                 JournalState::Published => "Destination was published; the original is intentionally retained.",
+                                JournalState::DiscardingStage => "Private stage discard was confirmed but interrupted. It cannot be published; verify the original and explicitly continue cleanup.",
+                                JournalState::StageDiscarded => "Private stage was discarded; original retained.",
                                 JournalState::Completed => "Verified copy completed; original retained.",
                             };
                             ui.small(guidance);
@@ -4434,6 +4443,29 @@ impl Explorer {
                                         confirm_resolution = Some(confirmation);
                                     }
                                 }
+                                #[cfg(target_os = "linux")]
+                                if *staged
+                                    && matches!(result, journal::Comparison::Identical { .. })
+                                    && inspection.can_offer_stage_discard()
+                                    && !self.recovery_loading
+                                    && self.recovery_comparison_active.is_none()
+                                {
+                                    let confirmation = format!("discard:{}", record.id);
+                                    if confirm_resolution.as_deref() == Some(confirmation.as_str()) {
+                                        ui.colored_label(Color32::LIGHT_YELLOW, "Discard this unpublished private staged copy? This permanently removes ONLY the staging payload after a fresh byte/identity check; the original and destination remain untouched. An interruption leaves a durable cleanup record, never an auto-retry.");
+                                        ui.horizontal(|ui| {
+                                            if ui.button("Confirm discard private stage").clicked() {
+                                                discard_staged = Some(record.id.clone());
+                                                confirm_resolution = None;
+                                            }
+                                            if ui.button("Cancel").clicked() {
+                                                confirm_resolution = None;
+                                            }
+                                        });
+                                    } else if ui.button("Discard verified private stage…").clicked() {
+                                        confirm_resolution = Some(confirmation);
+                                    }
+                                }
                                 #[cfg(unix)]
                                 if !*staged
                                     && matches!(result, journal::Comparison::Identical { .. })
@@ -4456,6 +4488,27 @@ impl Explorer {
                                     } else if ui.button("Resolve verified copy…").clicked() {
                                         confirm_resolution = Some(record.id.clone());
                                     }
+                                }
+                            }
+                            #[cfg(target_os = "linux")]
+                            if inspection.can_continue_stage_discard()
+                                && !self.recovery_loading
+                                && self.recovery_comparison_active.is_none()
+                            {
+                                let confirmation = format!("continue-discard:{}", record.id);
+                                if confirm_resolution.as_deref() == Some(confirmation.as_str()) {
+                                    ui.colored_label(Color32::LIGHT_YELLOW, "Continue removal of the SAME recorded private stage only? Its payload may already be incomplete. RiceField rechecks the original, vacant destination and pinned staging inode, and refuses substitutions. The original is never removed.");
+                                    ui.horizontal(|ui| {
+                                        if ui.button("Confirm continue private cleanup").clicked() {
+                                            discard_staged = Some(record.id.clone());
+                                            confirm_resolution = None;
+                                        }
+                                        if ui.button("Cancel").clicked() {
+                                            confirm_resolution = None;
+                                        }
+                                    });
+                                } else if ui.button("Continue interrupted stage discard…").clicked() {
+                                    confirm_resolution = Some(confirmation);
                                 }
                             }
                         });
@@ -4568,6 +4621,10 @@ impl Explorer {
         #[cfg(target_os = "linux")]
         if let Some(id) = publish_staged {
             self.publish_recovery_stage(id);
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(id) = discard_staged {
+            self.discard_recovery_stage(id);
         }
         if !open {
             self.recovery_comparison_cancel
