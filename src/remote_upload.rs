@@ -1290,6 +1290,58 @@ mod tests {
     }
 
     #[test]
+    fn webdav_cancel_after_server_stored_stage_preserves_evidence_and_reconnects() {
+        let server = MockDav::start_with_stage_stall(false, false, false, true);
+        let (folder, file) = fixture_file("cancel-stage.txt");
+        let journal = folder.join("evidence");
+        let cancelled = AtomicBool::new(false);
+        let error = thread::scope(|scope| {
+            let worker = scope.spawn(|| {
+                super::upload_with_journal_directory(
+                    request(file.clone(), &server),
+                    &cancelled,
+                    Some(&journal),
+                )
+            });
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while !server.stage_put_seen.load(Ordering::Acquire) && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(10));
+            }
+            let reached_stage = server.stage_put_seen.load(Ordering::Acquire);
+            cancelled.store(true, Ordering::Release);
+            let result = worker.join().unwrap();
+            server.stall_stage_response.store(false, Ordering::Release);
+            assert!(reached_stage, "upload never reached the committed private PUT");
+            result.unwrap_err()
+        });
+        assert!(error.contains("cancelled"), "{error}");
+        assert!(server.path("cancel-stage.txt").is_empty());
+        assert_eq!(fs::read(&file).unwrap(), b"verified upload bytes");
+        let (uploads, probes) = remote_upload_journal::inspect_evidence_in(&journal).unwrap();
+        assert!(probes.is_empty());
+        assert_eq!(uploads.len(), 1);
+        let stage = uploads[0].stage_uri.split("/share/").last().unwrap();
+        assert_eq!(server.path(stage), b"verified upload bytes");
+
+        // A new connection may publish only to the still-vacant final name;
+        // it must neither delete nor conceal the first uncertain stage.
+        super::upload_with_journal_directory(
+            request(file.clone(), &server),
+            &AtomicBool::new(false),
+            Some(&journal),
+        )
+        .unwrap();
+        assert_eq!(server.path("cancel-stage.txt"), b"verified upload bytes");
+        assert_eq!(server.path(stage), b"verified upload bytes");
+        let (uploads_after_reconnect, _) =
+            remote_upload_journal::inspect_evidence_in(&journal).unwrap();
+        assert_eq!(uploads_after_reconnect.len(), 1);
+        fs::remove_dir_all(journal).unwrap();
+        fs::remove_file(file).unwrap();
+        fs::remove_dir(folder).unwrap();
+    }
+
+    #[test]
     fn unwritable_journal_fails_closed_before_remote_stage_put() {
         let server = MockDav::start(false, false, false);
         let (folder, file) = fixture_file("unwritten.txt");

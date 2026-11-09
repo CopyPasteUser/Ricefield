@@ -183,6 +183,13 @@ impl Target {
         cancelled: &AtomicBool,
         max_download_bytes: Option<u64>,
     ) -> Result<(), String> {
+        #[cfg(test)]
+        if command.starts_with("del ")
+            && command.contains(".ricefield-upload-")
+            && std::env::var_os("RICEFIELD_TEST_SMB_FAIL_CLEANUP").is_some()
+        {
+            return Err("SMB cleanup connection interrupted after publication".into());
+        }
         if cancelled.load(Ordering::Relaxed) {
             return Err("SMB upload cancelled".into());
         }
@@ -481,6 +488,10 @@ fn upload_with_target(
         put(target, snapshot.path(), &stage, cancelled)?;
         #[cfg(test)]
         kill_test_process_at("stage-put");
+        #[cfg(test)]
+        if std::env::var_os("RICEFIELD_TEST_SMB_CANCEL_AFTER_STAGE").is_some() {
+            cancelled.store(true, Ordering::Release);
+        }
         let verify = snapshot.private_file("smb-verify.payload");
         get(target, &stage, &verify, snapshot.bytes, cancelled)?;
         compare(snapshot.path(), &verify, cancelled)?;
@@ -688,6 +699,16 @@ mod tests {
             &samba_target(),
             Some(&journal),
         );
+        if std::env::var_os("RICEFIELD_TEST_SMB_CANCEL_AFTER_STAGE").is_some() {
+            let error = result.expect_err("cancelled SMB stage must not publish");
+            assert!(error.contains("cancelled"), "{error}");
+            return;
+        }
+        if std::env::var_os("RICEFIELD_TEST_SMB_FAIL_CLEANUP").is_some() {
+            let error = result.expect_err("failed SMB cleanup must retain evidence");
+            assert!(error.contains("SMB cleanup connection interrupted"), "{error}");
+            return;
+        }
         panic!("SMB child-process crash checkpoint not reached: {result:?}");
     }
 
@@ -778,6 +799,69 @@ mod tests {
                 fs::read(&source).unwrap(),
                 b"signed SMB crash source retained\n"
             );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires disposable signed Samba on port 14445"]
+    fn real_samba_rust_uploader_cancel_and_failed_cleanup_remain_reviewable() {
+        if std::env::var_os("RICEFIELD_TEST_SMB_CRASH_CASE").is_some() {
+            run_samba_crash_child_if_requested();
+            return;
+        }
+        let root = samba_root();
+        for (case, injected_failure) in [
+            ("cancel", "RICEFIELD_TEST_SMB_CANCEL_AFTER_STAGE"),
+            ("cleanup", "RICEFIELD_TEST_SMB_FAIL_CLEANUP"),
+        ] {
+            let name = format!("rust-smb-crash-{case}.txt");
+            let source = root.join(&name);
+            fs::write(&source, format!("signed SMB {case} source retained\n")).unwrap();
+            let status = Command::new(std::env::current_exe().unwrap())
+                .arg("remote_upload_smb::tests::real_samba_rust_uploader_cancel_and_failed_cleanup_remain_reviewable")
+                .arg("--exact")
+                .arg("--ignored")
+                .env("RICEFIELD_TEST_SMB_CRASH_CASE", case)
+                .env(injected_failure, "1")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .unwrap();
+            assert!(status.success(), "{case}: child did not observe injected failure");
+            let journal = root.join(format!("rust-smb-crash-journal-{case}"));
+            let (uploads, probes) = remote_upload_journal::inspect_evidence_in(&journal).unwrap();
+            assert!(probes.is_empty());
+            assert_eq!(uploads.len(), 1, "{case}: uncertain stage must be recorded");
+            let stage = root
+                .join("share")
+                .join(format!(".ricefield-upload-{}", uploads[0].id));
+            assert_eq!(fs::read(stage.join("payload")).unwrap(), fs::read(&source).unwrap());
+            let destination = root.join("share").join(&name);
+            if case == "cancel" {
+                assert!(!destination.exists(), "cancellation published a final target");
+                upload_with_target(
+                    samba_request(&root, &name),
+                    &AtomicBool::new(false),
+                    &samba_target(),
+                    Some(&journal),
+                )
+                .unwrap();
+            } else {
+                assert_eq!(fs::read(&destination).unwrap(), fs::read(&source).unwrap());
+                let retry_error = upload_with_target(
+                    samba_request(&root, &name),
+                    &AtomicBool::new(false),
+                    &samba_target(),
+                    Some(&journal),
+                )
+                .unwrap_err();
+                assert!(retry_error.contains("SMB publication may be ambiguous"));
+            }
+            assert_eq!(fs::read(&destination).unwrap(), fs::read(&source).unwrap());
+            assert_eq!(fs::read(stage.join("payload")).unwrap(), fs::read(&source).unwrap());
+            let (after_reconnect, _) =
+                remote_upload_journal::inspect_evidence_in(&journal).unwrap();
+            assert_eq!(after_reconnect.len(), if case == "cancel" { 1 } else { 2 });
         }
     }
 

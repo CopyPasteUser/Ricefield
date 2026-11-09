@@ -496,6 +496,10 @@ fn upload_with_client(
         put(client, snapshot.path(), &stage, cancelled)?;
         #[cfg(test)]
         kill_test_process_at("stage");
+        #[cfg(test)]
+        if std::env::var_os("RICEFIELD_TEST_SFTP_CANCEL_AFTER_STAGE").is_some() {
+            cancelled.store(true, Ordering::Release);
+        }
         let verify_path = snapshot.private_file("sftp-verify.payload");
         get(client, &stage, &verify_path, snapshot.bytes, cancelled)?;
         compare_files(snapshot.path(), &verify_path, cancelled)?;
@@ -628,6 +632,11 @@ mod tests {
         if std::env::var_os("RICEFIELD_TEST_SFTP_DENY_CLEANUP").is_some() {
             let error = result.expect_err("OpenSSH cleanup must fail without write permission");
             assert!(error.contains("SFTP"), "{error}");
+            return true;
+        }
+        if std::env::var_os("RICEFIELD_TEST_SFTP_CANCEL_AFTER_STAGE").is_some() {
+            let error = result.expect_err("cancelled SFTP upload must retain the stage");
+            assert!(error.contains("cancelled"), "{error}");
             return true;
         }
         panic!("SFTP crash checkpoint was not reached: {result:?}");
@@ -1003,9 +1012,66 @@ mod tests {
             fs::read(&fixture.source).unwrap(),
             b"pinned-source-content\n"
         );
+        let retry_error = upload_with_client(
+            fixture.request(),
+            &AtomicBool::new(false),
+            &fixture.client,
+            Some(&fixture.journal),
+        )
+        .unwrap_err();
+        assert!(retry_error.contains("SFTP publication may be ambiguous"));
+        assert_eq!(
+            fs::read(format!("{}/example.txt", fixture.client.path)).unwrap(),
+            b"pinned-source-content\n"
+        );
+        let (retry_uploads, _) =
+            remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap();
+        assert_eq!(retry_uploads.len(), 2, "both attempts need manual review");
         // Restore the disposable test fixture; the application itself never
         // performs cleanup when publication or its aftermath is uncertain.
         fs::set_permissions(&stage, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    #[test]
+    fn real_sftp_cancelled_stage_keeps_source_and_reviewable_journal() {
+        if run_crash_child_if_requested() {
+            return;
+        }
+        let fixture = Fixture::new(server());
+        let status = Command::new(std::env::current_exe().unwrap())
+            .arg("remote_upload_sftp::tests::real_sftp_cancelled_stage_keeps_source_and_reviewable_journal")
+            .arg("--exact")
+            .env("RICEFIELD_TEST_SFTP_CRASH_ROOT", &fixture.directory)
+            .env("RICEFIELD_TEST_SFTP_CANCEL_AFTER_STAGE", "1")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "child must observe an aborted real SFTP stage");
+        let (uploads, probes) =
+            remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap();
+        assert!(probes.is_empty());
+        assert_eq!(uploads.len(), 1);
+        let stage = PathBuf::from(&fixture.client.path)
+            .join(format!(".ricefield-upload-{}", uploads[0].id));
+        assert_eq!(fs::read(stage.join("payload")).unwrap(), b"pinned-source-content\n");
+        assert!(!Path::new(&format!("{}/example.txt", fixture.client.path)).exists());
+        assert_eq!(fs::read(&fixture.source).unwrap(), b"pinned-source-content\n");
+
+        upload_with_client(
+            fixture.request(),
+            &AtomicBool::new(false),
+            &fixture.client,
+            Some(&fixture.journal),
+        )
+        .unwrap();
+        assert_eq!(fs::read(stage.join("payload")).unwrap(), b"pinned-source-content\n");
+        assert_eq!(
+            fs::read(format!("{}/example.txt", fixture.client.path)).unwrap(),
+            b"pinned-source-content\n"
+        );
+        let (retained, _) = remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap();
+        assert_eq!(retained.len(), 1, "retry must not remove the cancelled stage");
     }
 
     #[test]
