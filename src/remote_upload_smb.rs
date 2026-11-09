@@ -600,9 +600,15 @@ mod tests {
     #[ignore = "requires disposable signed Samba on port 14445"]
     fn real_samba_rust_uploader_two_clients_compete_without_replacement() {
         let root = samba_root();
-        let name = format!("rust-smb-race-{}.txt", remote_upload::random_suffix().unwrap());
+        let name = format!(
+            "rust-smb-race-{}.txt",
+            remote_upload::random_suffix().unwrap()
+        );
         let original = root.join(&name);
-        let second_directory = root.join(format!("second-client-{}", remote_upload::random_suffix().unwrap()));
+        let second_directory = root.join(format!(
+            "second-client-{}",
+            remote_upload::random_suffix().unwrap()
+        ));
         fs::create_dir(&second_directory).unwrap();
         let competitor = second_directory.join(&name);
         fs::write(&original, b"first-smb-client\n").unwrap();
@@ -615,15 +621,17 @@ mod tests {
         let cancelled = AtomicBool::new(false);
 
         let (first, second) = thread::scope(|scope| {
-            let first = scope.spawn(|| {
-                upload_with_target(first_request, &cancelled, &target, Some(&journal))
-            });
-            let second = scope.spawn(|| {
-                upload_with_target(second_request, &cancelled, &target, Some(&journal))
-            });
+            let first = scope
+                .spawn(|| upload_with_target(first_request, &cancelled, &target, Some(&journal)));
+            let second = scope
+                .spawn(|| upload_with_target(second_request, &cancelled, &target, Some(&journal)));
             (first.join().unwrap(), second.join().unwrap())
         });
-        assert_ne!(first.is_ok(), second.is_ok(), "SMB must publish exactly once");
+        assert_ne!(
+            first.is_ok(),
+            second.is_ok(),
+            "SMB must publish exactly once"
+        );
         let expected = if first.is_ok() {
             b"first-smb-client\n".as_slice()
         } else {
@@ -641,11 +649,16 @@ mod tests {
     #[ignore = "requires disposable signed Samba on port 14445"]
     fn real_samba_rust_uploader_refuses_directory_collision() {
         let root = samba_root();
-        let name = format!("rust-smb-folder-{}.txt", remote_upload::random_suffix().unwrap());
+        let name = format!(
+            "rust-smb-folder-{}.txt",
+            remote_upload::random_suffix().unwrap()
+        );
         let source = root.join(&name);
         fs::write(&source, b"source-unchanged\n").unwrap();
         let target = samba_target();
-        target.run(&format!("mkdir {}", quoted(&name)), &AtomicBool::new(false)).unwrap();
+        target
+            .run(&format!("mkdir {}", quoted(&name)), &AtomicBool::new(false))
+            .unwrap();
         let journal = root.join("rust-smb-folder-evidence");
         let error = upload_with_target(
             samba_request(&root, &name),

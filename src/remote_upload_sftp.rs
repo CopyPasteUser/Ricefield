@@ -771,7 +771,11 @@ mod tests {
             });
             (first.join().unwrap(), second.join().unwrap())
         });
-        assert_ne!(first.is_ok(), second.is_ok(), "exactly one upload may publish");
+        assert_ne!(
+            first.is_ok(),
+            second.is_ok(),
+            "exactly one upload may publish"
+        );
         let expected = if first.is_ok() {
             b"pinned-source-content\n".as_slice()
         } else {
@@ -781,8 +785,14 @@ mod tests {
             fs::read(format!("{}/example.txt", fixture.client.path)).unwrap(),
             expected
         );
-        assert_eq!(fs::read(&fixture.source).unwrap(), b"pinned-source-content\n");
-        assert_eq!(fs::read(&second_source).unwrap(), b"second-independent-client\n");
+        assert_eq!(
+            fs::read(&fixture.source).unwrap(),
+            b"pinned-source-content\n"
+        );
+        assert_eq!(
+            fs::read(&second_source).unwrap(),
+            b"second-independent-client\n"
+        );
         let (uploads, probes) =
             remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap();
         assert_eq!(uploads.len(), 1, "the losing attempt must retain evidence");
@@ -803,7 +813,10 @@ mod tests {
         .unwrap_err();
         assert!(error.contains("SFTP publication may be ambiguous"));
         assert!(destination.is_dir(), "a directory collision must survive");
-        assert_eq!(fs::read(&fixture.source).unwrap(), b"pinned-source-content\n");
+        assert_eq!(
+            fs::read(&fixture.source).unwrap(),
+            b"pinned-source-content\n"
+        );
         let (uploads, probes) =
             remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap();
         assert_eq!(uploads.len(), 1);

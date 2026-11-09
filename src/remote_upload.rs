@@ -1159,7 +1159,11 @@ mod tests {
             });
             (first.join().unwrap(), second.join().unwrap())
         });
-        assert_ne!(first.is_ok(), second.is_ok(), "exactly one MOVE may publish");
+        assert_ne!(
+            first.is_ok(),
+            second.is_ok(),
+            "exactly one MOVE may publish"
+        );
         let expected = if first.is_ok() {
             b"webdav-first\n".as_slice()
         } else {
@@ -1169,7 +1173,11 @@ mod tests {
         assert_eq!(fs::read(&first_source).unwrap(), b"webdav-first\n");
         assert_eq!(fs::read(&second_source).unwrap(), b"webdav-second\n");
         let (uploads, probes) = remote_upload_journal::inspect_evidence_in(&journal).unwrap();
-        assert_eq!(uploads.len(), 1, "the losing client must retain its journal");
+        assert_eq!(
+            uploads.len(),
+            1,
+            "the losing client must retain its journal"
+        );
         assert!(probes.is_empty());
         fs::remove_dir_all(journal).unwrap();
         fs::remove_file(second_source).unwrap();
