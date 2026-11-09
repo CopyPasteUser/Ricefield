@@ -8438,39 +8438,6 @@ impl Explorer {
                                 }
                                 if theme.shell_kind() == ShellKind::Finder {
                                     let home = config::home();
-                                    if finder::sidebar_link(
-                                        ui,
-                                        &theme,
-                                        "Home",
-                                        self.current().path == home,
-                                        FinderNavIcon::Home,
-                                    ) {
-                                        self.navigate(home.clone());
-                                    }
-                                    for (label, icon) in [
-                                        ("Desktop", FinderNavIcon::Folder),
-                                        ("Documents", FinderNavIcon::Folder),
-                                        ("Downloads", FinderNavIcon::Downloads),
-                                        ("Pictures", FinderNavIcon::Pictures),
-                                        ("Music", FinderNavIcon::Music),
-                                        ("Videos", FinderNavIcon::Folder),
-                                    ] {
-                                        let path = home.join(label);
-                                        if self
-                                            .places
-                                            .iter()
-                                            .any(|(_, available)| available == &path)
-                                            && finder::sidebar_link(
-                                                ui,
-                                                &theme,
-                                                label,
-                                                self.current().path == path,
-                                                icon,
-                                            )
-                                        {
-                                            self.navigate(path);
-                                        }
-                                    }
                                     for path in self.config.bookmarks.clone() {
                                         if path == home {
                                             continue;
@@ -8510,16 +8477,6 @@ impl Explorer {
                                     return;
                                 }
                                 if theme.shell_kind() == ShellKind::Aqua {
-                                    let home = config::home();
-                                    if aqua::sidebar_link(
-                                        ui,
-                                        &theme,
-                                        "Home",
-                                        self.current().path == home,
-                                        aqua::AquaNavIcon::Home,
-                                    ) {
-                                        self.navigate(home);
-                                    }
                                     for path in self.config.bookmarks.clone() {
                                         let label = path
                                             .file_name()
@@ -8551,30 +8508,6 @@ impl Explorer {
                                     return;
                                 }
                                 if theme.shell_kind() == ShellKind::Ribbon {
-                                    let home = config::home();
-                                    if shell_components::win10_sidebar_link(
-                                        ui,
-                                        &theme,
-                                        "Home",
-                                        self.current().path == home,
-                                        shell_components::Win10NavIcon::QuickAccess,
-                                    ) {
-                                        self.navigate(home.clone());
-                                    }
-                                    for name in ["Desktop", "Downloads", "Documents", "Pictures"] {
-                                        let path = home.join(name);
-                                        if self.places.iter().any(|(_, existing)| *existing == path)
-                                            && shell_components::win10_sidebar_link(
-                                                ui,
-                                                &theme,
-                                                name,
-                                                self.current().path == path,
-                                                shell_components::Win10NavIcon::Folder,
-                                            )
-                                        {
-                                            self.navigate(path);
-                                        }
-                                    }
                                     for path in self.config.bookmarks.clone() {
                                         let label = path
                                             .file_name()
@@ -8632,28 +8565,6 @@ impl Explorer {
                                     return;
                                 }
                                 if theme.shell_kind() == ShellKind::Aero {
-                                    let home = config::home();
-                                    if shell_components::aero_sidebar_link(
-                                        ui,
-                                        "Home",
-                                        self.current().path == home,
-                                        shell_components::AeroNavIcon::Favorite,
-                                    ) {
-                                        self.navigate(home.clone());
-                                    }
-                                    for name in ["Desktop", "Downloads"] {
-                                        let path = home.join(name);
-                                        if self.places.iter().any(|(_, existing)| *existing == path)
-                                            && shell_components::aero_sidebar_link(
-                                                ui,
-                                                name,
-                                                self.current().path == path,
-                                                shell_components::AeroNavIcon::Favorite,
-                                            )
-                                        {
-                                            self.navigate(path);
-                                        }
-                                    }
                                     for path in self.config.bookmarks.clone() {
                                         let label = path
                                             .file_name()
