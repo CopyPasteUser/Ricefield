@@ -871,6 +871,7 @@ struct CompletedOperation {
     rename_undo: Option<Box<filesystem::RenameUndo>>,
     batch_rename_undo: Option<Box<filesystem::BatchRenameUndo>>,
     creation_undo: Option<Box<filesystem::CreationUndo>>,
+    transfer_undo: Option<Box<filesystem::TransferUndo>>,
     retry_unstarted: Option<RetryProposal>,
     from_history: bool,
 }
@@ -951,6 +952,7 @@ impl CompletedOperation {
             rename_undo: None,
             batch_rename_undo: None,
             creation_undo: None,
+            transfer_undo: None,
             retry_unstarted: None,
             from_history: true,
         }
@@ -4101,6 +4103,7 @@ impl Explorer {
                     let rename_undo = report.rename_undo;
                     let batch_rename_undo = report.batch_rename_undo;
                     let creation_undo = report.creation_undo;
+                    let transfer_undo = report.transfer_undo;
                     if let Some(origin_id) = self.pending_undo_origin.take()
                         && undo_succeeded
                         && let Some(entry) = self
@@ -4111,6 +4114,7 @@ impl Explorer {
                         entry.rename_undo = None;
                         entry.batch_rename_undo = None;
                         entry.creation_undo = None;
+                        entry.transfer_undo = None;
                     }
                     self.busy = false;
                     let label = self
@@ -4188,6 +4192,7 @@ impl Explorer {
                         rename_undo,
                         batch_rename_undo,
                         creation_undo,
+                        transfer_undo,
                         retry_unstarted,
                         from_history: false,
                     };
@@ -4844,6 +4849,12 @@ impl Explorer {
                     .as_ref()
                     .map(|candidate| candidate.action())
             })
+            .or_else(|| {
+                entry
+                    .transfer_undo
+                    .as_ref()
+                    .map(|candidate| candidate.action())
+            })
             .map(|action| (entry.id, action))
     }
 
@@ -4863,7 +4874,7 @@ impl Explorer {
             self.start_undo(origin_id, action);
         } else {
             self.status = Some((
-                "The latest operation has no safe Undo (copies, deletes and earlier sessions cannot be replayed)".into(),
+                "The latest operation has no safe Undo (partial batches, changed files, permanent deletes and earlier sessions cannot be replayed)".into(),
                 true,
             ));
         }
@@ -4877,6 +4888,7 @@ impl Explorer {
         let mut remove = None;
         let mut undo_request = None;
         let mut review_unstarted = None;
+        let mut inspect_location = None;
         egui::Window::new("Transfers")
             .open(&mut open)
             .default_width(440.0)
@@ -4931,7 +4943,7 @@ impl Explorer {
                 });
                 ui.separator();
                 ui.strong(format!("Recent results ({})", self.recent_operations.len()));
-                ui.small("Earlier sessions keep up to 24 read-only per-file results per operation (errors first). History never enables Undo or replay.");
+                ui.small("Inspect any uncertain result before retrying. Earlier sessions keep read-only per-file results; history never enables Undo or replay.");
                 egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
                     for entry in &self.recent_operations {
                         let outcome = match entry.outcome {
@@ -4983,6 +4995,19 @@ impl Explorer {
                                         egui::Button::new("Undo new item"),
                                     )
                                     .on_hover_text("Only an unchanged empty file or folder can be undone. Files go to Trash; folders are removed only if empty. Available in this session.")
+                                    .clicked()
+                            {
+                                undo_request = Some((entry.id, candidate.action()));
+                            }
+                            if let Some(candidate) = &entry.transfer_undo
+                                && ui
+                                    .add_enabled(
+                                        !self.busy
+                                            && !self.queue_paused
+                                            && self.operation_queue.is_empty(),
+                                        egui::Button::new(candidate.label()),
+                                    )
+                                    .on_hover_text("Session-only: verify the exact object, refuse changed contents or occupied names. Copied files go to desktop Trash; cross-device moves and partial batches never receive Undo.")
                                     .clicked()
                             {
                                 undo_request = Some((entry.id, candidate.action()));
@@ -5062,7 +5087,14 @@ impl Explorer {
                                                     if let Some(error) = &item.detail {
                                                         details.push_str(&format!("\n{error}"));
                                                     }
-                                                    ui.monospace(shorten(&name, 54))
+                                                    let path = item.target.as_ref().unwrap_or(&item.source);
+                                                    if ui.small_button("Inspect")
+                                                        .on_hover_text(format!("Open the containing folder in a new tab: {}. No files are changed.", path.display()))
+                                                        .clicked()
+                                                    {
+                                                        inspect_location = path.parent().map(Path::to_path_buf);
+                                                    }
+                                                    ui.monospace(shorten(&name, 34))
                                                         .on_hover_text(details);
                                                 });
                                             }
@@ -5085,6 +5117,9 @@ impl Explorer {
         }
         if let Some((origin_id, action)) = undo_request {
             self.start_undo(origin_id, action);
+        }
+        if let Some(path) = inspect_location {
+            self.new_tab(path);
         }
         if let Some(proposal) = review_unstarted {
             let preview_generation = self.request_paste_preview(
