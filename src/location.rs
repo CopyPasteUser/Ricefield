@@ -86,7 +86,13 @@ pub fn smb_target(server: &str, share: &str) -> Result<String, &'static str> {
     let base = if normalized.starts_with("smb://") {
         normalized
     } else if normalized.starts_with("//") {
-        format!("smb:{normalized}")
+        let parts = normalized
+            .trim_start_matches('/')
+            .split('/')
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("/");
+        format!("smb://{parts}")
     } else {
         format!("smb://{normalized}")
     };
@@ -107,11 +113,18 @@ pub fn smb_target(server: &str, share: &str) -> Result<String, &'static str> {
     if !share.is_empty() && path_already_present {
         return Err("Enter the share in one field only");
     }
-    if share.contains(['/', '\\']) || share.chars().any(char::is_control) {
+    if matches!(share, "." | "..")
+        || share.contains(['/', '\\'])
+        || share.chars().any(char::is_control)
+    {
         return Err("Share name must not contain slashes or control characters");
     }
     let uri = if share.is_empty() {
-        format!("{base}/")
+        if path_already_present {
+            base.to_owned()
+        } else {
+            format!("{base}/")
+        }
     } else {
         let mut encoded = String::new();
         for byte in share.bytes() {
@@ -267,7 +280,7 @@ mod tests {
     fn nas_addresses_support_simple_hosts_share_names_and_pasted_unc_paths() {
         assert_eq!(super::smb_target("192.168.178.66", "medien"), Ok("smb://192.168.178.66/medien".into()));
         assert_eq!(super::smb_target("nas.local", "Shared Photos"), Ok("smb://nas.local/Shared%20Photos".into()));
-        assert_eq!(super::smb_target(r"\\nas\\medien", ""), Ok("smb://nas/medien/".into()));
+        assert_eq!(super::smb_target(r"\\nas\\medien", ""), Ok("smb://nas/medien".into()));
         assert_eq!(super::smb_target("smb://nas/medien", ""), Ok("smb://nas/medien/".into()));
         assert!(super::smb_needs_share_selection("smb://nas/"));
         assert!(!super::smb_needs_share_selection("smb://nas/medien"));
