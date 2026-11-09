@@ -1134,6 +1134,51 @@ mod tests {
     }
 
     #[test]
+    fn two_complete_webdav_uploaders_compete_for_one_destination() {
+        let server = MockDav::start(false, false, false);
+        let (folder, first_source) = fixture_file("race.txt");
+        fs::write(&first_source, b"webdav-first\n").unwrap();
+        let second_directory = folder.join("second-client");
+        fs::create_dir(&second_directory).unwrap();
+        let second_source = second_directory.join("race.txt");
+        fs::write(&second_source, b"webdav-second\n").unwrap();
+        let first_request = request(first_source.clone(), &server);
+        let second_request = request(second_source.clone(), &server);
+        let journal = folder.join("journals");
+        let cancelled = AtomicBool::new(false);
+
+        // Competing processes have independent curl connections and private
+        // stages; the full uploader must preserve the same no-replace outcome
+        // demonstrated by its earlier capability probe.
+        let (first, second) = thread::scope(|scope| {
+            let first = scope.spawn(|| {
+                super::upload_with_journal_directory(first_request, &cancelled, Some(&journal))
+            });
+            let second = scope.spawn(|| {
+                super::upload_with_journal_directory(second_request, &cancelled, Some(&journal))
+            });
+            (first.join().unwrap(), second.join().unwrap())
+        });
+        assert_ne!(first.is_ok(), second.is_ok(), "exactly one MOVE may publish");
+        let expected = if first.is_ok() {
+            b"webdav-first\n".as_slice()
+        } else {
+            b"webdav-second\n".as_slice()
+        };
+        assert_eq!(server.path("race.txt"), expected);
+        assert_eq!(fs::read(&first_source).unwrap(), b"webdav-first\n");
+        assert_eq!(fs::read(&second_source).unwrap(), b"webdav-second\n");
+        let (uploads, probes) = remote_upload_journal::inspect_evidence_in(&journal).unwrap();
+        assert_eq!(uploads.len(), 1, "the losing client must retain its journal");
+        assert!(probes.is_empty());
+        fs::remove_dir_all(journal).unwrap();
+        fs::remove_file(second_source).unwrap();
+        fs::remove_dir(second_directory).unwrap();
+        fs::remove_file(first_source).unwrap();
+        fs::remove_dir(folder).unwrap();
+    }
+
+    #[test]
     fn uncertain_publication_retains_private_evidence_and_success_retires_it() {
         let server = MockDav::start(false, false, false);
         let (folder, file) = fixture_file("evidence.txt");

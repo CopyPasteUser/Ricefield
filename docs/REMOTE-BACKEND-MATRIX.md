@@ -1,6 +1,9 @@
 # Remote-backend publication safety matrix
 
 This matrix describes **what RiceField itself currently proves and enables**.
+The [explicit 1.0 remote-operation scope and owner acceptance matrix](REMOTE-1.0-SCOPE.md)
+sets which actions remain intentionally disabled and how full-uploader races
+are tested before the hardware gate.
 It does not infer guarantees from a protocol name or the presence of a GVfs
 mount. A successful generic `gio move` is not evidence of atomic no-replace
 publication; see [the reproduced race](REMOTE-WRITE-SAFETY.md).

@@ -739,6 +739,78 @@ mod tests {
     }
 
     #[test]
+    fn two_complete_sftp_uploaders_compete_without_replacing_the_winner() {
+        let fixture = Fixture::new(server());
+        let second_directory = fixture.directory.join("second-client");
+        fs::create_dir(&second_directory).unwrap();
+        let second_source = second_directory.join("example.txt");
+        fs::write(&second_source, b"second-independent-client\n").unwrap();
+        let first_request = fixture.request();
+        let mut second_request = fixture.request();
+        second_request.source = second_source.clone();
+        let cancelled = AtomicBool::new(false);
+
+        // These are independent real OpenSSH-SFTP sessions performing the
+        // entire probe/stage/verify/publish path, not only raw hardlink calls.
+        let (first, second) = thread::scope(|scope| {
+            let first = scope.spawn(|| {
+                upload_with_client(
+                    first_request,
+                    &cancelled,
+                    &fixture.client,
+                    Some(&fixture.journal),
+                )
+            });
+            let second = scope.spawn(|| {
+                upload_with_client(
+                    second_request,
+                    &cancelled,
+                    &fixture.client,
+                    Some(&fixture.journal),
+                )
+            });
+            (first.join().unwrap(), second.join().unwrap())
+        });
+        assert_ne!(first.is_ok(), second.is_ok(), "exactly one upload may publish");
+        let expected = if first.is_ok() {
+            b"pinned-source-content\n".as_slice()
+        } else {
+            b"second-independent-client\n".as_slice()
+        };
+        assert_eq!(
+            fs::read(format!("{}/example.txt", fixture.client.path)).unwrap(),
+            expected
+        );
+        assert_eq!(fs::read(&fixture.source).unwrap(), b"pinned-source-content\n");
+        assert_eq!(fs::read(&second_source).unwrap(), b"second-independent-client\n");
+        let (uploads, probes) =
+            remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap();
+        assert_eq!(uploads.len(), 1, "the losing attempt must retain evidence");
+        assert!(probes.is_empty());
+    }
+
+    #[test]
+    fn real_sftp_refuses_a_preexisting_directory_destination() {
+        let fixture = Fixture::new(server());
+        let destination = PathBuf::from(&fixture.client.path).join("example.txt");
+        fs::create_dir(&destination).unwrap();
+        let error = upload_with_client(
+            fixture.request(),
+            &AtomicBool::new(false),
+            &fixture.client,
+            Some(&fixture.journal),
+        )
+        .unwrap_err();
+        assert!(error.contains("SFTP publication may be ambiguous"));
+        assert!(destination.is_dir(), "a directory collision must survive");
+        assert_eq!(fs::read(&fixture.source).unwrap(), b"pinned-source-content\n");
+        let (uploads, probes) =
+            remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap();
+        assert_eq!(uploads.len(), 1);
+        assert!(probes.is_empty());
+    }
+
+    #[test]
     fn real_sftp_verification_download_is_bounded() {
         let fixture = Fixture::new(server());
         let remote = PathBuf::from(&fixture.client.path).join("oversized.payload");

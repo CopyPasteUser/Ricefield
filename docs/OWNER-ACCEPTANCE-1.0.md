@@ -175,6 +175,10 @@ all boxes below still require owner verification.
 
 ## D. NAS, network tabs and guarded single-file uploads
 
+Use the [explicit 1.0 remote write scope, protocol evidence and disposable
+Synology test procedure](REMOTE-1.0-SCOPE.md) for D04–D11. Perform writes
+only on a new isolated test share, never on the production `medien` library.
+
 - [ ] **D01 Discovery/login:** discover/connect to the actual disposable NAS
   share and verify explicit authentication and optional Secret Service save.
   No password appears in command lines, logs or session restore.
