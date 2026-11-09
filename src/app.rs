@@ -8352,12 +8352,6 @@ impl Explorer {
                                 }
                                 if theme.shell_kind() == ShellKind::Aero {
                                     for (name, path) in self.places.clone() {
-                                        if !matches!(
-                                            name,
-                                            "Documents" | "Music" | "Pictures" | "Videos"
-                                        ) {
-                                            continue;
-                                        }
                                         let response = shell_components::aero_sidebar_response(
                                             ui,
                                             name,
@@ -8381,9 +8375,7 @@ impl Explorer {
                                     );
                                     self.place_response(ui, response, path);
                                 }
-                                ui.separator();
-                                ui.strong("FOLDER TREE");
-                                self.folder_tree_root(ui);
+                                ui.collapsing("Folder tree", |ui| self.folder_tree_root(ui));
                             }
                             SidebarSection::Favorites => {
                                 if theme.shell_kind() == ShellKind::Chromeos {
@@ -11900,25 +11892,7 @@ impl eframe::App for Explorer {
                     folders,
                     volumes: filesystem::mounted_volumes(),
                     device_volumes: crate::udisks2::volumes(),
-                    places: {
-                        let home = config::home();
-                        let mut places = vec![("Home", home.clone())];
-                        for name in [
-                            "Desktop",
-                            "Documents",
-                            "Downloads",
-                            "Music",
-                            "Pictures",
-                            "Videos",
-                        ] {
-                            let path = home.join(name);
-                            if path.is_dir() {
-                                places.push((name, path));
-                            }
-                        }
-                        places.push(("Filesystem", PathBuf::from("/")));
-                        places
-                    },
+                    places: config::sidebar_places(),
                 });
             });
             self.last_refresh_check = Instant::now();

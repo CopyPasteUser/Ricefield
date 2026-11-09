@@ -119,6 +119,13 @@ left-click/Enter opens in the current tab; right-click reveals Open, Open in
 new tab, Open in new window and Copy path. Shift+Enter on a focused row opens
 the specific folder in a new tab. Windows launch another `--separate-window`
 RiceField process with the selected local path, not the current tab path.
+Every built-in rice, including Finder and Aero, exposes the standard Places
+section with Home, available XDG user directories and Filesystem. XDG
+`user-dirs.dirs` is honored for localized or relocated folders; missing paths
+are omitted and duplicate Home destinations suppressed. Favorites remain
+independent. Device/network inventory belongs in a collapsed Volumes/Locations
+section, while the optional folder tree does not duplicate the main Places list
+unless expanded by the user.
 
 Archive files expose Browse / extract in their file context menu as well as
 the Archive menu. The existing bounded, asynchronous archive browser adds

@@ -26,5 +26,5 @@ kind = "finder"
 top = ["tabs", "navigation"]
 
 [shell.sidebar]
-sections = ["favorites", "volumes"]
+sections = ["places", "favorites", "volumes"]
 width = 221
