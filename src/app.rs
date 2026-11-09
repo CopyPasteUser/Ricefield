@@ -1504,6 +1504,7 @@ pub struct Explorer {
     paste_preview_sender: Sender<PastePreviewResult>,
     paste_preview_receiver: Receiver<PastePreviewResult>,
     paste_preview_generation: u64,
+    paste_preview_cancel: Arc<AtomicBool>,
     operation_queue: OperationQueue,
     active_operation: Option<(u64, String)>,
     active_started: Option<Instant>,
@@ -1779,6 +1780,7 @@ impl Explorer {
             paste_preview_sender,
             paste_preview_receiver,
             paste_preview_generation: 0,
+            paste_preview_cancel: Arc::new(AtomicBool::new(false)),
             operation_queue: OperationQueue::default(),
             active_operation: None,
             active_started: None,
@@ -4835,14 +4837,24 @@ impl Explorer {
             ));
             return;
         }
-        if self.queue_paused && !matches!(&action, Action::Copy { .. } | Action::CopyAs { .. } | Action::CopyWithRules { .. }) {
+        if self.queue_paused
+            && !matches!(
+                &action,
+                Action::Copy { .. } | Action::CopyAs { .. } | Action::CopyWithRules { .. }
+            )
+        {
             self.status = Some((
                 "Waiting copies are paused. Resume or remove them first.".into(),
                 true,
             ));
             return;
         }
-        if self.busy && !matches!(&action, Action::Copy { .. } | Action::CopyAs { .. } | Action::CopyWithRules { .. }) {
+        if self.busy
+            && !matches!(
+                &action,
+                Action::Copy { .. } | Action::CopyAs { .. } | Action::CopyWithRules { .. }
+            )
+        {
             self.status = Some((
                 "A transfer is running. Only Copy can be queued; retry this action when it finishes."
                     .into(),
@@ -5246,6 +5258,9 @@ impl Explorer {
         conflict: ConflictPolicy,
         rules: &[filesystem::CopyRule],
     ) -> u64 {
+        self.paste_preview_cancel.store(true, Ordering::Relaxed);
+        self.paste_preview_cancel = Arc::new(AtomicBool::new(false));
+        let cancelled = Arc::clone(&self.paste_preview_cancel);
         self.paste_preview_generation = self.paste_preview_generation.saturating_add(1);
         let generation = self.paste_preview_generation;
         let sources = clipboard.paths.clone();
@@ -5254,13 +5269,26 @@ impl Explorer {
         let rules = rules.to_vec();
         let sender = self.paste_preview_sender.clone();
         thread::spawn(move || {
-            let result = if !moving && rules.iter().any(|rule| *rule != filesystem::CopyRule::Global) {
-                filesystem::preview_copy_with_rules(&sources, &destination, conflict, &rules)
+            // Typing an exact name must not launch a full directory scan for
+            // every keystroke. Superseded workers exit before preflight; the
+            // cancellation token also stops a preflight already in progress.
+            thread::sleep(Duration::from_millis(160));
+            if cancelled.load(Ordering::Relaxed) {
+                return;
+            }
+            let result = if !moving
+                && rules
+                    .iter()
+                    .any(|rule| *rule != filesystem::CopyRule::Global)
+            {
+                filesystem::preview_copy_with_rules_cancellable(&sources, &destination, conflict, &rules, &cancelled)
             } else {
-                filesystem::preview_transfer(&sources, &destination, conflict, moving)
+                filesystem::preview_transfer_cancellable(&sources, &destination, conflict, moving, &cancelled)
             }
             .map_err(|error| error.to_string());
-            let _ = sender.send(PastePreviewResult { generation, result });
+            if !cancelled.load(Ordering::Relaxed) {
+                let _ = sender.send(PastePreviewResult { generation, result });
+            }
         });
         generation
     }
@@ -10340,6 +10368,7 @@ impl Explorer {
 
     fn dialogs(&mut self, context: &egui::Context) {
         if self.dialog.is_some() && context.input(|input| input.key_pressed(Key::Escape)) {
+            self.paste_preview_cancel.store(true, Ordering::Relaxed);
             self.analysis_cancel.store(true, Ordering::Relaxed);
             self.duplicate_cancel.store(true, Ordering::Relaxed);
             self.open_with_cancel.store(true, Ordering::Relaxed);
@@ -10661,17 +10690,26 @@ impl Explorer {
                                     .add_enabled(can_start, egui::Button::new("Start transfer"))
                                     .clicked()
                                 {
-                                    action = Some(if !clipboard.cut
-                                        && rules.iter().any(|rule| *rule != filesystem::CopyRule::Global) {
-                                        Action::CopyWithRules {
-                                            sources: clipboard.paths.clone(),
-                                            destination: destination.clone(),
-                                            conflict: *conflict,
-                                            rules: rules.clone(),
-                                        }
-                                    } else {
-                                        Self::paste_action(clipboard.clone(), destination.clone(), *conflict)
-                                    });
+                                    action = Some(
+                                        if !clipboard.cut
+                                            && rules
+                                                .iter()
+                                                .any(|rule| *rule != filesystem::CopyRule::Global)
+                                        {
+                                            Action::CopyWithRules {
+                                                sources: clipboard.paths.clone(),
+                                                destination: destination.clone(),
+                                                conflict: *conflict,
+                                                rules: rules.clone(),
+                                            }
+                                        } else {
+                                            Self::paste_action(
+                                                clipboard.clone(),
+                                                destination.clone(),
+                                                *conflict,
+                                            )
+                                        },
+                                    );
                                     dismiss = true;
                                 }
                             });
@@ -11072,6 +11110,7 @@ impl Explorer {
             }
         }
         if dismiss {
+            self.paste_preview_cancel.store(true, Ordering::Relaxed);
             self.analysis_cancel.store(true, Ordering::Relaxed);
             self.duplicate_cancel.store(true, Ordering::Relaxed);
             self.open_with_cancel.store(true, Ordering::Relaxed);
@@ -11114,8 +11153,7 @@ impl Explorer {
             self.start_deep_analysis(path, generation);
         }
         if let Some((clipboard, destination, conflict, rules)) = refresh_paste_preview {
-            let generation =
-                self.request_paste_preview(&clipboard, &destination, conflict, &rules);
+            let generation = self.request_paste_preview(&clipboard, &destination, conflict, &rules);
             if let Some(Dialog::PasteOptions {
                 preview_generation,
                 preview,
@@ -11127,7 +11165,10 @@ impl Explorer {
             }
         }
         if let Some(action) = action {
-            if let Action::Copy { sources, .. } | Action::CopyWithRules { sources, .. } | Action::Move { sources, .. } = &action {
+            if let Action::Copy { sources, .. }
+            | Action::CopyWithRules { sources, .. }
+            | Action::Move { sources, .. } = &action
+            {
                 self.clipboard = Some(Clipboard {
                     paths: sources.clone(),
                     cut: matches!(&action, Action::Move { .. }),
@@ -11140,6 +11181,7 @@ impl Explorer {
 
 impl Drop for Explorer {
     fn drop(&mut self) {
+        self.paste_preview_cancel.store(true, Ordering::Relaxed);
         self.analysis_cancel.store(true, Ordering::Relaxed);
         self.duplicate_cancel.store(true, Ordering::Relaxed);
         self.open_with_cancel.store(true, Ordering::Relaxed);

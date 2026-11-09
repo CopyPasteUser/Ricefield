@@ -1832,21 +1832,36 @@ fn perform_with_progress_and_items(
                 }
             }
         }
-        Action::CopyWithRules { sources, destination, conflict, rules }
-            if !sources.is_empty() => {
-                match plan_transfer_with_rules(sources, destination, *conflict, false, Some(rules), cancelled) {
-                    Ok(plan) => Some(plan),
-                    Err(failure) => {
-                        let index = failure.index.unwrap_or(0);
-                        on_item(ItemUpdate::error(index, None, &failure.error));
-                        return Err(io::Error::new(
-                            failure.error.kind(),
-                            format!("Copy choices preflight failed at item {} of {}: {}. No files were processed",
-                                index + 1, sources.len(), failure.error),
-                        ));
-                    }
+        Action::CopyWithRules {
+            sources,
+            destination,
+            conflict,
+            rules,
+        } if !sources.is_empty() => {
+            match plan_transfer_with_rules(
+                sources,
+                destination,
+                *conflict,
+                false,
+                Some(rules),
+                cancelled,
+            ) {
+                Ok(plan) => Some(plan),
+                Err(failure) => {
+                    let index = failure.index.unwrap_or(0);
+                    on_item(ItemUpdate::error(index, None, &failure.error));
+                    return Err(io::Error::new(
+                        failure.error.kind(),
+                        format!(
+                            "Copy choices preflight failed at item {} of {}: {}. No files were processed",
+                            index + 1,
+                            sources.len(),
+                            failure.error
+                        ),
+                    ));
                 }
             }
+        }
         Action::CopyAs {
             source,
             destination,
@@ -1892,7 +1907,9 @@ fn perform_with_progress_and_items(
     for (index, source) in sources.iter().enumerate() {
         let estimate =
             match action {
-                Action::Copy { .. } | Action::CopyAs { .. } | Action::CopyWithRules { .. } => estimate_bytes(source, cancelled, 0),
+                Action::Copy { .. } | Action::CopyAs { .. } | Action::CopyWithRules { .. } => {
+                    estimate_bytes(source, cancelled, 0)
+                }
                 Action::Move { .. } => fs::symlink_metadata(source).map(|metadata| {
                     if metadata.is_dir() { 0 } else { metadata.len() }
                 }),
@@ -2545,14 +2562,24 @@ fn free_destination_reserved(
 /// A read-only, best-effort preview. No name reservation or overwrite occurs;
 /// the worker re-runs the plan immediately before executing a batch. The
 /// no-replace publication/rename is still the authority under concurrent I/O.
+#[cfg(test)]
 pub fn preview_transfer(
     sources: &[PathBuf],
     destination: &Path,
     conflict: ConflictPolicy,
     moving: bool,
 ) -> io::Result<TransferPlan> {
-    let cancelled = AtomicBool::new(false);
-    plan_transfer(sources, destination, conflict, moving, &cancelled).map_err(|failure| {
+    preview_transfer_cancellable(sources, destination, conflict, moving, &AtomicBool::new(false))
+}
+
+pub fn preview_transfer_cancellable(
+    sources: &[PathBuf],
+    destination: &Path,
+    conflict: ConflictPolicy,
+    moving: bool,
+    cancelled: &AtomicBool,
+) -> io::Result<TransferPlan> {
+    plan_transfer(sources, destination, conflict, moving, cancelled).map_err(|failure| {
         io::Error::new(
             failure.error.kind(),
             match failure.index {
@@ -2571,11 +2598,24 @@ pub fn preview_transfer(
 
 /// Read-only preflight for per-source copy rules, with the same worker-side
 /// validations and no-replace publication as an ordinary copy.
+#[cfg(test)]
 pub fn preview_copy_with_rules(
     sources: &[PathBuf],
     destination: &Path,
     conflict: ConflictPolicy,
     rules: &[CopyRule],
+) -> io::Result<TransferPlan> {
+    preview_copy_with_rules_cancellable(
+        sources, destination, conflict, rules, &AtomicBool::new(false),
+    )
+}
+
+pub fn preview_copy_with_rules_cancellable(
+    sources: &[PathBuf],
+    destination: &Path,
+    conflict: ConflictPolicy,
+    rules: &[CopyRule],
+    cancelled: &AtomicBool,
 ) -> io::Result<TransferPlan> {
     plan_transfer_with_rules(
         sources,
@@ -2583,13 +2623,14 @@ pub fn preview_copy_with_rules(
         conflict,
         false,
         Some(rules),
-        &AtomicBool::new(false),
+        cancelled,
     )
     .map_err(|failure| failure.error)
 }
 
 /// Read-only preview of a single copy with an explicitly chosen final name.
 /// The same preflight runs again on the worker immediately before copying.
+#[cfg(test)]
 pub fn preview_copy_as(
     source: &Path,
     destination: &Path,
@@ -2677,7 +2718,10 @@ fn plan_transfer_with_rules(
                 if !valid_exact_name(name) {
                     return Err(PlanFailure::at(
                         index,
-                        io::Error::new(io::ErrorKind::InvalidInput, "Invalid exact filename (1–255 bytes, no slash, control characters, . or ..)"),
+                        io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "Invalid exact filename (1–255 bytes, no slash, control characters, . or ..)",
+                        ),
                     ));
                 }
             }
@@ -2794,9 +2838,13 @@ fn plan_transfer_with_rules(
         } else if collision && exact_name {
             return Err(PlanFailure::at(
                 index,
-                io::Error::new(io::ErrorKind::AlreadyExists, format!(
-                    "The chosen destination already exists: {}", intended.display()
-                )),
+                io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!(
+                        "The chosen destination already exists: {}",
+                        intended.display()
+                    ),
+                ),
             ));
         } else if collision && conflict == ConflictPolicy::SkipExisting {
             (intended.clone(), PlannedDisposition::Skip)
@@ -5797,27 +5845,43 @@ mod tests {
             CopyRule::KeepBoth,
             CopyRule::Global,
         ];
-        let plan = preview_copy_with_rules(
-            &sources, &destination, ConflictPolicy::SkipExisting, &rules,
-        ).unwrap();
+        let plan =
+            preview_copy_with_rules(&sources, &destination, ConflictPolicy::SkipExisting, &rules)
+                .unwrap();
         assert_eq!(plan.renamed, 2);
         assert_eq!(plan.skipped, 1);
         assert_eq!(plan.items[0].target, destination.join("chosen.txt"));
         assert_eq!(plan.items[1].target, destination.join("shared (copy).txt"));
-        let report = perform_with_report(&Action::CopyWithRules {
-            sources,
-            destination: destination.clone(),
-            conflict: ConflictPolicy::SkipExisting,
-            rules,
-        }, &AtomicBool::new(false), &mut |_| {});
+        let report = perform_with_report(
+            &Action::CopyWithRules {
+                sources,
+                destination: destination.clone(),
+                conflict: ConflictPolicy::SkipExisting,
+                rules,
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
         assert!(report.result.is_ok(), "{:?}", report.result);
         assert_eq!(report.items[0].state, ItemState::Completed);
         assert_eq!(report.items[1].state, ItemState::Completed);
         assert_eq!(report.items[2].state, ItemState::Skipped);
-        assert_eq!(fs::read(destination.join("chosen.txt")).unwrap(), b"exact data");
-        assert_eq!(fs::read(destination.join("shared (copy).txt")).unwrap(), b"keep both data");
-        assert_eq!(fs::read(destination.join("shared.txt")).unwrap(), b"existing shared");
-        assert_eq!(fs::read(destination.join("skip.txt")).unwrap(), b"existing skip");
+        assert_eq!(
+            fs::read(destination.join("chosen.txt")).unwrap(),
+            b"exact data"
+        );
+        assert_eq!(
+            fs::read(destination.join("shared (copy).txt")).unwrap(),
+            b"keep both data"
+        );
+        assert_eq!(
+            fs::read(destination.join("shared.txt")).unwrap(),
+            b"existing shared"
+        );
+        assert_eq!(
+            fs::read(destination.join("skip.txt")).unwrap(),
+            b"existing skip"
+        );
         assert_eq!(fs::read(exact).unwrap(), b"exact data");
         assert_eq!(fs::read(keep).unwrap(), b"keep both data");
         assert_eq!(fs::read(skip).unwrap(), b"skipped source");
@@ -5835,33 +5899,78 @@ mod tests {
         }
         for rules in [
             vec![CopyRule::ExactName(OsString::from("same.txt")); 2],
-            vec![CopyRule::Global, CopyRule::ExactName(OsString::from("../unsafe"))],
+            vec![
+                CopyRule::Global,
+                CopyRule::ExactName(OsString::from("../unsafe")),
+            ],
             vec![CopyRule::Global],
         ] {
-            assert!(preview_copy_with_rules(&sources, &destination, ConflictPolicy::KeepBoth, &rules).is_err());
-            let report = perform_with_report(&Action::CopyWithRules {
-                sources: sources.clone(),
-                destination: destination.clone(),
-                conflict: ConflictPolicy::KeepBoth,
-                rules,
-            }, &AtomicBool::new(false), &mut |_| {});
+            assert!(
+                preview_copy_with_rules(&sources, &destination, ConflictPolicy::KeepBoth, &rules)
+                    .is_err()
+            );
+            let report = perform_with_report(
+                &Action::CopyWithRules {
+                    sources: sources.clone(),
+                    destination: destination.clone(),
+                    conflict: ConflictPolicy::KeepBoth,
+                    rules,
+                },
+                &AtomicBool::new(false),
+                &mut |_| {},
+            );
             assert!(report.result.is_err());
-            assert!(report.items.iter().all(|item| item.state != ItemState::Completed));
+            assert!(
+                report
+                    .items
+                    .iter()
+                    .all(|item| item.state != ItemState::Completed)
+            );
             assert_eq!(fs::read(&sources[0]).unwrap(), b"source remains");
             assert_eq!(fs::read(&sources[1]).unwrap(), b"source remains");
             assert_eq!(fs::read_dir(&destination).unwrap().count(), 0);
         }
-        let rules = vec![CopyRule::Global, CopyRule::ExactName(OsString::from("chosen.txt"))];
+        let rules = vec![
+            CopyRule::Global,
+            CopyRule::ExactName(OsString::from("chosen.txt")),
+        ];
         preview_copy_with_rules(&sources, &destination, ConflictPolicy::KeepBoth, &rules).unwrap();
         fs::write(destination.join("chosen.txt"), b"racer").unwrap();
-        let report = perform_with_report(&Action::CopyWithRules {
-            sources: sources.clone(), destination: destination.clone(),
-            conflict: ConflictPolicy::KeepBoth, rules,
-        }, &AtomicBool::new(false), &mut |_| {});
-        assert_eq!(report.result.unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        let report = perform_with_report(
+            &Action::CopyWithRules {
+                sources: sources.clone(),
+                destination: destination.clone(),
+                conflict: ConflictPolicy::KeepBoth,
+                rules,
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert_eq!(
+            report.result.unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
         assert_eq!(report.items[0].state, ItemState::NotStarted);
         assert_eq!(fs::read(destination.join("chosen.txt")).unwrap(), b"racer");
         assert!(!destination.join("a.txt").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cancelled_batch_preview_never_produces_a_transfer_plan() {
+        let root = test_root();
+        let destination = root.join("out");
+        fs::create_dir(&destination).unwrap();
+        let source = root.join("source.txt");
+        fs::write(&source, b"intact").unwrap();
+        let cancelled = AtomicBool::new(true);
+        let result = preview_copy_with_rules_cancellable(
+            &[source.clone()], &destination, ConflictPolicy::KeepBoth,
+            &[CopyRule::Global], &cancelled,
+        );
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Interrupted);
+        assert_eq!(fs::read(source).unwrap(), b"intact");
+        assert_eq!(fs::read_dir(destination).unwrap().count(), 0);
         fs::remove_dir_all(root).unwrap();
     }
 
