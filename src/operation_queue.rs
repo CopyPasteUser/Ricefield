@@ -87,6 +87,10 @@ pub fn describe(action: &Action) -> String {
         Action::NewFolder { .. } => "New folder".into(),
         Action::NewFile { .. } => "New file".into(),
         Action::UndoCreation { .. } => "Undo new item".into(),
+        Action::UndoCopy { .. } => "Undo copy to Trash".into(),
+        Action::UndoMove { .. } => "Undo move".into(),
+        #[cfg(target_os = "linux")]
+        Action::UndoTrash { .. } => "Restore from Trash".into(),
         Action::SetMode { .. } => "Change permissions".into(),
         Action::SetOwnership { .. } => "Change owner/group".into(),
         Action::CreateUserAttribute { .. } => "Create extended attribute".into(),

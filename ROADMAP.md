@@ -63,14 +63,18 @@ and live-disconnect owner gate remains open even when software CI passes.
 
 ### Step 3 — P0/P1: Local recovery, moves and Undo
 
-- [ ] Complete interruption/rollback tests for staged file and directory
+- [x] Complete software fault-injection coverage for staged file and directory
   operations, including cross-device moves, collisions and post-commit
-  failures. Preserve originals whenever evidence is insufficient.
-- [ ] Expand guarded Undo to eligible copy, move and Trash operations only
+  failures. Preserve originals whenever evidence is insufficient; physical
+  power-loss and removable-device faults remain owner acceptance.
+- [x] Expand guarded Undo to eligible copy, move and Trash operations only
   with verified object identity, collision refusal and recoverable behavior;
-  keep permanent delete and uncertain batches excluded.
-- [ ] Show per-file results and explicit recovery actions without blocking
-  the UI; update the owner fault-injection matrix.
+  keep permanent delete and uncertain batches excluded. Initial scope is
+  single unchanged regular files with one hardlink; directory undo, changed
+  files, failed batches and cross-device Move remain deliberately ineligible.
+- [x] Show per-file results and explicit inspection/recovery actions without blocking
+  the UI; update the owner fault-injection matrix. Inspection opens the relevant
+  folder in a separate tab; retry is never automatic.
 
 **Exit:** no silent data loss or overwrite on supported local workflows.
 

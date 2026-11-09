@@ -48,6 +48,10 @@ can reopen Paste with options for items that never began. Review the current
 paths and choices, then explicitly start a new transfer if safe. Failed or
 already processed items are excluded because their destination may require
 manual inspection. This button is session-only and cannot replay history.
+Each per-file row now offers **Inspect**, which opens the recorded target's
+containing folder in a new tab (or the source folder when no target is known).
+Inspect never retries, deletes or changes a result; a failed publish may have
+left both copies, and the user must examine them before deciding what to do.
 
 A same-filesystem Move renames. A cross-filesystem Move publishes a verified
 copy and **retains the original for separate manual cleanup**. Source metadata
@@ -56,7 +60,17 @@ partial batch; earlier completed items are not automatically rolled back.
 
 Trash and permanent delete require confirmation of the selected paths.
 Single completed renames and entirely successful batch renames can offer a
-guarded, session-only **Undo** in Transfers.
+guarded, session-only **Undo** in Transfers. A fully successful, single-file
+Copy can be undone by sending its unchanged result to desktop Trash; a
+same-filesystem single-file Move can be returned to its unoccupied original
+name; a single Trash entry can be restored if its exact inode and Trash
+metadata are still present. Restoring from Trash on Linux uses an atomic
+no-overwrite rename, not the backend's ordinary rename. These three Undo
+operations refuse changed or replaced objects, hardlinked files and
+collisions; failed or partial batches, directories and cross-device Moves
+cannot be undone automatically. No Undo is offered after restart; previous
+session history is display-only. When Undo fails, use **Inspect** before
+retrying rather than assuming either location is safe to remove.
 For multiple names, **F2** opens a batch-rename preview with prefix/suffix,
 numbering and literal search/replace. Enable **Regular expression** to match
 names using bounded Rust regex patterns with capture replacements such as `$1`

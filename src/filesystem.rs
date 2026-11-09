@@ -51,6 +51,72 @@ pub struct OperationReport {
     pub rename_undo: Option<Box<RenameUndo>>,
     pub batch_rename_undo: Option<Box<BatchRenameUndo>>,
     pub creation_undo: Option<Box<CreationUndo>>,
+    pub transfer_undo: Option<Box<TransferUndo>>,
+}
+
+/// A session-only, single-item reversal. Copies are moved to the desktop
+/// Trash, never unlinked. Cross-device moves, partial batches, directories,
+/// hardlinked files and irreversible deletes do not grant an Undo token.
+#[derive(Clone)]
+pub enum TransferUndo {
+    Copy { target: PathBuf, snapshot: fs::Metadata },
+    Move {
+        current: PathBuf,
+        original: PathBuf,
+        snapshot: fs::Metadata,
+    },
+    #[cfg(target_os = "linux")]
+    Trash {
+        item: trash::TrashItem,
+        data_path: PathBuf,
+        snapshot: fs::Metadata,
+        info_snapshot: fs::Metadata,
+    },
+}
+
+impl TransferUndo {
+    pub fn action(&self) -> Action {
+        match self {
+            Self::Copy { target, snapshot } => Action::UndoCopy {
+                target: target.clone(),
+                snapshot: snapshot.clone(),
+            },
+            Self::Move { current, original, snapshot } => Action::UndoMove {
+                current: current.clone(),
+                original: original.clone(),
+                snapshot: snapshot.clone(),
+            },
+            #[cfg(target_os = "linux")]
+            Self::Trash { item, data_path, snapshot, info_snapshot } => Action::UndoTrash {
+                item: item.clone(),
+                data_path: data_path.clone(),
+                snapshot: snapshot.clone(),
+                info_snapshot: info_snapshot.clone(),
+            },
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Copy { .. } => "Undo copy (to Trash)",
+            Self::Move { .. } => "Undo move",
+            #[cfg(target_os = "linux")]
+            Self::Trash { .. } => "Restore from Trash",
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn trash_data_path(item: &trash::TrashItem) -> Option<PathBuf> {
+    let info = Path::new(&item.id);
+    let parent = info.parent()?;
+    if !info.is_absolute()
+        || info.extension() != Some(OsStr::new("trashinfo"))
+        || parent.file_name() != Some(OsStr::new("info"))
+    {
+        return None;
+    }
+    Some(parent.parent()?.join("files").join(info.file_stem()?))
 }
 
 /// A newly created empty object can be reversed in-session only while its
@@ -712,6 +778,22 @@ pub enum Action {
     },
     UndoBatchRename {
         items: Vec<(PathBuf, OsString, fs::Metadata)>,
+    },
+    UndoCopy {
+        target: PathBuf,
+        snapshot: fs::Metadata,
+    },
+    UndoMove {
+        current: PathBuf,
+        original: PathBuf,
+        snapshot: fs::Metadata,
+    },
+    #[cfg(target_os = "linux")]
+    UndoTrash {
+        item: trash::TrashItem,
+        data_path: PathBuf,
+        snapshot: fs::Metadata,
+        info_snapshot: fs::Metadata,
     },
     Copy {
         sources: Vec<PathBuf>,
@@ -1715,6 +1797,24 @@ pub fn perform_with_report(
             .collect::<Option<Vec<_>>>(),
         _ => None,
     };
+    let before_move = match action {
+        Action::Move { sources, .. } | Action::MoveWithRules { sources, .. }
+            if sources.len() == 1 => fs::symlink_metadata(&sources[0]).ok(),
+        _ => None,
+    };
+    #[cfg(target_os = "linux")]
+    let before_trash = match action {
+        Action::Trash { paths } if paths.len() == 1 => {
+            fs::symlink_metadata(&paths[0]).ok().and_then(|snapshot| {
+                (snapshot.is_file() && snapshot.nlink() == 1).then_some(snapshot)
+            }).and_then(|snapshot| {
+                trash::os_limited::list().ok().map(|items| {
+                    (snapshot, items.into_iter().map(|item| item.id).collect::<BTreeSet<_>>())
+                })
+            })
+        }
+        _ => None,
+    };
     let sources: Vec<PathBuf> = match action {
         Action::Copy { sources, .. }
         | Action::CopyWithRules { sources, .. }
@@ -1819,12 +1919,67 @@ pub fn perform_with_report(
     } else {
         None
     };
+    // A completed batch is intentionally not undone piecemeal: the next
+    // operation may have left a mixture of published, retained and skipped
+    // objects. Only a proven single-item result creates a fresh Undo token.
+    let transfer_undo = if result.is_ok()
+        && items.len() == 1
+        && items[0].state == ItemState::Completed
+    {
+        let item = &items[0];
+        match action {
+            Action::Copy { .. } | Action::CopyAs { .. } | Action::CopyWithRules { .. } => item
+                .target
+                .as_ref()
+                .and_then(|target| fs::symlink_metadata(target).ok().map(|saved| (target, saved)))
+                .filter(|(_, saved)| saved.is_file() && saved.nlink() == 1)
+                .map(|(target, snapshot)| {
+                    Box::new(TransferUndo::Copy { target: target.clone(), snapshot })
+                }),
+            Action::Move { .. } | Action::MoveWithRules { .. } => {
+                before_move.and_then(|before| {
+                    let target = item.target.as_ref()?;
+                    let snapshot = fs::symlink_metadata(target).ok()?;
+                    (target != &item.source
+                        && before.is_file()
+                        && snapshot.is_file()
+                        && snapshot.nlink() == 1
+                        && same_inode_and_kind(&before, &snapshot))
+                        .then(|| Box::new(TransferUndo::Move {
+                            current: target.clone(), original: item.source.clone(), snapshot,
+                        }))
+                })
+            }
+            #[cfg(target_os = "linux")]
+            Action::Trash { .. } => before_trash.and_then(|(before, old_ids)| {
+                let mut matches = trash::os_limited::list().ok()?.into_iter().filter_map(|entry| {
+                    if old_ids.contains(&entry.id) || entry.original_path() != item.source {
+                        return None;
+                    }
+                    let path = trash_data_path(&entry)?;
+                    let after = fs::symlink_metadata(&path).ok()?;
+                    let info = fs::symlink_metadata(Path::new(&entry.id)).ok()?;
+                    (after.is_file() && after.nlink() == 1 && info.is_file()
+                        && info.nlink() == 1 && same_inode_and_kind(&before, &after))
+                        .then_some((entry, path, after, info))
+                });
+                let (entry, path, snapshot, info_snapshot) = matches.next()?;
+                matches.next().is_none().then(|| Box::new(TransferUndo::Trash {
+                    item: entry, data_path: path, snapshot, info_snapshot,
+                }))
+            }),
+            _ => None,
+        }
+    } else {
+        None
+    };
     OperationReport {
         result,
         items,
         rename_undo,
         batch_rename_undo,
         creation_undo,
+        transfer_undo,
     }
 }
 
@@ -2122,6 +2277,88 @@ fn perform_with_progress_and_items(
             let evidence: Vec<_> = items.iter().map(|(_, _, saved)| saved.clone()).collect();
             apply_batch_rename(&changes, Some(&evidence), &mut transfer, on_item)
                 .map(|_| format!("Restored {} original names", items.len()))
+        }
+        Action::UndoCopy { target, snapshot } => {
+            transfer.check()?;
+            let current = fs::symlink_metadata(target)?;
+            if !snapshot.is_file() || !current.is_file() || current.nlink() != 1 {
+                return Err(io::Error::new(io::ErrorKind::InvalidData,
+                    "Undo copy requires an unchanged, singly linked regular file"));
+            }
+            ensure_same_source_metadata(snapshot, &current)?;
+            // Never permanently remove a published copy during Undo. If the
+            // desktop Trash is unavailable, leave it exactly where it is.
+            trash::delete(target).map_err(io::Error::other)?;
+            Ok(format!("Moved copied file {} to Trash", target.display()))
+        }
+        Action::UndoMove { current, original, snapshot } => {
+            transfer.check()?;
+            let metadata = fs::symlink_metadata(current)?;
+            if current == original || !snapshot.is_file() || !metadata.is_file()
+                || metadata.nlink() != 1
+            {
+                return Err(io::Error::new(io::ErrorKind::InvalidData,
+                    "Undo move requires an unchanged, singly linked regular file"));
+            }
+            ensure_same_source_metadata(snapshot, &metadata)?;
+            // renameat2(RENAME_NOREPLACE) on Linux: a newly occupied original
+            // name is never overwritten and the moved file remains intact.
+            rename_without_overwrite(current, original)?;
+            if !same_inode_and_kind(snapshot, &fs::symlink_metadata(original)?) {
+                return Err(io::Error::new(io::ErrorKind::InvalidData,
+                    "Undo move restored an unexpected inode; inspect the original path manually"));
+            }
+            Ok(format!("Restored moved file to {}", original.display()))
+        }
+        #[cfg(target_os = "linux")]
+        Action::UndoTrash { item, data_path, snapshot, info_snapshot } => {
+            transfer.check()?;
+            if trash_data_path(item).as_deref() != Some(data_path.as_path()) {
+                return Err(io::Error::new(io::ErrorKind::InvalidData,
+                    "Trash entry path changed; refusing restore"));
+            }
+            let original = item.original_path();
+            if occupied(&original)? {
+                return Err(io::Error::new(io::ErrorKind::AlreadyExists,
+                    "Original name is occupied; refusing to replace it"));
+            }
+            let fresh = trash::os_limited::list().map_err(io::Error::other)?
+                .into_iter().find(|entry| entry.id == item.id && entry.original_path() == original)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound,
+                    "Trash item is no longer available"))?;
+            let metadata = fs::symlink_metadata(data_path)?;
+            if !snapshot.is_file() || !metadata.is_file() || metadata.nlink() != 1 {
+                return Err(io::Error::new(io::ErrorKind::InvalidData,
+                    "Trash item is no longer a singly linked regular file"));
+            }
+            ensure_same_source_metadata(snapshot, &metadata)?;
+            let info_path = Path::new(&fresh.id);
+            let info_current = fs::symlink_metadata(info_path)?;
+            if !info_snapshot.is_file() || !info_current.is_file()
+                || info_current.nlink() != 1
+            {
+                return Err(io::Error::new(io::ErrorKind::InvalidData,
+                    "Trash metadata is no longer a regular, singly linked file"));
+            }
+            ensure_same_source_metadata(info_snapshot, &info_current)?;
+            // The upstream restore helper uses std::fs::rename on Linux.
+            // Use renameat2(NOREPLACE) instead so a concurrent writer cannot
+            // occupy the original name and have their file replaced.
+            rename_without_overwrite(data_path, &original)?;
+            // A post-restore mismatch is reported, never cleaned up or erased.
+            if !same_inode_and_kind(snapshot, &fs::symlink_metadata(&original)?) {
+                return Err(io::Error::new(io::ErrorKind::InvalidData,
+                    "Restored object identity differs; inspect the restored path manually"));
+            }
+            sync_directory(data_path.parent().ok_or_else(invalid_name)?)?;
+            sync_directory(original.parent().ok_or_else(invalid_name)?)?;
+            // The .trashinfo is now only a stale index entry, never a file to
+            // be restored. If cleanup fails, keep the restored data in place
+            // and surface the error for manual review.
+            ensure_same_source(info_path, info_snapshot)?;
+            fs::remove_file(info_path)?;
+            sync_directory(info_path.parent().ok_or_else(invalid_name)?)?;
+            Ok(format!("Restored {} from Trash", original.display()))
         }
         Action::Copy { .. } | Action::CopyAs { .. } | Action::CopyWithRules { .. } => {
             if sources.is_empty() {
@@ -4868,6 +5105,49 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn nested_directory_post_commit_failure_keeps_both_trees_and_recovery_evidence() {
+        let root = test_root();
+        let source = root.join("original-tree");
+        fs::create_dir(&source).unwrap();
+        fs::create_dir(source.join("nested")).unwrap();
+        fs::write(source.join("nested/keep.txt"), b"directory data").unwrap();
+        let target = root.join("published-tree");
+        let journal_dir = root.join("journal");
+        let mut journal = Journal::begin_in(&journal_dir, &source, &target).unwrap();
+        let cancelled = AtomicBool::new(false);
+        let mut no_op = |_: Progress| {};
+        let mut transfer = Transfer {
+            cancelled: &cancelled,
+            notify: &mut no_op,
+            transferred: 0,
+            total: 0,
+            last_report: Instant::now(),
+            last_reported_bytes: 0,
+            phase: "Copying",
+        };
+        let mut syncs = 0;
+        let error = stage_and_publish_with_sync(
+            &source, &target, true, &mut transfer, Some(&mut journal),
+            &mut |path| {
+                syncs += 1;
+                if syncs == 3 {
+                    Err(io::Error::other("injected final parent sync failure"))
+                } else {
+                    sync_directory(path)
+                }
+            },
+        ).unwrap_err();
+        assert_eq!(syncs, 3);
+        assert!(error.to_string().contains("Destination was published"));
+        assert_eq!(journal.record().state, State::StagedVerified);
+        assert_eq!(fs::read(source.join("nested/keep.txt")).unwrap(), b"directory data");
+        assert_eq!(fs::read(target.join("nested/keep.txt")).unwrap(), b"directory data");
+        assert!(journal_dir.join(format!("{}.toml", journal.record().id)).is_file());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn post_rename_staging_sync_failure_preserves_original_and_journal() {
         let root = test_root();
@@ -7016,6 +7296,129 @@ mod tests {
         let fresh_undo = report.creation_undo.unwrap();
         assert!(perform(&fresh_undo.action()).is_ok());
         assert!(!root.join("untouched").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn single_copy_undo_is_recoverable_and_refuses_changed_or_replaced_targets() {
+        let root = test_root();
+        let output = root.join("output");
+        fs::create_dir(&output).unwrap();
+        let original = root.join("source.txt");
+        fs::write(&original, b"user data").unwrap();
+        let copy = || perform_with_report(&Action::Copy {
+            sources: vec![original.clone()], destination: output.clone(),
+            conflict: ConflictPolicy::KeepBoth,
+        }, &AtomicBool::new(false), &mut |_| {});
+
+        let first = copy();
+        assert!(first.result.is_ok());
+        let first_undo = first.transfer_undo.expect("single regular copy should offer Undo");
+        let first_target = output.join("source.txt");
+        fs::write(&first_target, b"somebody changed the copied file").unwrap();
+        assert_eq!(perform(&first_undo.action()).unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(&first_target).unwrap(), b"somebody changed the copied file");
+
+        let second = copy();
+        let second_undo = second.transfer_undo.expect("keep-both copy should offer Undo");
+        let second_target = output.join("source (copy).txt");
+        assert!(second_target.is_file());
+        assert!(perform(&second_undo.action()).is_ok());
+        assert!(!second_target.exists());
+        assert_eq!(fs::read(original).unwrap(), b"user data");
+
+        // Purge only this disposable fixture, never any other Trash entry.
+        let ours = trash::os_limited::list().unwrap().into_iter()
+            .filter(|item| item.original_path() == second_target).collect::<Vec<_>>();
+        assert_eq!(ours.len(), 1);
+        trash::os_limited::purge_all(ours).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn single_move_undo_refuses_original_name_collision_and_stale_identity() {
+        let root = test_root();
+        let output = root.join("output");
+        fs::create_dir(&output).unwrap();
+        let original = root.join("source.txt");
+        let moved = output.join("source.txt");
+        fs::write(&original, b"original payload").unwrap();
+        let report = perform_with_report(&Action::Move {
+            sources: vec![original.clone()], destination: output.clone(),
+            conflict: ConflictPolicy::KeepBoth,
+        }, &AtomicBool::new(false), &mut |_| {});
+        assert!(report.result.is_ok());
+        let undo = report.transfer_undo.expect("same-volume single move should offer Undo");
+        fs::write(&original, b"new occupant").unwrap();
+        assert_eq!(perform(&undo.action()).unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&moved).unwrap(), b"original payload");
+        assert_eq!(fs::read(&original).unwrap(), b"new occupant");
+        fs::remove_file(&original).unwrap();
+        assert!(perform(&undo.action()).is_ok());
+        assert_eq!(fs::read(&original).unwrap(), b"original payload");
+        assert!(!moved.exists());
+
+        let moved_again = perform_with_report(&Action::Move {
+            sources: vec![original.clone()], destination: output,
+            conflict: ConflictPolicy::KeepBoth,
+        }, &AtomicBool::new(false), &mut |_| {});
+        let stale = moved_again.transfer_undo.unwrap();
+        let held = File::open(&moved).unwrap();
+        fs::remove_file(&moved).unwrap();
+        fs::write(&moved, b"replacement payload").unwrap();
+        assert_eq!(perform(&stale.action()).unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(&moved).unwrap(), b"replacement payload");
+        assert!(!original.exists());
+        drop(held);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn single_file_trash_undo_restores_only_the_verified_unchanged_item() {
+        let root = test_root();
+        let original = root.join("recover.txt");
+        fs::write(&original, b"recover me").unwrap();
+        let report = perform_with_report(&Action::Trash { paths: vec![original.clone()] },
+            &AtomicBool::new(false), &mut |_| {});
+        assert!(report.result.is_ok());
+        let undo = report.transfer_undo.expect("same-filesystem Trash must offer verified Undo");
+        assert!(!original.exists());
+        fs::write(&original, b"occupied by another writer").unwrap();
+        assert_eq!(perform(&undo.action()).unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&original).unwrap(), b"occupied by another writer");
+        fs::remove_file(&original).unwrap();
+        assert!(perform(&undo.action()).is_ok());
+        assert_eq!(fs::read(&original).unwrap(), b"recover me");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn multi_item_and_directory_transfers_never_offer_unsafe_undo() {
+        let root = test_root();
+        let output = root.join("output");
+        fs::create_dir(&output).unwrap();
+        let a = root.join("a.txt");
+        let b = root.join("b.txt");
+        fs::write(&a, b"A").unwrap();
+        fs::write(&b, b"B").unwrap();
+        let batch = perform_with_report(&Action::Copy {
+            sources: vec![a.clone(), b], destination: output.clone(),
+            conflict: ConflictPolicy::KeepBoth,
+        }, &AtomicBool::new(false), &mut |_| {});
+        assert!(batch.result.is_ok());
+        assert!(batch.transfer_undo.is_none());
+        let folder = root.join("folder");
+        fs::create_dir(&folder).unwrap();
+        fs::write(folder.join("nested.txt"), b"nested").unwrap();
+        let directory = perform_with_report(&Action::Copy {
+            sources: vec![folder], destination: output,
+            conflict: ConflictPolicy::KeepBoth,
+        }, &AtomicBool::new(false), &mut |_| {});
+        assert!(directory.result.is_ok());
+        assert!(directory.transfer_undo.is_none());
         fs::remove_dir_all(root).unwrap();
     }
 

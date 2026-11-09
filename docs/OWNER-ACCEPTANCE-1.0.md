@@ -100,6 +100,16 @@ all boxes below still require owner verification.
   Trash. Repeat after adding content: Undo must refuse to discard the data.
   Rename a disposable file then Undo; occupy its original name and confirm
   Undo cannot overwrite it. Previous-session transfer history offers no Undo.
+- [ ] **B06d Guarded transfer Undo (new):** on disposable, same-volume regular
+  files with a single hardlink, Copy then Undo: only the new copy goes to
+  desktop Trash and the source remains byte-identical. Move then Undo: the
+  original filename returns without overwriting a competing file. Trash then
+  Undo: restore the exact item without replacing an occupied original name.
+  Between each operation and Undo, modify contents, swap the inode and occupy
+  the original name in separate trials; all must refuse unsafe recovery. Check
+  partial batches, directories, hardlinks and cross-volume Move do **not**
+  offer automated Undo. Restart RiceField: old results are read-only. The
+  Transfers per-file **Inspect** button opens a new tab without mutation.
 - [ ] **B06c Archive extraction:** right-click disposable ZIP, tar.gz and 7z
   archives, open the browser and Extract all into a new folder. Check nested
   contents, selected-only extraction, refusal to overwrite the chosen output
@@ -281,6 +291,14 @@ only on a new isolated test share, never on the production `medien` library.
 - [ ] **F05 Power-loss behavior:** **optional, high risk** and only on a
   sacrificial lab system with full backup. Process-crash CI is *not* proof of
   power-loss durability; record this separately or mark NOT TESTED.
+- [ ] **F06 Local Step 3 fault matrix:** with disposable files and nested
+  directories, inject/cause cancellation during staging, source mutation,
+  destination file/directory collision, and failure after the no-overwrite
+  publication but before its final directory sync. Check originals, competing
+  targets, published trees and private journal evidence independently. Do not
+  infer a failed transfer from a failed acknowledgement or delete either copy
+  based on timestamps alone. Repeat with a real disconnected removable drive
+  and record which cases could not be simulated safely.
 
 ## G. Seven rice profiles, RiceBowl and accessibility
 
