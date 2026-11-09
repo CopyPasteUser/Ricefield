@@ -4,6 +4,10 @@ use std::{
     ffi::{OsStr, OsString},
     fs::{self, File, FileTimes, OpenOptions},
     io::{self, Read, Write},
+    os::{
+        fd::AsRawFd,
+        unix::fs::{MetadataExt, OpenOptionsExt},
+    },
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant, SystemTime},
@@ -2697,16 +2701,63 @@ fn ensure_outside_source(source: &Path, target: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn remove_created(path: &Path) -> io::Result<()> {
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error),
+/// Pin a just-created private staging directory without following a symlink.
+/// The returned descriptor is held until cleanup, even if the pathname is
+/// renamed or another entry is substituted in the destination directory.
+pub(crate) fn pin_private_staging(path: &Path) -> io::Result<File> {
+    OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+}
+
+/// Clean only the inode we pinned, never a new directory at the same name.
+/// The callback exists to reproduce a rename exactly between the identity
+/// check and removal in regression tests. Ordinary callers pass `|| {}`.
+pub(crate) fn cleanup_pinned_staging_with(
+    path: &Path,
+    directory: &File,
+    after_check: impl FnOnce(),
+) {
+    let still_ours = || {
+        matches!(
+            (fs::symlink_metadata(path), directory.metadata()),
+            (Ok(found), Ok(pinned))
+                if found.is_dir() && found.dev() == pinned.dev() && found.ino() == pinned.ino()
+        )
     };
-    if metadata.is_dir() {
-        fs::remove_dir_all(path)
-    } else {
-        fs::remove_file(path)
+    if !still_ours() {
+        return;
+    }
+    after_check();
+
+    // A directory entry can be replaced after the check. /proc/self/fd/N
+    // follows the already-opened inode, not the pathname being reused. If
+    // procfs is missing, intentionally leave the private staging untouched.
+    let anchored = PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd()));
+    let Ok(entries) = fs::read_dir(anchored) else {
+        return;
+    };
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return;
+        };
+        let Ok(kind) = entry.file_type() else {
+            return;
+        };
+        let result = if kind.is_dir() {
+            fs::remove_dir_all(entry.path())
+        } else {
+            fs::remove_file(entry.path())
+        };
+        if result.is_err() {
+            return;
+        }
+    }
+    // A last-minute replacement of a *nonempty* root remains safe: this is
+    // only a nonrecursive rmdir and cannot erase someone else's contents.
+    if still_ours() {
+        let _ = fs::remove_dir(path);
     }
 }
 
@@ -3000,12 +3051,11 @@ fn stage_and_publish_with_sync(
     transfer.check()?;
     ensure_outside_source(source, destination)?;
     let staging_dir = create_staging_dir(destination.parent().ok_or_else(invalid_name)?)?;
+    let staging_handle = pin_private_staging(&staging_dir)?;
     if let Some(record) = journal.as_mut()
         && let Err(error) = record.set_staging(&staging_dir)
     {
-        if let Err(cleanup_error) = fs::remove_dir(&staging_dir) {
-            eprintln!("RiceField: cannot clean staging directory: {cleanup_error}");
-        }
+        cleanup_pinned_staging_with(&staging_dir, &staging_handle, || {});
         return Err(error);
     }
     let staged = staging_dir.join("payload");
@@ -3061,11 +3111,7 @@ fn stage_and_publish_with_sync(
     match result {
         Ok(()) => {
             // Publication is committed; a failed cleanup must not report it as failed.
-            if let Err(error) = fs::remove_dir(&staging_dir) {
-                eprintln!(
-                    "RiceField: published copy, but cannot remove staging directory: {error}"
-                );
-            }
+            cleanup_pinned_staging_with(&staging_dir, &staging_handle, || {});
             Ok(())
         }
         Err(error) => {
@@ -3080,8 +3126,8 @@ fn stage_and_publish_with_sync(
                     "RiceField: preserving verified staging at {} for recovery review",
                     staging_dir.display()
                 );
-            } else if let Err(cleanup_error) = remove_created(&staging_dir) {
-                eprintln!("RiceField: cannot clean staging directory: {cleanup_error}");
+            } else {
+                cleanup_pinned_staging_with(&staging_dir, &staging_handle, || {});
             }
             Err(error)
         }
@@ -3349,20 +3395,11 @@ fn copy_tree(
             ensure_same_source(source, &metadata)?;
             std::os::unix::fs::symlink(target, destination)?;
             #[cfg(target_os = "linux")]
-            if let Err(error) = preserve_available_owner(destination, &metadata) {
-                let _ = fs::remove_file(destination);
-                return Err(error);
-            }
+            preserve_available_owner(destination, &metadata)?;
             #[cfg(target_os = "linux")]
-            if let Err(error) = copy_user_xattrs(source, destination, false) {
-                let _ = fs::remove_file(destination);
-                return Err(error);
-            }
+            copy_user_xattrs(source, destination, false)?;
             #[cfg(target_os = "linux")]
-            if let Err(error) = preserve_symlink_times(destination, &metadata) {
-                let _ = fs::remove_file(destination);
-                return Err(error);
-            }
+            preserve_symlink_times(destination, &metadata)?;
             ensure_same_source(source, &metadata)?;
             transfer.advance(metadata.len(), source);
             return Ok(());
@@ -3376,7 +3413,10 @@ fn copy_tree(
     if metadata.is_dir() {
         ensure_outside_source(source, destination)?;
         fs::create_dir(destination)?;
-        let result = (|| {
+        // All production copies live in a pinned private staging directory.
+        // On error, its owner performs descriptor-bound cleanup. Removing
+        // this subtree by pathname here could recurse into a replacement.
+        (|| {
             for item in fs::read_dir(source)? {
                 let item = item?;
                 copy_tree(
@@ -3402,11 +3442,7 @@ fn copy_tree(
             ensure_same_source(source, &metadata)?;
             output.sync_all()?;
             Ok(())
-        })();
-        if result.is_err() {
-            let _ = fs::remove_dir_all(destination);
-        }
-        result
+        })()
     } else if metadata.is_file() {
         #[cfg(unix)]
         let hardlink_key = {
@@ -3459,9 +3495,7 @@ fn copy_tree(
             output.sync_all()?;
             Ok(())
         })();
-        if result.is_err() {
-            let _ = fs::remove_file(destination);
-        } else {
+        if result.is_ok() {
             #[cfg(unix)]
             if let Some(key) = hardlink_key {
                 context
@@ -4163,6 +4197,56 @@ mod tests {
                 .staging
                 .as_ref()
                 .is_some_and(|path| !path.exists())
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_local_copy_never_cleans_up_a_replaced_staging_directory() {
+        let root = test_root();
+        let source = root.join("source.txt");
+        let destination = root.join("target.txt");
+        fs::write(&source, b"original content").unwrap();
+        let relocated = root.join("relocated-stage");
+        let cancelled = AtomicBool::new(false);
+        let mut no_op = |_: Progress| {};
+        let mut transfer = Transfer {
+            cancelled: &cancelled,
+            notify: &mut no_op,
+            transferred: 0,
+            total: 16,
+            last_report: Instant::now(),
+            last_reported_bytes: 0,
+            phase: "Copying",
+        };
+        let mut substituted_path = None;
+        let mut swap_during_sync = |stage: &Path| {
+            fs::rename(stage, &relocated)?;
+            fs::create_dir(stage)?;
+            fs::write(stage.join("important.txt"), b"not RiceField data")?;
+            substituted_path = Some(stage.to_path_buf());
+            Err(io::Error::other("injected staging sync failure"))
+        };
+
+        let error = stage_and_publish_with_sync(
+            &source,
+            &destination,
+            true,
+            &mut transfer,
+            None,
+            &mut swap_during_sync,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("injected staging sync failure"));
+        assert_eq!(fs::read(&source).unwrap(), b"original content");
+        assert!(!destination.exists());
+        assert_eq!(
+            fs::read(relocated.join("payload")).unwrap(),
+            b"original content"
+        );
+        assert_eq!(
+            fs::read(substituted_path.unwrap().join("important.txt")).unwrap(),
+            b"not RiceField data"
         );
         fs::remove_dir_all(root).unwrap();
     }
