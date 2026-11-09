@@ -153,9 +153,15 @@ jobs:
           # A GitHub Actions-created tag deliberately does not recursively
           # trigger tag-push workflows; this job publishes its verified bundle.
           if [[ "$GITHUB_REF_TYPE" != tag ]]; then
-            existing_ref="$(gh api "repos/$GH_REPO/git/ref/tags/$expected_tag" --jq '.object.sha' 2>/dev/null || true)"
-            if [[ -n "$existing_ref" ]]; then
+            # `gh api` can emit a JSON error body on stdout even when it
+            # exits nonzero. Treat only an HTTP 404 as a missing reference.
+            if tag_probe="$(gh api "repos/$GH_REPO/git/ref/tags/$expected_tag" 2>/dev/null)"; then
               echo "Release tag $expected_tag already exists without a published release; inspect manually." >&2
+              exit 1
+            fi
+            probe_status="$(jq -r '.status // empty' <<< "$tag_probe" 2>/dev/null || true)"
+            if [[ "$probe_status" != 404 ]]; then
+              echo "Cannot verify that $expected_tag is absent (HTTP ${probe_status:-unknown}); refusing to create a tag." >&2
               exit 1
             fi
             annotated_sha="$(gh api -X POST "repos/$GH_REPO/git/tags" \
