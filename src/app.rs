@@ -3145,10 +3145,15 @@ impl Explorer {
             .resizable(true)
             .default_width(440.0)
             .show(context, |ui| {
-                ui.label(i18n::tr("Nearby advertised SMB/NAS servers (no automatic connections):"));
+                ui.label(i18n::tr(
+                    "Nearby advertised SMB/NAS servers (no automatic connections):",
+                ));
                 ui.horizontal(|ui| {
                     retry = ui
-                        .add_enabled(!self.discovery_busy, egui::Button::new(i18n::tr("Scan again")))
+                        .add_enabled(
+                            !self.discovery_busy,
+                            egui::Button::new(i18n::tr("Scan again")),
+                        )
                         .clicked();
                     if self.discovery_busy {
                         ui.spinner();
@@ -3158,7 +3163,9 @@ impl Explorer {
                 if let Some(error) = &self.discovery_error {
                     ui.colored_label(Color32::LIGHT_RED, error);
                 } else if !self.discovery_busy && self.discovery_hosts.is_empty() {
-                    ui.label(i18n::tr("No NAS was advertised. You can still connect using its address."));
+                    ui.label(i18n::tr(
+                        "No NAS was advertised. You can still connect using its address.",
+                    ));
                 }
                 egui::ScrollArea::vertical()
                     .max_height(280.0)
@@ -3171,18 +3178,18 @@ impl Explorer {
                                 });
                                 if ui
                                     .button(i18n::tr("Browse shares"))
-                                    .on_hover_text(
-                                        i18n::tr("List shares using GVfs; sign in when a share requires it"),
-                                    )
+                                    .on_hover_text(i18n::tr(
+                                        "List shares using GVfs; sign in when a share requires it",
+                                    ))
                                     .clicked()
                                 {
                                     browse = Some(host.uri.clone());
                                 }
                                 if ui
                                     .button(i18n::tr("New tab"))
-                                    .on_hover_text(
-                                        i18n::tr("Browse this server without replacing the current folder"),
-                                    )
+                                    .on_hover_text(i18n::tr(
+                                        "Browse this server without replacing the current folder",
+                                    ))
                                     .clicked()
                                 {
                                     browse_new_tab = Some(host.uri.clone());
@@ -10454,7 +10461,9 @@ impl Explorer {
                     self.current().remote_uri.is_none(),
                     egui::Button::new("Drag to another app…"),
                 )
-                .on_hover_text("Native X11/Wayland drag source via ripdrag or dragon · Ctrl+Shift+D")
+                .on_hover_text(
+                    "Native X11/Wayland drag source via ripdrag or dragon · Ctrl+Shift+D",
+                )
                 .clicked()
             {
                 if !self.current().selected.contains(&entry.path) {
@@ -10826,7 +10835,10 @@ impl Explorer {
             // Do not lose the cancellation handshake: the worker must finish
             // cleaning its private stage before other file mutations start.
             if dialog.running {
-                dialog.message = Some((i18n::tr("Cancelling; waiting for archive cleanup…").into(), false));
+                dialog.message = Some((
+                    i18n::tr("Cancelling; waiting for archive cleanup…").into(),
+                    false,
+                ));
                 self.archive_dialog = Some(dialog);
             } else {
                 self.archive_generation = self.archive_generation.wrapping_add(1);

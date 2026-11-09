@@ -2,8 +2,7 @@
 //! A visual change regenerates TOML; manual edits require validation first.
 
 use crate::{
-    config,
-    i18n,
+    config, i18n,
     theme::{
         ChromeComponent, ShellKind, SidebarPosition, SidebarSection, SidebarSectionMode, Theme,
     },
@@ -103,11 +102,20 @@ impl ThemeEditor {
                 match Theme::from_text(&self.source) {
                     Ok(theme) => {
                         self.preview = Some(theme);
-                        self.message = Some((i18n::tr("Valid TOML · visual controls enabled").into(), false));
+                        self.message = Some((
+                            i18n::tr("Valid TOML · visual controls enabled").into(),
+                            false,
+                        ));
                     }
                     Err(error) => {
                         self.preview = None;
-                        self.message = Some((i18n::template("Invalid theme: {error}", &[("error", error.to_string())]), true));
+                        self.message = Some((
+                            i18n::template(
+                                "Invalid theme: {error}",
+                                &[("error", error.to_string())],
+                            ),
+                            true,
+                        ));
                     }
                 }
             }
@@ -157,7 +165,10 @@ impl ThemeEditor {
                     }
                 });
             changed |= ui
-                .add(egui::Slider::new(&mut theme.metrics.icon_size, 12.0..=64.0).text(i18n::tr("Icon size")))
+                .add(
+                    egui::Slider::new(&mut theme.metrics.icon_size, 12.0..=64.0)
+                        .text(i18n::tr("Icon size")),
+                )
                 .changed();
             changed |= ui
                 .add(
@@ -183,7 +194,9 @@ impl ThemeEditor {
                 ));
             }
         } else {
-            ui.small(i18n::tr("Validate the TOML to unlock color and layout controls."));
+            ui.small(i18n::tr(
+                "Validate the TOML to unlock color and layout controls.",
+            ));
         }
 
         if let Some((message, error)) = &self.message {
