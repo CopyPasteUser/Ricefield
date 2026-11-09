@@ -68,6 +68,7 @@ Linux desktop file management for RiceBowl users. v0.1 interface English; runtim
 | Rename | Background worker | Refresh tabs; status message; session-only Undo in Transfers if a post-rename inode snapshot is captured | Existing target remains; error in status |
 | Batch rename | Snapshot selection, preview all candidate names, preflight targets on worker | Rename each item without overwriting | Stop with failed item and completed count; no silent rollback claim |
 | Copy | Background worker | Unique new destination; status | Partial new output cleaned when possible; source intact |
+| Copy with individual rules | Per-source choices plus read-only asynchronous whole-batch preview; worker rechecks before first write | Each item follows global or overridden keep-both, skip-existing, require-free, skip-identical or exact-name rule; statuses identify skips and actual targets | Exact names always require a vacant target; invalid/duplicate/raced names abort before any write, and no rule ever authorizes replacement |
 | Move | Background worker | Rename within volume; cross-volume verified copy with source kept | Original kept on cross-volume success; errors and per-item status explicit |
 | Trash | Explicit confirmation, then worker | Platform Trash; status | Report error; refresh tabs to show partial state |
 

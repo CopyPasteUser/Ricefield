@@ -812,6 +812,13 @@ pass. Physical Mint X11/Wayland review is deliberately scheduled *after* the
 
 ### 1.0 — Code-complete candidate, then owner acceptance
 
+- [x] Per-source collision decisions for copy batches: Keep both, Skip
+  existing, Require free, Skip identical or explicit exact name from one
+  virtualized Paste-with-options surface. Async preview and worker preflight
+  independently check every choice; no replace/overwrite is enabled.
+  Per-source rules for **Move** and verified replacement remain outside the
+  candidate, and cannot be described as implemented.
+
 - [x] Prepare an explicit owner test matrix with reproducible disposable
   fixtures, per-case pass/fail IDs, Linux Mint/NAS/USB/RiceBowl/low-memory
   coverage and a results template in
