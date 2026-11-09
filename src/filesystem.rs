@@ -331,6 +331,14 @@ pub struct FolderScan {
     pub notice: Option<String>,
 }
 
+impl FolderScan {
+    /// Drop unused geometric `Vec<Entry>` growth after a scan, on the worker.
+    /// Keeping spare capacity in every open tab wastes MiB for huge folders.
+    pub fn compact(&mut self) {
+        self.entries.shrink_to_fit();
+    }
+}
+
 /// Resolve address/desktop requests on a worker, including symlinked folders.
 /// A file opens its containing folder without launching the file itself.
 pub fn navigation_target(path: &Path) -> io::Result<(PathBuf, Option<PathBuf>)> {
