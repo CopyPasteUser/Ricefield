@@ -20,9 +20,9 @@ use std::{
 };
 
 #[cfg(test)]
-use std::path::PathBuf;
-#[cfg(test)]
 use std::os::unix::fs::PermissionsExt;
+#[cfg(test)]
+use std::path::PathBuf;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
 
@@ -847,12 +847,18 @@ mod tests {
         assert_eq!(uploads.len(), 1, "unacknowledged cleanup keeps evidence");
         let stage = PathBuf::from(&fixture.client.path)
             .join(format!(".ricefield-upload-{}", uploads[0].id));
-        assert_eq!(fs::read(stage.join("payload")).unwrap(), b"pinned-source-content\n");
+        assert_eq!(
+            fs::read(stage.join("payload")).unwrap(),
+            b"pinned-source-content\n"
+        );
         assert_eq!(
             fs::read(format!("{}/example.txt", fixture.client.path)).unwrap(),
             b"pinned-source-content\n"
         );
-        assert_eq!(fs::read(&fixture.source).unwrap(), b"pinned-source-content\n");
+        assert_eq!(
+            fs::read(&fixture.source).unwrap(),
+            b"pinned-source-content\n"
+        );
         assert!(uploads[0].destination_uri.ends_with("/example.txt"));
         let retry_error = upload_with_client(
             fixture.request(),
@@ -868,7 +874,11 @@ mod tests {
         );
         let (new_uploads, _) =
             remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap();
-        assert_eq!(new_uploads.len(), 2, "reconnect collision keeps both attempts");
+        assert_eq!(
+            new_uploads.len(),
+            2,
+            "reconnect collision keeps both attempts"
+        );
     }
 
     #[test]
@@ -884,19 +894,28 @@ mod tests {
             .stderr(Stdio::null())
             .status()
             .unwrap();
-        assert!(status.success(), "child must observe a denied remote cleanup");
+        assert!(
+            status.success(),
+            "child must observe a denied remote cleanup"
+        );
         let (uploads, probes) =
             remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap();
         assert!(probes.is_empty());
         assert_eq!(uploads.len(), 1);
         let stage = PathBuf::from(&fixture.client.path)
             .join(format!(".ricefield-upload-{}", uploads[0].id));
-        assert_eq!(fs::read(stage.join("payload")).unwrap(), b"pinned-source-content\n");
+        assert_eq!(
+            fs::read(stage.join("payload")).unwrap(),
+            b"pinned-source-content\n"
+        );
         assert_eq!(
             fs::read(format!("{}/example.txt", fixture.client.path)).unwrap(),
             b"pinned-source-content\n"
         );
-        assert_eq!(fs::read(&fixture.source).unwrap(), b"pinned-source-content\n");
+        assert_eq!(
+            fs::read(&fixture.source).unwrap(),
+            b"pinned-source-content\n"
+        );
         // Restore the disposable test fixture; the application itself never
         // performs cleanup when publication or its aftermath is uncertain.
         fs::set_permissions(&stage, fs::Permissions::from_mode(0o700)).unwrap();

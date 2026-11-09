@@ -1192,13 +1192,19 @@ mod tests {
             Some(&journal),
         )
         .unwrap_err();
-        assert!(error.contains("Check both the final destination"), "{error}");
+        assert!(
+            error.contains("Check both the final destination"),
+            "{error}"
+        );
         assert_eq!(server.path("lost-reply.txt"), b"verified upload bytes");
         assert_eq!(fs::read(&file).unwrap(), b"verified upload bytes");
-        let (uploads, probes) =
-            remote_upload_journal::inspect_evidence_in(&journal).unwrap();
+        let (uploads, probes) = remote_upload_journal::inspect_evidence_in(&journal).unwrap();
         assert!(probes.is_empty());
-        assert_eq!(uploads.len(), 1, "lost acknowledgement must preserve evidence");
+        assert_eq!(
+            uploads.len(),
+            1,
+            "lost acknowledgement must preserve evidence"
+        );
         assert!(uploads[0].destination_uri.ends_with("/lost-reply.txt"));
         let remote_stages = server
             .state
@@ -1207,7 +1213,10 @@ mod tests {
             .keys()
             .filter(|path| path.contains("/.ricefield-upload-"))
             .count();
-        assert_eq!(remote_stages, 0, "MOVE transferred the stage to its destination");
+        assert_eq!(
+            remote_stages, 0,
+            "MOVE transferred the stage to its destination"
+        );
         // A fresh connection after the lost acknowledgement must see a
         // collision, not infer a failed first request or replace its result.
         server.drop_publish_response.store(false, Ordering::Release);
