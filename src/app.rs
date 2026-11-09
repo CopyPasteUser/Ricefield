@@ -5179,7 +5179,9 @@ impl Explorer {
             };
         }
         if !clipboard.cut
-            && rules.iter().any(|rule| *rule != filesystem::CopyRule::Global)
+            && rules
+                .iter()
+                .any(|rule| *rule != filesystem::CopyRule::Global)
         {
             return Action::CopyWithRules {
                 sources: clipboard.paths,
