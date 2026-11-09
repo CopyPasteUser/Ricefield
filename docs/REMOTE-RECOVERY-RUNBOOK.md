@@ -83,13 +83,16 @@ manual, explicitly authorized operation with its own backup and confirmation.
 
 ## Test coverage and limits
 
-The deterministic fixtures cover occupied destinations, pre-publish process
-kills, post-publish OpenSSH-SFTP/signed-SMB process kills, an OpenSSH-SFTP
-server refusing cleanup after successful hardlink publication, and a WebDAV
-server committing `MOVE` but dropping its response. Fresh client attempts
-against those published destinations are checked for collision refusal.
-They assert original
-source bytes, remote destination/stage state and restart-visible local
-records. These are **protocol exercises on disposable local fixtures**, not
+The deterministic fixtures cover occupied destinations, cancellations after
+real private-stage PUTs on all three protocols, pre-publish process kills,
+post-publish OpenSSH-SFTP/signed-SMB process kills, an OpenSSH-SFTP server
+refusing cleanup after successful hardlink publication, an injected signed-SMB
+cleanup transport failure after real hardlink publication, and a WebDAV server
+committing `MOVE` but dropping its response. WebDAV's successful MOVE consumes
+the stage rather than performing a separate cleanup. Reconnected clients check
+that occupied final destinations are not replaced; a cancelled unpublished
+stage can coexist with a later successful upload and requires separate review.
+Tests assert original source bytes, remote destination/stage state and
+restart-visible local records. These are **protocol exercises on disposable local fixtures**, not
 physical Wi-Fi loss, unclean NAS power-off, arbitrary server implementations
 or Synology ACL acceptance. Those remain separate owner checks.

@@ -23,15 +23,19 @@ operations disabled rather than relaxing no-overwrite requirements.
   artifact. Show explicit warnings without deleting/replaying any entry;
   leave upload admission's strict validator unchanged. Regression-test mixed
   valid/damaged evidence and symlinked journal directories.
-- [ ] Extend real-protocol interruption fixtures for cancellation, occupied
+- [x] Extend real-protocol interruption fixtures for cancellation, occupied
   destinations, lost replies and reconnects across WebDAV, OpenSSH-SFTP and
   signed SMB, including a **failed cleanup after successful publication**.
-  **In progress:** existing collision, cancellation and pre-publish kill
-  fixtures are joined by a WebDAV lost-`MOVE`-reply fixture, real OpenSSH-SFTP
-  and signed-SMB post-publication process kills, and an SFTP server refusing
-  private-stage cleanup after a successful hardlink. Fresh client attempts
-  after uncertain publication are rejected as collisions without replacement.
-  Physical disconnect/reconnect and Synology ACL validation remain unverified.
+  Full-uploader lab cases now cover: WebDAV abort after private PUT and a
+  committed `MOVE` with lost reply; OpenSSH-SFTP cancellation after stage PUT,
+  process kills and server-denied post-hardlink cleanup; signed SMB cancellation,
+  process kills and injected cleanup-transport failure after a real signed
+  hardlink. All three exercise existing destination collisions and fresh-client
+  reconnects. Assertions independently inspect source bytes, final targets,
+  private stages and restart-visible journals. WebDAV's successful `MOVE`
+  consumes its stage, unlike the hardlink backends; it has no post-publication
+  cleanup command to fail. **Physical** network disconnect/reconnect, sudden
+  power loss and Synology ACL behavior remain owner hardware acceptance gates.
 - [x] Provide an actionable [manual remote recovery checklist](docs/REMOTE-RECOVERY-RUNBOOK.md)
   and explicit `UNKNOWN` / `PROBE UNCERTAIN` review labels, plus independent
   server-state classification for stages and destinations. Never infer success
