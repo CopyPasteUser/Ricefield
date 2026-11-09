@@ -217,9 +217,15 @@ mod tests {
             assert!(manager.cache.len() <= MAX_CACHED);
         }
         assert_eq!(manager.cache.len(), MAX_CACHED);
-        assert!(!manager.cache.contains_key(&Key::from_entry(&image("0.png")).unwrap()));
-        assert!(manager.cache.contains_key(
-            &Key::from_entry(&image(&format!("{}.png", MAX_CACHED + 9))).unwrap()
-        ));
+        assert!(
+            !manager
+                .cache
+                .contains_key(&Key::from_entry(&image("0.png")).unwrap())
+        );
+        assert!(
+            manager.cache.contains_key(
+                &Key::from_entry(&image(&format!("{}.png", MAX_CACHED + 9))).unwrap()
+            )
+        );
     }
 }
