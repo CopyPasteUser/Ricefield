@@ -1,10 +1,11 @@
 # Release process (Linux x86_64)
 
-RiceField 1.0.0-rc.21 is a **development candidate**, not signed off for use
-with irreplaceable files or as a complete network/archive file manager.
-The code can produce a tested distribution bundle, but a green CI run alone
-does not satisfy the safety, recovery and Linux Mint hardware gates in
-[ROADMAP.md](ROADMAP.md).
+RiceField 1.0.0 is the **first stable release for the declared supported
+workflows**. The owner accepted their daily file-management and SMB-upload
+usage on 2026-11-09. Green CI plus this functional sign-off do **not** prove
+every real-device, access-control, unplug, power-loss or accessibility case.
+Unknown/unsafe remote capabilities remain disabled and a second file manager
+and backups are recommended for irreplaceable files.
 
 The current candidate scope, actual lab results, remaining code limitations and
 post-freeze device checklist are maintained in [docs/1.0-STATUS.md](docs/1.0-STATUS.md).
@@ -12,10 +13,14 @@ The actionable owner test cases and reporting template are in
 [docs/OWNER-ACCEPTANCE-1.0.md](docs/OWNER-ACCEPTANCE-1.0.md).
 The historical version gates below remain evidence, not claims of acceptance.
 
-**Owner's release sequence:** complete the 1.0 code candidate autonomously,
-then hand over a concrete Linux Mint/NAS/USB/performance test checklist for
-owner acceptance. Do not request manual sign-off during alpha development;
-do not tag a stable `v1.0.0` until the post-code-freeze findings are resolved.
+**Release sequence:** version/lockfile and scope documentation are frozen in a
+reviewed commit and PR CI must pass. A version-changing `Cargo.toml` push to
+`main` runs the independent release workflow. Only after its full Rust/GUI,
+reproducible archive, checksum, install and rollback checks pass does its
+restricted publish job create an annotated `v1.0.0` tag on the tested commit
+and upload the verified GitHub release assets. Existing tag-triggered releases
+remain supported. A release already published is not repeated. Hardware test
+cases not personally verified stay unchecked in the acceptance ledger.
 
 ## Build a preview bundle
 

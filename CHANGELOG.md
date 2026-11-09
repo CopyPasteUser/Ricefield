@@ -1,6 +1,37 @@
 # Changelog
 
-## Unreleased — per-item copy and move decisions
+## 1.0.0 — 2026-11-09
+
+The first stable release for RiceField's documented Linux desktop workflows.
+The owner has approved their daily use, including SMB browsing and file
+uploads, after the recent sidebar, memory and mouse-selection fixes.
+
+- Seven distinct desktop styles, tabs, split view, standard Places, local
+  search, previews, archive browsing and guarded file operations.
+- Per-file copy/move conflict choices, safe no-overwrite publication,
+  session-only eligible Undo, transfer history and recovery inspection.
+- Conditional single-file uploads to compatible SMB2/3, SFTP and WebDAV
+  servers; unsafe server capabilities still fail closed.
+- Mouse rubber-band multi-selection in list/grid, with additive Ctrl-drag and
+  preserved file drag-out helpers. Compact large-folder scan allocations and
+  bounded thumbnail/index caches.
+- CI-validated Rust checks, real disposable Samba collision/crash tests,
+  release bundling, installer rollback, eight visual configurations and
+  100,000-entry benchmark.
+
+**Declared 1.0 limitations:** arbitrary remote rename/delete, remote folder
+and multi-file writes, MTP writes and automatic recovery of uncertain remote
+mutations are not supported. Native outgoing drag-and-drop remains dependent
+on an installed `ripdrag`/`dragon` helper; direct RiceBowl event-bus integration
+and full translation coverage are deferred. No blanket claim of physical
+power-loss, disconnection, every NAS ACL, USB or screen-reader testing is made.
+See [the acceptance ledger](docs/OWNER-ACCEPTANCE-1.0.md).
+
+The detailed development entries below retain their original pre-1.0
+"Unreleased" and RC headings for historical traceability; the changes listed
+there are included in this release unless explicitly labeled out of scope.
+
+## Unreleased — per-item copy and move decisions (included in 1.0.0)
 
 - Failed/cancelled Copy and Move batches can now offer **Review unstarted
   items** in the shared Transfers dialog. This reconstructs a read-only

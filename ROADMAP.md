@@ -1,20 +1,35 @@
-# RiceField roadmap to 1.0
+# RiceField roadmap — 1.0 release and 1.1 follow-up
 
-**Current candidate: `1.0.0-rc.21`.** See [the scope and evidence ledger](docs/1.0-STATUS.md) and [owner acceptance matrix](docs/OWNER-ACCEPTANCE-1.0.md).
-This roadmap retains incomplete capabilities explicitly: a candidate version
-does not turn unchecked safety, integration or physical-device work into a pass.
+**Release scope: `1.0.0`.** The owner accepted their daily use of RiceField,
+including SMB file uploads, on 2026-11-09. See [the scope and evidence
+ledger](docs/1.0-STATUS.md) and [owner acceptance
+matrix](docs/OWNER-ACCEPTANCE-1.0.md). Advanced hardware and fault-injection
+cases that have not been run remain unchecked and must not be presented as
+validated by the 1.0 tag.
 
 **Goal:** a reliable, customizable Linux file manager that can replace
 Thunar for supported workflows. Keep Thunar installed until real Linux Mint
 acceptance passes. Prioritize data integrity, functionality, stability,
 performance, Linux integration, then visual polish.
 
-## Final 1.0 execution plan (after rc.21)
+## Next: 1.1 stabilization and desktop integration
 
-Work in this order. Each checked item needs tests, documentation and a green
-GitHub PR before moving to the next. **No stable tag** until both P0 software
-gates and the owner's physical-device acceptance pass. Keep unsupported remote
-operations disabled rather than relaxing no-overwrite requirements.
+- Investigate any real Synology ACL, reconnect or interrupted-upload failures
+  on disposable shares; preserve fail-closed remote publication and recovery.
+- Continue the owner-run Mint/Wayland, 4 GB, removable USB/LUKS, unplug,
+  power-loss and accessibility acceptance matrix with explicit evidence.
+- Pursue native outgoing external drag-and-drop when the framework offers a
+  safe data-source API; retain the existing optional helper in the meantime.
+- Improve direct RiceBowl event integration, remaining translations and
+  measured idle RAM only when profiling identifies a concrete bottleneck.
+
+## Historical final 1.0 execution plan (after rc.21)
+
+The checklist below records the pre-release plan. Its open items are **not**
+quietly marked as passed: the user explicitly accepted the bounded daily-use
+scope for 1.0 while the broader device and interoperability matrix remains
+post-release qualification. Keep unsupported remote operations disabled rather
+than relaxing no-overwrite requirements.
 
 ### Step 1 — P0: Trustworthy recovery evidence and network-write failures
 

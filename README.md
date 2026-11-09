@@ -27,7 +27,11 @@ A customizable **Rust + egui** file manager for Linux, usable standalone or alon
 - **Network and devices:** browse SMB, SFTP, WebDAV and MTP; manage removable media through UDisks2/Polkit.
 - **Customization:** seven built-in themes, custom TOML appearances and optional RiceBowl RiceProfile integration.
 
-**Status:** `1.0.0-rc.21` is a release candidate, **not stable 1.0**. Physical desktop, USB and NAS acceptance remains open. Keep your existing file manager installed.
+**Status:** **RiceField 1.0.0** is the first stable release for the documented
+supported workflows. The owner has accepted their daily file-management and
+SMB-upload usage. This does not constitute exhaustive NAS, USB, power-loss,
+Wayland or accessibility qualification; see the [scope and limitations](docs/1.0-STATUS.md).
+Keep an alternative file manager installed and maintain backups of important data.
 
 ## Install
 
