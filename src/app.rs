@@ -1205,6 +1205,7 @@ enum Dialog {
         clipboard: Clipboard,
         destination: PathBuf,
         conflict: ConflictPolicy,
+        custom_name: String,
         preview_generation: u64,
         preview: Option<Result<filesystem::TransferPlan, String>>,
     },
@@ -4526,11 +4527,13 @@ impl Explorer {
                 cut: false,
             };
             let conflict = ConflictPolicy::KeepBoth;
-            let preview_generation = self.request_paste_preview(&clipboard, &destination, conflict);
+            let preview_generation =
+                self.request_paste_preview(&clipboard, &destination, conflict, "");
             self.dialog = Some(Dialog::PasteOptions {
                 clipboard,
                 destination,
                 conflict,
+                custom_name: String::new(),
                 preview_generation,
                 preview: None,
             });
@@ -4831,14 +4834,14 @@ impl Explorer {
             ));
             return;
         }
-        if self.queue_paused && !matches!(&action, Action::Copy { .. }) {
+        if self.queue_paused && !matches!(&action, Action::Copy { .. } | Action::CopyAs { .. }) {
             self.status = Some((
                 "Waiting copies are paused. Resume or remove them first.".into(),
                 true,
             ));
             return;
         }
-        if self.busy && !matches!(&action, Action::Copy { .. }) {
+        if self.busy && !matches!(&action, Action::Copy { .. } | Action::CopyAs { .. }) {
             self.status = Some((
                 "A transfer is running. Only Copy can be queued; retry this action when it finishes."
                     .into(),
@@ -5221,11 +5224,12 @@ impl Explorer {
             PasteMode::Options => {
                 let conflict = ConflictPolicy::KeepBoth;
                 let preview_generation =
-                    self.request_paste_preview(&clipboard, &destination, conflict);
+                    self.request_paste_preview(&clipboard, &destination, conflict, "");
                 self.dialog = Some(Dialog::PasteOptions {
                     clipboard,
                     destination,
                     conflict,
+                    custom_name: String::new(),
                     preview_generation,
                     preview: None,
                 });
@@ -5238,16 +5242,26 @@ impl Explorer {
         clipboard: &Clipboard,
         destination: &Path,
         conflict: ConflictPolicy,
+        custom_name: &str,
     ) -> u64 {
         self.paste_preview_generation = self.paste_preview_generation.saturating_add(1);
         let generation = self.paste_preview_generation;
         let sources = clipboard.paths.clone();
         let destination = destination.to_path_buf();
         let moving = clipboard.cut;
+        let custom_name = custom_name.to_owned();
         let sender = self.paste_preview_sender.clone();
         thread::spawn(move || {
-            let result = filesystem::preview_transfer(&sources, &destination, conflict, moving)
-                .map_err(|error| error.to_string());
+            let result = if !moving && sources.len() == 1 && !custom_name.is_empty() {
+                filesystem::preview_copy_as(
+                    &sources[0],
+                    &destination,
+                    std::ffi::OsStr::new(&custom_name),
+                )
+            } else {
+                filesystem::preview_transfer(&sources, &destination, conflict, moving)
+            }
+            .map_err(|error| error.to_string());
             let _ = sender.send(PastePreviewResult { generation, result });
         });
         generation
@@ -10459,6 +10473,7 @@ impl Explorer {
                     clipboard,
                     destination,
                     conflict,
+                    custom_name,
                     preview,
                     ..
                 } => {
@@ -10503,12 +10518,42 @@ impl Explorer {
                                 ConflictPolicy::SkipIfIdentical,
                                 "Skip only matching contents — reject different or unverifiable files",
                             ).changed();
-                            if policy_changed {
-                                refresh_paste_preview =
-                                    Some((clipboard.clone(), destination.clone(), *conflict));
+                            let allows_custom_name = !clipboard.cut && clipboard.paths.len() == 1;
+                            let mut name_changed = false;
+                            let custom_valid = custom_name.is_empty()
+                                || (filesystem::valid_name(custom_name)
+                                    && custom_name.len() <= 255
+                                    && !custom_name.chars().any(char::is_control));
+                            if allows_custom_name {
+                                ui.separator();
+                                ui.label("Exact destination name (optional, single-item copy)");
+                                name_changed = ui
+                                    .add_sized(
+                                        [ui.available_width().min(360.0), 28.0],
+                                        egui::TextEdit::singleline(custom_name).hint_text(
+                                            "Leave blank for the selected conflict policy",
+                                        ),
+                                    )
+                                    .changed();
+                                if !custom_valid {
+                                    ui.colored_label(
+                                        Color32::LIGHT_RED,
+                                        "Use 1–255 bytes, no slash or control characters, and not . or ..",
+                                    );
+                                } else if !custom_name.is_empty() {
+                                    ui.small("An exact name must be available. A collision aborts without overwriting or adding a suffix.");
+                                }
+                            }
+                            if policy_changed || name_changed {
+                                refresh_paste_preview = Some((
+                                    clipboard.clone(),
+                                    destination.clone(),
+                                    *conflict,
+                                    custom_name.clone(),
+                                ));
                             }
                             ui.separator();
-                            let can_start = if policy_changed {
+                            let can_start = if policy_changed || name_changed || !custom_valid {
                                 false
                             } else {
                                 match preview {
@@ -10580,11 +10625,20 @@ impl Explorer {
                                     .add_enabled(can_start, egui::Button::new("Start transfer"))
                                     .clicked()
                                 {
-                                    action = Some(Self::paste_action(
-                                        clipboard.clone(),
-                                        destination.clone(),
-                                        *conflict,
-                                    ));
+                                    action =
+                                        Some(if allows_custom_name && !custom_name.is_empty() {
+                                            Action::CopyAs {
+                                                source: clipboard.paths[0].clone(),
+                                                destination: destination.clone(),
+                                                name: custom_name.clone().into(),
+                                            }
+                                        } else {
+                                            Self::paste_action(
+                                                clipboard.clone(),
+                                                destination.clone(),
+                                                *conflict,
+                                            )
+                                        });
                                     dismiss = true;
                                 }
                             });
@@ -11026,8 +11080,9 @@ impl Explorer {
         if let Some((path, generation)) = requested_analysis {
             self.start_deep_analysis(path, generation);
         }
-        if let Some((clipboard, destination, conflict)) = refresh_paste_preview {
-            let generation = self.request_paste_preview(&clipboard, &destination, conflict);
+        if let Some((clipboard, destination, conflict, custom_name)) = refresh_paste_preview {
+            let generation =
+                self.request_paste_preview(&clipboard, &destination, conflict, &custom_name);
             if let Some(Dialog::PasteOptions {
                 preview_generation,
                 preview,
