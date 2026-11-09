@@ -48,10 +48,7 @@ const MAX_CLOSED_TABS: usize = 16;
 // Small folders update immediately; expensive 100k-entry sorts never run in egui.
 const BACKGROUND_VIEW_THRESHOLD: usize = 8_192;
 
-type WebdavEvidence = (
-    Vec<remote_upload_journal::Record>,
-    Vec<remote_upload_journal::ProbeRecord>,
-);
+type WebdavEvidence = remote_upload_journal::EvidenceInspection;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RemoteSort {
@@ -1603,6 +1600,7 @@ pub struct Explorer {
     remote_journal_generation: u64,
     remote_journal_records: Vec<remote_upload_journal::Record>,
     remote_probe_records: Vec<remote_upload_journal::ProbeRecord>,
+    remote_journal_warnings: Vec<String>,
     remote_journal_error: Option<String>,
     remote_journal_loading: bool,
     remote_journal_rescan_requested: bool,
@@ -1879,6 +1877,7 @@ impl Explorer {
             remote_journal_generation: 0,
             remote_journal_records: Vec::new(),
             remote_probe_records: Vec::new(),
+            remote_journal_warnings: Vec::new(),
             remote_journal_error: None,
             remote_journal_loading: false,
             remote_journal_rescan_requested: false,
@@ -2082,8 +2081,8 @@ impl Explorer {
         self.remote_journal_loading = true;
         let sender = self.remote_journal_sender.clone();
         thread::spawn(move || {
-            let result =
-                remote_upload_journal::inspect_evidence().map_err(|error| error.to_string());
+            let result = remote_upload_journal::inspect_evidence_for_review()
+                .map_err(|error| error.to_string());
             let _ = sender.send((generation, result));
         });
     }
@@ -2098,7 +2097,7 @@ impl Explorer {
         let sender = self.remote_journal_sender.clone();
         thread::spawn(move || {
             let result = remote_upload_journal::acknowledge(&record)
-                .and_then(|()| remote_upload_journal::inspect_evidence())
+                .and_then(|()| remote_upload_journal::inspect_evidence_for_review())
                 .map_err(|error| error.to_string());
             let _ = sender.send((generation, result));
         });
@@ -2114,7 +2113,7 @@ impl Explorer {
         let sender = self.remote_journal_sender.clone();
         thread::spawn(move || {
             let result = remote_upload_journal::acknowledge_probe(&record)
-                .and_then(|()| remote_upload_journal::inspect_evidence())
+                .and_then(|()| remote_upload_journal::inspect_evidence_for_review())
                 .map_err(|error| error.to_string());
             let _ = sender.send((generation, result));
         });
@@ -3767,9 +3766,10 @@ impl Explorer {
             }
             self.remote_journal_loading = false;
             match result {
-                Ok((records, probes)) => {
-                    self.remote_journal_records = records;
-                    self.remote_probe_records = probes;
+                Ok(inspection) => {
+                    self.remote_journal_records = inspection.uploads;
+                    self.remote_probe_records = inspection.probes;
+                    self.remote_journal_warnings = inspection.warnings;
                     self.remote_journal_error = None;
                     self.remote_journal_confirm = None;
                 }
@@ -4578,6 +4578,7 @@ impl Explorer {
                 });
                 if !self.remote_journal_records.is_empty()
                     || !self.remote_probe_records.is_empty()
+                    || !self.remote_journal_warnings.is_empty()
                     || self.remote_journal_error.is_some()
                 {
                     ui.separator();
@@ -4585,6 +4586,13 @@ impl Explorer {
                     ui.label("A timeout or crash may have left private objects on the remote server. RiceField never queries, retries, moves or deletes them during recovery. Review the named paths before discarding local evidence.");
                     if let Some(error) = &self.remote_journal_error {
                         ui.colored_label(Color32::LIGHT_RED, format!("Cannot inspect remote evidence: {error}"));
+                    }
+                    if !self.remote_journal_warnings.is_empty() {
+                        ui.colored_label(Color32::LIGHT_YELLOW,
+                            "Some recovery artifacts are unreadable or incomplete. Valid records remain visible; no remote objects or local evidence were deleted. Upload admission still uses strict journal validation.");
+                        for warning in &self.remote_journal_warnings {
+                            ui.small(warning);
+                        }
                     }
                     egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
                     for record in &self.remote_journal_records {

@@ -9,6 +9,84 @@ Thunar for supported workflows. Keep Thunar installed until real Linux Mint
 acceptance passes. Prioritize data integrity, functionality, stability,
 performance, Linux integration, then visual polish.
 
+## Final 1.0 execution plan (after rc.21)
+
+Work in this order. Each checked item needs tests, documentation and a green
+GitHub PR before moving to the next. **No stable tag** until both P0 software
+gates and the owner's physical-device acceptance pass. Keep unsupported remote
+operations disabled rather than relaxing no-overwrite requirements.
+
+### Step 1 — P0: Trustworthy recovery evidence and network-write failures
+
+- [x] Keep valid remote-upload and safety-probe evidence visible even when a
+  different journal entry is corrupt, a symlink or an interrupted temporary
+  artifact. Show explicit warnings without deleting/replaying any entry;
+  leave upload admission's strict validator unchanged. Regression-test mixed
+  valid/damaged evidence and symlinked journal directories.
+- [ ] Extend real-protocol interruption fixtures for cancellation, occupied
+  destinations, lost replies and reconnects across WebDAV, OpenSSH-SFTP and
+  signed SMB, including a **failed cleanup after successful publication**.
+- [ ] Provide an actionable manual recovery checklist and explicit state
+  labels for uncertain server stages; never infer success from a timeout.
+
+**Exit:** an interrupted upload cannot silently overwrite, lose source data,
+or conceal inspectable recovery evidence. Hardware NAS/offline validation is
+still a separate release gate.
+
+### Step 2 — P0: Complete the declared remote write contract
+
+- [ ] Audit each supported server and operation against server-enforced
+  atomic no-replace publication, private staging, verified bytes and crash
+  evidence. Add concurrent-client protocol tests before enabling mutations.
+- [ ] Implement safe additional remote operations only where a real backend
+  proves its guarantees. Keep remote rename/delete and MTP write disabled
+  until proven; any permanent read-only limitation needs an explicit 1.0 scope
+  decision rather than an implicit checklist pass.
+- [ ] Verify Synology SMB permissions and disconnection behavior on disposable
+  user-owned shares, with no operations against the media library.
+
+**Exit:** every advertised write backend has a tested capability/failure
+matrix; unsupported servers fail closed and report why.
+
+### Step 3 — P0/P1: Local recovery, moves and Undo
+
+- [ ] Complete interruption/rollback tests for staged file and directory
+  operations, including cross-device moves, collisions and post-commit
+  failures. Preserve originals whenever evidence is insufficient.
+- [ ] Expand guarded Undo to eligible copy, move and Trash operations only
+  with verified object identity, collision refusal and recoverable behavior;
+  keep permanent delete and uncertain batches excluded.
+- [ ] Show per-file results and explicit recovery actions without blocking
+  the UI; update the owner fault-injection matrix.
+
+**Exit:** no silent data loss or overwrite on supported local workflows.
+
+### Step 4 — P1: Complete daily desktop workflows
+
+- [ ] Finish native external drag-and-drop and broader portal/clipboard
+  interoperability on X11 and Wayland; retain safe helper fallback.
+- [ ] Validate file-manager registration, Open With, mounts/Unlock/Eject,
+  focus, keyboard navigation and screen-reader behaviors in all seven rices.
+- [ ] Finish direct RiceBowl theme/event integration without making RiceBowl
+  mandatory. Complete German/English text for supported core dialogs.
+
+**Exit:** file manager works independently and retains its Linux desktop
+contract across rices, with no functional regressions from visual polish.
+
+### Step 5 — Release candidate and owner acceptance
+
+- [ ] Finalize changelog, source/release artifact checksums, installer and
+  rollback, screenshots, documentation, static analysis, security and
+  performance tests; freeze the exact candidate SHA.
+- [ ] Owner runs the prepared Mint/ThinkPad, 4 GB, NAS/SMB, USB/LUKS,
+  disconnect, power-off, X11/Wayland and accessibility acceptance fixtures.
+- [ ] Fix release-blocking defects, rerun CI and the affected hardware checks,
+  then publish signed-off `v1.0.0`. Keep Thunar/Nemo as a fallback until then.
+
+**Scope guard:** optional indexing, 1:1 proprietary UI artwork, arbitrary
+runtime Rust plugins, and speculative file-system backends are post-1.0.
+The historical milestone details below remain the full implementation ledger.
+
 ### ChromeOS · Files identity and differentiation
 
 - [x] Replace the generic Modern control stack with an original ChromeOS
