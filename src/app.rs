@@ -5281,9 +5281,21 @@ impl Explorer {
                     .iter()
                     .any(|rule| *rule != filesystem::CopyRule::Global)
             {
-                filesystem::preview_copy_with_rules_cancellable(&sources, &destination, conflict, &rules, &cancelled)
+                filesystem::preview_copy_with_rules_cancellable(
+                    &sources,
+                    &destination,
+                    conflict,
+                    &rules,
+                    &cancelled,
+                )
             } else {
-                filesystem::preview_transfer_cancellable(&sources, &destination, conflict, moving, &cancelled)
+                filesystem::preview_transfer_cancellable(
+                    &sources,
+                    &destination,
+                    conflict,
+                    moving,
+                    &cancelled,
+                )
             }
             .map_err(|error| error.to_string());
             if !cancelled.load(Ordering::Relaxed) {

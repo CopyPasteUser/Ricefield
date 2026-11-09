@@ -2569,7 +2569,13 @@ pub fn preview_transfer(
     conflict: ConflictPolicy,
     moving: bool,
 ) -> io::Result<TransferPlan> {
-    preview_transfer_cancellable(sources, destination, conflict, moving, &AtomicBool::new(false))
+    preview_transfer_cancellable(
+        sources,
+        destination,
+        conflict,
+        moving,
+        &AtomicBool::new(false),
+    )
 }
 
 pub fn preview_transfer_cancellable(
@@ -2606,7 +2612,11 @@ pub fn preview_copy_with_rules(
     rules: &[CopyRule],
 ) -> io::Result<TransferPlan> {
     preview_copy_with_rules_cancellable(
-        sources, destination, conflict, rules, &AtomicBool::new(false),
+        sources,
+        destination,
+        conflict,
+        rules,
+        &AtomicBool::new(false),
     )
 }
 
@@ -5965,8 +5975,11 @@ mod tests {
         fs::write(&source, b"intact").unwrap();
         let cancelled = AtomicBool::new(true);
         let result = preview_copy_with_rules_cancellable(
-            &[source.clone()], &destination, ConflictPolicy::KeepBoth,
-            &[CopyRule::Global], &cancelled,
+            &[source.clone()],
+            &destination,
+            ConflictPolicy::KeepBoth,
+            &[CopyRule::Global],
+            &cancelled,
         );
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Interrupted);
         assert_eq!(fs::read(source).unwrap(), b"intact");
