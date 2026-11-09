@@ -74,6 +74,9 @@ pub fn describe(action: &Action) -> String {
         }
         Action::CopyAs { name, .. } => format!("Copy as {}", name.to_string_lossy()),
         Action::Move { sources, .. } => format!("Move {} item(s)", sources.len()),
+        Action::MoveWithRules { sources, .. } => {
+            format!("Move {} item(s) with individual choices", sources.len())
+        }
         Action::Trash { paths } => format!("Trash {} item(s)", paths.len()),
         Action::Delete { paths } => format!("Delete {} item(s)", paths.len()),
         Action::Link { sources, .. } => format!("Link {} item(s)", sources.len()),
