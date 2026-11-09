@@ -1556,6 +1556,7 @@ pub struct Explorer {
     volume_receiver: Receiver<Result<(String, Option<String>), String>>,
     volume_connect_open: bool,
     volume_connect_uri: String,
+    volume_connect_last_target: String,
     volume_connect_smb: bool,
     volume_connect_server: String,
     volume_connect_share: String,
@@ -1839,6 +1840,7 @@ impl Explorer {
             volume_receiver,
             volume_connect_open: false,
             volume_connect_uri: String::new(),
+            volume_connect_last_target: String::new(),
             volume_connect_smb: true,
             volume_connect_server: String::new(),
             volume_connect_share: String::new(),
@@ -3138,6 +3140,7 @@ impl Explorer {
         };
         self.volume_connect_share.clear();
         self.volume_connect_show_discovery = false;
+        self.volume_connect_last_target = uri.clone();
         self.volume_connect_uri = uri;
         self.volume_connect_user.clear();
         self.volume_connect_domain.clear();
@@ -3387,19 +3390,20 @@ impl Explorer {
                                     _ => Err("Enter a valid SFTP, WebDAV or MTP address".into()),
                                 }
                             };
-                            let previous_uri = self.volume_connect_uri.clone();
-                            if self.volume_connect_smb {
-                                self.volume_connect_uri = target.as_ref().cloned().unwrap_or_default();
-                            }
-                            if self.volume_connect_uri != previous_uri
+                            let current_target = target.as_ref().cloned().unwrap_or_default();
+                            if current_target != self.volume_connect_last_target
                                 || self
                                     .keyring_loaded_uri
                                     .as_ref()
-                                    .is_some_and(|loaded| loaded != &self.volume_connect_uri)
+                                    .is_some_and(|loaded| loaded != &current_target)
                             {
                                 volume::clear_password(&mut self.volume_connect_password);
                                 self.keyring_loaded_uri = None;
                                 self.volume_connect_remember = false;
+                            }
+                            self.volume_connect_last_target = current_target.clone();
+                            if self.volume_connect_smb {
+                                self.volume_connect_uri = current_target;
                             }
                             match &target {
                                 Ok(uri) => {
