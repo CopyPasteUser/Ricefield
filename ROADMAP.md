@@ -11,6 +11,9 @@ performance, Linux integration, then visual polish.
 
 ## Final 1.0 execution plan (after rc.21)
 
+For the final desktop integration, language, accessibility and release polish
+checklist see [the ordered 1.0 polish plan](docs/1.0-FINAL-POLISH.md).
+
 Work in this order. Each checked item needs tests, documentation and a green
 GitHub PR before moving to the next. **No stable tag** until both P0 software
 gates and the owner's physical-device acceptance pass. Keep unsupported remote

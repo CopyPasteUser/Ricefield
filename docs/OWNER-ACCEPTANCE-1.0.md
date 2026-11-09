@@ -180,8 +180,18 @@ all boxes below still require owner verification.
   encryption must report its backend limitation. Use hostile-path fixtures
   only in isolated disposable folders; no traversal escapes extraction root.
 - [ ] **C05 Clipboard/drag helpers:** copy, cut, paste and external desktop
-  clipboard exchange. Test drag-out when supported; unavailable portal or
-  shell functionality must fail honestly instead of losing selection.
+  clipboard exchange. On X11 and Wayland separately, test direct drag **in**
+  from Thunar and desktop to a local folder, an inactive local tab, both split
+  panes and a sidebar place. A pointer over toolbar/non-folder controls must
+  refuse instead of copying into the focused tab. A remote tab must never
+  redirect a drop to a local fallback path, including with an active local
+  split pane. A dialog must block drops. Copy 129 disposable files, a duplicate
+  URI list, and an unsupported non-file payload: all must fail or deduplicate
+  visibly, with no unwanted mutation. Also test pointer-less drop fallback to
+  the focused **local** pane only. Test explicit `ripdrag`/`dragon` drag-out
+  when installed; direct file-tile-to-app drag-out is not yet supported.
+  Unavailable compositor, portal or shell functionality must fail honestly
+  instead of losing selection. Use Cut/Copy/Paste as keyboard alternative.
 
 ## D. NAS, network tabs and guarded single-file uploads
 

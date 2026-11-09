@@ -94,7 +94,12 @@ nothing. Conflicts use new names rather than overwriting existing files.
 Press **Esc** to cancel. Dragging files **into** RiceField from another app
 copies them to the local folder under the pointer, or the focused folder if
 the desktop does not report a pointer position. Drops onto non-folder controls
-are ignored. Remote tabs remain read-only.
+are ignored with an error message. The intended local folder or pane is
+outlined while desktop file-drag hover events are available. A file drop onto
+a network tab is refused; even in a split view no files are written to that
+tab's hidden local fallback path. An active dialog blocks drops until closed.
+Drops are limited to 128 absolute local file/folder paths; duplicate paths are
+processed only once. Remote tabs remain read-only.
 
 To drag **out** to another application, the context action **Drag to another
 app…** still needs an installed `ripdrag` or `dragon` helper. Direct native

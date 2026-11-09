@@ -635,6 +635,24 @@ struct DropArea {
     folder: bool,
 }
 
+// The native windowing backend does not always provide a pointer position for
+// an external file drop. Only that case may fall back to the focused *local*
+// folder; a known pointer position must never silently target another pane.
+fn external_drop_target(
+    pointer_known: bool,
+    hit: Option<(u64, &Path)>,
+    focused_local: Option<(u64, &Path)>,
+) -> Result<(u64, PathBuf), &'static str> {
+    if pointer_known {
+        hit.map(|(id, path)| (id, path.to_path_buf()))
+            .ok_or("Drop onto a local folder, tab or file pane")
+    } else {
+        focused_local
+            .map(|(id, path)| (id, path.to_path_buf()))
+            .ok_or("Focus a local folder before dropping files")
+    }
+}
+
 // A drop is a copy unless Shift is held. Never turn a drag onto the source
 // directory into a duplicate, and never copy a folder into its own subtree.
 fn drop_action(
@@ -642,17 +660,25 @@ fn drop_action(
     destination: &Path,
     move_requested: bool,
 ) -> Result<Option<Action>, &'static str> {
-    if paths.is_empty() || paths.iter().any(|path| !path.is_absolute()) {
-        return Err("Drag requires local files or folders with absolute paths");
+    if paths.is_empty() || paths.len() > 128 {
+        return Err("Drag supports between 1 and 128 local files or folders");
+    }
+    if !destination.is_absolute()
+        || paths
+            .iter()
+            .any(|path| !path.is_absolute() || path.file_name().is_none())
+    {
+        return Err("Drag requires absolute local file or folder paths");
     }
     if paths.iter().any(|path| destination.starts_with(path)) {
         return Err("Cannot drop a folder into itself or a descendant");
     }
-    let sources: Vec<_> = paths
-        .iter()
-        .filter(|path| path.parent() != Some(destination))
-        .cloned()
-        .collect();
+    let mut sources = Vec::with_capacity(paths.len());
+    for path in paths {
+        if path.parent() != Some(destination) && !sources.contains(path) {
+            sources.push(path.clone());
+        }
+    }
     if sources.is_empty() {
         return Ok(None);
     }
@@ -2509,6 +2535,73 @@ impl Explorer {
         );
     }
 
+    fn paint_external_drop_feedback(&self, context: &egui::Context) {
+        let count = context.input(|input| input.raw.hovered_files.len());
+        if count == 0 || self.drag_files.is_some() {
+            return;
+        }
+        let position = context.input(|input| input.pointer.latest_pos());
+        // Pointer-less drops target the active local pane, not an unrelated
+        // tab or a remote tab's local fallback path.
+        let target = if let Some(position) = position {
+            self.drop_area_at(position)
+        } else {
+            self.drop_areas
+                .iter()
+                .rev()
+                .find(|area| !area.folder && area.tab_id == self.current().id)
+        };
+        let Some(target) = target else {
+            return;
+        };
+        let valid = count <= 128 && !self.external_drop_blocked();
+        let color = if valid {
+            Color32::from_rgb(39, 117, 72)
+        } else {
+            Color32::from_rgb(165, 52, 49)
+        };
+        let painter = context.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::unique("external_drop_feedback"),
+        ));
+        painter.rect_stroke(
+            target.rect.shrink(1.0),
+            4.0,
+            egui::Stroke::new(2.0, color),
+            egui::StrokeKind::Inside,
+        );
+        let label = if self.external_drop_blocked() {
+            "Close dialog before dropping".into()
+        } else if valid {
+            format!("Copy {count} item(s) here")
+        } else {
+            "Too many files (maximum 128)".into()
+        };
+        let rect = Rect::from_min_size(
+            target.rect.left_top() + egui::vec2(8.0, 8.0),
+            egui::vec2((label.chars().count() as f32 * 7.1 + 20.0).min(270.0), 29.0),
+        );
+        painter.rect_filled(rect, 5.0, color);
+        painter.text(
+            rect.left_center() + egui::vec2(10.0, 0.0),
+            Align2::LEFT_CENTER,
+            label,
+            egui::FontId::proportional(12.0),
+            Color32::WHITE,
+        );
+    }
+
+    fn external_drop_blocked(&self) -> bool {
+        self.dialog.is_some()
+            || self.archive_dialog.is_some()
+            || self.volume_confirm.is_some()
+            || self.volume_unlock_target.is_some()
+            || self.volume_connect_open
+            || self.discovery_open
+            || self.recovery_open
+            || self.remote_upload_open
+    }
+
     fn accept_external_drop(&mut self, context: &egui::Context) {
         let files: Vec<_> = context.input(|input| {
             input
@@ -2521,22 +2614,31 @@ impl Explorer {
         if files.is_empty() {
             return;
         }
-        if self.current().remote_uri.is_some() {
+        if self.external_drop_blocked() {
             self.status = Some((
-                "Remote browsing is read-only; drag-in is disabled".into(),
+                "Close the active dialog before dropping files".into(),
                 true,
             ));
             return;
         }
         let position = context.input(|input| input.pointer.latest_pos());
-        let target = position.and_then(|position| self.drop_destination(position));
-        if position.is_some() && target.is_none() {
-            self.status = Some(("Drop onto a local folder, tab or file pane".into(), true));
-            return;
-        }
-        let destination = target
-            .as_ref()
-            .map_or_else(|| self.current().path.clone(), |(_, path, _)| path.clone());
+        let hit = position.and_then(|position| self.drop_area_at(position));
+        let focused_local = self
+            .current()
+            .remote_uri
+            .is_none()
+            .then_some((self.current().id, self.current().path.as_path()));
+        let (tab_id, destination) = match external_drop_target(
+            position.is_some(),
+            hit.map(|area| (area.tab_id, area.destination.as_path())),
+            focused_local,
+        ) {
+            Ok(target) => target,
+            Err(reason) => {
+                self.status = Some((reason.into(), true));
+                return;
+            }
+        };
         let action = match drop_action(&files, &destination, false) {
             Ok(Some(action)) => action,
             Ok(None) => return,
@@ -2545,8 +2647,7 @@ impl Explorer {
                 return;
             }
         };
-        if let Some((id, _, _)) = target
-            && let Some(index) = self.tabs.iter().position(|tab| tab.id == id)
+        if let Some(index) = self.tabs.iter().position(|tab| tab.id == tab_id)
         {
             self.tab_command(TabCommand::Activate(index));
         }
@@ -9778,12 +9879,14 @@ impl Explorer {
 
     fn file_area(&mut self, ui: &mut egui::Ui, index: usize) {
         let theme = self.theme.clone();
-        self.drop_areas.push(DropArea {
-            tab_id: self.tabs[index].id,
-            destination: self.tabs[index].path.clone(),
-            rect: ui.available_rect_before_wrap(),
-            folder: false,
-        });
+        if self.tabs[index].remote_uri.is_none() {
+            self.drop_areas.push(DropArea {
+                tab_id: self.tabs[index].id,
+                destination: self.tabs[index].path.clone(),
+                rect: ui.available_rect_before_wrap(),
+                folder: false,
+            });
+        }
         if let Some(warning) = self.tabs[index].scan_warning.clone() {
             ui.horizontal_wrapped(|ui| {
                 ui.colored_label(Color32::from_rgb(168, 101, 14), warning);
@@ -11728,6 +11831,7 @@ impl eframe::App for Explorer {
         self.thumbnails.dispatch();
         self.quick_look_window(&context);
         self.paint_drag_feedback(&context);
+        self.paint_external_drop_feedback(&context);
         self.finish_drag(&context);
         self.accept_external_drop(&context);
         self.dialogs(&context);
@@ -11785,8 +11889,9 @@ mod tests {
         Action, CLIPBOARD_WAIT, Clipboard, Dialog, Explorer, ItemCounts, NameMode, PasteMode,
         PendingPaste, PropertyResult, PropertySnapshot, Tab, TabSnapshot, ViewResult,
         accept_property_result, active_after_swap, choose_paste_clipboard, commit_local_view,
-        drop_action, elapsed_label, next_search_repaint_delay, project_local_view,
-        read_property_snapshot, remaining_cut_paths, resolve_split_tabs, retain_visible_selection,
+        drop_action, elapsed_label, external_drop_target, next_search_repaint_delay,
+        project_local_view, read_property_snapshot, remaining_cut_paths, resolve_split_tabs,
+        retain_visible_selection,
         retry_unstarted_items, transfer_progress_details,
     };
     use crate::clipboard;
@@ -11926,6 +12031,48 @@ mod tests {
             drop_action(&mixed, Path::new("/home"), false),
             Ok(Some(Action::Copy { sources, .. })) if sources == [PathBuf::from("/other/new.txt")]
         ));
+    }
+
+    #[test]
+    fn drag_drop_deduplicates_paths_and_refuses_oversized_or_root_sources() {
+        let path = PathBuf::from("/source/picture.jpg");
+        let paths = vec![path.clone(), path.clone()];
+        assert!(matches!(
+            drop_action(&paths, Path::new("/target"), false),
+            Ok(Some(Action::Copy { sources, .. })) if sources == [path]
+        ));
+        assert!(drop_action(
+            &vec![PathBuf::from("/source/file"); 129],
+            Path::new("/target"),
+            false
+        )
+        .is_err());
+        assert!(drop_action(&[PathBuf::from("/")], Path::new("/target"), false).is_err());
+        assert!(drop_action(
+            &[PathBuf::from("/source/file")],
+            Path::new("relative"),
+            false
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn external_drop_uses_hit_local_target_even_when_focused_tab_is_remote() {
+        let local = Path::new("/home/user/Downloads");
+        let (id, path) = external_drop_target(true, Some((7, local)), None).unwrap();
+        assert_eq!(id, 7);
+        assert_eq!(path, local);
+    }
+
+    #[test]
+    fn external_drop_does_not_fall_back_when_pointer_misses_or_tab_is_remote() {
+        let local = Path::new("/home/user/Documents");
+        assert!(external_drop_target(true, None, Some((4, local))).is_err());
+        assert!(external_drop_target(false, None, None).is_err());
+        assert_eq!(
+            external_drop_target(false, None, Some((4, local))).unwrap(),
+            (4, local.to_path_buf())
+        );
     }
     fn remote_entry(name: &str, directory: bool, size: Option<u64>) -> RemoteEntry {
         RemoteEntry {
