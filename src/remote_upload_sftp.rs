@@ -598,9 +598,9 @@ mod tests {
         }
     }
 
-    fn run_crash_child_if_requested() {
+    fn run_crash_child_if_requested() -> bool {
         let Some(root) = std::env::var_os("RICEFIELD_TEST_SFTP_CRASH_ROOT") else {
-            return;
+            return false;
         };
         let root = PathBuf::from(root);
         let remote = root.join("remote");
@@ -628,7 +628,7 @@ mod tests {
         if std::env::var_os("RICEFIELD_TEST_SFTP_DENY_CLEANUP").is_some() {
             let error = result.expect_err("OpenSSH cleanup must fail without write permission");
             assert!(error.contains("SFTP"), "{error}");
-            return;
+            return true;
         }
         panic!("SFTP crash checkpoint was not reached: {result:?}");
     }
@@ -883,7 +883,9 @@ mod tests {
 
     #[test]
     fn real_sftp_denied_cleanup_after_publication_retains_recovery_evidence() {
-        run_crash_child_if_requested();
+        if run_crash_child_if_requested() {
+            return;
+        }
         let fixture = Fixture::new(server());
         let status = Command::new(std::env::current_exe().unwrap())
             .arg("remote_upload_sftp::tests::real_sftp_denied_cleanup_after_publication_retains_recovery_evidence")
