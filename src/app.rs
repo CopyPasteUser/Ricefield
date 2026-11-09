@@ -1166,9 +1166,9 @@ fn retry_unstarted_items(
         }
         if item.state == filesystem::ItemState::NotStarted {
             paths.push(item.source.clone());
-            selected_rules.push(
-                rules.map_or(filesystem::TransferRule::Global, |rules| rules[index].clone()),
-            );
+            selected_rules.push(rules.map_or(filesystem::TransferRule::Global, |rules| {
+                rules[index].clone()
+            }));
         }
     }
     (!paths.is_empty()).then_some(RetryProposal {
