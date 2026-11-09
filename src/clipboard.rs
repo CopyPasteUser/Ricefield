@@ -178,14 +178,23 @@ fn handlers() -> Vec<(&'static str, Vec<&'static str>, Vec<&'static str>)> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClipboardFormat {
+    Gnome,
+    UriList,
+}
+
 /// Desktop managers differ in which clipboard targets they advertise. Try
 /// the GNOME copy/cut format first (it preserves Move intent), then a plain
 /// URI list as a copy-only fallback. Never infer Cut from an ordinary list.
-fn paste_handlers() -> Vec<Vec<&'static str>> {
+fn paste_handlers() -> Vec<(ClipboardFormat, Vec<&'static str>)> {
     let handlers = handlers();
-    let mut commands: Vec<_> = handlers.iter().map(|(_, _, paste)| paste.clone()).collect();
+    let mut commands: Vec<_> = handlers
+        .iter()
+        .map(|(_, _, paste)| (ClipboardFormat::Gnome, paste.clone()))
+        .collect();
     for (program, _, _) in handlers {
-        commands.push(match program {
+        let command = match program {
             "wl-copy" => vec!["wl-paste", "--no-newline", "--type", "text/uri-list"],
             _ => vec![
                 "xclip",
@@ -195,7 +204,8 @@ fn paste_handlers() -> Vec<Vec<&'static str>> {
                 "text/uri-list",
                 "-o",
             ],
-        });
+        };
+        commands.push((ClipboardFormat::UriList, command));
     }
     commands
 }
@@ -236,7 +246,7 @@ pub fn copy_files(paths: &[PathBuf], cut: bool) -> io::Result<()> {
 }
 
 pub fn paste_files() -> Option<Files> {
-    for command in paste_handlers() {
+    for (format, command) in paste_handlers() {
         let (program, args) = command.split_first()?;
         let mut command = Command::new(program);
         command.args(args);
@@ -247,7 +257,7 @@ pub fn paste_files() -> Option<Files> {
             continue;
         }
         if let Ok(text) = String::from_utf8(bytes)
-            && let Some(files) = parse_files(&text)
+            && let Some(files) = parse_files(&text, format)
         {
             return Some(files);
         }
@@ -255,16 +265,17 @@ pub fn paste_files() -> Option<Files> {
     None
 }
 
-fn parse_files(text: &str) -> Option<Files> {
+fn parse_files(text: &str, format: ClipboardFormat) -> Option<Files> {
     let mut lines = text.lines();
     let first = lines.next()?;
-    let (cut, urls): (bool, Vec<&str>) = match first {
-        "cut" => (true, lines.collect()),
-        "copy" => (false, lines.collect()),
-        _ => (
+    let (cut, urls): (bool, Vec<&str>) = match (format, first) {
+        (ClipboardFormat::Gnome, "cut") => (true, lines.collect()),
+        (ClipboardFormat::Gnome, "copy") => (false, lines.collect()),
+        (ClipboardFormat::UriList, _) => (
             false,
             text.lines().filter(|line| !line.starts_with('#')).collect(),
         ),
+        _ => return None,
     };
     let paths: Vec<_> = urls.into_iter().filter_map(decode_uri).collect();
     if paths.is_empty() {
@@ -302,9 +313,15 @@ mod tests {
 
     #[test]
     fn parses_gnome_cut_and_uri_list() {
-        assert!(parse_files("cut\nfile:///tmp/a%20b\n").unwrap().cut);
+        assert!(
+            parse_files("cut\nfile:///tmp/a%20b\n", ClipboardFormat::Gnome)
+                .unwrap()
+                .cut
+        );
         assert_eq!(
-            parse_files("# comment\nfile:///tmp/a\n").unwrap().paths,
+            parse_files("# comment\nfile:///tmp/a\n", ClipboardFormat::UriList)
+                .unwrap()
+                .paths,
             vec![PathBuf::from("/tmp/a")]
         );
     }
@@ -313,18 +330,18 @@ mod tests {
     fn uri_list_fallback_is_copy_only_and_keeps_native_targets_first() {
         let candidates = paste_handlers();
         assert_eq!(candidates.len(), 4);
-        assert!(
-            candidates[..2]
-                .iter()
-                .all(|args| { args.contains(&"x-special/gnome-copied-files") })
-        );
+        assert!(candidates[..2].iter().all(|(format, args)| {
+            *format == ClipboardFormat::Gnome && args.contains(&"x-special/gnome-copied-files")
+        }));
         assert!(
             candidates[2..]
                 .iter()
-                .all(|args| args.contains(&"text/uri-list"))
+                .all(|(format, args)| *format == ClipboardFormat::UriList
+                    && args.contains(&"text/uri-list"))
         );
         let files = parse_files(
             "# URI list from another file manager\r\nfile:///tmp/first%20file\r\nfile:///tmp/second\r\n",
+            ClipboardFormat::UriList,
         )
         .unwrap();
         assert!(!files.cut);
@@ -335,7 +352,17 @@ mod tests {
                 PathBuf::from("/tmp/second")
             ]
         );
-        assert!(parse_files("https://example.invalid/file\r\n").is_none());
+        assert!(
+            parse_files("https://example.invalid/file\r\n", ClipboardFormat::UriList).is_none()
+        );
+        // A malformed URI-list must never convert a paste into a destructive
+        // move merely because it contains the GNOME word "cut".
+        assert!(
+            !parse_files("cut\nfile:///tmp/a\n", ClipboardFormat::UriList)
+                .unwrap()
+                .cut
+        );
+        assert!(parse_files("file:///tmp/a\n", ClipboardFormat::Gnome).is_none());
     }
 
     #[test]
@@ -345,7 +372,7 @@ mod tests {
         let (status, bytes) = run_helper(output, None, Duration::from_secs(2)).unwrap();
         assert!(status.success());
         assert_eq!(
-            parse_files(std::str::from_utf8(&bytes).unwrap())
+            parse_files(std::str::from_utf8(&bytes).unwrap(), ClipboardFormat::Gnome)
                 .unwrap()
                 .paths,
             vec![PathBuf::from("/tmp/example")]

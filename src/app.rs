@@ -10,6 +10,7 @@ use crate::{
     filesystem::{self, Action, ConflictPolicy, Entry, Progress},
     finder::{self, FinderAction, FinderContext, FinderNavIcon},
     folder_tree::FolderTree,
+    i18n,
     journal::{self, Inspection as JournalInspection, State as JournalState},
     keyring,
     location::Location,
@@ -21,6 +22,7 @@ use crate::{
     shell_renderer::{self, FileCellLayout, shorten},
     theme::{BUILTIN_IDS, ChromeComponent, ShellKind, SidebarPosition, SidebarSection, Theme},
     theme_editor::{self, ThemeEditor},
+    theme_events,
     thumbnail::ThumbnailManager,
     transfer_history,
     volume::{self, MountCredentials, VolumeAction},
@@ -30,6 +32,7 @@ use eframe::egui::{self, Align2, Color32, Key, Modifiers, Pos2, Rect, Vec2};
 use std::{
     collections::{BTreeSet, HashMap, HashSet, VecDeque},
     fs,
+    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     process::Command,
     sync::{
@@ -47,6 +50,7 @@ const CLIPBOARD_WAIT: Duration = Duration::from_secs(2);
 const MAX_CLOSED_TABS: usize = 16;
 // Small folders update immediately; expensive 100k-entry sorts never run in egui.
 const BACKGROUND_VIEW_THRESHOLD: usize = 8_192;
+type ThemeFingerprint = (SystemTime, u64, u64, u64);
 
 type WebdavEvidence = remote_upload_journal::EvidenceInspection;
 
@@ -1418,7 +1422,7 @@ fn accept_property_result(dialog: &mut Option<Dialog>, message: PropertyResult) 
 struct ThemeReloadResult {
     generation: u64,
     path: PathBuf,
-    fingerprint: Option<(SystemTime, u64)>,
+    fingerprint: Option<ThemeFingerprint>,
     theme: Result<Option<Theme>, String>,
 }
 
@@ -1467,8 +1471,10 @@ pub struct Explorer {
     config_writer: config::SaveWorker,
     theme: Theme,
     theme_file: Option<PathBuf>,
-    theme_file_state: Option<(SystemTime, u64)>,
+    theme_file_state: Option<ThemeFingerprint>,
     theme_last_check: Instant,
+    theme_watch_path: Option<PathBuf>,
+    theme_watcher: Option<theme_events::Watcher>,
     theme_reload_sender: Sender<ThemeReloadResult>,
     theme_reload_receiver: Receiver<ThemeReloadResult>,
     theme_reload_generation: u64,
@@ -1747,6 +1753,8 @@ impl Explorer {
             theme_file,
             theme_file_state,
             theme_last_check: Instant::now(),
+            theme_watch_path: None,
+            theme_watcher: None,
             theme_reload_sender,
             theme_reload_receiver,
             theme_reload_generation: 0,
@@ -3195,13 +3203,13 @@ impl Explorer {
         if self.volume_connect_open {
             let mut open = true;
             let mut connect = false;
-            egui::Window::new("Connect to network location")
+            egui::Window::new(i18n::tr("Connect to network location"))
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
                 .default_width(420.0)
                 .show(context, |ui| {
-                    ui.label("SMB, SFTP, WebDAV or MTP address (no passwords in the URL):");
+                    ui.label(i18n::tr("SMB, SFTP, WebDAV or MTP address (no passwords in the URL):"));
                     ui.add_sized(
                         [ui.available_width().min(420.0), 26.0],
                         egui::TextEdit::singleline(&mut self.volume_connect_uri)
@@ -3221,38 +3229,38 @@ impl Explorer {
                         self.keyring_loaded_uri = None;
                     }
                     ui.separator();
-                    ui.label("Username (leave empty for server default):");
+                    ui.label(i18n::tr("Username (leave empty for server default):"));
                     ui.add_sized(
                         [ui.available_width().min(420.0), 26.0],
                         egui::TextEdit::singleline(&mut self.volume_connect_user)
-                            .hint_text("NAS username"),
+                            .hint_text(i18n::tr("NAS username")),
                     );
-                    ui.label("Domain / workgroup (optional):");
+                    ui.label(i18n::tr("Domain / workgroup (optional):"));
                     ui.add_sized(
                         [ui.available_width().min(420.0), 26.0],
                         egui::TextEdit::singleline(&mut self.volume_connect_domain)
                             .hint_text("WORKGROUP"),
                     );
-                    ui.label("Password (leave empty for guest / existing session):");
+                    ui.label(i18n::tr("Password (leave empty for guest / existing session):"));
                     ui.add_sized(
                         [ui.available_width().min(420.0), 26.0],
                         egui::TextEdit::singleline(&mut self.volume_connect_password)
                             .password(true)
-                            .hint_text("NAS password"),
+                            .hint_text(i18n::tr("NAS password")),
                     );
-                    ui.checkbox(&mut self.volume_connect_remember, "Remember login in Linux keyring")
-                        .on_hover_text("Only after a successful connection. Requires libsecret-tools and an unlocked Secret Service; never stored in RiceField settings.");
+                    ui.checkbox(&mut self.volume_connect_remember, i18n::tr("Remember login in Linux keyring"))
+                        .on_hover_text(i18n::tr("Only after a successful connection. Requires libsecret-tools and an unlocked Secret Service; never stored in RiceField settings."));
                     ui.horizontal(|ui| {
-                        if ui.add_enabled(!self.keyring_busy, egui::Button::new("Use saved login")).clicked() {
+                        if ui.add_enabled(!self.keyring_busy, egui::Button::new(i18n::tr("Use saved login"))).clicked() {
                             self.request_keyring(false);
                         }
-                        if ui.add_enabled(!self.keyring_busy, egui::Button::new("Forget saved login")).clicked() {
+                        if ui.add_enabled(!self.keyring_busy, egui::Button::new(i18n::tr("Forget saved login"))).clicked() {
                             self.request_keyring(true);
                         }
                         if self.keyring_busy { ui.spinner(); }
                     });
-                    ui.small("Passwords are never included in the URL. Saving is opt-in and uses your desktop's encrypted Secret Service.");
-                    connect = ui.add_enabled(!self.volume_busy, egui::Button::new("Connect")).clicked();
+                    ui.small(i18n::tr("Passwords are never included in the URL. Saving is opt-in and uses your desktop's encrypted Secret Service."));
+                    connect = ui.add_enabled(!self.volume_busy, egui::Button::new(i18n::tr("Connect"))).clicked();
                 });
             self.volume_connect_open = open;
             if connect {
@@ -3300,22 +3308,22 @@ impl Explorer {
         if let Some((object_path, label)) = self.volume_unlock_target.clone() {
             let mut open = true;
             let mut approve = false;
-            egui::Window::new("Unlock encrypted removable volume")
+            egui::Window::new(i18n::tr("Unlock encrypted removable volume"))
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
                 .show(context, |ui| {
                     ui.strong(label);
-                    ui.label("Enter the volume passphrase. UDisks2 and Polkit handle authorization; RiceField never saves this password.");
+                    ui.label(i18n::tr("Enter the volume passphrase. UDisks2 and Polkit handle authorization; RiceField never saves this password."));
                     ui.add(
                         egui::TextEdit::singleline(&mut self.volume_unlock_password)
                             .password(true)
-                            .hint_text("Volume passphrase"),
+                            .hint_text(i18n::tr("Volume passphrase")),
                     );
                     approve = ui
                         .add_enabled(
                             !self.volume_busy && !self.volume_unlock_password.is_empty(),
-                            egui::Button::new("Unlock volume"),
+                            egui::Button::new(i18n::tr("Unlock volume")),
                         )
                         .clicked();
                 });
@@ -3338,26 +3346,36 @@ impl Explorer {
         if let Some(action) = self.volume_confirm.clone() {
             let mut approve = false;
             let mut dismiss = false;
-            egui::Window::new(format!("Confirm {}", action.label()))
-                .collapsible(false)
-                .resizable(false)
-                .show(context, |ui| {
-                    if matches!(action, VolumeAction::LockEncrypted(_)) {
-                        ui.label("Unmount all decrypted filesystems before locking this volume.");
-                        ui.label("UDisks2 will refuse to lock a busy encrypted mapping.");
-                    } else {
-                        ui.label(
-                            "Open files or transfers on this volume may fail after disconnecting it.",
-                        );
-                        ui.label("Make sure writes are complete before continuing.");
-                    }
-                    ui.horizontal(|ui| {
-                        approve = ui
-                            .add_enabled(!self.volume_busy, egui::Button::new(action.label()))
-                            .clicked();
-                        dismiss = ui.button("Cancel").clicked();
-                    });
+            egui::Window::new(i18n::template(
+                "Confirm {action}",
+                &[("action", i18n::tr(action.label()).into())],
+            ))
+            .collapsible(false)
+            .resizable(false)
+            .show(context, |ui| {
+                if matches!(action, VolumeAction::LockEncrypted(_)) {
+                    ui.label(i18n::tr(
+                        "Unmount all decrypted filesystems before locking this volume.",
+                    ));
+                    ui.label(i18n::tr(
+                        "UDisks2 will refuse to lock a busy encrypted mapping.",
+                    ));
+                } else {
+                    ui.label(i18n::tr(
+                        "Open files or transfers on this volume may fail after disconnecting it.",
+                    ));
+                    ui.label(i18n::tr("Make sure writes are complete before continuing."));
+                }
+                ui.horizontal(|ui| {
+                    approve = ui
+                        .add_enabled(
+                            !self.volume_busy,
+                            egui::Button::new(i18n::tr(action.label())),
+                        )
+                        .clicked();
+                    dismiss = ui.button(i18n::tr("Cancel")).clicked();
                 });
+            });
             if approve {
                 self.start_volume_action(action, false);
             }
@@ -5747,9 +5765,11 @@ impl Explorer {
         }
     }
 
-    fn theme_file_fingerprint(path: &Path) -> Option<(SystemTime, u64)> {
+    fn theme_file_fingerprint(path: &Path) -> Option<ThemeFingerprint> {
         let meta = fs::metadata(path).ok()?;
-        Some((meta.modified().ok()?, meta.len()))
+        // RiceBowl replaces its profile atomically. Inode/device detect
+        // replacements even when new content has identical length and mtime.
+        Some((meta.modified().ok()?, meta.len(), meta.dev(), meta.ino()))
     }
 
     fn reload_theme_file(&mut self, context: &egui::Context, force: bool) {
@@ -10839,47 +10859,56 @@ impl Explorer {
                     );
                 }
                 Dialog::OpenWith { path, apps, .. } => {
-                    shell_components::show_dialog(context, "Open With", true, Some(450.0), |ui| {
-                        ui.label(format!("Choose an installed app for {}", path.display()));
-                        match apps {
-                            None => {
-                                ui.horizontal(|ui| {
-                                    ui.spinner();
-                                    ui.label("Looking up MIME handlers…");
-                                });
-                            }
-                            Some(Err(error)) => {
-                                ui.colored_label(Color32::RED, error.as_str());
-                            }
-                            Some(Ok(handlers)) => {
-                                egui::ScrollArea::vertical()
-                                    .max_height(260.0)
-                                    .show(ui, |ui| {
-                                        for desktop_id in handlers.iter() {
-                                            if ui
-                                                .button(desktop_id.trim_end_matches(".desktop"))
-                                                .on_hover_text(desktop_id)
-                                                .clicked()
-                                            {
-                                                open_with_launch =
-                                                    Some((desktop_id.clone(), path.clone()));
-                                                dismiss = true;
-                                            }
-                                        }
+                    shell_components::show_dialog(
+                        context,
+                        i18n::tr("Open With"),
+                        true,
+                        Some(450.0),
+                        |ui| {
+                            ui.label(i18n::template(
+                                "Choose an installed app for {path}",
+                                &[("path", path.display().to_string())],
+                            ));
+                            match apps {
+                                None => {
+                                    ui.horizontal(|ui| {
+                                        ui.spinner();
+                                        ui.label(i18n::tr("Looking up MIME handlers…"));
                                     });
+                                }
+                                Some(Err(error)) => {
+                                    ui.colored_label(Color32::RED, error.as_str());
+                                }
+                                Some(Ok(handlers)) => {
+                                    egui::ScrollArea::vertical()
+                                        .max_height(260.0)
+                                        .show(ui, |ui| {
+                                            for desktop_id in handlers.iter() {
+                                                if ui
+                                                    .button(desktop_id.trim_end_matches(".desktop"))
+                                                    .on_hover_text(desktop_id)
+                                                    .clicked()
+                                                {
+                                                    open_with_launch =
+                                                        Some((desktop_id.clone(), path.clone()));
+                                                    dismiss = true;
+                                                }
+                                            }
+                                        });
+                                }
                             }
-                        }
-                        if ui
-                            .button("Choose another app with system dialog…")
-                            .clicked()
-                        {
-                            open_with_portal = Some(path.clone());
-                            dismiss = true;
-                        }
-                        if ui.button("Cancel").clicked() {
-                            dismiss = true;
-                        }
-                    });
+                            if ui
+                                .button(i18n::tr("Choose another app with system dialog…"))
+                                .clicked()
+                            {
+                                open_with_portal = Some(path.clone());
+                                dismiss = true;
+                            }
+                            if ui.button(i18n::tr("Cancel")).clicked() {
+                                dismiss = true;
+                            }
+                        },
+                    );
                 }
                 Dialog::Duplicates { result, .. } => {
                     shell_components::show_dialog(
@@ -10946,15 +10975,21 @@ impl Explorer {
                 } => {
                     shell_components::show_dialog(
                         context,
-                        "Paste with options",
+                        i18n::tr("Paste with options"),
                         true,
                         None,
                         |ui| {
-                            ui.label(format!(
-                                "{} {} item(s) into {}",
-                                if clipboard.cut { "Move" } else { "Copy" },
-                                clipboard.paths.len(),
-                                destination.display()
+                            ui.label(i18n::template(
+                                "{action} {count} item(s) into {destination}",
+                                &[
+                                    (
+                                        "action",
+                                        i18n::tr(if clipboard.cut { "Move" } else { "Copy" })
+                                            .into(),
+                                    ),
+                                    ("count", clipboard.paths.len().to_string()),
+                                    ("destination", destination.display().to_string()),
+                                ],
                             ));
                             if clipboard.cut {
                                 ui.colored_label(
@@ -10967,23 +11002,25 @@ impl Explorer {
                                 .radio_value(
                                     conflict,
                                     ConflictPolicy::KeepBoth,
-                                    "Keep both — rename incoming items when names collide",
+                                    i18n::tr(
+                                        "Keep both — rename incoming items when names collide",
+                                    ),
                                 )
                                 .changed();
                             policy_changed |= ui.radio_value(
                                 conflict,
                                 ConflictPolicy::SkipExisting,
-                                "Skip existing — leave any existing destination item untouched (no comparison)",
+                                i18n::tr("Skip existing — leave any existing destination item untouched (no comparison)"),
                             ).changed();
                             policy_changed |= ui.radio_value(
                                 conflict,
                                 ConflictPolicy::AbortOnConflict,
-                                "Require no conflicts — cancel the entire batch if a name collides",
+                                i18n::tr("Require no conflicts — cancel the entire batch if a name collides"),
                             ).changed();
                             policy_changed |= ui.radio_value(
                                 conflict,
                                 ConflictPolicy::SkipIfIdentical,
-                                "Skip only matching contents — reject different or unverifiable files",
+                                i18n::tr("Skip only matching contents — reject different or unverifiable files"),
                             ).changed();
                             let mut rule_changed = false;
                             if !rules.is_empty() {
@@ -11123,11 +11160,14 @@ impl Explorer {
                             };
                             ui.small("Preview only: the worker rechecks paths before execution. Matching contents are compared read-only (up to 512 MiB / 10,000 entries); this is not a permanent integrity guarantee. No existing file is overwritten.");
                             ui.horizontal(|ui| {
-                                if ui.button("Cancel").clicked() {
+                                if ui.button(i18n::tr("Cancel")).clicked() {
                                     dismiss = true;
                                 }
                                 if ui
-                                    .add_enabled(can_start, egui::Button::new("Start transfer"))
+                                    .add_enabled(
+                                        can_start,
+                                        egui::Button::new(i18n::tr("Start transfer")),
+                                    )
                                     .clicked()
                                 {
                                     action = Some(Self::paste_action_with_rules(
@@ -11144,12 +11184,12 @@ impl Explorer {
                 }
                 Dialog::Name { mode, value } => {
                     let title = match mode {
-                        NameMode::Folder(_) => "New folder",
-                        NameMode::File(_) => "New empty file",
-                        NameMode::Rename(_) => "Rename item",
+                        NameMode::Folder(_) => i18n::tr("New folder"),
+                        NameMode::File(_) => i18n::tr("New empty file"),
+                        NameMode::Rename(_) => i18n::tr("Rename item"),
                     };
                     shell_components::show_dialog(context, title, false, None, |ui| {
-                        ui.label("Name");
+                        ui.label(i18n::tr("Name"));
                         let input = ui.add_sized(
                             [ui.available_width().min(340.0), 28.0],
                             egui::TextEdit::singleline(value),
@@ -11158,14 +11198,16 @@ impl Explorer {
                         if !valid {
                             shell_components::small_error(
                                 ui,
-                                "Enter a name without slashes, or dots alone.",
+                                i18n::tr("Enter a name without slashes, or dots alone."),
                             );
                         }
                         ui.horizontal(|ui| {
-                            if ui.button("Cancel").clicked() {
+                            if ui.button(i18n::tr("Cancel")).clicked() {
                                 dismiss = true;
                             }
-                            if ui.add_enabled(valid, egui::Button::new("Save")).clicked()
+                            if ui
+                                .add_enabled(valid, egui::Button::new(i18n::tr("Save")))
+                                .clicked()
                                 || (valid
                                     && input.lost_focus()
                                     && ui.input(|i| i.key_pressed(Key::Enter)))
@@ -11190,41 +11232,46 @@ impl Explorer {
                 } => {
                     shell_components::show_dialog(
                         context,
-                        format!("Batch rename ({} items)", paths.len()),
+                        i18n::template(
+                            "Batch rename ({count} items)",
+                            &[("count", paths.len().to_string())],
+                        ),
                         true,
                         Some(580.0),
                         |ui| {
-                            ui.label("Preview every new name before applying the changes.");
+                            ui.label(i18n::tr(
+                                "Preview every new name before applying the changes.",
+                            ));
                             ui.horizontal(|ui| {
-                                ui.label("Prefix:");
+                                ui.label(i18n::tr("Prefix:"));
                                 ui.add_sized([220.0, 26.0], egui::TextEdit::singleline(prefix));
                             });
                             ui.horizontal(|ui| {
-                                ui.label("Suffix:");
+                                ui.label(i18n::tr("Suffix:"));
                                 ui.add_sized([220.0, 26.0], egui::TextEdit::singleline(suffix));
                             });
                             ui.horizontal_wrapped(|ui| {
-                                ui.label("Find:");
+                                ui.label(i18n::tr("Find:"));
                                 ui.add_sized(
                                     [ui.available_width().min(170.0), 26.0],
                                     egui::TextEdit::singleline(find),
                                 );
-                                ui.label("Replace:");
+                                ui.label(i18n::tr("Replace:"));
                                 ui.add_sized(
                                     [ui.available_width().min(170.0), 26.0],
                                     egui::TextEdit::singleline(replace),
                                 );
                             });
-                            ui.checkbox(regex, "Regular expression (supports $1 capture replacements)")
-                                .on_hover_text("Use Rust regular expressions. Names that are not valid UTF-8 cannot use search and replace.");
+                            ui.checkbox(regex, i18n::tr("Regular expression (supports $1 capture replacements)"))
+                                .on_hover_text(i18n::tr("Use Rust regular expressions. Names that are not valid UTF-8 cannot use search and replace."));
                             ui.horizontal_wrapped(|ui| {
-                                ui.checkbox(numbering, "Add sequence numbers");
+                                ui.checkbox(numbering, i18n::tr("Add sequence numbers"));
                                 if *numbering {
-                                    ui.label("Start:");
+                                    ui.label(i18n::tr("Start:"));
                                     ui.add(
                                         egui::DragValue::new(number_start).range(1..=99_999_999),
                                     );
-                                    ui.label("Digits:");
+                                    ui.label(i18n::tr("Digits:"));
                                     ui.add(egui::DragValue::new(number_width).range(1..=8));
                                 }
                             });
@@ -11241,7 +11288,7 @@ impl Explorer {
                             match filesystem::plan_batch_rename_with_options(paths, &options) {
                                 Ok(changes) => {
                                     ui.separator();
-                                    ui.strong("Preview (original → new name)");
+                                    ui.strong(i18n::tr("Preview (original → new name)"));
                                     egui::ScrollArea::vertical()
                                         .max_height(245.0)
                                         .show(ui, |ui| {
@@ -11259,13 +11306,13 @@ impl Explorer {
                                             }
                                         });
                                     ui.label(
-                                        "Targets are checked before renaming. Existing names are never overwritten; if a later rename fails, earlier changes remain.",
+                                        i18n::tr("Targets are checked before renaming. Existing names are never overwritten; if a later rename fails, earlier changes remain."),
                                     );
                                     ui.horizontal(|ui| {
-                                        if ui.button("Cancel").clicked() {
+                                        if ui.button(i18n::tr("Cancel")).clicked() {
                                             dismiss = true;
                                         }
-                                        if ui.button("Rename selected").clicked() {
+                                        if ui.button(i18n::tr("Rename selected")).clicked() {
                                             action = Some(Action::BatchRename { changes });
                                             dismiss = true;
                                         }
@@ -11273,7 +11320,7 @@ impl Explorer {
                                 }
                                 Err(error) => {
                                     shell_components::small_error(ui, error.to_string());
-                                    if ui.button("Cancel").clicked() {
+                                    if ui.button(i18n::tr("Cancel")).clicked() {
                                         dismiss = true;
                                     }
                                 }
@@ -11282,41 +11329,55 @@ impl Explorer {
                     );
                 }
                 Dialog::Trash(paths) => {
-                    shell_components::show_dialog(context, "Move to Trash?", false, None, |ui| {
-                        ui.label(format!("Move {} selected item(s) to Trash?", paths.len()));
-                        ui.label("The items can usually be restored from your desktop Trash.");
-                        removal_confirmation_paths(ui, paths);
-                        ui.horizontal(|ui| {
-                            if ui.button("Cancel").clicked() {
-                                dismiss = true;
-                            }
-                            if ui.button("Move to Trash").clicked() {
-                                action = Some(Action::Trash {
-                                    paths: paths.clone(),
-                                });
-                                dismiss = true;
-                            }
-                        });
-                    });
+                    shell_components::show_dialog(
+                        context,
+                        i18n::tr("Move to Trash?"),
+                        false,
+                        None,
+                        |ui| {
+                            ui.label(i18n::template(
+                                "Move {count} selected item(s) to Trash?",
+                                &[("count", paths.len().to_string())],
+                            ));
+                            ui.label(i18n::tr(
+                                "The items can usually be restored from your desktop Trash.",
+                            ));
+                            removal_confirmation_paths(ui, paths);
+                            ui.horizontal(|ui| {
+                                if ui.button(i18n::tr("Cancel")).clicked() {
+                                    dismiss = true;
+                                }
+                                if ui.button(i18n::tr("Move to Trash")).clicked() {
+                                    action = Some(Action::Trash {
+                                        paths: paths.clone(),
+                                    });
+                                    dismiss = true;
+                                }
+                            });
+                        },
+                    );
                 }
                 Dialog::Delete(paths) => {
                     shell_components::show_dialog(
                         context,
-                        "Permanently delete items?",
+                        i18n::tr("Permanently delete items?"),
                         false,
                         None,
                         |ui| {
                             ui.colored_label(
                                 Color32::RED,
-                                format!("Delete {} item(s) permanently?", paths.len()),
+                                i18n::template(
+                                    "Delete {count} item(s) permanently?",
+                                    &[("count", paths.len().to_string())],
+                                ),
                             );
-                            ui.label("This bypasses Trash. There is no undo.");
+                            ui.label(i18n::tr("This bypasses Trash. There is no undo."));
                             removal_confirmation_paths(ui, paths);
                             ui.horizontal(|ui| {
-                                if ui.button("Cancel").clicked() {
+                                if ui.button(i18n::tr("Cancel")).clicked() {
                                     dismiss = true;
                                 }
-                                if ui.button("Delete permanently").clicked() {
+                                if ui.button(i18n::tr("Delete permanently")).clicked() {
                                     action = Some(Action::Delete {
                                         paths: paths.clone(),
                                     });
@@ -11340,133 +11401,142 @@ impl Explorer {
                     generation,
                     ..
                 } => {
-                    shell_components::show_dialog(context, "Properties", true, Some(460.0), |ui| {
-                        match details {
-                            Some(Ok(snapshot)) => {
-                                for (name, value) in &snapshot.lines {
-                                    ui.horizontal_wrapped(|ui| {
-                                        ui.strong(format!("{name}:"));
-                                        ui.label(value);
-                                    });
-                                }
-                            }
-                            Some(Err(error)) => {
-                                ui.colored_label(
-                                    Color32::RED,
-                                    format!("Cannot read properties: {error}"),
-                                );
-                            }
-                            None => {
-                                ui.horizontal(|ui| {
-                                    ui.spinner();
-                                    ui.label("Reading file properties…");
-                                });
-                            }
-                        }
-                        #[cfg(unix)]
-                        if let Some(Ok(snapshot)) = details.as_ref()
-                            && !snapshot.is_symlink
-                        {
-                            ui.separator();
-                            let name = if snapshot.is_dir {
-                                "Calculate folder size"
-                            } else {
-                                "Calculate SHA-256"
-                            };
-                            if ui
-                                .add_enabled(!analysis_busy, egui::Button::new(name))
-                                .clicked()
-                            {
-                                *analysis = None;
-                                requested_analysis = Some((path.clone(), *generation));
-                            }
-                            if analysis_busy {
-                                ui.horizontal(|ui| {
-                                    ui.spinner();
-                                    ui.label("Analysing in background…");
-                                });
-                            }
-                            if let Some(result) = analysis {
-                                match result {
-                                    Ok(result) => {
-                                        ui.label(egui::RichText::new(result.as_str()).monospace());
-                                    }
-                                    Err(error) => {
-                                        ui.colored_label(Color32::RED, error.as_str());
+                    shell_components::show_dialog(
+                        context,
+                        i18n::tr("Properties"),
+                        true,
+                        Some(460.0),
+                        |ui| {
+                            match details {
+                                Some(Ok(snapshot)) => {
+                                    for (name, value) in &snapshot.lines {
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.strong(format!("{name}:"));
+                                            ui.label(value);
+                                        });
                                     }
                                 }
-                            }
-                        }
-                        #[cfg(unix)]
-                        if let Some(Ok(snapshot)) = details.as_ref() {
-                            ui.separator();
-                            if snapshot.is_symlink {
-                                ui.label("Symlink permissions cannot be changed here.");
-                            }
-                            ui.horizontal(|ui| {
-                                ui.label("Mode (octal):");
-                                ui.add_sized([100.0, 25.0], egui::TextEdit::singleline(mode));
-                                let parsed = u32::from_str_radix(mode.trim(), 8)
-                                    .ok()
-                                    .filter(|number| *number <= 0o777);
-                                if ui
-                                    .add_enabled(
-                                        parsed.is_some() && !snapshot.is_symlink,
-                                        egui::Button::new("Apply"),
-                                    )
-                                    .clicked()
-                                {
-                                    action = Some(Action::SetMode {
-                                        path: path.clone(),
-                                        mode: parsed.expect("button only enabled for valid mode"),
-                                        expected: snapshot.metadata.clone(),
-                                    });
-                                    dismiss = true;
-                                }
-                            });
-                            #[cfg(target_os = "linux")]
-                            ui.horizontal_wrapped(|ui| {
-                                use std::os::unix::fs::MetadataExt;
-                                ui.label("Owner UID:");
-                                ui.add_sized([84.0, 25.0], egui::TextEdit::singleline(owner));
-                                ui.label("Group GID:");
-                                ui.add_sized([84.0, 25.0], egui::TextEdit::singleline(group));
-                                let parsed = owner
-                                    .trim()
-                                    .parse::<u32>()
-                                    .ok()
-                                    .filter(|uid| *uid != u32::MAX)
-                                    .zip(
-                                        group
-                                            .trim()
-                                            .parse::<u32>()
-                                            .ok()
-                                            .filter(|gid| *gid != u32::MAX),
+                                Some(Err(error)) => {
+                                    ui.colored_label(
+                                        Color32::RED,
+                                        format!("Cannot read properties: {error}"),
                                     );
-                                let changed = parsed.is_some_and(|(uid, gid)| {
-                                    uid != snapshot.metadata.uid() || gid != snapshot.metadata.gid()
-                                });
+                                }
+                                None => {
+                                    ui.horizontal(|ui| {
+                                        ui.spinner();
+                                        ui.label(i18n::tr("Reading file properties…"));
+                                    });
+                                }
+                            }
+                            #[cfg(unix)]
+                            if let Some(Ok(snapshot)) = details.as_ref()
+                                && !snapshot.is_symlink
+                            {
+                                ui.separator();
+                                let name = if snapshot.is_dir {
+                                    "Calculate folder size"
+                                } else {
+                                    "Calculate SHA-256"
+                                };
                                 if ui
-                                    .add_enabled(
-                                        changed && !snapshot.is_symlink,
-                                        egui::Button::new("Apply owner/group"),
-                                    )
+                                    .add_enabled(!analysis_busy, egui::Button::new(name))
                                     .clicked()
                                 {
-                                    let (uid, gid) =
-                                        parsed.expect("owner/group button requires valid IDs");
-                                    action = Some(Action::SetOwnership {
-                                        path: path.clone(),
-                                        uid,
-                                        gid,
-                                        expected: snapshot.metadata.clone(),
-                                    });
-                                    dismiss = true;
+                                    *analysis = None;
+                                    requested_analysis = Some((path.clone(), *generation));
                                 }
-                            });
-                            #[cfg(target_os = "linux")]
+                                if analysis_busy {
+                                    ui.horizontal(|ui| {
+                                        ui.spinner();
+                                        ui.label("Analysing in background…");
+                                    });
+                                }
+                                if let Some(result) = analysis {
+                                    match result {
+                                        Ok(result) => {
+                                            ui.label(
+                                                egui::RichText::new(result.as_str()).monospace(),
+                                            );
+                                        }
+                                        Err(error) => {
+                                            ui.colored_label(Color32::RED, error.as_str());
+                                        }
+                                    }
+                                }
+                            }
+                            #[cfg(unix)]
+                            if let Some(Ok(snapshot)) = details.as_ref() {
+                                ui.separator();
+                                if snapshot.is_symlink {
+                                    ui.label("Symlink permissions cannot be changed here.");
+                                }
+                                ui.horizontal(|ui| {
+                                    ui.label("Mode (octal):");
+                                    ui.add_sized([100.0, 25.0], egui::TextEdit::singleline(mode));
+                                    let parsed = u32::from_str_radix(mode.trim(), 8)
+                                        .ok()
+                                        .filter(|number| *number <= 0o777);
+                                    if ui
+                                        .add_enabled(
+                                            parsed.is_some() && !snapshot.is_symlink,
+                                            egui::Button::new("Apply"),
+                                        )
+                                        .clicked()
+                                    {
+                                        action = Some(Action::SetMode {
+                                            path: path.clone(),
+                                            mode: parsed
+                                                .expect("button only enabled for valid mode"),
+                                            expected: snapshot.metadata.clone(),
+                                        });
+                                        dismiss = true;
+                                    }
+                                });
+                                #[cfg(target_os = "linux")]
+                                ui.horizontal_wrapped(|ui| {
+                                    use std::os::unix::fs::MetadataExt;
+                                    ui.label("Owner UID:");
+                                    ui.add_sized([84.0, 25.0], egui::TextEdit::singleline(owner));
+                                    ui.label("Group GID:");
+                                    ui.add_sized([84.0, 25.0], egui::TextEdit::singleline(group));
+                                    let parsed = owner
+                                        .trim()
+                                        .parse::<u32>()
+                                        .ok()
+                                        .filter(|uid| *uid != u32::MAX)
+                                        .zip(
+                                            group
+                                                .trim()
+                                                .parse::<u32>()
+                                                .ok()
+                                                .filter(|gid| *gid != u32::MAX),
+                                        );
+                                    let changed = parsed.is_some_and(|(uid, gid)| {
+                                        uid != snapshot.metadata.uid()
+                                            || gid != snapshot.metadata.gid()
+                                    });
+                                    if ui
+                                        .add_enabled(
+                                            changed && !snapshot.is_symlink,
+                                            egui::Button::new("Apply owner/group"),
+                                        )
+                                        .clicked()
+                                    {
+                                        let (uid, gid) =
+                                            parsed.expect("owner/group button requires valid IDs");
+                                        action = Some(Action::SetOwnership {
+                                            path: path.clone(),
+                                            uid,
+                                            gid,
+                                            expected: snapshot.metadata.clone(),
+                                        });
+                                        dismiss = true;
+                                    }
+                                });
+                                #[cfg(target_os = "linux")]
                             ui.small("Ownership changes follow your account's Linux permissions; no sudo or privilege escalation.");
-                            #[cfg(target_os = "linux")]
+                                #[cfg(target_os = "linux")]
                             ui.vertical(|ui| {
                                 ui.separator();
                                 ui.label("Create a POSIX access ACL for one additional user:");
@@ -11500,7 +11570,7 @@ impl Explorer {
                                 }
                                 ui.small("Creates an ACL only if none is found. Group rights are preserved. Avoid simultaneous ACL edits from other programs: Linux does not guarantee atomic no-replace for this attribute. Requires filesystem ACL support and ordinary Linux permissions.");
                             });
-                            #[cfg(target_os = "linux")]
+                                #[cfg(target_os = "linux")]
                             ui.vertical(|ui| {
                                 ui.separator();
                                 ui.label("Add an extended attribute (existing values are never overwritten):");
@@ -11527,11 +11597,12 @@ impl Explorer {
                                 }
                                 ui.small("Only user.* names and up to 4 KiB of UTF-8 text. A conflicting attribute is left untouched.");
                             });
-                        }
-                        if ui.button("Close").clicked() {
-                            dismiss = true;
-                        }
-                    });
+                            }
+                            if ui.button("Close").clicked() {
+                                dismiss = true;
+                            }
+                        },
+                    );
                 }
             }
         }
@@ -11632,6 +11703,24 @@ impl eframe::App for Explorer {
         let context = ui.ctx().clone();
         self.poll_background(&context);
         self.poll_desktop(&context);
+        if self.theme_watch_path != self.theme_file {
+            // Dropping the old watcher stops its worker after at most 500 ms.
+            self.theme_watcher = None;
+            self.theme_watch_path = self.theme_file.clone();
+            self.theme_watcher = self
+                .theme_file
+                .as_deref()
+                .and_then(|path| theme_events::Watcher::start(path, &context));
+        }
+        if self
+            .theme_watcher
+            .as_ref()
+            .is_some_and(theme_events::Watcher::changed)
+        {
+            // The event itself is evidence of a change; don't depend on a
+            // network/filesystem's inode or timestamp precision here.
+            self.reload_theme_file(&context, true);
+        }
         if self.theme_file.is_some() && self.theme_last_check.elapsed() >= Duration::from_secs(3) {
             self.theme_last_check = Instant::now();
             self.reload_theme_file(&context, false);
@@ -11796,10 +11885,11 @@ mod tests {
     use crate::transfer_history;
     use crate::volume::RemoteEntry;
     use std::collections::BTreeSet;
+    use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::time::{Duration, Instant};
+    use std::time::{Duration, Instant, SystemTime};
 
     #[test]
     fn individual_move_choices_dispatch_as_move_and_global_choices_keep_legacy_path() {
@@ -12774,5 +12864,29 @@ mod tests {
             assert!(!details.contains("/s avg"));
             assert!(!details.contains("remaining"));
         }
+    }
+
+    #[test]
+    fn atomic_theme_replacement_changes_fingerprint_even_with_same_length() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ricefield-theme-fingerprint-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).unwrap();
+        let target = directory.join("profile.toml");
+        let next = directory.join(".profile-next.toml");
+        fs::write(&target, b"a = 1\n").unwrap();
+        let old = Explorer::theme_file_fingerprint(&target).unwrap();
+        fs::write(&next, b"a = 2\n").unwrap();
+        fs::rename(&next, &target).unwrap();
+        let updated = Explorer::theme_file_fingerprint(&target).unwrap();
+        assert_eq!(old.1, updated.1);
+        assert_ne!(old, updated);
+        fs::remove_file(target).unwrap();
+        fs::remove_dir(directory).unwrap();
     }
 }

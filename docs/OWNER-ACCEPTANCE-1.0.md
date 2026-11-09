@@ -181,7 +181,11 @@ all boxes below still require owner verification.
   only in isolated disposable folders; no traversal escapes extraction root.
 - [ ] **C05 Clipboard/drag helpers:** copy, cut, paste and external desktop
   clipboard exchange. Test drag-out when supported; unavailable portal or
-  shell functionality must fail honestly instead of losing selection.
+  shell functionality must fail honestly instead of losing selection. Include
+  a `text/uri-list` import from another app: it must never move the originals,
+  even if the text contains `cut`; the GNOME typed file-cut format must still
+  preserve intended Move behavior. On Wayland, distinguish native input
+  drag from helper-initiated outgoing drag and record both separately.
 
 ## D. NAS, network tabs and guarded single-file uploads
 
@@ -311,6 +315,10 @@ only on a new isolated test share, never on the production `medien` library.
 - [ ] **G03 RiceBowl decoration boundary:** when running under RiceBowl/labwc,
   window titlebar/buttons remain owned by the window manager, not duplicated
   by RiceField. Switching rices preserves current tabs and pending transfers.
+  In a RiceProfile v1 session, atomically replace the profile with a valid
+  same-length update: appearance should refresh promptly (file event), or
+  after the fallback check, without navigation/transfer state loss. Invalid
+  updates must preserve the last known-good appearance.
 - [ ] **G04 Display scaling:** test 100%, 125%, 150%, HiDPI, 1024×768 and
   dual monitors where available. No clipped critical controls or unreadable
   file rows.
