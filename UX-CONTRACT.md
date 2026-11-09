@@ -58,9 +58,10 @@ Linux desktop file management for RiceBowl users. v0.1 interface English; runtim
   symlink lengths); modified-date presets use the entry's reported timestamp.
 - Sorting always groups directories before files. Filters operate only on the current folder; no unrequested recursive search/indexing.
 - Shift selects a contiguous visible range; Ctrl toggles one item. Dragging from
-  empty file-view space draws a selection rectangle across visible rows or
-  tiles; Ctrl+drag adds to the existing selection, while dragging an actual
-  file continues to initiate file drag-and-drop. The selected files persist
+  empty file-view space (or the trailing whitespace of a list row) draws a
+  selection rectangle across visible rows or tiles; Ctrl+drag adds to the
+  existing selection, while dragging a file by its icon/name continues to
+  initiate file drag-and-drop. The selected files persist
   after mouse release. Navigation history is independent of filesystem
   mutation history.
 - Keyboard shortcuts do not copy/cut/paste files while a text field has focus.

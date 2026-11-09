@@ -695,6 +695,15 @@ impl MarqueeSelection {
     }
 }
 
+/// List rows are clickable across their width. Reserve the trailing whitespace
+/// for starting a rubber-band drag, so even a completely full directory can
+/// be multi-selected without needing empty space below the last file.
+fn marquee_from_list_whitespace(layout: FileCellLayout, rect: Rect, origin: Pos2) -> bool {
+    !layout.grid
+        && rect.contains(origin)
+        && origin.x >= rect.left() + (rect.width() * 0.42).clamp(180.0, 380.0)
+}
+
 struct DropArea {
     tab_id: u64,
     destination: PathBuf,
@@ -10523,20 +10532,9 @@ impl Explorer {
                 self.tabs[tab_index].last_selected = None;
             }
         }
-        let dragging = background.dragged_by(primary) || background.drag_stopped_by(primary);
-        if dragging
-            && let Some(drag) = self.marquee.as_mut()
-            && drag.tab_id == tab_id
-            && let Some(position) = ui.input(|input| input.pointer.latest_pos())
-        {
-            drag.pointer = position;
-        }
-        let rectangle = self
-            .marquee
-            .as_ref()
-            .filter(|drag| drag.tab_id == tab_id && drag.scan_generation == scan_generation)
-            .map(MarqueeSelection::rect);
-        let mut hits = BTreeSet::new();
+        // Keep only visible geometry here; the active rectangle may begin on
+        // a file row midway through this pass. Resolve hits AFTER all cells.
+        let mut rendered_rows = Vec::new();
         let output = egui::ScrollArea::vertical()
             .id_salt(("file_scroller", self.tabs[tab_index].id))
             .auto_shrink([false, false])
@@ -10564,11 +10562,7 @@ impl Explorer {
                                         row_index: visible_index,
                                     },
                                 );
-                                if rectangle.is_some_and(|selection| {
-                                    selection.intersects(rect) && rect.intersects(ui.clip_rect())
-                                }) {
-                                    hits.insert(entry.path);
-                                }
+                                rendered_rows.push((rect, visible_index));
                             }
                         }
                     });
@@ -10579,6 +10573,20 @@ impl Explorer {
             .as_mut()
             .filter(|drag| drag.tab_id == tab_id && drag.scan_generation == scan_generation)
         {
+            if let Some(pointer) = ui.input(|input| input.pointer.latest_pos()) {
+                drag.pointer = pointer;
+            }
+            let rectangle = drag.rect();
+            let hits = rendered_rows
+                .into_iter()
+                .filter(|(rect, _)| {
+                    rectangle.intersects(*rect) && rect.intersects(output.inner_rect)
+                })
+                .filter_map(|(_, visible_index)| {
+                    let entry_index = *self.tabs[tab_index].visible.get(visible_index)?;
+                    Some(self.tabs[tab_index].entries.get(entry_index)?.path.clone())
+                })
+                .collect();
             drag.apply(&mut self.tabs[tab_index], hits);
             if drag.rect().intersects(output.inner_rect) {
                 let selection = drag.rect().intersect(output.inner_rect);
@@ -10597,7 +10605,7 @@ impl Explorer {
                 );
             }
         }
-        if background.drag_stopped_by(primary) {
+        if !ui.input(|input| input.pointer.primary_down()) {
             self.marquee = None;
         }
     }
@@ -10626,7 +10634,20 @@ impl Explorer {
                 folder: true,
             });
         }
-        if response.drag_started() {
+        if response.drag_started()
+            && let Some(origin) = ui.input(|input| input.pointer.press_origin())
+            && marquee_from_list_whitespace(item, rect, origin)
+        {
+            if self.active != tab_index {
+                self.tab_command(TabCommand::Activate(tab_index));
+            }
+            let additive = ui.input(|input| input.modifiers.command);
+            self.marquee = Some(MarqueeSelection::begin(
+                &mut self.tabs[tab_index],
+                origin,
+                additive,
+            ));
+        } else if response.drag_started() {
             self.marquee = None;
             if self.active != tab_index {
                 self.tab_command(TabCommand::Activate(tab_index));
@@ -12120,13 +12141,13 @@ impl eframe::App for Explorer {
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, CLIPBOARD_WAIT, Clipboard, Dialog, Explorer, ItemCounts, MarqueeSelection,
-        NameMode, PasteMode, PendingPaste, PropertyResult, PropertySnapshot, Tab, TabSnapshot,
-        ViewResult, accept_property_result, active_after_swap, choose_paste_clipboard,
-        commit_local_view, drop_action, elapsed_label, next_search_repaint_delay,
-        project_local_view, properties_dialog_limits, read_property_snapshot, remaining_cut_paths,
-        resolve_split_tabs, retain_visible_selection, retry_unstarted_items,
-        transfer_progress_details,
+        Action, CLIPBOARD_WAIT, Clipboard, Dialog, Explorer, FileCellLayout, ItemCounts,
+        MarqueeSelection, NameMode, PasteMode, PendingPaste, PropertyResult, PropertySnapshot, Tab,
+        TabSnapshot, ViewResult, accept_property_result, active_after_swap, choose_paste_clipboard,
+        commit_local_view, drop_action, elapsed_label, marquee_from_list_whitespace,
+        next_search_repaint_delay, project_local_view, properties_dialog_limits,
+        read_property_snapshot, remaining_cut_paths, resolve_split_tabs, retain_visible_selection,
+        retry_unstarted_items, transfer_progress_details,
     };
     use crate::clipboard;
     use crate::config::Config;
@@ -12134,7 +12155,7 @@ mod tests {
     use crate::location::Location;
     use crate::transfer_history;
     use crate::volume::RemoteEntry;
-    use eframe::egui::{Pos2, Vec2};
+    use eframe::egui::{Pos2, Rect, Vec2};
     use std::collections::BTreeSet;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -12171,6 +12192,32 @@ mod tests {
         marquee.apply(&mut tab, BTreeSet::from([touched.clone()]));
         marquee.apply(&mut tab, BTreeSet::new());
         assert_eq!(tab.selected, BTreeSet::from([preserved, touched]));
+    }
+
+    #[test]
+    fn list_whitespace_allows_selection_in_full_folders_but_preserves_file_drag() {
+        let layout = FileCellLayout {
+            width: 900.0,
+            height: 30.0,
+            grid: false,
+            row_index: 0,
+        };
+        let row = Rect::from_min_size(Pos2::new(210.0, 100.0), Vec2::new(900.0, 30.0));
+        assert!(marquee_from_list_whitespace(
+            layout,
+            row,
+            Pos2::new(1000.0, 115.0)
+        ));
+        assert!(!marquee_from_list_whitespace(
+            layout,
+            row,
+            Pos2::new(250.0, 115.0)
+        ));
+        assert!(!marquee_from_list_whitespace(
+            FileCellLayout { grid: true, ..layout },
+            row,
+            Pos2::new(1000.0, 115.0)
+        ));
     }
 
     #[test]
