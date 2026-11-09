@@ -147,8 +147,7 @@ pub fn smb_needs_share_selection(uri: &str) -> bool {
     let Some(rest) = uri.strip_prefix("smb://") else {
         return false;
     };
-    rest.split_once('/')
-        .is_none_or(|(_, path)| path.is_empty())
+    rest.split_once('/').is_none_or(|(_, path)| path.is_empty())
 }
 
 fn validate_remote_host(authority: &str) -> Result<(), &'static str> {
@@ -278,10 +277,22 @@ mod tests {
 
     #[test]
     fn nas_addresses_support_simple_hosts_share_names_and_pasted_unc_paths() {
-        assert_eq!(super::smb_target("192.168.178.66", "medien"), Ok("smb://192.168.178.66/medien".into()));
-        assert_eq!(super::smb_target("nas.local", "Shared Photos"), Ok("smb://nas.local/Shared%20Photos".into()));
-        assert_eq!(super::smb_target(r"\\nas\\medien", ""), Ok("smb://nas/medien".into()));
-        assert_eq!(super::smb_target("smb://nas/medien", ""), Ok("smb://nas/medien/".into()));
+        assert_eq!(
+            super::smb_target("192.168.178.66", "medien"),
+            Ok("smb://192.168.178.66/medien".into())
+        );
+        assert_eq!(
+            super::smb_target("nas.local", "Shared Photos"),
+            Ok("smb://nas.local/Shared%20Photos".into())
+        );
+        assert_eq!(
+            super::smb_target(r"\\nas\\medien", ""),
+            Ok("smb://nas/medien".into())
+        );
+        assert_eq!(
+            super::smb_target("smb://nas/medien", ""),
+            Ok("smb://nas/medien".into())
+        );
         assert!(super::smb_needs_share_selection("smb://nas/"));
         assert!(!super::smb_needs_share_selection("smb://nas/medien"));
     }
