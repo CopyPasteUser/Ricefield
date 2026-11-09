@@ -4849,7 +4849,12 @@ impl Explorer {
                     .as_ref()
                     .map(|candidate| candidate.action())
             })
-            .or_else(|| entry.transfer_undo.as_ref().map(|candidate| candidate.action()))
+            .or_else(|| {
+                entry
+                    .transfer_undo
+                    .as_ref()
+                    .map(|candidate| candidate.action())
+            })
             .map(|action| (entry.id, action))
     }
 
