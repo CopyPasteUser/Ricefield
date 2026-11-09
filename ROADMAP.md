@@ -84,12 +84,25 @@ and live-disconnect owner gate remains open even when software CI passes.
 
 ### Step 4 — P1: Complete daily desktop workflows
 
+- [x] Add optional event-driven RiceBowl RiceProfile reload on Linux inotify,
+  including atomic replacement detection and unchanged nonblocking polling
+  fallback. Never depend on a running RiceBowl session.
+- [x] Harden URI-list clipboard imports: they remain copy-only even when an
+  unrelated provider injects a `cut` marker; GNOME's typed cut format still
+  preserves cut intent.
+- [x] Add German translations for shared rename/create/batch rename,
+  trash/permanent-delete, Open With, paste-policy, network login and
+  encrypted-volume confirmation dialogs, with English fallback.
 - [ ] Finish native external drag-and-drop and broader portal/clipboard
-  interoperability on X11 and Wayland; retain safe helper fallback.
+  interoperability on X11 and Wayland; retain safe helper fallback. The
+  eframe 0.37/winit 0.30 native Wayland outbound-data-source limitation is
+  still a real framework blocker; helper drag-out is not native in-process.
 - [ ] Validate file-manager registration, Open With, mounts/Unlock/Eject,
   focus, keyboard navigation and screen-reader behaviors in all seven rices.
 - [ ] Finish direct RiceBowl theme/event integration without making RiceBowl
-  mandatory. Complete German/English text for supported core dialogs.
+  mandatory. Profile filesystem events now work; a separate direct RiceBowl
+  bus protocol is not defined by RiceBowl yet. Finish complete German/English
+  coverage in remaining non-core settings, recovery, and specialist dialogs.
 
 **Exit:** file manager works independently and retains its Linux desktop
 contract across rices, with no functional regressions from visual polish.

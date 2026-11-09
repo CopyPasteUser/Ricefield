@@ -86,7 +86,9 @@ not replace your chosen default. Selecting a theme inside RiceField still saves 
 session, compatible RiceField installations may receive
 `RICEBOWL_RICEFIELD_THEME_FILE=/absolute/session/ricefield.riceprofile.toml`.
 RiceField validates the owner-private, data-only TOML and reloads accepted
-changes while running (normally within three seconds); rejected updates keep
+changes while running (Linux file events request an immediate refresh, with a
+three-second safety check on filesystems without working notifications);
+rejected updates keep
 the last working theme. `ricefield --check-theme-file PATH` performs the same
 validation without opening a window. The supported v1 fields are
 `format_version = 1`, `name`, an existing `base_theme` ID and the
