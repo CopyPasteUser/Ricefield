@@ -12214,7 +12214,10 @@ mod tests {
             Pos2::new(250.0, 115.0)
         ));
         assert!(!marquee_from_list_whitespace(
-            FileCellLayout { grid: true, ..layout },
+            FileCellLayout {
+                grid: true,
+                ..layout
+            },
             row,
             Pos2::new(1000.0, 115.0)
         ));
