@@ -55,6 +55,17 @@ fn primary_sidebar_place(label: &str) -> bool {
     matches!(label, "Home" | "Downloads" | "Documents" | "Pictures")
 }
 
+/// Render saved network addresses as useful human labels, not full protocol URIs.
+fn network_favorite_label(uri: &str) -> String {
+    let rest = uri.split_once("://").map_or(uri, |(_, rest)| rest);
+    let (server, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let share = path.split('/').find(|part| !part.is_empty());
+    match share {
+        Some(name) => format!("{server} / {name}"),
+        None => server.to_owned(),
+    }
+}
+
 // Small folders update immediately; expensive 100k-entry sorts never run in egui.
 const BACKGROUND_VIEW_THRESHOLD: usize = 8_192;
 type ThemeFingerprint = (SystemTime, u64, u64, u64);
@@ -8776,18 +8787,19 @@ impl Explorer {
                                     ) {
                                         continue;
                                     }
+                                    let display = network_favorite_label(&uri);
                                     let remote_clicked = if chromeos_shell {
                                         chromeos::sidebar_link(
                                             ui,
                                             &theme,
-                                            &shorten(&uri, 24),
+                                            &shorten(&display, 24),
                                             false,
                                             FilesNavIcon::Network,
                                         )
                                     } else if classic_shell {
                                         let response = classic98::tree_link(
                                             ui,
-                                            &shorten(&uri, 25),
+                                            &shorten(&display, 25),
                                             false,
                                             TreeIcon::Network,
                                         );
@@ -8796,7 +8808,7 @@ impl Explorer {
                                         finder::sidebar_link(
                                             ui,
                                             &theme,
-                                            &shorten(&uri, 24),
+                                            &shorten(&display, 24),
                                             false,
                                             FinderNavIcon::Network,
                                         )
@@ -8804,15 +8816,15 @@ impl Explorer {
                                         aqua::sidebar_link(
                                             ui,
                                             &theme,
-                                            &shorten(&uri, 24),
+                                            &shorten(&display, 24),
                                             false,
                                             aqua::AquaNavIcon::Network,
                                         )
                                     } else {
                                         ui.button(if aero {
-                                            format!("    {}", shorten(&uri, 24))
+                                            format!("    {}", shorten(&display, 24))
                                         } else {
-                                            format!("Network favorite: {}", shorten(&uri, 27))
+                                            format!("NAS: {}", shorten(&display, 27))
                                         })
                                         .on_hover_text(&uri)
                                         .clicked()
@@ -12024,6 +12036,15 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant, SystemTime};
+
+    #[test]
+    fn saved_nas_shortcuts_show_server_and_share_not_protocol_noise() {
+        assert_eq!(
+            super::network_favorite_label("smb://nas.home.arpa/medien"),
+            "nas.home.arpa / medien"
+        );
+        assert_eq!(super::network_favorite_label("smb://nas/"), "nas");
+    }
 
     #[test]
     fn primary_places_are_useful_and_secondary_folders_remain_discoverable() {
