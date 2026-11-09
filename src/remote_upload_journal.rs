@@ -295,9 +295,7 @@ impl PendingProbe {
 pub fn inspect_evidence_for_review() -> io::Result<EvidenceInspection> {
     let directory = journal_directory()?;
     match fs::symlink_metadata(&directory) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            Ok(EvidenceInspection::default())
-        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(EvidenceInspection::default()),
         Err(error) => Err(error),
         Ok(_) => inspect_evidence_for_review_in(&directory),
     }
@@ -319,7 +317,9 @@ fn inspect_evidence_for_review_in(directory: &Path) -> io::Result<EvidenceInspec
         let entry = entry?;
         let name = entry.file_name();
         let Some(name) = name.to_str() else {
-            inspection.warnings.push("Non-UTF8 recovery filename requires manual review".into());
+            inspection
+                .warnings
+                .push("Non-UTF8 recovery filename requires manual review".into());
             continue;
         };
         let (kind, id) = if let Some(id) = name.strip_suffix(".toml") {
@@ -364,10 +364,16 @@ fn inspect_evidence_for_review_in(directory: &Path) -> io::Result<EvidenceInspec
         }
     }
     inspection.uploads.sort_by(|left, right| {
-        right.created_unix_seconds.cmp(&left.created_unix_seconds).then_with(|| left.id.cmp(&right.id))
+        right
+            .created_unix_seconds
+            .cmp(&left.created_unix_seconds)
+            .then_with(|| left.id.cmp(&right.id))
     });
     inspection.probes.sort_by(|left, right| {
-        right.created_unix_seconds.cmp(&left.created_unix_seconds).then_with(|| left.id.cmp(&right.id))
+        right
+            .created_unix_seconds
+            .cmp(&left.created_unix_seconds)
+            .then_with(|| left.id.cmp(&right.id))
     });
     Ok(inspection)
 }
@@ -762,7 +768,8 @@ mod tests {
     fn review_keeps_valid_evidence_visible_when_other_records_are_damaged() {
         let directory = isolated_directory();
         let (stage, destination) = urls();
-        let probe_uri = "smb://nas.example/media/.ricefield-safety-0123456789abcdef0123456789abcdef";
+        let probe_uri =
+            "smb://nas.example/media/.ricefield-safety-0123456789abcdef0123456789abcdef";
         let upload = PendingUpload::begin_in(&directory, &stage, &destination).unwrap();
         let probe = PendingProbe::begin_in(&directory, probe_uri).unwrap();
         drop(upload);
@@ -783,7 +790,12 @@ mod tests {
         assert_eq!(inspection.probes.len(), 1);
         assert_eq!(inspection.probes[0].prefix_uri, probe_uri);
         assert_eq!(inspection.warnings.len(), 3);
-        assert!(inspection.warnings.iter().any(|warning| warning.contains(".tmp")));
+        assert!(
+            inspection
+                .warnings
+                .iter()
+                .any(|warning| warning.contains(".tmp"))
+        );
 
         // Review cannot mutate or repair an unknown entry, but the intact
         // records can still be acknowledged independently after server review.
