@@ -784,7 +784,10 @@ mod tests {
 
         drop(stage);
         assert_eq!(fs::read(path.join("important.txt")).unwrap(), b"user data");
-        assert_eq!(fs::read(moved.join("partial")).unwrap(), b"original staging");
+        assert_eq!(
+            fs::read(moved.join("partial")).unwrap(),
+            b"original staging"
+        );
         fs::remove_dir_all(target).unwrap();
     }
 
