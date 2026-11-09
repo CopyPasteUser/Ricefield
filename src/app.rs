@@ -48,6 +48,13 @@ const SEARCH_DEBOUNCE: Duration = Duration::from_millis(350);
 const MAX_RECENT_OPERATIONS: usize = transfer_history::MAX_RECORDS;
 const CLIPBOARD_WAIT: Duration = Duration::from_secs(2);
 const MAX_CLOSED_TABS: usize = 16;
+
+/// Keep the default Places area focused; secondary folders remain accessible
+/// from the collapsed More locations section, the address bar and folder tree.
+fn primary_sidebar_place(label: &str) -> bool {
+    matches!(label, "Home" | "Downloads" | "Documents" | "Pictures")
+}
+
 // Small folders update immediately; expensive 100k-entry sorts never run in egui.
 const BACKGROUND_VIEW_THRESHOLD: usize = 8_192;
 type ThemeFingerprint = (SystemTime, u64, u64, u64);
@@ -7971,6 +7978,12 @@ impl Explorer {
                         let mut render_section = |ui: &mut egui::Ui| match section {
                             SidebarSection::Tasks => self.sidebar_tasks(ui),
                             SidebarSection::Places => {
+                                let primary_places = self
+                                    .places
+                                    .iter()
+                                    .filter(|(label, _)| primary_sidebar_place(label))
+                                    .cloned()
+                                    .collect::<Vec<_>>();
                                 if theme.shell_kind() == ShellKind::Chromeos {
                                     let home = config::home();
                                     let response = chromeos::sidebar_response(
@@ -7985,9 +7998,6 @@ impl Explorer {
                                         ("Downloads", FilesNavIcon::Download),
                                         ("Documents", FilesNavIcon::Folder),
                                         ("Pictures", FilesNavIcon::Image),
-                                        ("Music", FilesNavIcon::Music),
-                                        ("Videos", FilesNavIcon::Video),
-                                        ("Desktop", FilesNavIcon::Folder),
                                     ] {
                                         let path = home.join(name);
                                         if self
@@ -8008,7 +8018,7 @@ impl Explorer {
                                     return;
                                 }
                                 if theme.shell_kind() == ShellKind::Classic {
-                                    for (label, path) in self.places.clone() {
+                                    for (label, path) in primary_places.clone() {
                                         let icon = if path == Path::new("/") {
                                             TreeIcon::Disk
                                         } else if path == config::home() {
@@ -8028,7 +8038,7 @@ impl Explorer {
                                     return;
                                 }
                                 if theme.shell_kind() == ShellKind::Finder {
-                                    for (name, path) in self.places.clone() {
+                                    for (name, path) in primary_places.clone() {
                                         let icon = if path == Path::new("/") {
                                             FinderNavIcon::Computer
                                         } else {
@@ -8047,7 +8057,7 @@ impl Explorer {
                                     return;
                                 }
                                 if theme.shell_kind() == ShellKind::Aqua {
-                                    for (name, path) in self.places.clone() {
+                                    for (name, path) in primary_places.clone() {
                                         let label = if path == Path::new("/") {
                                             "Filesystem"
                                         } else {
@@ -8074,7 +8084,7 @@ impl Explorer {
                                     return;
                                 }
                                 if theme.shell_kind() == ShellKind::Ribbon {
-                                    for (name, path) in self.places.clone() {
+                                    for (name, path) in primary_places.clone() {
                                         let label = if path == Path::new("/") {
                                             "Linux filesystem"
                                         } else {
@@ -8098,7 +8108,7 @@ impl Explorer {
                                 }
                                 if theme.shell_kind() == ShellKind::Luna {
                                     use shell_components::{LunaLinkIcon as Icon, luna_link};
-                                    for (label, path) in self.places.clone() {
+                                    for (label, path) in primary_places.clone() {
                                         let title = if path == Path::new("/") {
                                             "My Computer"
                                         } else {
@@ -8125,7 +8135,7 @@ impl Explorer {
                                     return;
                                 }
                                 if theme.shell_kind() == ShellKind::Aero {
-                                    for (name, path) in self.places.clone() {
+                                    for (name, path) in primary_places.clone() {
                                         if !matches!(
                                             name,
                                             "Documents" | "Music" | "Pictures" | "Videos"
@@ -8147,7 +8157,7 @@ impl Explorer {
                                     return;
                                 }
                                 ui.add_space(8.0);
-                                for (label, path) in self.places.clone() {
+                                for (label, path) in primary_places.clone() {
                                     let response = ui.add_sized(
                                         [ui.available_width(), 29.0],
                                         egui::Button::new(label)
@@ -8478,82 +8488,19 @@ impl Explorer {
                                 let finder_shell = theme.shell_kind() == ShellKind::Finder;
                                 let chromeos_shell = theme.shell_kind() == ShellKind::Chromeos;
                                 let classic_shell = theme.shell_kind() == ShellKind::Classic;
-                                let discover = if chromeos_shell {
-                                    chromeos::sidebar_link(
-                                        ui,
-                                        &theme,
-                                        "Network",
-                                        false,
-                                        FilesNavIcon::Network,
-                                    )
-                                } else if classic_shell {
-                                    let response = classic98::tree_link(
-                                        ui,
-                                        "Network Neighborhood",
-                                        false,
-                                        TreeIcon::Network,
-                                    );
-                                    classic98::activated(ui, &response)
-                                } else if finder_shell {
-                                    finder::sidebar_link(
-                                        ui,
-                                        &theme,
-                                        "Network",
-                                        false,
-                                        FinderNavIcon::Network,
-                                    )
-                                } else if aqua_shell {
-                                    aqua::sidebar_link(
-                                        ui,
-                                        &theme,
-                                        "Discover network",
-                                        false,
-                                        aqua::AquaNavIcon::Network,
-                                    )
-                                } else if ribbon {
-                                    shell_components::win10_sidebar_link(
-                                        ui,
-                                        &theme,
-                                        "Discover network",
-                                        false,
-                                        shell_components::Win10NavIcon::Network,
-                                    )
-                                } else if aero {
-                                    shell_components::aero_sidebar_link(
-                                        ui,
-                                        "Network · discover",
-                                        false,
-                                        shell_components::AeroNavIcon::Network,
-                                    )
-                                } else if luna {
-                                    shell_components::luna_link(
-                                        ui,
-                                        "Discover network storage",
-                                        true,
-                                        shell_components::LunaLinkIcon::Drive,
-                                    )
-                                } else {
-                                    ui.button("Discover NAS on network…").clicked()
-                                };
-                                if discover {
-                                    self.discovery_open = true;
-                                    if self.discovery_hosts.is_empty() {
-                                        self.start_discovery();
-                                    }
-                                }
                                 let connect = if chromeos_shell {
                                     !self.volume_busy
                                         && chromeos::sidebar_link(
                                             ui,
                                             &theme,
-                                            "Connect to server",
+                                            "Connect to NAS",
                                             false,
                                             FilesNavIcon::Network,
                                         )
                                 } else if classic_shell {
                                     let response = classic98::tree_link(
                                         ui,
-                                        "Map network folder",
+                                        "Connect to NAS",
                                         false,
                                         TreeIcon::Network,
                                     );
@@ -8581,14 +8528,14 @@ impl Explorer {
                                         && shell_components::win10_sidebar_link(
                                             ui,
                                             &theme,
-                                            "Connect to network",
+                                            "Connect to NAS",
                                             false,
                                             shell_components::Win10NavIcon::Network,
                                         )
                                 } else if aero {
                                     shell_components::aero_sidebar_link(
                                         ui,
-                                        "Connect to network…",
+                                        "Connect to NAS…",
                                         false,
                                         shell_components::AeroNavIcon::Network,
                                     )
@@ -8602,7 +8549,7 @@ impl Explorer {
                                 } else {
                                     ui.add_enabled(
                                         !self.volume_busy,
-                                        egui::Button::new("+ Connect to network…"),
+                                        egui::Button::new("+ Connect to NAS…"),
                                     )
                                     .clicked()
                                 };
@@ -8753,6 +8700,11 @@ impl Explorer {
                                 }
                                 for volume in self.volumes.clone() {
                                     let path = volume.path;
+                                    // Root is always accessible under More locations.
+                                    // Do not waste a persistent device row on it.
+                                    if path == Path::new("/") {
+                                        continue;
+                                    }
                                     let device = self
                                         .device_volumes
                                         .iter()
@@ -8922,6 +8874,26 @@ impl Explorer {
                             section,
                             &mut render_section,
                         );
+                        if section == SidebarSection::Places {
+                            let secondary = self
+                                .places
+                                .iter()
+                                .filter(|(label, _)| !primary_sidebar_place(label))
+                                .cloned()
+                                .collect::<Vec<_>>();
+                            if !secondary.is_empty() {
+                                ui.collapsing(i18n::tr("More locations"), |ui| {
+                                    for (label, path) in secondary {
+                                        let response = ui.add_sized(
+                                            [ui.available_width(), 25.0],
+                                            egui::Button::new(label)
+                                                .selected(self.current().path == path),
+                                        );
+                                        self.place_response(ui, response, path);
+                                    }
+                                });
+                            }
+                        }
                     }
                 });
             });
@@ -11929,6 +11901,16 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant, SystemTime};
+
+    #[test]
+    fn primary_places_are_useful_and_secondary_folders_remain_discoverable() {
+        for name in ["Home", "Downloads", "Documents", "Pictures"] {
+            assert!(super::primary_sidebar_place(name));
+        }
+        for name in ["Desktop", "Music", "Videos", "Filesystem"] {
+            assert!(!super::primary_sidebar_place(name));
+        }
+    }
 
     #[test]
     fn individual_move_choices_dispatch_as_move_and_global_choices_keep_legacy_path() {
