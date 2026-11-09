@@ -1836,9 +1836,7 @@ fn perform_with_progress_and_items(
     for (index, source) in sources.iter().enumerate() {
         let estimate =
             match action {
-                Action::Copy { .. } | Action::CopyAs { .. } => {
-                    estimate_bytes(source, cancelled, 0)
-                }
+                Action::Copy { .. } | Action::CopyAs { .. } => estimate_bytes(source, cancelled, 0),
                 Action::Move { .. } => fs::symlink_metadata(source).map(|metadata| {
                     if metadata.is_dir() { 0 } else { metadata.len() }
                 }),
@@ -2517,7 +2515,11 @@ pub fn preview_transfer(
 
 /// Read-only preview of a single copy with an explicitly chosen final name.
 /// The same preflight runs again on the worker immediately before copying.
-pub fn preview_copy_as(source: &Path, destination: &Path, name: &OsStr) -> io::Result<TransferPlan> {
+pub fn preview_copy_as(
+    source: &Path,
+    destination: &Path,
+    name: &OsStr,
+) -> io::Result<TransferPlan> {
     plan_copy_as(source, destination, name, &AtomicBool::new(false))
         .map_err(|failure| failure.error)
 }
@@ -2550,11 +2552,16 @@ fn plan_copy_as(
             0,
             io::Error::new(
                 io::ErrorKind::AlreadyExists,
-                format!("The chosen destination already exists: {}", target.display()),
+                format!(
+                    "The chosen destination already exists: {}",
+                    target.display()
+                ),
             ),
         ));
     }
-    let original_name = source.file_name().ok_or_else(|| PlanFailure::at(0, invalid_name()))?;
+    let original_name = source
+        .file_name()
+        .ok_or_else(|| PlanFailure::at(0, invalid_name()))?;
     let renamed = name != original_name;
     let item = &mut plan.items[0];
     item.target = target;
@@ -5585,9 +5592,18 @@ mod tests {
         );
         assert!(report.result.is_ok());
         assert_eq!(report.items[0].state, ItemState::Completed);
-        assert_eq!(report.items[0].target, Some(destination.join("holiday.txt")));
-        assert_eq!(fs::read(destination.join("holiday.txt")).unwrap(), b"original source");
-        assert_eq!(fs::read(destination.join("photo.txt")).unwrap(), b"unrelated existing file");
+        assert_eq!(
+            report.items[0].target,
+            Some(destination.join("holiday.txt"))
+        );
+        assert_eq!(
+            fs::read(destination.join("holiday.txt")).unwrap(),
+            b"original source"
+        );
+        assert_eq!(
+            fs::read(destination.join("photo.txt")).unwrap(),
+            b"unrelated existing file"
+        );
         assert_eq!(fs::read(source).unwrap(), b"original source");
         fs::remove_dir_all(root).unwrap();
     }
@@ -5624,7 +5640,10 @@ mod tests {
             &AtomicBool::new(false),
             &mut |_| {},
         );
-        assert_eq!(report.result.unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            report.result.unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
         assert_eq!(report.items[0].state, ItemState::Failed);
         assert_eq!(fs::read(&target).unwrap(), b"another writer");
         assert_eq!(fs::read(source).unwrap(), b"source remains");

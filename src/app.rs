@@ -10530,8 +10530,9 @@ impl Explorer {
                                 name_changed = ui
                                     .add_sized(
                                         [ui.available_width().min(360.0), 28.0],
-                                        egui::TextEdit::singleline(custom_name)
-                                            .hint_text("Leave blank for the selected conflict policy"),
+                                        egui::TextEdit::singleline(custom_name).hint_text(
+                                            "Leave blank for the selected conflict policy",
+                                        ),
                                     )
                                     .changed();
                                 if !custom_valid {
@@ -10624,19 +10625,20 @@ impl Explorer {
                                     .add_enabled(can_start, egui::Button::new("Start transfer"))
                                     .clicked()
                                 {
-                                    action = Some(if allows_custom_name && !custom_name.is_empty() {
-                                        Action::CopyAs {
-                                            source: clipboard.paths[0].clone(),
-                                            destination: destination.clone(),
-                                            name: custom_name.clone().into(),
-                                        }
-                                    } else {
-                                        Self::paste_action(
-                                            clipboard.clone(),
-                                            destination.clone(),
-                                            *conflict,
-                                        )
-                                    });
+                                    action =
+                                        Some(if allows_custom_name && !custom_name.is_empty() {
+                                            Action::CopyAs {
+                                                source: clipboard.paths[0].clone(),
+                                                destination: destination.clone(),
+                                                name: custom_name.clone().into(),
+                                            }
+                                        } else {
+                                            Self::paste_action(
+                                                clipboard.clone(),
+                                                destination.clone(),
+                                                *conflict,
+                                            )
+                                        });
                                     dismiss = true;
                                 }
                             });
