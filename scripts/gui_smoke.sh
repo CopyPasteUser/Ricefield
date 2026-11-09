@@ -114,6 +114,24 @@ for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sideba
   sleep 1
   import -window "$window_id" "screenshots/$theme.png"
   identify -format '%wx%h\n' "screenshots/$theme.png"
+  # Exercise actual primary-button rubber-band selection in a populated list.
+  # Starting below the items and ending above the last files must select
+  # multiple visible rows; move the pointer away before comparing to avoid
+  # mistaking a mere hover effect for a selection.
+  if [[ "$theme" == win7 ]]; then
+    xdotool mousemove --window "$window_id" 1050 425
+    xdotool mousedown 1
+    xdotool mousemove --sync --window "$window_id" 218 250
+    sleep 0.35
+    xdotool mouseup 1
+    xdotool mousemove --window "$window_id" 1060 550
+    sleep 0.6
+    import -window "$window_id" screenshots/win7-marquee.png
+    convert screenshots/win7.png -crop 900x110+215+245 +repage "$fixture_dir/before-selection.png"
+    convert screenshots/win7-marquee.png -crop 900x110+215+245 +repage "$fixture_dir/after-selection.png"
+    require_visible_change "$fixture_dir/before-selection.png" "$fixture_dir/after-selection.png" \
+      'Win7 mouse multi-selection' 12000
+  fi
   # Windows 10 has distinct interactive ribbon pages, not merely a painted
   # Home toolbar. Verify that both other pages visibly change the running UI.
   if [[ "$theme" == win10 ]]; then
