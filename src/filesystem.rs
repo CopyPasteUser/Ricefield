@@ -72,8 +72,8 @@ pub enum TransferUndo {
     Trash {
         item: trash::TrashItem,
         data_path: PathBuf,
-        snapshot: fs::Metadata,
-        info_snapshot: fs::Metadata,
+        snapshot: Box<fs::Metadata>,
+        info_snapshot: Box<fs::Metadata>,
     },
 }
 
@@ -804,8 +804,8 @@ pub enum Action {
     UndoTrash {
         item: trash::TrashItem,
         data_path: PathBuf,
-        snapshot: fs::Metadata,
-        info_snapshot: fs::Metadata,
+        snapshot: Box<fs::Metadata>,
+        info_snapshot: Box<fs::Metadata>,
     },
     Copy {
         sources: Vec<PathBuf>,
@@ -2003,8 +2003,8 @@ pub fn perform_with_report(
                     Box::new(TransferUndo::Trash {
                         item: entry,
                         data_path: path,
-                        snapshot,
-                        info_snapshot,
+                        snapshot: Box::new(snapshot),
+                        info_snapshot: Box::new(info_snapshot),
                     })
                 })
             }),
