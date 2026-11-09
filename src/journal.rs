@@ -1053,7 +1053,10 @@ fn adopt_legacy_verified_stage_in(
     }
     require_unpublished_unchanged_source(&record)?;
     if cancelled.load(Ordering::Relaxed) {
-        return Err(io::Error::new(io::ErrorKind::Interrupted, "Adoption cancelled"));
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "Adoption cancelled",
+        ));
     }
     let staging = record
         .staging
@@ -1064,7 +1067,9 @@ fn adopt_legacy_verified_stage_in(
         compare_staged_copy(&record.source, &staging.join("payload"), cancelled),
         Comparison::Identical { .. }
     ) {
-        return Err(invalid_data("Legacy stage and original are not verified identical"));
+        return Err(invalid_data(
+            "Legacy stage and original are not verified identical",
+        ));
     }
 
     let _lock = lock_journal_directory(directory)?;
@@ -1073,7 +1078,10 @@ fn adopt_legacy_verified_stage_in(
     }
     require_unpublished_unchanged_source(&record)?;
     if cancelled.load(Ordering::Relaxed) {
-        return Err(io::Error::new(io::ErrorKind::Interrupted, "Adoption cancelled"));
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "Adoption cancelled",
+        ));
     }
     let (_, stage_fd) = open_private_stage(&record)?;
     // Ensure the pinned private directory contains only its expected payload.
@@ -1107,11 +1115,16 @@ fn adopt_legacy_verified_stage_in(
         compare_staged_copy(&record.source, &anchored.join("payload"), cancelled),
         Comparison::Identical { .. }
     ) {
-        return Err(invalid_data("Legacy stage changed during final verification"));
+        return Err(invalid_data(
+            "Legacy stage changed during final verification",
+        ));
     }
     require_unpublished_unchanged_source(&record)?;
     if cancelled.load(Ordering::Relaxed) {
-        return Err(io::Error::new(io::ErrorKind::Interrupted, "Adoption cancelled"));
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "Adoption cancelled",
+        ));
     }
     if identity_of(&payload_fd.metadata()?) != payload_identity
         || identity_of(&fs::symlink_metadata(staging.join("payload"))?) != payload_identity
@@ -2883,10 +2896,15 @@ mod tests {
             assert!(inspected.can_offer_stage_discard());
             assert!(upgraded.staged_identity.is_some());
             assert!(upgraded.staging_directory_identity.is_some());
-            assert!(matches!(fs::symlink_metadata(&record.destination), Err(error) if error.kind() == io::ErrorKind::NotFound));
+            assert!(
+                matches!(fs::symlink_metadata(&record.destination), Err(error) if error.kind() == io::ErrorKind::NotFound)
+            );
 
             publish_verified_stage_in(&directory, &record.id, &AtomicBool::new(false)).unwrap();
-            assert!(matches!(compare_staged_copy(&record.source, &record.destination, &AtomicBool::new(false)), Comparison::Identical { .. }));
+            assert!(matches!(
+                compare_staged_copy(&record.source, &record.destination, &AtomicBool::new(false)),
+                Comparison::Identical { .. }
+            ));
             assert!(fs::symlink_metadata(&record.source).is_ok());
             assert!(!directory.join(format!("{}.toml", record.id)).exists());
             fs::remove_dir_all(directory).unwrap();
@@ -2911,11 +2929,20 @@ mod tests {
                 "cancel" => {}
                 _ => unreachable!(),
             }
-            assert!(adopt_legacy_verified_stage_in(&directory, &record.id, &cancelled).is_err(), "case: {fault}");
+            assert!(
+                adopt_legacy_verified_stage_in(&directory, &record.id, &cancelled).is_err(),
+                "case: {fault}"
+            );
             let unchanged = scan_incomplete_in(&directory).unwrap().remove(0);
             assert!(unchanged.staged_identity.is_none(), "case: {fault}");
-            assert!(unchanged.staging_directory_identity.is_none(), "case: {fault}");
-            assert!(fs::symlink_metadata(&record.source).is_ok(), "case: {fault}");
+            assert!(
+                unchanged.staging_directory_identity.is_none(),
+                "case: {fault}"
+            );
+            assert!(
+                fs::symlink_metadata(&record.source).is_ok(),
+                "case: {fault}"
+            );
             fs::remove_dir_all(directory).unwrap();
         }
     }
@@ -2940,7 +2967,10 @@ mod tests {
         assert!(inspected.can_offer_unproven_fresh_copy());
         assert!(!inspected.can_offer_fresh_copy());
         assert!(!inspected.can_offer_legacy_stage_adoption());
-        assert!(adopt_legacy_verified_stage_in(&directory, &record.id, &AtomicBool::new(false)).is_err());
+        assert!(
+            adopt_legacy_verified_stage_in(&directory, &record.id, &AtomicBool::new(false))
+                .is_err()
+        );
         fs::remove_file(&record.source).unwrap();
         let missing = inspect_record(scan_incomplete_in(&directory).unwrap().remove(0));
         assert!(!missing.can_offer_unproven_fresh_copy());
