@@ -859,6 +859,7 @@ struct OperationResult {
     id: u64,
     report: filesystem::OperationReport,
     moved_paths: Option<Vec<PathBuf>>,
+    retry_unstarted: Option<RetryProposal>,
 }
 
 struct CompletedOperation {
@@ -872,6 +873,7 @@ struct CompletedOperation {
     counts: ItemCounts,
     rename_undo: Option<Box<filesystem::RenameUndo>>,
     batch_rename_undo: Option<Box<filesystem::BatchRenameUndo>>,
+    retry_unstarted: Option<RetryProposal>,
     from_history: bool,
 }
 
@@ -950,6 +952,7 @@ impl CompletedOperation {
                 .collect(),
             rename_undo: None,
             batch_rename_undo: None,
+            retry_unstarted: None,
             from_history: true,
         }
     }
@@ -1111,6 +1114,69 @@ struct PastePreviewResult {
 struct Clipboard {
     paths: Vec<PathBuf>,
     cut: bool,
+}
+
+/// A review-only proposal. Never repeat the failed item: its destination may
+/// have been published before an I/O error or crash was observed.
+#[derive(Clone)]
+struct RetryProposal {
+    clipboard: Clipboard,
+    destination: PathBuf,
+    conflict: ConflictPolicy,
+    rules: Vec<filesystem::TransferRule>,
+}
+
+fn retry_unstarted_items(
+    action: &Action,
+    items: &[filesystem::ItemResult],
+) -> Option<RetryProposal> {
+    let (sources, destination, conflict, rules, cut) = match action {
+        Action::Copy {
+            sources,
+            destination,
+            conflict,
+        } => (sources, destination, *conflict, None, false),
+        Action::Move {
+            sources,
+            destination,
+            conflict,
+        } => (sources, destination, *conflict, None, true),
+        Action::CopyWithRules {
+            sources,
+            destination,
+            conflict,
+            rules,
+        } => (sources, destination, *conflict, Some(rules), false),
+        Action::MoveWithRules {
+            sources,
+            destination,
+            conflict,
+            rules,
+        } => (sources, destination, *conflict, Some(rules), true),
+        _ => return None,
+    };
+    if items.len() != sources.len() || rules.is_some_and(|rules| rules.len() != sources.len()) {
+        return None;
+    }
+    let mut paths = Vec::new();
+    let mut selected_rules = Vec::new();
+    for (index, item) in items.iter().enumerate() {
+        if item.source != sources[index] {
+            return None;
+        }
+        if item.state == filesystem::ItemState::NotStarted {
+            paths.push(item.source.clone());
+            selected_rules.push(
+                rules.map_or(filesystem::TransferRule::Global, |rules| rules[index].clone()),
+            );
+        }
+    }
+    (!paths.is_empty()).then_some(RetryProposal {
+        clipboard: Clipboard { paths, cut },
+        destination: destination.clone(),
+        conflict,
+        rules: selected_rules,
+    })
 }
 
 fn choose_paste_clipboard(
@@ -4013,6 +4079,7 @@ impl Explorer {
                         id,
                         report,
                         moved_paths,
+                        retry_unstarted,
                     } = message;
                     let undo_succeeded = report.result.is_ok();
                     let rename_undo = report.rename_undo;
@@ -4102,6 +4169,7 @@ impl Explorer {
                         items: report.items,
                         rename_undo,
                         batch_rename_undo,
+                        retry_unstarted,
                         from_history: false,
                     };
                     if let Some(writer) = &self.history_sender {
@@ -4629,6 +4697,7 @@ impl Explorer {
         let mut open = true;
         let mut remove = None;
         let mut undo_request = None;
+        let mut review_unstarted = None;
         egui::Window::new("Transfers")
             .open(&mut open)
             .default_width(440.0)
@@ -4726,6 +4795,19 @@ impl Explorer {
                             {
                                 undo_request = Some((entry.id, candidate.action()));
                             }
+                            if let Some(proposal) = &entry.retry_unstarted
+                                && ui
+                                    .add_enabled(
+                                        !self.busy
+                                            && !self.queue_paused
+                                            && self.operation_queue.is_empty(),
+                                        egui::Button::new("Review unstarted items"),
+                                    )
+                                    .on_hover_text("Open a new safety preview for files never attempted. Failed, cancelled and completed files are excluded because their state may be uncertain. No transfer runs automatically.")
+                                    .clicked()
+                            {
+                                review_unstarted = Some(proposal.clone());
+                            }
                         });
                         if entry.outcome == OperationOutcome::Failed {
                             ui.colored_label(Color32::LIGHT_RED, &entry.summary);
@@ -4814,6 +4896,23 @@ impl Explorer {
             if self.busy {
                 self.pending_undo_origin = Some(origin_id);
             }
+        }
+        if let Some(proposal) = review_unstarted {
+            let preview_generation = self.request_paste_preview(
+                &proposal.clipboard,
+                &proposal.destination,
+                proposal.conflict,
+                &proposal.rules,
+            );
+            self.dialog = Some(Dialog::PasteOptions {
+                clipboard: proposal.clipboard,
+                destination: proposal.destination,
+                conflict: proposal.conflict,
+                rules: proposal.rules,
+                preview_generation,
+                preview: None,
+            });
+            self.show_operations = false;
         }
         self.start_next_operation();
     }
@@ -5072,10 +5171,12 @@ impl Explorer {
             let report = filesystem::perform_with_report(&job.action, &cancel, &mut |progress| {
                 let _ = sender.send(OperationEvent::Progress(progress));
             });
+            let retry_unstarted = retry_unstarted_items(&job.action, &report.items);
             let _ = sender.send(OperationEvent::Finished(OperationResult {
                 id: job.id,
                 report,
                 moved_paths,
+                retry_unstarted,
             }));
         });
     }
@@ -11399,7 +11500,7 @@ mod tests {
         accept_property_result, active_after_swap, choose_paste_clipboard, commit_local_view,
         drop_action, elapsed_label, next_search_repaint_delay, project_local_view,
         read_property_snapshot, remaining_cut_paths, resolve_split_tabs, retain_visible_selection,
-        transfer_progress_details,
+        retry_unstarted_items, transfer_progress_details,
     };
     use crate::clipboard;
     use crate::config::Config;
@@ -11440,6 +11541,58 @@ mod tests {
             &[TransferRule::Global, TransferRule::Global],
         );
         assert!(matches!(action, Action::Move { .. }));
+    }
+
+    #[test]
+    fn recovery_review_proposes_only_never_attempted_items() {
+        let sources = vec![
+            PathBuf::from("/source/completed"),
+            PathBuf::from("/source/uncertain"),
+            PathBuf::from("/source/unstarted-one"),
+            PathBuf::from("/source/unstarted-two"),
+        ];
+        let rules = vec![
+            TransferRule::KeepBoth,
+            TransferRule::SkipExisting,
+            TransferRule::ExactName("chosen.txt".into()),
+            TransferRule::AbortOnConflict,
+        ];
+        let states = [
+            ItemState::Completed,
+            ItemState::Failed,
+            ItemState::NotStarted,
+            ItemState::NotStarted,
+        ];
+        let items: Vec<ItemResult> = sources
+            .iter()
+            .zip(states)
+            .map(|(source, state)| ItemResult {
+                source: source.clone(),
+                target: None,
+                state,
+                detail: None,
+            })
+            .collect();
+        let destination = PathBuf::from("/destination");
+        let action = Action::MoveWithRules {
+            sources: sources.clone(),
+            destination: destination.clone(),
+            conflict: ConflictPolicy::SkipExisting,
+            rules: rules.clone(),
+        };
+        let proposal = retry_unstarted_items(&action, &items).unwrap();
+        assert!(proposal.clipboard.cut);
+        assert_eq!(proposal.clipboard.paths, sources[2..].to_vec());
+        assert_eq!(proposal.rules, rules[2..].to_vec());
+        assert_eq!(proposal.destination, destination);
+        assert_eq!(proposal.conflict, ConflictPolicy::SkipExisting);
+
+        let mut completed = items.clone();
+        completed[2].state = ItemState::CopiedSourceRetained;
+        completed[3].state = ItemState::Cancelled;
+        assert!(retry_unstarted_items(&action, &completed).is_none());
+        assert!(retry_unstarted_items(&action, &items[..2]).is_none());
+        assert!(retry_unstarted_items(&Action::Delete { paths: sources }, &items).is_none());
     }
 
     #[test]

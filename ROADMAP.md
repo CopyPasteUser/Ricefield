@@ -395,6 +395,11 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   an occupied name aborts rather than silently replacing or suffixing it.
   Batch copies and moves now offer per-item exact-name overrides; same-folder
   exact-name moves become guarded renames. Verified replacement remains open.
+  Failed/cancelled Copy/Move batches now offer an explicit read-only preview
+  for only items that never started in the current session. The original
+  per-item rules survive that review; failed, completed, retained and
+  uncertain items are not automatically retried, and saved history cannot
+  replay actions. This is partial recovery UX, not durable rollback.
   The additional content-verified **Skip only matching contents** policy now
   compares existing files, nested folders and symlink targets on a bounded
   background preflight, aborts if contents differ or cannot be checked, and

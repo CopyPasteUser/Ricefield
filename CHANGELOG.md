@@ -2,6 +2,13 @@
 
 ## Unreleased — per-item copy and move decisions
 
+- Failed/cancelled Copy and Move batches can now offer **Review unstarted
+  items** in the shared Transfers dialog. This reconstructs a read-only
+  Paste-with-options preflight from only items never attempted in this session,
+  carrying their original individual conflict choices. It never automatically
+  replays failed, uncertain, already completed or cross-volume-retained items;
+  persisted history remains display-only.
+
 - Paste with options now supports an independent conflict rule for every
   source in a multi-file **copy or move**: use the global policy, Keep both,
   Skip existing, Require free, or Skip only matching contents. Both copy and

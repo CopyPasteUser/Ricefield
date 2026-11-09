@@ -128,6 +128,14 @@ all boxes below still require owner verification.
   the item without an automatic suffix, including a rename within the same
   folder. Existing names, invalid names and duplicate batch targets must
   refuse the entire batch without moving any source.
+- [ ] **B14 Review unstarted files:** On disposable files, force a mixed
+  Copy/Move batch to fail after at least one completed item and leave later
+  items unstarted. Open Transfers → Review unstarted items, verify that only
+  untouched later sources and their original per-item policies appear in the
+  new preview. Cancelling changes nothing; confirming runs worker preflight
+  again. Failed, cancelled, completed and cross-volume-retained items must
+  never be retried automatically. The control must be absent from restored
+  read-only history.
 
 ## C. Search, previews, archives and desktop helpers
 
