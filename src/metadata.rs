@@ -370,7 +370,7 @@ mod tests {
         fs::create_dir(&root).unwrap();
         fs::write(root.join("tiny.txt"), b"hello").unwrap();
         let output = deep_analysis(&root, &AtomicBool::new(false)).unwrap();
-        assert!(output.contains("5 bytes across 1 files"));
+        assert!(output.contains("5 B across 1 files"));
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink(&root, root.join("loop")).unwrap();
