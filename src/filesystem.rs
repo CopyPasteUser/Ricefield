@@ -2810,7 +2810,11 @@ pub fn property_lines(path: &Path) -> io::Result<Vec<(String, String)>> {
         ("Type".into(), kind.into()),
         (
             "Size".into(),
-            format!("{} ({} bytes)", human_size(metadata.len()), metadata.len()),
+            if metadata.is_dir() {
+                "Not calculated (use Calculate folder size)".into()
+            } else {
+                human_size(metadata.len())
+            },
         ),
         ("Modified".into(), age(metadata.modified().ok())),
         (
@@ -4525,6 +4529,30 @@ pub fn age(modified: Option<SystemTime>) -> String {
 mod tests {
     use super::*;
     use std::time::UNIX_EPOCH;
+
+    #[test]
+    fn property_sizes_are_human_readable_and_directories_are_not_inode_sizes() {
+        let root = std::env::temp_dir().join(format!(
+            "ricefield-readable-properties-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("sample.bin");
+        std::fs::File::create(&file)
+            .unwrap()
+            .set_len(3 * 1024 * 1024 + 65)
+            .unwrap();
+        let file_rows = property_lines(&file).unwrap();
+        assert_eq!(
+            file_rows.iter().find(|(label, _)| label == "Size").unwrap().1,
+            "3.0 MiB"
+        );
+        let dir_rows = property_lines(&root).unwrap();
+        assert!(dir_rows
+            .iter()
+            .any(|(label, value)| label == "Size" && value.contains("Not calculated")));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn file_type_badges_cover_common_formats_case_insensitively() {
