@@ -133,6 +133,41 @@ fn translate(language: Language, source: &'static str) -> &'static str {
         }
         "Rename selected" => "Auswahl umbenennen",
         "Connect to network location" => "Mit Netzwerkadresse verbinden",
+        "Connect to NAS / network" => "NAS / Netzwerk verbinden",
+        "Connect to your NAS" => "NAS verbinden",
+        "Enter its IP/hostname, or find a NAS on your local network." => {
+            "IP-Adresse oder Hostnamen eingeben oder ein NAS im lokalen Netzwerk finden."
+        }
+        "SMB / NAS" => "SMB / NAS",
+        "Other protocols" => "Weitere Protokolle",
+        "Server or IP address" => "Server oder IP-Adresse",
+        "Share name (optional)" => "Freigabename (optional)",
+        "Leave the share empty to browse available folders first." => {
+            "Freigabe leer lassen, um zuerst verfügbare Ordner anzuzeigen."
+        }
+        "Find NAS on network" => "NAS im Netzwerk suchen",
+        "Searching for advertised NAS servers…" => "Suche nach NAS-Geräten im Netzwerk…",
+        "No NAS found. Enter its IP address manually." => {
+            "Kein NAS gefunden. IP-Adresse manuell eingeben."
+        }
+        "Network address" => "Netzwerkadresse",
+        "SFTP, WebDAV and MTP use a full network URI." => {
+            "Für SFTP, WebDAV und MTP eine vollständige Netzwerkadresse eingeben."
+        }
+        "Enter a valid SFTP, WebDAV or MTP address" => {
+            "Gültige SFTP-, WebDAV- oder MTP-Adresse eingeben"
+        }
+        "Target" => "Ziel",
+        "Browse the NAS to pick a share, then enter credentials if needed." => {
+            "NAS-Freigabe auswählen und bei Bedarf anschließend anmelden."
+        }
+        "Username (optional)" => "Benutzername (optional)",
+        "Password (optional)" => "Passwort (optional)",
+        "Advanced login options" => "Erweiterte Anmeldeoptionen",
+        "Credentials are never stored in the URL. Saving uses your Linux keyring." => {
+            "Zugangsdaten stehen nie in der URL. Speichern erfolgt über den Linux-Schlüsselbund."
+        }
+        "More locations" => "Weitere Orte",
         "SMB, SFTP, WebDAV or MTP address (no passwords in the URL):" => {
             "SMB-, SFTP-, WebDAV- oder MTP-Adresse (kein Passwort in der URL):"
         }

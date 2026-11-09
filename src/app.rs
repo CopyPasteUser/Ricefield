@@ -48,6 +48,24 @@ const SEARCH_DEBOUNCE: Duration = Duration::from_millis(350);
 const MAX_RECENT_OPERATIONS: usize = transfer_history::MAX_RECORDS;
 const CLIPBOARD_WAIT: Duration = Duration::from_secs(2);
 const MAX_CLOSED_TABS: usize = 16;
+
+/// Keep the default Places area focused; secondary folders remain accessible
+/// from the collapsed More locations section, the address bar and folder tree.
+fn primary_sidebar_place(label: &str) -> bool {
+    matches!(label, "Home" | "Downloads" | "Documents" | "Pictures")
+}
+
+/// Render saved network addresses as useful human labels, not full protocol URIs.
+fn network_favorite_label(uri: &str) -> String {
+    let rest = uri.split_once("://").map_or(uri, |(_, rest)| rest);
+    let (server, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let share = path.split('/').find(|part| !part.is_empty());
+    match share {
+        Some(name) => format!("{server} / {name}"),
+        None => server.to_owned(),
+    }
+}
+
 // Small folders update immediately; expensive 100k-entry sorts never run in egui.
 const BACKGROUND_VIEW_THRESHOLD: usize = 8_192;
 type ThemeFingerprint = (SystemTime, u64, u64, u64);
@@ -1538,6 +1556,11 @@ pub struct Explorer {
     volume_receiver: Receiver<Result<(String, Option<String>), String>>,
     volume_connect_open: bool,
     volume_connect_uri: String,
+    volume_connect_last_target: String,
+    volume_connect_smb: bool,
+    volume_connect_server: String,
+    volume_connect_share: String,
+    volume_connect_show_discovery: bool,
     volume_connect_user: String,
     volume_connect_domain: String,
     volume_connect_password: String,
@@ -1817,6 +1840,11 @@ impl Explorer {
             volume_receiver,
             volume_connect_open: false,
             volume_connect_uri: String::new(),
+            volume_connect_last_target: String::new(),
+            volume_connect_smb: true,
+            volume_connect_server: String::new(),
+            volume_connect_share: String::new(),
+            volume_connect_show_discovery: false,
             volume_connect_user: String::new(),
             volume_connect_domain: String::new(),
             volume_connect_password: String::new(),
@@ -3101,6 +3129,18 @@ impl Explorer {
     }
 
     fn open_network_login(&mut self, uri: String) {
+        self.volume_connect_smb = uri.is_empty() || uri.starts_with("smb://");
+        self.volume_connect_server = if self.volume_connect_smb {
+            uri.strip_prefix("smb://")
+                .unwrap_or("")
+                .trim_end_matches('/')
+                .to_owned()
+        } else {
+            String::new()
+        };
+        self.volume_connect_share.clear();
+        self.volume_connect_show_discovery = false;
+        self.volume_connect_last_target = uri.clone();
         self.volume_connect_uri = uri;
         self.volume_connect_user.clear();
         self.volume_connect_domain.clear();
@@ -3235,68 +3275,258 @@ impl Explorer {
     fn volume_dialog(&mut self, context: &egui::Context) {
         if self.volume_connect_open {
             let mut open = true;
+            let mut close_from_footer = false;
             let mut connect = false;
-            egui::Window::new(i18n::tr("Connect to network location"))
+            let mut browse_shares = false;
+            let height = (context.content_rect().height() - 32.0).max(220.0);
+            let width = (context.content_rect().width() - 32.0).max(260.0);
+            egui::Window::new(i18n::tr("Connect to NAS / network"))
                 .open(&mut open)
                 .collapsible(false)
-                .resizable(false)
-                .default_width(420.0)
+                .resizable(true)
+                .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+                .default_width(460.0_f32.min(width))
+                .max_width(width)
+                .max_height(height)
                 .show(context, |ui| {
-                    ui.label(i18n::tr("SMB, SFTP, WebDAV or MTP address (no passwords in the URL):"));
-                    ui.add_sized(
-                        [ui.available_width().min(420.0), 26.0],
-                        egui::TextEdit::singleline(&mut self.volume_connect_uri)
-                            .hint_text("smb://server/share"),
-                    );
-                    // A saved password belongs to one server; editing its
-                    // address must not send the secret to a different host.
-                    if self
-                        .keyring_loaded_uri
-                        .as_ref()
-                        .is_some_and(|loaded| loaded != &self.volume_connect_uri)
-                    {
-                        volume::clear_password(&mut self.volume_connect_password);
-                        self.volume_connect_user.clear();
-                        self.volume_connect_domain.clear();
-                        self.volume_connect_remember = false;
-                        self.keyring_loaded_uri = None;
-                    }
+                    egui::ScrollArea::vertical()
+                        .max_height((height - 96.0).max(116.0))
+                        .show(ui, |ui| {
+                            ui.heading(i18n::tr("Connect to your NAS"));
+                            ui.small(i18n::tr("Enter its IP/hostname, or find a NAS on your local network."));
+                            ui.add_space(8.0);
+                            ui.horizontal(|ui| {
+                                ui.selectable_value(
+                                    &mut self.volume_connect_smb,
+                                    true,
+                                    i18n::tr("SMB / NAS"),
+                                );
+                                ui.selectable_value(
+                                    &mut self.volume_connect_smb,
+                                    false,
+                                    i18n::tr("Other protocols"),
+                                );
+                            });
+                            ui.separator();
+                            if self.volume_connect_smb {
+                                ui.label(i18n::tr("Server or IP address"));
+                                ui.add_sized(
+                                    [ui.available_width(), 27.0],
+                                    egui::TextEdit::singleline(&mut self.volume_connect_server)
+                                        .hint_text("192.168.178.66 / nas.local / \\\\nas\\share"),
+                                );
+                                ui.label(i18n::tr("Share name (optional)"));
+                                ui.add_sized(
+                                    [ui.available_width(), 27.0],
+                                    egui::TextEdit::singleline(&mut self.volume_connect_share)
+                                        .hint_text("medien"),
+                                );
+                                ui.small(i18n::tr("Leave the share empty to browse available folders first."));
+                                if ui
+                                    .add_enabled(
+                                        !self.discovery_busy,
+                                        egui::Button::new(i18n::tr("Find NAS on network")),
+                                    )
+                                    .clicked()
+                                {
+                                    self.volume_connect_show_discovery = true;
+                                    self.start_discovery();
+                                }
+                                if self.volume_connect_show_discovery {
+                                    if self.discovery_busy {
+                                        ui.horizontal(|ui| {
+                                            ui.spinner();
+                                            ui.label(i18n::tr("Searching for advertised NAS servers…"));
+                                        });
+                                    }
+                                    if let Some(error) = &self.discovery_error {
+                                        ui.colored_label(Color32::LIGHT_RED, error);
+                                    } else if !self.discovery_busy && self.discovery_hosts.is_empty() {
+                                        ui.small(i18n::tr("No NAS found. Enter its IP address manually."));
+                                    }
+                                    egui::ScrollArea::vertical()
+                                        .max_height(156.0)
+                                        .show(ui, |ui| {
+                                            for host in self.discovery_hosts.clone() {
+                                                if ui
+                                                    .add_sized(
+                                                        [ui.available_width(), 29.0],
+                                                        egui::Button::new(&host.label),
+                                                    )
+                                                    .on_hover_text(format!("{} · {}", host.uri, host.source))
+                                                    .clicked()
+                                                {
+                                                    self.volume_connect_server = host
+                                                        .uri
+                                                        .trim_start_matches("smb://")
+                                                        .trim_end_matches('/')
+                                                        .to_owned();
+                                                    self.volume_connect_share.clear();
+                                                }
+                                            }
+                                        });
+                                }
+                            } else {
+                                ui.label(i18n::tr("Network address"));
+                                ui.add_sized(
+                                    [ui.available_width(), 27.0],
+                                    egui::TextEdit::singleline(&mut self.volume_connect_uri)
+                                        .hint_text("sftp://server/path · davs://server/share"),
+                                );
+                                ui.small(i18n::tr("SFTP, WebDAV and MTP use a full network URI."));
+                            }
+
+                            // An address edit must never reuse a saved password
+                            // from a different server/share.
+                            let target = if self.volume_connect_smb {
+                                crate::location::smb_target(
+                                    &self.volume_connect_server,
+                                    &self.volume_connect_share,
+                                )
+                                .map_err(str::to_owned)
+                            } else {
+                                match Location::parse(self.volume_connect_uri.clone().into()) {
+                                    Ok(Location::Remote(remote)) => Ok(remote.uri),
+                                    _ => Err("Enter a valid SFTP, WebDAV or MTP address".into()),
+                                }
+                            };
+                            let current_target = target.as_ref().cloned().unwrap_or_default();
+                            if current_target != self.volume_connect_last_target
+                                || self
+                                    .keyring_loaded_uri
+                                    .as_ref()
+                                    .is_some_and(|loaded| loaded != &current_target)
+                            {
+                                volume::clear_password(&mut self.volume_connect_password);
+                                self.keyring_loaded_uri = None;
+                                self.volume_connect_remember = false;
+                            }
+                            self.volume_connect_last_target = current_target.clone();
+                            if self.volume_connect_smb {
+                                self.volume_connect_uri = current_target;
+                            }
+                            match &target {
+                                Ok(uri) => {
+                                    ui.small(format!("{}: {uri}", i18n::tr("Target")));
+                                }
+                                Err(error) => {
+                                    ui.colored_label(Color32::LIGHT_RED, error);
+                                }
+                            }
+
+                            let selecting_share = self.volume_connect_smb
+                                && target
+                                    .as_ref()
+                                    .is_ok_and(|uri| crate::location::smb_needs_share_selection(uri));
+                            if selecting_share {
+                                ui.small(i18n::tr("Browse the NAS to pick a share, then enter credentials if needed."));
+                            } else {
+                                ui.add_space(8.0);
+                                ui.label(i18n::tr("Username (optional)"));
+                                ui.add_sized(
+                                    [ui.available_width(), 26.0],
+                                    egui::TextEdit::singleline(&mut self.volume_connect_user)
+                                        .hint_text(i18n::tr("NAS username")),
+                                );
+                                ui.label(i18n::tr("Password (optional)"));
+                                ui.add_sized(
+                                    [ui.available_width(), 26.0],
+                                    egui::TextEdit::singleline(&mut self.volume_connect_password)
+                                        .password(true)
+                                        .hint_text(i18n::tr("NAS password")),
+                                );
+                                ui.collapsing(i18n::tr("Advanced login options"), |ui| {
+                                    ui.label(i18n::tr("Domain / workgroup (optional):"));
+                                    ui.add_sized(
+                                        [ui.available_width(), 26.0],
+                                        egui::TextEdit::singleline(&mut self.volume_connect_domain)
+                                            .hint_text("WORKGROUP"),
+                                    );
+                                    ui.checkbox(
+                                        &mut self.volume_connect_remember,
+                                        i18n::tr("Remember login in Linux keyring"),
+                                    )
+                                    .on_hover_text(i18n::tr("Only after a successful connection. Requires libsecret-tools and an unlocked Secret Service; never stored in RiceField settings."));
+                                    ui.horizontal(|ui| {
+                                        if ui
+                                            .add_enabled(
+                                                !self.keyring_busy && target.is_ok(),
+                                                egui::Button::new(i18n::tr("Use saved login")),
+                                            )
+                                            .clicked()
+                                        {
+                                            self.request_keyring(false);
+                                        }
+                                        if ui
+                                            .add_enabled(
+                                                !self.keyring_busy && target.is_ok(),
+                                                egui::Button::new(i18n::tr("Forget saved login")),
+                                            )
+                                            .clicked()
+                                        {
+                                            self.request_keyring(true);
+                                        }
+                                        if self.keyring_busy {
+                                            ui.spinner();
+                                        }
+                                    });
+                                    ui.small(i18n::tr("Credentials are never stored in the URL. Saving uses your Linux keyring."));
+                                });
+                            }
+                            ui.add_space(4.0);
+                        });
                     ui.separator();
-                    ui.label(i18n::tr("Username (leave empty for server default):"));
-                    ui.add_sized(
-                        [ui.available_width().min(420.0), 26.0],
-                        egui::TextEdit::singleline(&mut self.volume_connect_user)
-                            .hint_text(i18n::tr("NAS username")),
-                    );
-                    ui.label(i18n::tr("Domain / workgroup (optional):"));
-                    ui.add_sized(
-                        [ui.available_width().min(420.0), 26.0],
-                        egui::TextEdit::singleline(&mut self.volume_connect_domain)
-                            .hint_text("WORKGROUP"),
-                    );
-                    ui.label(i18n::tr("Password (leave empty for guest / existing session):"));
-                    ui.add_sized(
-                        [ui.available_width().min(420.0), 26.0],
-                        egui::TextEdit::singleline(&mut self.volume_connect_password)
-                            .password(true)
-                            .hint_text(i18n::tr("NAS password")),
-                    );
-                    ui.checkbox(&mut self.volume_connect_remember, i18n::tr("Remember login in Linux keyring"))
-                        .on_hover_text(i18n::tr("Only after a successful connection. Requires libsecret-tools and an unlocked Secret Service; never stored in RiceField settings."));
-                    ui.horizontal(|ui| {
-                        if ui.add_enabled(!self.keyring_busy, egui::Button::new(i18n::tr("Use saved login"))).clicked() {
-                            self.request_keyring(false);
+                    let ready = if self.volume_connect_smb {
+                        crate::location::smb_target(
+                            &self.volume_connect_server,
+                            &self.volume_connect_share,
+                        )
+                        .ok()
+                    } else {
+                        match Location::parse(self.volume_connect_uri.clone().into()) {
+                            Ok(Location::Remote(remote)) => Some(remote.uri),
+                            _ => None,
                         }
-                        if ui.add_enabled(!self.keyring_busy, egui::Button::new(i18n::tr("Forget saved login"))).clicked() {
-                            self.request_keyring(true);
-                        }
-                        if self.keyring_busy { ui.spinner(); }
+                    };
+                    let selecting_share = ready.as_ref().is_some_and(|uri| {
+                        self.volume_connect_smb
+                            && crate::location::smb_needs_share_selection(uri)
                     });
-                    ui.small(i18n::tr("Passwords are never included in the URL. Saving is opt-in and uses your desktop's encrypted Secret Service."));
-                    connect = ui.add_enabled(!self.volume_busy, egui::Button::new(i18n::tr("Connect"))).clicked();
+                    ui.horizontal(|ui| {
+                        if ui.button(i18n::tr("Cancel")).clicked() {
+                            close_from_footer = true;
+                        }
+                        if ui
+                            .add_enabled(
+                                !self.volume_busy && ready.is_some(),
+                                egui::Button::new(if selecting_share {
+                                    i18n::tr("Browse shares")
+                                } else {
+                                    i18n::tr("Connect")
+                                }),
+                            )
+                            .clicked()
+                        {
+                            browse_shares = selecting_share;
+                            connect = !selecting_share;
+                        }
+                        if self.volume_busy {
+                            ui.spinner();
+                        }
+                    });
                 });
-            self.volume_connect_open = open;
-            if connect {
+            if browse_shares {
+                if let Ok(uri) = crate::location::smb_target(
+                    &self.volume_connect_server,
+                    &self.volume_connect_share,
+                ) {
+                    self.navigate_remote(uri);
+                    self.volume_connect_open = false;
+                    volume::clear_password(&mut self.volume_connect_password);
+                    self.volume_connect_remember = false;
+                    self.keyring_loaded_uri = None;
+                }
+            } else if connect {
                 match Location::parse(self.volume_connect_uri.clone().into()) {
                     Ok(Location::Remote(remote)) => {
                         let credentials = MountCredentials {
@@ -3331,7 +3561,7 @@ impl Explorer {
                     }
                     Err(error) => self.status = Some((error.into(), true)),
                 }
-            } else if !open {
+            } else if !open || close_from_footer {
                 volume::clear_password(&mut self.volume_connect_password);
                 self.volume_connect_remember = false;
                 self.keyring_loaded_uri = None;
@@ -7971,6 +8201,12 @@ impl Explorer {
                         let mut render_section = |ui: &mut egui::Ui| match section {
                             SidebarSection::Tasks => self.sidebar_tasks(ui),
                             SidebarSection::Places => {
+                                let primary_places = self
+                                    .places
+                                    .iter()
+                                    .filter(|(label, _)| primary_sidebar_place(label))
+                                    .cloned()
+                                    .collect::<Vec<_>>();
                                 if theme.shell_kind() == ShellKind::Chromeos {
                                     let home = config::home();
                                     let response = chromeos::sidebar_response(
@@ -7985,9 +8221,6 @@ impl Explorer {
                                         ("Downloads", FilesNavIcon::Download),
                                         ("Documents", FilesNavIcon::Folder),
                                         ("Pictures", FilesNavIcon::Image),
-                                        ("Music", FilesNavIcon::Music),
-                                        ("Videos", FilesNavIcon::Video),
-                                        ("Desktop", FilesNavIcon::Folder),
                                     ] {
                                         let path = home.join(name);
                                         if self
@@ -8008,7 +8241,7 @@ impl Explorer {
                                     return;
                                 }
                                 if theme.shell_kind() == ShellKind::Classic {
-                                    for (label, path) in self.places.clone() {
+                                    for (label, path) in primary_places.clone() {
                                         let icon = if path == Path::new("/") {
                                             TreeIcon::Disk
                                         } else if path == config::home() {
@@ -8028,11 +8261,12 @@ impl Explorer {
                                     return;
                                 }
                                 if theme.shell_kind() == ShellKind::Finder {
-                                    for (name, path) in self.places.clone() {
-                                        let icon = if path == Path::new("/") {
-                                            FinderNavIcon::Computer
-                                        } else {
-                                            FinderNavIcon::Home
+                                    for (name, path) in primary_places.clone() {
+                                        let icon = match name {
+                                            "Downloads" => FinderNavIcon::Downloads,
+                                            "Pictures" => FinderNavIcon::Pictures,
+                                            _ if path == Path::new("/") => FinderNavIcon::Computer,
+                                            _ => FinderNavIcon::Home,
                                         };
                                         let response = finder::sidebar_response(
                                             ui,
@@ -8047,7 +8281,7 @@ impl Explorer {
                                     return;
                                 }
                                 if theme.shell_kind() == ShellKind::Aqua {
-                                    for (name, path) in self.places.clone() {
+                                    for (name, path) in primary_places.clone() {
                                         let label = if path == Path::new("/") {
                                             "Filesystem"
                                         } else {
@@ -8074,7 +8308,7 @@ impl Explorer {
                                     return;
                                 }
                                 if theme.shell_kind() == ShellKind::Ribbon {
-                                    for (name, path) in self.places.clone() {
+                                    for (name, path) in primary_places.clone() {
                                         let label = if path == Path::new("/") {
                                             "Linux filesystem"
                                         } else {
@@ -8098,7 +8332,7 @@ impl Explorer {
                                 }
                                 if theme.shell_kind() == ShellKind::Luna {
                                     use shell_components::{LunaLinkIcon as Icon, luna_link};
-                                    for (label, path) in self.places.clone() {
+                                    for (label, path) in primary_places.clone() {
                                         let title = if path == Path::new("/") {
                                             "My Computer"
                                         } else {
@@ -8125,7 +8359,7 @@ impl Explorer {
                                     return;
                                 }
                                 if theme.shell_kind() == ShellKind::Aero {
-                                    for (name, path) in self.places.clone() {
+                                    for (name, path) in primary_places.clone() {
                                         if !matches!(
                                             name,
                                             "Documents" | "Music" | "Pictures" | "Videos"
@@ -8147,7 +8381,7 @@ impl Explorer {
                                     return;
                                 }
                                 ui.add_space(8.0);
-                                for (label, path) in self.places.clone() {
+                                for (label, path) in primary_places.clone() {
                                     let response = ui.add_sized(
                                         [ui.available_width(), 29.0],
                                         egui::Button::new(label)
@@ -8216,39 +8450,6 @@ impl Explorer {
                                 }
                                 if theme.shell_kind() == ShellKind::Finder {
                                     let home = config::home();
-                                    if finder::sidebar_link(
-                                        ui,
-                                        &theme,
-                                        "Home",
-                                        self.current().path == home,
-                                        FinderNavIcon::Home,
-                                    ) {
-                                        self.navigate(home.clone());
-                                    }
-                                    for (label, icon) in [
-                                        ("Desktop", FinderNavIcon::Folder),
-                                        ("Documents", FinderNavIcon::Folder),
-                                        ("Downloads", FinderNavIcon::Downloads),
-                                        ("Pictures", FinderNavIcon::Pictures),
-                                        ("Music", FinderNavIcon::Music),
-                                        ("Videos", FinderNavIcon::Folder),
-                                    ] {
-                                        let path = home.join(label);
-                                        if self
-                                            .places
-                                            .iter()
-                                            .any(|(_, available)| available == &path)
-                                            && finder::sidebar_link(
-                                                ui,
-                                                &theme,
-                                                label,
-                                                self.current().path == path,
-                                                icon,
-                                            )
-                                        {
-                                            self.navigate(path);
-                                        }
-                                    }
                                     for path in self.config.bookmarks.clone() {
                                         if path == home {
                                             continue;
@@ -8288,16 +8489,6 @@ impl Explorer {
                                     return;
                                 }
                                 if theme.shell_kind() == ShellKind::Aqua {
-                                    let home = config::home();
-                                    if aqua::sidebar_link(
-                                        ui,
-                                        &theme,
-                                        "Home",
-                                        self.current().path == home,
-                                        aqua::AquaNavIcon::Home,
-                                    ) {
-                                        self.navigate(home);
-                                    }
                                     for path in self.config.bookmarks.clone() {
                                         let label = path
                                             .file_name()
@@ -8329,30 +8520,6 @@ impl Explorer {
                                     return;
                                 }
                                 if theme.shell_kind() == ShellKind::Ribbon {
-                                    let home = config::home();
-                                    if shell_components::win10_sidebar_link(
-                                        ui,
-                                        &theme,
-                                        "Home",
-                                        self.current().path == home,
-                                        shell_components::Win10NavIcon::QuickAccess,
-                                    ) {
-                                        self.navigate(home.clone());
-                                    }
-                                    for name in ["Desktop", "Downloads", "Documents", "Pictures"] {
-                                        let path = home.join(name);
-                                        if self.places.iter().any(|(_, existing)| *existing == path)
-                                            && shell_components::win10_sidebar_link(
-                                                ui,
-                                                &theme,
-                                                name,
-                                                self.current().path == path,
-                                                shell_components::Win10NavIcon::Folder,
-                                            )
-                                        {
-                                            self.navigate(path);
-                                        }
-                                    }
                                     for path in self.config.bookmarks.clone() {
                                         let label = path
                                             .file_name()
@@ -8410,28 +8577,6 @@ impl Explorer {
                                     return;
                                 }
                                 if theme.shell_kind() == ShellKind::Aero {
-                                    let home = config::home();
-                                    if shell_components::aero_sidebar_link(
-                                        ui,
-                                        "Home",
-                                        self.current().path == home,
-                                        shell_components::AeroNavIcon::Favorite,
-                                    ) {
-                                        self.navigate(home.clone());
-                                    }
-                                    for name in ["Desktop", "Downloads"] {
-                                        let path = home.join(name);
-                                        if self.places.iter().any(|(_, existing)| *existing == path)
-                                            && shell_components::aero_sidebar_link(
-                                                ui,
-                                                name,
-                                                self.current().path == path,
-                                                shell_components::AeroNavIcon::Favorite,
-                                            )
-                                        {
-                                            self.navigate(path);
-                                        }
-                                    }
                                     for path in self.config.bookmarks.clone() {
                                         let label = path
                                             .file_name()
@@ -8478,82 +8623,19 @@ impl Explorer {
                                 let finder_shell = theme.shell_kind() == ShellKind::Finder;
                                 let chromeos_shell = theme.shell_kind() == ShellKind::Chromeos;
                                 let classic_shell = theme.shell_kind() == ShellKind::Classic;
-                                let discover = if chromeos_shell {
-                                    chromeos::sidebar_link(
-                                        ui,
-                                        &theme,
-                                        "Network",
-                                        false,
-                                        FilesNavIcon::Network,
-                                    )
-                                } else if classic_shell {
-                                    let response = classic98::tree_link(
-                                        ui,
-                                        "Network Neighborhood",
-                                        false,
-                                        TreeIcon::Network,
-                                    );
-                                    classic98::activated(ui, &response)
-                                } else if finder_shell {
-                                    finder::sidebar_link(
-                                        ui,
-                                        &theme,
-                                        "Network",
-                                        false,
-                                        FinderNavIcon::Network,
-                                    )
-                                } else if aqua_shell {
-                                    aqua::sidebar_link(
-                                        ui,
-                                        &theme,
-                                        "Discover network",
-                                        false,
-                                        aqua::AquaNavIcon::Network,
-                                    )
-                                } else if ribbon {
-                                    shell_components::win10_sidebar_link(
-                                        ui,
-                                        &theme,
-                                        "Discover network",
-                                        false,
-                                        shell_components::Win10NavIcon::Network,
-                                    )
-                                } else if aero {
-                                    shell_components::aero_sidebar_link(
-                                        ui,
-                                        "Network · discover",
-                                        false,
-                                        shell_components::AeroNavIcon::Network,
-                                    )
-                                } else if luna {
-                                    shell_components::luna_link(
-                                        ui,
-                                        "Discover network storage",
-                                        true,
-                                        shell_components::LunaLinkIcon::Drive,
-                                    )
-                                } else {
-                                    ui.button("Discover NAS on network…").clicked()
-                                };
-                                if discover {
-                                    self.discovery_open = true;
-                                    if self.discovery_hosts.is_empty() {
-                                        self.start_discovery();
-                                    }
-                                }
                                 let connect = if chromeos_shell {
                                     !self.volume_busy
                                         && chromeos::sidebar_link(
                                             ui,
                                             &theme,
-                                            "Connect to server",
+                                            "Connect to NAS",
                                             false,
                                             FilesNavIcon::Network,
                                         )
                                 } else if classic_shell {
                                     let response = classic98::tree_link(
                                         ui,
-                                        "Map network folder",
+                                        "Connect to NAS",
                                         false,
                                         TreeIcon::Network,
                                     );
@@ -8581,14 +8663,14 @@ impl Explorer {
                                         && shell_components::win10_sidebar_link(
                                             ui,
                                             &theme,
-                                            "Connect to network",
+                                            "Connect to NAS",
                                             false,
                                             shell_components::Win10NavIcon::Network,
                                         )
                                 } else if aero {
                                     shell_components::aero_sidebar_link(
                                         ui,
-                                        "Connect to network…",
+                                        "Connect to NAS…",
                                         false,
                                         shell_components::AeroNavIcon::Network,
                                     )
@@ -8597,12 +8679,12 @@ impl Explorer {
                                         ui,
                                         "Connect to network",
                                         !self.volume_busy,
-                                        shell_components::LunaLinkIcon::Computer,
+                                        shell_components::LunaLinkIcon::Drive,
                                     )
                                 } else {
                                     ui.add_enabled(
                                         !self.volume_busy,
-                                        egui::Button::new("+ Connect to network…"),
+                                        egui::Button::new("+ Connect to NAS…"),
                                     )
                                     .clicked()
                                 };
@@ -8706,18 +8788,19 @@ impl Explorer {
                                     ) {
                                         continue;
                                     }
+                                    let display = network_favorite_label(&uri);
                                     let remote_clicked = if chromeos_shell {
                                         chromeos::sidebar_link(
                                             ui,
                                             &theme,
-                                            &shorten(&uri, 24),
+                                            &shorten(&display, 24),
                                             false,
                                             FilesNavIcon::Network,
                                         )
                                     } else if classic_shell {
                                         let response = classic98::tree_link(
                                             ui,
-                                            &shorten(&uri, 25),
+                                            &shorten(&display, 25),
                                             false,
                                             TreeIcon::Network,
                                         );
@@ -8726,7 +8809,7 @@ impl Explorer {
                                         finder::sidebar_link(
                                             ui,
                                             &theme,
-                                            &shorten(&uri, 24),
+                                            &shorten(&display, 24),
                                             false,
                                             FinderNavIcon::Network,
                                         )
@@ -8734,15 +8817,15 @@ impl Explorer {
                                         aqua::sidebar_link(
                                             ui,
                                             &theme,
-                                            &shorten(&uri, 24),
+                                            &shorten(&display, 24),
                                             false,
                                             aqua::AquaNavIcon::Network,
                                         )
                                     } else {
                                         ui.button(if aero {
-                                            format!("    {}", shorten(&uri, 24))
+                                            format!("    {}", shorten(&display, 24))
                                         } else {
-                                            format!("Network favorite: {}", shorten(&uri, 27))
+                                            format!("NAS: {}", shorten(&display, 27))
                                         })
                                         .on_hover_text(&uri)
                                         .clicked()
@@ -8753,6 +8836,11 @@ impl Explorer {
                                 }
                                 for volume in self.volumes.clone() {
                                     let path = volume.path;
+                                    // Root is always accessible under More locations.
+                                    // Do not waste a persistent device row on it.
+                                    if path == Path::new("/") {
+                                        continue;
+                                    }
                                     let device = self
                                         .device_volumes
                                         .iter()
@@ -8922,6 +9010,48 @@ impl Explorer {
                             section,
                             &mut render_section,
                         );
+                        if section == SidebarSection::Places {
+                            let secondary = self
+                                .places
+                                .iter()
+                                .filter(|(label, _)| !primary_sidebar_place(label))
+                                .cloned()
+                                .collect::<Vec<_>>();
+                            if !secondary.is_empty() {
+                                ui.collapsing(i18n::tr("More locations"), |ui| {
+                                    for (label, path) in secondary {
+                                        let selected = self.current().path == path;
+                                        let response = if theme.shell_kind() == ShellKind::Chromeos
+                                        {
+                                            let icon = match label {
+                                                "Music" => FilesNavIcon::Music,
+                                                "Videos" => FilesNavIcon::Video,
+                                                _ => FilesNavIcon::Folder,
+                                            };
+                                            chromeos::sidebar_response(
+                                                ui, &theme, label, selected, icon,
+                                            )
+                                        } else if theme.shell_kind() == ShellKind::Finder {
+                                            let icon = match label {
+                                                "Music" => FinderNavIcon::Music,
+                                                "Downloads" => FinderNavIcon::Downloads,
+                                                "Pictures" => FinderNavIcon::Pictures,
+                                                _ => FinderNavIcon::Folder,
+                                            };
+                                            finder::sidebar_response(
+                                                ui, &theme, label, selected, icon,
+                                            )
+                                        } else {
+                                            ui.add_sized(
+                                                [ui.available_width(), 25.0],
+                                                egui::Button::new(label).selected(selected),
+                                            )
+                                        };
+                                        self.place_response(ui, response, path);
+                                    }
+                                });
+                            }
+                        }
                     }
                 });
             });
@@ -11929,6 +12059,25 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant, SystemTime};
+
+    #[test]
+    fn saved_nas_shortcuts_show_server_and_share_not_protocol_noise() {
+        assert_eq!(
+            super::network_favorite_label("smb://nas.home.arpa/medien"),
+            "nas.home.arpa / medien"
+        );
+        assert_eq!(super::network_favorite_label("smb://nas/"), "nas");
+    }
+
+    #[test]
+    fn primary_places_are_useful_and_secondary_folders_remain_discoverable() {
+        for name in ["Home", "Downloads", "Documents", "Pictures"] {
+            assert!(super::primary_sidebar_place(name));
+        }
+        for name in ["Desktop", "Music", "Videos", "Filesystem"] {
+            assert!(!super::primary_sidebar_place(name));
+        }
+    }
 
     #[test]
     fn individual_move_choices_dispatch_as_move_and_global_choices_keep_legacy_path() {

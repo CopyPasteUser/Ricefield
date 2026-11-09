@@ -74,6 +74,82 @@ impl Location {
     }
 }
 
+/// Build an SMB target from a simple NAS address and an optional share name.
+/// Accepts a host/IP, smb://host/share, or a pasted Windows UNC path.
+/// Credentials and unescaped path separators are never accepted in the share.
+pub fn smb_target(server: &str, share: &str) -> Result<String, &'static str> {
+    let entered = server.trim();
+    if entered.is_empty() {
+        return Err("Enter a NAS hostname or IP address");
+    }
+    let normalized = entered.replace('\\', "/");
+    let base = if normalized.starts_with("smb://") {
+        normalized
+    } else if normalized.starts_with("//") {
+        let parts = normalized
+            .trim_start_matches('/')
+            .split('/')
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("/");
+        format!("smb://{parts}")
+    } else {
+        format!("smb://{normalized}")
+    };
+    let base = base.trim_end_matches('/');
+    let authority = base
+        .strip_prefix("smb://")
+        .ok_or("Enter an SMB server address")?
+        .split('/')
+        .next()
+        .unwrap_or("");
+    if authority.is_empty() {
+        return Err("Enter a NAS hostname or IP address");
+    }
+    let share = share.trim();
+    let path_already_present = base
+        .strip_prefix(&format!("smb://{authority}"))
+        .is_some_and(|tail| !tail.is_empty());
+    if !share.is_empty() && path_already_present {
+        return Err("Enter the share in one field only");
+    }
+    if matches!(share, "." | "..")
+        || share.contains(['/', '\\'])
+        || share.chars().any(char::is_control)
+    {
+        return Err("Share name must not contain slashes or control characters");
+    }
+    let uri = if share.is_empty() {
+        if path_already_present {
+            base.to_owned()
+        } else {
+            format!("{base}/")
+        }
+    } else {
+        let mut encoded = String::new();
+        for byte in share.bytes() {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+                encoded.push(char::from(byte));
+            } else {
+                encoded.push_str(&format!("%{byte:02X}"));
+            }
+        }
+        format!("{base}/{encoded}")
+    };
+    match Location::parse(uri.clone().into()) {
+        Ok(Location::Remote(target)) if target.scheme == RemoteScheme::Smb => Ok(target.uri),
+        _ => Err("Invalid NAS address. Use a hostname, IP or SMB URL without credentials"),
+    }
+}
+
+/// Show the share picker when no share/path was specified.
+pub fn smb_needs_share_selection(uri: &str) -> bool {
+    let Some(rest) = uri.strip_prefix("smb://") else {
+        return false;
+    };
+    rest.split_once('/').is_none_or(|(_, path)| path.is_empty())
+}
+
 fn validate_remote_host(authority: &str) -> Result<(), &'static str> {
     let suffix = if let Some(bracketed) = authority.strip_prefix('[') {
         let (host, suffix) = bracketed
@@ -198,6 +274,38 @@ fn local_file_uri(uri: &str) -> Result<PathBuf, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::{Location, RemoteScheme};
+
+    #[test]
+    fn nas_addresses_support_simple_hosts_share_names_and_pasted_unc_paths() {
+        assert_eq!(
+            super::smb_target("192.168.178.66", "medien"),
+            Ok("smb://192.168.178.66/medien".into())
+        );
+        assert_eq!(
+            super::smb_target("nas.local", "Shared Photos"),
+            Ok("smb://nas.local/Shared%20Photos".into())
+        );
+        assert_eq!(
+            super::smb_target(r"\\nas\\medien", ""),
+            Ok("smb://nas/medien".into())
+        );
+        assert_eq!(
+            super::smb_target("smb://nas/medien", ""),
+            Ok("smb://nas/medien".into())
+        );
+        assert!(super::smb_needs_share_selection("smb://nas/"));
+        assert!(!super::smb_needs_share_selection("smb://nas/medien"));
+    }
+
+    #[test]
+    fn nas_addresses_reject_credentials_invalid_shares_and_ambiguous_paths() {
+        assert!(super::smb_target("user:pass@nas", "share").is_err());
+        assert!(super::smb_target("nas", "../private").is_err());
+        assert!(super::smb_target("smb://nas/share", "another").is_err());
+        assert!(super::smb_target("", "share").is_err());
+        assert!(super::smb_target("nas", "null\0byte").is_err());
+        assert!(super::smb_target("nas", "sub/folder").is_err());
+    }
 
     #[test]
     fn keeps_local_and_file_uri_paths_exact() {

@@ -211,7 +211,8 @@ fn folder_size(path: &Path, stop: &AtomicBool) -> io::Result<String> {
         }
     }
     Ok(format!(
-        "{total} bytes across {files} files / {folders} folders{} (symlinks and other volumes excluded)",
+        "{} across {files} files / {folders} folders{} (symlinks and other volumes excluded)",
+        crate::filesystem::human_size(total),
         if limited {
             " · partial result: scan budget reached"
         } else {
@@ -300,6 +301,23 @@ mod tests {
 
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    #[test]
+    fn folder_analysis_uses_human_readable_units() {
+        let root = std::env::temp_dir().join(format!(
+            "ricefield-readable-analysis-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::File::create(root.join("sample.bin"))
+            .unwrap()
+            .set_len(2 * 1024 * 1024)
+            .unwrap();
+        let result = folder_size(&root, &AtomicBool::new(false)).unwrap();
+        assert!(result.starts_with("2.0 MiB across 1 files / 1 folders"));
+        assert!(!result.contains("2097152 bytes"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn posix_acl_reader_displays_rules_and_fails_closed_on_malformed_bytes() {
@@ -352,12 +370,12 @@ mod tests {
         fs::create_dir(&root).unwrap();
         fs::write(root.join("tiny.txt"), b"hello").unwrap();
         let output = deep_analysis(&root, &AtomicBool::new(false)).unwrap();
-        assert!(output.contains("5 bytes across 1 files"));
+        assert!(output.contains("5 B across 1 files"));
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink(&root, root.join("loop")).unwrap();
             let output = deep_analysis(&root, &AtomicBool::new(false)).unwrap();
-            assert!(output.contains("5 bytes across 1 files"));
+            assert!(output.contains("5 B across 1 files"));
         }
         fs::remove_dir_all(root).unwrap();
     }
