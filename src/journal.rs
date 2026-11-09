@@ -21,7 +21,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const VERSION: u32 = 3;
+const VERSION: u32 = 4;
 const MAX_RECORD_BYTES: u64 = 64 * 1024;
 const MAX_RECORDS: usize = 4096;
 // Recovery comparisons are explicitly requested, never run during startup.
@@ -37,6 +37,10 @@ pub enum State {
     Prepared,
     StagedVerified,
     Published,
+    /// Confirmed and durable intent to remove only unpublished staging.
+    DiscardingStage,
+    /// Terminal evidence after a confirmed stage discard; no destination exists.
+    StageDiscarded,
     Completed,
 }
 
@@ -49,6 +53,7 @@ pub struct Record {
     pub staging: Option<PathBuf>,
     pub source_identity: Option<ObjectIdentity>,
     pub staged_identity: Option<ObjectIdentity>,
+    pub staging_directory_identity: Option<ObjectIdentity>,
     pub destination_identity: Option<ObjectIdentity>,
 }
 
@@ -268,9 +273,30 @@ impl Inspection {
             && matches!(self.staging, Some(PathStatus::Directory))
     }
 
+    #[cfg(target_os = "linux")]
+    pub fn can_offer_stage_discard(&self) -> bool {
+        self.record.state == State::StagedVerified
+            && self.record.staged_identity.is_some()
+            && matches!(self.source_identity, IdentityStatus::SameSnapshot)
+            && matches!(self.destination, PathStatus::Missing)
+            && matches!(self.staging, Some(PathStatus::Directory))
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn can_continue_stage_discard(&self) -> bool {
+        self.record.state == State::DiscardingStage
+            && self.record.staging_directory_identity.is_some()
+            && matches!(self.source_identity, IdentityStatus::SameSnapshot)
+            && matches!(self.destination, PathStatus::Missing)
+            && matches!(self.staging, Some(PathStatus::Directory | PathStatus::Missing))
+    }
+
     /// Conservative triage only: metadata presence cannot authorize an undo,
     /// source deletion, or dismissal of a recovery record.
     pub fn guidance(&self) -> &'static str {
+        if self.record.state == State::DiscardingStage {
+            return "Private stage removal was confirmed but interrupted. The payload may be incomplete; never publish it. Explicitly continue only after checking the unchanged original and vacant destination.";
+        }
         if matches!(&self.source, PathStatus::Inaccessible(_))
             || matches!(&self.destination, PathStatus::Inaccessible(_))
             || self
@@ -667,6 +693,8 @@ struct StoredRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     staged_identity: Option<ObjectIdentity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    staging_directory_identity: Option<ObjectIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     destination_identity: Option<ObjectIdentity>,
 }
 
@@ -727,6 +755,7 @@ impl Journal {
                 staging: None,
                 source_identity: source_identity.clone(),
                 staged_identity: None,
+                staging_directory_identity: None,
                 destination_identity: None,
             };
             match write_record(&path, &record, true) {
@@ -797,6 +826,9 @@ impl Journal {
                     .ok_or_else(|| invalid_input("Staging path was not recorded"))?
                     .join("payload");
                 updated.staged_identity = Some(identity_of(&fs::symlink_metadata(staged)?));
+                updated.staging_directory_identity = Some(identity_of(&fs::symlink_metadata(
+                    self.record.staging.as_ref().unwrap(),
+                )?));
             }
         }
         if next == State::Published {
@@ -872,6 +904,202 @@ pub fn resolve_verified_copy(id: &str, cancelled: &AtomicBool) -> io::Result<()>
 #[cfg(target_os = "linux")]
 pub fn publish_verified_stage(id: &str, cancelled: &AtomicBool) -> io::Result<()> {
     publish_verified_stage_in(&journal_directory()?, id, cancelled)
+}
+
+/// Explicit rollback of an *unpublished private stage only*. The original is
+/// never unlinked. Once intent is durably recorded, an interruption leaves a
+/// `DiscardingStage` journal that can be resumed, but never republished.
+#[cfg(target_os = "linux")]
+pub fn discard_verified_stage(id: &str, cancelled: &AtomicBool) -> io::Result<()> {
+    discard_verified_stage_in(&journal_directory()?, id, cancelled)
+}
+
+#[cfg(target_os = "linux")]
+fn open_private_stage(record: &Record) -> io::Result<(File, File)> {
+    use std::os::{fd::{AsRawFd, FromRawFd}, unix::{ffi::OsStrExt, fs::OpenOptionsExt}};
+
+    let stage = record.staging.as_ref().ok_or_else(|| invalid_data("Missing staging path"))?;
+    let parent = record.destination.parent().ok_or_else(|| invalid_data("Missing destination parent"))?;
+    if stage.parent() != Some(parent)
+        || !stage.file_name().is_some_and(|name| name.as_bytes().starts_with(b".ricefield-staging-"))
+    {
+        return Err(invalid_data("Staging is not under the recorded destination parent"));
+    }
+    let parent_fd = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(parent)?;
+    let name = std::ffi::CString::new(stage.file_name().unwrap().as_bytes())
+        .map_err(|_| invalid_data("Invalid staging directory name"))?;
+    let raw = unsafe {
+        libc::openat(parent_fd.as_raw_fd(), name.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+    };
+    if raw < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let stage_fd = unsafe { File::from_raw_fd(raw) };
+    use std::os::unix::fs::MetadataExt;
+    let meta = stage_fd.metadata()?;
+    if meta.uid() != unsafe { libc::geteuid() } || meta.mode() & 0o077 != 0 {
+        return Err(invalid_data("Staging directory is not owned and private"));
+    }
+    let named = fs::symlink_metadata(stage)?;
+    if !named.is_dir() || named.dev() != meta.dev() || named.ino() != meta.ino() {
+        return Err(invalid_data("Staging directory was substituted"));
+    }
+    Ok((parent_fd, stage_fd))
+}
+
+#[cfg(target_os = "linux")]
+fn require_unpublished_unchanged_source(record: &Record) -> io::Result<()> {
+    if !matches!(inspect_identity(&record.source, record.source_identity.as_ref()), IdentityStatus::SameSnapshot) {
+        return Err(invalid_data("Original source changed; keep recovery evidence"));
+    }
+    match fs::symlink_metadata(&record.destination) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+        Ok(_) => Err(invalid_data("Destination exists; private stage discard is unsafe")),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn same_stage_inode(saved: &ObjectIdentity, current: &fs::Metadata) -> bool {
+    let current = identity_of(current);
+    current.dev == saved.dev
+        && current.ino == saved.ino
+        && current.mode & libc::S_IFMT == saved.mode & libc::S_IFMT
+        && current.uid == saved.uid
+}
+
+#[cfg(target_os = "linux")]
+fn discard_verified_stage_in(directory: &Path, id: &str, cancelled: &AtomicBool) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+
+    if !valid_id(id) {
+        return Err(invalid_input("Invalid recovery record ID"));
+    }
+    check_private_directory(&fs::symlink_metadata(directory)?)?;
+    let path = directory.join(format!("{id}.toml"));
+    let (record, _) = read_record(&path)?;
+    if !matches!(record.state, State::StagedVerified | State::DiscardingStage) {
+        return Err(invalid_data("Only unpublished verified stages may be discarded"));
+    }
+    require_unpublished_unchanged_source(&record)?;
+    if record.state == State::StagedVerified {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(io::Error::new(io::ErrorKind::Interrupted, "Stage discard cancelled"));
+        }
+        let staging = record.staging.as_ref().ok_or_else(|| invalid_data("Missing stage"))?;
+        if !matches!(inspect_identity(&staging.join("payload"), record.staged_identity.as_ref()), IdentityStatus::SameSnapshot)
+            || !matches!(compare_staged_copy(&record.source, &staging.join("payload"), cancelled), Comparison::Identical { .. })
+        {
+            return Err(invalid_data("Original and private stage are not verified identical"));
+        }
+    }
+
+    // An active Copy worker and two review windows cannot write conflicting
+    // journal transitions. Hold this lock through cleanup and retirement.
+    let _lock = lock_journal_directory(directory)?;
+    if read_record(&path)?.0 != record {
+        return Err(invalid_data("Recovery record changed during verification"));
+    }
+    require_unpublished_unchanged_source(&record)?;
+    let mut pending = record.clone();
+    if pending.state == State::StagedVerified {
+        let (_, stage_fd) = open_private_stage(&record)?;
+        if !matches!(inspect_identity(&record.staging.as_ref().unwrap().join("payload"), record.staged_identity.as_ref()), IdentityStatus::SameSnapshot) {
+            return Err(invalid_data("Private stage changed during verification"));
+        }
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(io::Error::new(io::ErrorKind::Interrupted, "Stage discard cancelled"));
+        }
+        pending.state = State::DiscardingStage;
+        pending.staging_directory_identity = Some(identity_of(&stage_fd.metadata()?));
+        write_record(&path, &pending, false)?;
+    }
+    // After this durable intent, cancellation cannot make a partial stage
+    // publishable again. A crash leaves an explicit follow-up action.
+    #[cfg(test)]
+    rollback_crash_checkpoint("intent");
+    let stage = pending.staging.as_ref().unwrap();
+    let saved_dir = pending.staging_directory_identity.as_ref().unwrap();
+    // A missing stage is only a successful previous cleanup when its parent
+    // is still mounted on the recorded filesystem. An unplugged destination
+    // must not make us retire the last recovery evidence.
+    let parent = pending.destination.parent().unwrap();
+    let parent_meta = fs::symlink_metadata(parent)?;
+    if !parent_meta.is_dir() || parent_meta.dev() != saved_dir.dev {
+        return Err(invalid_data("Destination filesystem changed; keep recovery evidence"));
+    }
+    match open_private_stage(&pending) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            // A previous attempt may have removed an empty private stage.
+            if fs::symlink_metadata(stage).is_ok() {
+                return Err(invalid_data("Staging location changed unexpectedly"));
+            }
+        }
+        Err(error) => return Err(error),
+        Ok((parent_fd, stage_fd)) => {
+            if !same_stage_inode(saved_dir, &stage_fd.metadata()?) {
+                return Err(invalid_data("Private staging directory was replaced"));
+            }
+            let anchored = PathBuf::from(format!("/proc/self/fd/{}", stage_fd.as_raw_fd()));
+            // Refuse any other staging entries; only the recorded payload is
+            // disposable, even if another process added unrelated files.
+            for entry in fs::read_dir(&anchored)? {
+                if entry?.file_name() != "payload" {
+                    return Err(invalid_data("Unexpected data in private staging directory"));
+                }
+            }
+            let payload = anchored.join("payload");
+            match fs::symlink_metadata(&payload) {
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+                Ok(meta) => {
+                    let saved = pending.staged_identity.as_ref().unwrap();
+                    if !same_stage_inode(saved, &meta)
+                        || !(meta.is_file() || meta.is_dir() || meta.file_type().is_symlink())
+                    {
+                        return Err(invalid_data("Private payload was replaced; keep evidence"));
+                    }
+                    if meta.is_dir() {
+                        fs::remove_dir_all(&payload)?;
+                    } else {
+                        fs::remove_file(&payload)?;
+                    }
+                }
+            }
+            stage_fd.sync_all()?;
+            #[cfg(test)]
+            rollback_crash_checkpoint("payload_removed");
+            require_unpublished_unchanged_source(&pending)?;
+            if !same_stage_inode(saved_dir, &stage_fd.metadata()?)
+                || !fs::symlink_metadata(stage).is_ok_and(|meta| same_stage_inode(saved_dir, &meta))
+            {
+                return Err(invalid_data("Private staging directory changed before removal"));
+            }
+            fs::remove_dir(stage)?;
+            parent_fd.sync_all()?;
+        }
+    }
+    #[cfg(test)]
+    rollback_crash_checkpoint("stage_removed");
+    require_unpublished_unchanged_source(&pending)?;
+    pending.state = State::StageDiscarded;
+    write_record(&path, &pending, false)?;
+    #[cfg(test)]
+    rollback_crash_checkpoint("completed");
+    if let Err(error) = fs::remove_file(&path).and_then(|()| File::open(directory)?.sync_all()) {
+        eprintln!("RiceField: finished stage-discard record cleanup failed: {error}");
+    }
+    Ok(())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+fn rollback_crash_checkpoint(name: &str) {
+    if std::env::var("RICEFIELD_TEST_DISCARD_CRASH").ok().as_deref() == Some(name) {
+        std::process::exit(54);
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -1266,7 +1494,7 @@ fn ensure_capacity(directory: &Path, limit: usize) -> io::Result<()> {
             let Ok((record, snapshot)) = read_record(path) else {
                 continue;
             };
-            if record.state != State::Completed {
+            if !matches!(record.state, State::Completed | State::StageDiscarded) {
                 continue;
             }
             if fs::symlink_metadata(path).is_ok_and(|current| same_snapshot(&snapshot, &current)) {
@@ -1320,7 +1548,7 @@ fn scan_incomplete_in(directory: &Path) -> io::Result<Vec<Record>> {
             return Err(invalid_data("Too many operation journal records"));
         }
         let (record, _) = read_record(&path)?;
-        if record.state != State::Completed {
+        if !matches!(record.state, State::Completed | State::StageDiscarded) {
             records.push(record);
         }
     }
@@ -1495,12 +1723,13 @@ fn to_stored(record: &Record) -> io::Result<StoredRecord> {
             .transpose()?,
         source_identity: record.source_identity.clone(),
         staged_identity: record.staged_identity.clone(),
+        staging_directory_identity: record.staging_directory_identity.clone(),
         destination_identity: record.destination_identity.clone(),
     })
 }
 
 fn from_stored(stored: StoredRecord) -> io::Result<Record> {
-    if !matches!(stored.version, 1 | 2 | VERSION) || !valid_id(&stored.id) {
+    if !matches!(stored.version, 1 | 2 | 3 | VERSION) || !valid_id(&stored.id) {
         return Err(invalid_data("Unsupported or invalid journal record"));
     }
     if stored.version >= 2 {
@@ -1518,6 +1747,7 @@ fn from_stored(stored: StoredRecord) -> io::Result<Record> {
     for evidence in [
         stored.source_identity.as_ref(),
         stored.staged_identity.as_ref(),
+        stored.staging_directory_identity.as_ref(),
         stored.destination_identity.as_ref(),
     ]
     .into_iter()
@@ -1552,6 +1782,14 @@ fn from_stored(stored: StoredRecord) -> io::Result<Record> {
     if stored.state != State::Prepared && staging.is_none() {
         return Err(invalid_data("Published operation has no staging path"));
     }
+    if matches!(stored.state, State::DiscardingStage | State::StageDiscarded)
+        && (stored.version < 4
+            || stored.staged_identity.is_none()
+            || stored.staging_directory_identity.is_none()
+            || stored.source_identity.is_none())
+    {
+        return Err(invalid_data("Stage discard lacks durable identity evidence"));
+    }
     Ok(Record {
         id: stored.id,
         state: stored.state,
@@ -1560,6 +1798,7 @@ fn from_stored(stored: StoredRecord) -> io::Result<Record> {
         staging,
         source_identity: stored.source_identity,
         staged_identity: stored.staged_identity,
+        staging_directory_identity: stored.staging_directory_identity,
         destination_identity: stored.destination_identity,
     })
 }
@@ -1780,6 +2019,158 @@ mod tests {
             b"safe nested bytes"
         );
         assert!(scan_incomplete_in(&directory).unwrap().is_empty());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn explicit_stage_discard_preserves_original_and_never_publishes() {
+        for kind in ["file", "symlink", "directory"] {
+            let directory = test_directory();
+            let journal = match kind {
+                "file" => verified_unpublished_fixture(&directory),
+                "symlink" => verified_symlink_fixture(&directory),
+                _ => verified_directory_fixture(&directory),
+            };
+            let record = journal.record().clone();
+            let inspection = inspect_record(record.clone());
+            assert!(inspection.can_offer_stage_discard());
+            discard_verified_stage_in(&directory, &record.id, &AtomicBool::new(false)).unwrap();
+            assert!(fs::symlink_metadata(&record.destination).is_err());
+            assert!(fs::symlink_metadata(record.staging.as_ref().unwrap()).is_err());
+            assert!(scan_incomplete_in(&directory).unwrap().is_empty());
+            match kind {
+                "file" => assert_eq!(fs::read(&record.source).unwrap(), b"verified original"),
+                "symlink" => assert_eq!(fs::read_link(&record.source).unwrap(), Path::new("absent-target")),
+                _ => {
+                    use std::os::unix::fs::MetadataExt;
+                    assert_eq!(fs::read(record.source.join("sub/child.txt")).unwrap(), b"safe nested bytes");
+                    assert_eq!(
+                        fs::metadata(record.source.join("root.txt")).unwrap().ino(),
+                        fs::metadata(record.source.join("root-hardlink.txt")).unwrap().ino()
+                    );
+                }
+            }
+            fs::remove_dir_all(directory).unwrap();
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn discard_refuses_collision_source_drift_stage_drift_and_cancel() {
+        for scenario in ["collision", "source_changed", "stage_changed", "cancel"] {
+            let directory = test_directory();
+            let journal = verified_unpublished_fixture(&directory);
+            let record = journal.record().clone();
+            match scenario {
+                "collision" => fs::write(&record.destination, b"other writer").unwrap(),
+                "source_changed" => fs::write(&record.source, b"new original").unwrap(),
+                "stage_changed" => fs::write(record.staging.as_ref().unwrap().join("payload"), b"new stage").unwrap(),
+                _ => {}
+            }
+            let cancelled = AtomicBool::new(scenario == "cancel");
+            assert!(discard_verified_stage_in(&directory, &record.id, &cancelled).is_err());
+            assert_eq!(scan_incomplete_in(&directory).unwrap()[0].state, State::StagedVerified);
+            assert!(record.staging.as_ref().unwrap().join("payload").exists());
+            if scenario == "collision" {
+                assert_eq!(fs::read(&record.destination).unwrap(), b"other writer");
+            }
+            fs::remove_dir_all(directory).unwrap();
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn v3_staged_journal_can_start_discard_but_cannot_forge_incomplete_intent() {
+        let directory = test_directory();
+        let journal = verified_unpublished_fixture(&directory);
+        let path = directory.join(format!("{}.toml", journal.record().id));
+        let mut legacy = to_stored(journal.record()).unwrap();
+        legacy.version = 3;
+        legacy.staging_directory_identity = None;
+        fs::write(&path, toml::to_string(&legacy).unwrap()).unwrap();
+        assert_eq!(scan_incomplete_in(&directory).unwrap().len(), 1);
+        legacy.state = State::DiscardingStage;
+        fs::write(&path, toml::to_string(&legacy).unwrap()).unwrap();
+        assert!(scan_incomplete_in(&directory).is_err());
+        legacy.state = State::StagedVerified;
+        fs::write(&path, toml::to_string(&legacy).unwrap()).unwrap();
+        discard_verified_stage_in(&directory, &journal.record().id, &AtomicBool::new(false))
+            .unwrap();
+        assert_eq!(fs::read(directory.join("source")).unwrap(), b"verified original");
+        assert!(scan_incomplete_in(&directory).unwrap().is_empty());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn real_process_crashes_leave_resumable_discard_intent_not_publishable_stages() {
+        const PHASE: &str = "RICEFIELD_TEST_DISCARD_CRASH";
+        const ROOT: &str = "RICEFIELD_TEST_DISCARD_ROOT";
+        if env::var_os(PHASE).is_some() {
+            let directory = PathBuf::from(env::var_os(ROOT).unwrap());
+            let record = scan_incomplete_in(&directory).unwrap().remove(0);
+            discard_verified_stage_in(&directory, &record.id, &AtomicBool::new(false)).unwrap();
+            panic!("Missing stage-discard crash point");
+        }
+        for kind in ["file", "symlink", "directory"] {
+            for phase in ["intent", "payload_removed", "stage_removed", "completed"] {
+                let directory = test_directory();
+                let journal = match kind {
+                    "file" => verified_unpublished_fixture(&directory),
+                    "symlink" => verified_symlink_fixture(&directory),
+                    _ => verified_directory_fixture(&directory),
+                };
+                let record = journal.record().clone();
+                let status = std::process::Command::new(env::current_exe().unwrap())
+                    .arg("journal::tests::real_process_crashes_leave_resumable_discard_intent_not_publishable_stages")
+                    .arg("--exact")
+                    .env(PHASE, phase)
+                    .env(ROOT, &directory)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status().unwrap();
+                assert_eq!(status.code(), Some(54), "{kind} at {phase}");
+                assert!(fs::symlink_metadata(&record.source).is_ok());
+                assert!(fs::symlink_metadata(&record.destination).is_err());
+                let saved = read_record(&directory.join(format!("{}.toml", record.id))).unwrap().0;
+                assert_eq!(saved.state, if phase == "completed" { State::StageDiscarded } else { State::DiscardingStage });
+                if phase != "completed" {
+                    assert!(publish_verified_stage_in(&directory, &record.id, &AtomicBool::new(false)).is_err());
+                    assert!(inspect_record(saved).can_continue_stage_discard());
+                    discard_verified_stage_in(&directory, &record.id, &AtomicBool::new(false)).unwrap();
+                }
+                assert!(scan_incomplete_in(&directory).unwrap().is_empty());
+                assert!(fs::symlink_metadata(&record.source).is_ok());
+                assert!(fs::symlink_metadata(&record.destination).is_err());
+                assert!(fs::symlink_metadata(record.staging.as_ref().unwrap()).is_err());
+                fs::remove_dir_all(directory).unwrap();
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn interrupted_discard_rejects_substituted_private_stage() {
+        let directory = test_directory();
+        let journal = verified_unpublished_fixture(&directory);
+        let record = journal.record().clone();
+        // A durable intent recorded by an earlier process, but no cleanup yet.
+        let mut pending = record.clone();
+        pending.state = State::DiscardingStage;
+        pending.staging_directory_identity = Some(identity_of(&fs::symlink_metadata(record.staging.as_ref().unwrap()).unwrap()));
+        write_record(&directory.join(format!("{}.toml", record.id)), &pending, false).unwrap();
+        let original_stage = record.staging.as_ref().unwrap();
+        let moved = directory.join("original-private-stage");
+        fs::rename(original_stage, &moved).unwrap();
+        fs::create_dir(original_stage).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(original_stage, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::write(original_stage.join("payload"), b"unrelated data").unwrap();
+        assert!(discard_verified_stage_in(&directory, &record.id, &AtomicBool::new(false)).is_err());
+        assert_eq!(fs::read(original_stage.join("payload")).unwrap(), b"unrelated data");
+        assert_eq!(fs::read(moved.join("payload")).unwrap(), b"verified original");
+        assert_eq!(scan_incomplete_in(&directory).unwrap()[0].state, State::DiscardingStage);
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -2722,6 +3113,7 @@ mod tests {
             staging: Some(staging.clone()),
             source_identity: None,
             staged_identity: None,
+            staging_directory_identity: None,
             destination_identity: None,
         };
         let first = inspect_record(record.clone());
@@ -2750,6 +3142,7 @@ mod tests {
                 staging: None,
                 source_identity: None,
                 staged_identity: None,
+                staging_directory_identity: None,
                 destination_identity: None,
             },
             source: PathStatus::Missing,
@@ -2805,6 +3198,7 @@ mod tests {
                 staging: None,
                 source_identity: None,
                 staged_identity: None,
+                staging_directory_identity: None,
                 destination_identity: None,
             },
             source: PathStatus::File,
@@ -2850,6 +3244,7 @@ mod tests {
             staging: Some(directory.join("staging")),
             source_identity: None,
             staged_identity: None,
+            staging_directory_identity: None,
             destination_identity: None,
         });
         assert_eq!(inspection.source, PathStatus::Symlink);

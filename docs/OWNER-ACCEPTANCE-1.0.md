@@ -242,6 +242,13 @@ all boxes below still require owner verification.
 - [ ] **F03 Bounded directory recovery:** on a disposable directory with
   nested files and links, check explicit two-step verified stage publication.
   The source remains. Oversized or unverifiable trees fail closed.
+- [ ] **F03b Private stage discard:** using *only disposable copies*, create
+  a verified unpublished stage, compare it and confirm "Discard verified
+  private stage". Check that the original is unchanged, destination vacant,
+  private stage removed and journal retired. Interrupt another discard in a
+  disposable process; recovery must show explicit continuation, never offer
+  publication. Test a competing destination and replaced private stage: both
+  must stop cleanup and retain evidence. Do not use important user files.
 - [ ] **F04 Filesystem failure:** test a removed drive, read-only remount or
   full test filesystem. Inconclusive recovery must keep its evidence rather
   than claim a successful Move.
