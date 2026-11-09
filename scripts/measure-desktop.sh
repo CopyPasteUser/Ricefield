@@ -40,10 +40,14 @@ kill -0 "$app_pid"
 idle_end_ns="$(date +%s%N)"
 ticks_after="$(awk '{print $14 + $15}' "/proc/$app_pid/stat")"
 rss_kib="$(awk '/^VmRSS:/ {print $2}' "/proc/$app_pid/status")"
+anon_kib="$(awk '/^RssAnon:/ {print $2}' "/proc/$app_pid/status")"
+file_kib="$(awk '/^RssFile:/ {print $2}' "/proc/$app_pid/status")"
+pss_kib="$(awk '/^Pss:/ {print $2}' "/proc/$app_pid/smaps_rollup")"
 clock_ticks="$(getconf CLK_TCK)"
 awk -v version="$("$binary" --version)" -v start="$start_ns" -v mapped="$mapped_ns" \
   -v first="$ticks_before" -v last="$ticks_after" -v hz="$clock_ticks" \
   -v idle_start="$idle_start_ns" -v idle_end="$idle_end_ns" -v rss="$rss_kib" \
+  -v anon="$anon_kib" -v file="$file_kib" -v pss="$pss_kib" \
   'BEGIN {
     printf "version = \"%s\"\n", version;
     print "display = \"Xvfb / software GL\"";
@@ -51,5 +55,8 @@ awk -v version="$("$binary" --version)" -v start="$start_ns" -v mapped="$mapped_
     printf "idle_sample_seconds = %.3f\n", (idle_end-idle_start)/1000000000;
     printf "idle_cpu_percent_one_core = %.3f\n", 100*(last-first)/hz/((idle_end-idle_start)/1000000000);
     printf "idle_rss_kib = %d\n", rss;
+    printf "idle_rss_anon_kib = %d\n", anon;
+    printf "idle_rss_file_kib = %d\n", file;
+    printf "idle_pss_kib = %d\n", pss;
   }' > "$output"
 cat "$output"

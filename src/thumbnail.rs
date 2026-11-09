@@ -11,7 +11,10 @@ use std::{
     time::SystemTime,
 };
 
-const MAX_CACHED: usize = 96;
+// Keep roughly one viewport of decoded thumbnails. Each 108x108 image can
+// occupy multiple CPU/GPU copies; a larger LRU provides little scrolling
+// benefit but retains textures after leaving an image-heavy directory.
+const MAX_CACHED: usize = 48;
 const MAX_PENDING: usize = 48;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -197,5 +200,32 @@ mod tests {
         entry.is_symlink = true;
         manager.request(&entry);
         assert!(!manager.has_pending());
+    }
+
+    #[test]
+    fn completed_thumbnails_evict_old_entries_at_the_memory_budget() {
+        let mut manager = ThumbnailManager::default();
+        let context = egui::Context::default();
+        for index in 0..MAX_CACHED + 10 {
+            let key = Key::from_entry(&image(&format!("{index}.png"))).unwrap();
+            manager.active = Some(key.clone());
+            manager
+                .sender
+                .send(ResultMessage { key, result: None })
+                .unwrap();
+            manager.poll(&context);
+            assert!(manager.cache.len() <= MAX_CACHED);
+        }
+        assert_eq!(manager.cache.len(), MAX_CACHED);
+        assert!(
+            !manager
+                .cache
+                .contains_key(&Key::from_entry(&image("0.png")).unwrap())
+        );
+        assert!(
+            manager.cache.contains_key(
+                &Key::from_entry(&image(&format!("{}.png", MAX_CACHED + 9))).unwrap()
+            )
+        );
     }
 }

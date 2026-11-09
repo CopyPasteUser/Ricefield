@@ -44,11 +44,17 @@ pub fn run() -> io::Result<()> {
     if scan.entries.len() != 100_000 || scan.unreadable != 0 {
         return Err(io::Error::other("Benchmark directory scan was incomplete"));
     }
+    let compact_names = file_view::FoldedNames::from_entries(&scan.entries);
+    let folded_name_index_bytes = compact_names.heap_capacity_bytes();
     let mut names: Vec<_> = scan
         .entries
         .iter()
         .map(|entry| entry.name.to_lowercase())
         .collect();
+    // Compare exact owned heap capacities against the former representation.
+    // These figures are for the filename index, not full-process RSS.
+    let legacy_folded_names_bytes = names.capacity() * std::mem::size_of::<String>()
+        + names.iter().map(String::capacity).sum::<usize>();
     let started = Instant::now();
     names.sort_by(|left, right| file_view::natural_cmp(left, right));
     let sort_ms = started.elapsed().as_secs_f64() * 1000.0;
@@ -106,7 +112,7 @@ pub fn run() -> io::Result<()> {
         ));
     }
     println!(
-        "version = {:?}\nentries = 100000\nfixture_ms = {fixture_ms:.3}\nscan_ms = {scan_ms:.3}\nnatural_sort_ms = {sort_ms:.3}\nglob_ms = {filter_ms:.3}\nglob_matches = {matches}\nsearch_ms = {search_ms:.3}\nsearch_matches = {}\nsearch_incomplete = {}\ncopy_bytes = 67108864\ncopy_ms = {copy_ms:.3}\ncopy_verified = true\nsource_retained = true",
+        "version = {:?}\nentries = 100000\nfixture_ms = {fixture_ms:.3}\nscan_ms = {scan_ms:.3}\nfolded_name_index_bytes = {folded_name_index_bytes}\nlegacy_folded_names_bytes = {legacy_folded_names_bytes}\nnatural_sort_ms = {sort_ms:.3}\nglob_ms = {filter_ms:.3}\nglob_matches = {matches}\nsearch_ms = {search_ms:.3}\nsearch_matches = {}\nsearch_incomplete = {}\ncopy_bytes = 67108864\ncopy_ms = {copy_ms:.3}\ncopy_verified = true\nsource_retained = true",
         env!("CARGO_PKG_VERSION"),
         search.entries.len(),
         search.notice.is_some(),
