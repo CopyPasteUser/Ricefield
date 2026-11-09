@@ -154,7 +154,9 @@ fn translate(language: Language, source: &'static str) -> &'static str {
         "SFTP, WebDAV and MTP use a full network URI." => {
             "Für SFTP, WebDAV und MTP eine vollständige Netzwerkadresse eingeben."
         }
-        "Enter a valid SFTP, WebDAV or MTP address" => "Gültige SFTP-, WebDAV- oder MTP-Adresse eingeben",
+        "Enter a valid SFTP, WebDAV or MTP address" => {
+            "Gültige SFTP-, WebDAV- oder MTP-Adresse eingeben"
+        }
         "Target" => "Ziel",
         "Browse the NAS to pick a share, then enter credentials if needed." => {
             "NAS-Freigabe auswählen und bei Bedarf anschließend anmelden."
