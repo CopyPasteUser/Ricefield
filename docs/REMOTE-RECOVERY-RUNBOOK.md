@@ -86,7 +86,9 @@ manual, explicitly authorized operation with its own backup and confirmation.
 The deterministic fixtures cover occupied destinations, pre-publish process
 kills, post-publish OpenSSH-SFTP/signed-SMB process kills, an OpenSSH-SFTP
 server refusing cleanup after successful hardlink publication, and a WebDAV
-server committing `MOVE` but dropping its response. They assert original
+server committing `MOVE` but dropping its response. Fresh client attempts
+against those published destinations are checked for collision refusal.
+They assert original
 source bytes, remote destination/stage state and restart-visible local
 records. These are **protocol exercises on disposable local fixtures**, not
 physical Wi-Fi loss, unclean NAS power-off, arbitrary server implementations

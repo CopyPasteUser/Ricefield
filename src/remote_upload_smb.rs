@@ -677,6 +677,21 @@ mod tests {
                     fs::read(root.join("share").join(&name)).unwrap(),
                     b"signed SMB crash source retained\n"
                 );
+                let retry_error = upload_with_target(
+                    samba_request(&root, &name),
+                    &AtomicBool::new(false),
+                    &samba_target(),
+                    Some(&journal),
+                )
+                .unwrap_err();
+                assert!(retry_error.contains("SMB publication may be ambiguous"));
+                assert_eq!(
+                    fs::read(root.join("share").join(&name)).unwrap(),
+                    b"signed SMB crash source retained\n"
+                );
+                let (retry_uploads, _) =
+                    remote_upload_journal::inspect_evidence_in(&journal).unwrap();
+                assert_eq!(retry_uploads.len(), 2, "reconnect retains both attempts");
             } else {
                 assert!(!root.join("share").join(&name).exists());
             }

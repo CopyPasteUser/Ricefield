@@ -854,6 +854,21 @@ mod tests {
         );
         assert_eq!(fs::read(&fixture.source).unwrap(), b"pinned-source-content\n");
         assert!(uploads[0].destination_uri.ends_with("/example.txt"));
+        let retry_error = upload_with_client(
+            fixture.request(),
+            &AtomicBool::new(false),
+            &fixture.client,
+            Some(&fixture.journal),
+        )
+        .unwrap_err();
+        assert!(retry_error.contains("SFTP publication may be ambiguous"));
+        assert_eq!(
+            fs::read(format!("{}/example.txt", fixture.client.path)).unwrap(),
+            b"pinned-source-content\n"
+        );
+        let (new_uploads, _) =
+            remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap();
+        assert_eq!(new_uploads.len(), 2, "reconnect collision keeps both attempts");
     }
 
     #[test]

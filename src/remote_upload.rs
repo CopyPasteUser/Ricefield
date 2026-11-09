@@ -1208,6 +1208,20 @@ mod tests {
             .filter(|path| path.contains("/.ricefield-upload-"))
             .count();
         assert_eq!(remote_stages, 0, "MOVE transferred the stage to its destination");
+        // A fresh connection after the lost acknowledgement must see a
+        // collision, not infer a failed first request or replace its result.
+        server.drop_publish_response.store(false, Ordering::Release);
+        let retry_error = super::upload_with_journal_directory(
+            request(file.clone(), &server),
+            &AtomicBool::new(false),
+            Some(&journal),
+        )
+        .unwrap_err();
+        assert!(retry_error.contains("HTTP 412"), "{retry_error}");
+        assert_eq!(server.path("lost-reply.txt"), b"verified upload bytes");
+        let (uploads_after_reconnect, _) =
+            remote_upload_journal::inspect_evidence_in(&journal).unwrap();
+        assert_eq!(uploads_after_reconnect.len(), 2);
         fs::remove_dir_all(journal).unwrap();
         fs::remove_file(file).unwrap();
         fs::remove_dir(folder).unwrap();
