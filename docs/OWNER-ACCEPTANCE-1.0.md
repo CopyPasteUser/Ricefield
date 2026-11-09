@@ -249,6 +249,14 @@ all boxes below still require owner verification.
   disposable process; recovery must show explicit continuation, never offer
   publication. Test a competing destination and replaced private stage: both
   must stop cleanup and retain evidence. Do not use important user files.
+- [ ] **F03c Legacy staged copy:** use disposable fixtures from an old v2
+  `StagedVerified` journal with an unchanged original and private stage.
+  Compare, confirm "Verify and adopt legacy private stage", then separately
+  confirm publish or discard. Verify the original remains and publication
+  never overwrites an occupied target. Changed bytes, extra stage entries,
+  missing mount and wrong permissions must refuse adoption without removing
+  evidence. For a v1 journal, check that the only forward route is a warned
+  *new* Keep Both copy preview from the currently visible source, not replay.
 - [ ] **F04 Filesystem failure:** test a removed drive, read-only remount or
   full test filesystem. Inconclusive recovery must keep its evidence rather
   than claim a successful Move.

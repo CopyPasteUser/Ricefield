@@ -509,6 +509,13 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   crash cases prove the stage is never republished or the source removed.
   This is not rollback of an already-published copy or legacy Move, and
   cannot prove protection from hostile same-user writers or device power loss.
+- [x] Provide opt-in legacy v2 unpublished-stage adoption after full current
+  source/stage checks, recording only freshly observed stage inode evidence.
+  Adopted copies enter the existing separate, freshly verified publication or
+  private discard workflows; neither source nor destination is modified by
+  adoption itself. Legacy v1 without source identity offers only a warned
+  *new* Keep Both Copy preview from the visible path. No legacy move is
+  replayed, and historical stage provenance cannot be reconstructed.
 - [ ] Complete durable content provenance and safe restart resume/rollback
   for legacy Move journals; a matching read-only scan is insufficient.
   New cross-volume transfers do not automatically delete the original.

@@ -124,7 +124,18 @@ The original stays untouched, and stale, changed, colliding or unverifiable
 cases fail closed. A successful publication retires the journal; no automatic
 recovery, source deletion, overwriting or general rollback exists.
 Older journal versions without staged inode evidence remain inspectable and
-explicitly marked as unproven.
+explicitly marked as unproven. For legacy v2 `StagedVerified` records only, a
+two-step **verify and adopt** action rechecks the saved source identity,
+vacant target, 0700 owner-private stage and bounded complete staged contents,
+then saves *newly observed* stage and directory inode evidence in a v4 journal.
+It does not claim historical stage provenance: the stage might have been
+replaced before observation. Neither data nor original is moved/deleted; only
+subsequent, separately confirmed publish/discard actions can mutate the stage,
+and both independently reverify all applicable evidence. A v1 record without
+saved source identity cannot be adopted or replayed. Its only guided forward
+option is a separate, explicitly warned Keep Both Copy preview from the
+**currently visible** source path, which may not be the historical original;
+the legacy journal is retained for independent manual review.
 
 On Linux, a separate two-step recovery action may **discard only an unpublished,
 fully compared private stage** while the recorded original remains unchanged and

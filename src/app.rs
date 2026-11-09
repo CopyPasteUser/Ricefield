@@ -2155,6 +2155,11 @@ impl Explorer {
     }
 
     #[cfg(target_os = "linux")]
+    fn adopt_recovery_stage(&mut self, id: String) {
+        self.run_recovery_action(id, journal::adopt_legacy_verified_stage);
+    }
+
+    #[cfg(target_os = "linux")]
     fn discard_recovery_stage(&mut self, id: String) {
         self.run_recovery_action(id, journal::discard_verified_stage);
     }
@@ -4279,6 +4284,8 @@ impl Explorer {
         #[cfg(target_os = "linux")]
         let mut publish_staged = None;
         #[cfg(target_os = "linux")]
+        let mut adopt_staged = None;
+        #[cfg(target_os = "linux")]
         let mut discard_staged = None;
         #[cfg(unix)]
         let mut confirm_resolution = self.recovery_resolution_confirm.clone();
@@ -4290,7 +4297,7 @@ impl Explorer {
             .show(context, |ui| {
                 ui.label("Recovery never deletes original files or overwrites destinations. Confirmed actions can publish a verified private stage, discard only an unpublished private stage, or retire a verified publication record. No action runs automatically.");
                 ui.label("Compare file contents on demand (maximum 512 MiB and 10,000 entries). A match is only a snapshot, never authorization to delete a source.");
-                ui.small("If the original source identity still matches, you can separately prepare a new Copy with a full preview. This does not complete the interrupted Move or clear its journal.");
+                ui.small("You can prepare a new Copy with a full preview. For v1 records without saved source identity, this uses only the current source path after a separate warning. Neither route completes the interrupted Move or clears its journal.");
                 if let Some(error) = &self.recovery_error {
                     ui.colored_label(Color32::LIGHT_RED, format!("Cannot read all journal records: {error}"));
                 }
@@ -4360,6 +4367,29 @@ impl Explorer {
                             {
                                 prepare_copy = Some((record.source.clone(), parent.to_path_buf()));
                             }
+                            if inspection.can_offer_unproven_fresh_copy()
+                                && record.destination.parent().is_some()
+                                && !self.recovery_loading
+                                && self.recovery_comparison_active.is_none()
+                            {
+                                let confirmation = format!("legacy-copy:{}", record.id);
+                                if confirm_resolution.as_deref() == Some(confirmation.as_str()) {
+                                    ui.colored_label(Color32::LIGHT_YELLOW, "This old journal did not save the original inode. The current source path may contain a DIFFERENT file. Prepare a completely NEW Keep Both copy preview from what exists now? Nothing is deleted or replayed, and this journal remains open.");
+                                    ui.horizontal(|ui| {
+                                        if ui.button("Confirm new Copy preview").clicked() {
+                                            if let Some(parent) = record.destination.parent() {
+                                                prepare_copy = Some((record.source.clone(), parent.to_path_buf()));
+                                            }
+                                            confirm_resolution = None;
+                                        }
+                                        if ui.button("Cancel").clicked() {
+                                            confirm_resolution = None;
+                                        }
+                                    });
+                                } else if ui.button("New Copy from unproven legacy path…").clicked() {
+                                    confirm_resolution = Some(confirmation);
+                                }
+                            }
                             let guidance = match record.state {
                                 JournalState::Prepared => "Copy may be incomplete or may not have started.",
                                 JournalState::StagedVerified => "Staged data was verified; final publication may have occurred.",
@@ -4420,6 +4450,29 @@ impl Explorer {
                                     journal::Comparison::Inconclusive(_) => Color32::LIGHT_YELLOW,
                                 };
                                 ui.colored_label(color, result.label());
+                                #[cfg(target_os = "linux")]
+                                if *staged
+                                    && matches!(result, journal::Comparison::Identical { .. })
+                                    && inspection.can_offer_legacy_stage_adoption()
+                                    && !self.recovery_loading
+                                    && self.recovery_comparison_active.is_none()
+                                {
+                                    let confirmation = format!("adopt:{}", record.id);
+                                    if confirm_resolution.as_deref() == Some(confirmation.as_str()) {
+                                        ui.colored_label(Color32::LIGHT_YELLOW, "Re-verify this legacy v2 private stage and save NEW current inode evidence? The old journal cannot prove historical stage provenance. No files are moved, published or deleted. A later publication or discard requires its own confirmation and fresh verification.");
+                                        ui.horizontal(|ui| {
+                                            if ui.button("Confirm verify and adopt").clicked() {
+                                                adopt_staged = Some(record.id.clone());
+                                                confirm_resolution = None;
+                                            }
+                                            if ui.button("Cancel").clicked() {
+                                                confirm_resolution = None;
+                                            }
+                                        });
+                                    } else if ui.button("Verify and adopt legacy private stage…").clicked() {
+                                        confirm_resolution = Some(confirmation);
+                                    }
+                                }
                                 #[cfg(target_os = "linux")]
                                 if *staged
                                     && matches!(result, journal::Comparison::Identical { .. })
@@ -4617,6 +4670,10 @@ impl Explorer {
             if let Some(id) = resolve {
                 self.resolve_recovery_record(id);
             }
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(id) = adopt_staged {
+            self.adopt_recovery_stage(id);
         }
         #[cfg(target_os = "linux")]
         if let Some(id) = publish_staged {
