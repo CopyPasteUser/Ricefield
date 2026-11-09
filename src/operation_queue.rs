@@ -69,6 +69,7 @@ impl OperationQueue {
 pub fn describe(action: &Action) -> String {
     match action {
         Action::Copy { sources, .. } => format!("Copy {} item(s)", sources.len()),
+        Action::CopyWithRules { sources, .. } => format!("Copy {} item(s) with individual choices", sources.len()),
         Action::CopyAs { name, .. } => format!("Copy as {}", name.to_string_lossy()),
         Action::Move { sources, .. } => format!("Move {} item(s)", sources.len()),
         Action::Trash { paths } => format!("Trash {} item(s)", paths.len()),

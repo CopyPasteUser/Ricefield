@@ -1205,7 +1205,7 @@ enum Dialog {
         clipboard: Clipboard,
         destination: PathBuf,
         conflict: ConflictPolicy,
-        custom_name: String,
+        rules: Vec<filesystem::CopyRule>,
         preview_generation: u64,
         preview: Option<Result<filesystem::TransferPlan, String>>,
     },
@@ -4527,13 +4527,14 @@ impl Explorer {
                 cut: false,
             };
             let conflict = ConflictPolicy::KeepBoth;
+            let rules = vec![filesystem::CopyRule::Global; clipboard.paths.len()];
             let preview_generation =
-                self.request_paste_preview(&clipboard, &destination, conflict, "");
+                self.request_paste_preview(&clipboard, &destination, conflict, &rules);
             self.dialog = Some(Dialog::PasteOptions {
                 clipboard,
                 destination,
                 conflict,
-                custom_name: String::new(),
+                rules,
                 preview_generation,
                 preview: None,
             });
@@ -4834,14 +4835,14 @@ impl Explorer {
             ));
             return;
         }
-        if self.queue_paused && !matches!(&action, Action::Copy { .. } | Action::CopyAs { .. }) {
+        if self.queue_paused && !matches!(&action, Action::Copy { .. } | Action::CopyAs { .. } | Action::CopyWithRules { .. }) {
             self.status = Some((
                 "Waiting copies are paused. Resume or remove them first.".into(),
                 true,
             ));
             return;
         }
-        if self.busy && !matches!(&action, Action::Copy { .. } | Action::CopyAs { .. }) {
+        if self.busy && !matches!(&action, Action::Copy { .. } | Action::CopyAs { .. } | Action::CopyWithRules { .. }) {
             self.status = Some((
                 "A transfer is running. Only Copy can be queued; retry this action when it finishes."
                     .into(),
@@ -5223,13 +5224,14 @@ impl Explorer {
             )),
             PasteMode::Options => {
                 let conflict = ConflictPolicy::KeepBoth;
+                let rules = vec![filesystem::CopyRule::Global; clipboard.paths.len()];
                 let preview_generation =
-                    self.request_paste_preview(&clipboard, &destination, conflict, "");
+                    self.request_paste_preview(&clipboard, &destination, conflict, &rules);
                 self.dialog = Some(Dialog::PasteOptions {
                     clipboard,
                     destination,
                     conflict,
-                    custom_name: String::new(),
+                    rules,
                     preview_generation,
                     preview: None,
                 });
@@ -5242,22 +5244,18 @@ impl Explorer {
         clipboard: &Clipboard,
         destination: &Path,
         conflict: ConflictPolicy,
-        custom_name: &str,
+        rules: &[filesystem::CopyRule],
     ) -> u64 {
         self.paste_preview_generation = self.paste_preview_generation.saturating_add(1);
         let generation = self.paste_preview_generation;
         let sources = clipboard.paths.clone();
         let destination = destination.to_path_buf();
         let moving = clipboard.cut;
-        let custom_name = custom_name.to_owned();
+        let rules = rules.to_vec();
         let sender = self.paste_preview_sender.clone();
         thread::spawn(move || {
-            let result = if !moving && sources.len() == 1 && !custom_name.is_empty() {
-                filesystem::preview_copy_as(
-                    &sources[0],
-                    &destination,
-                    std::ffi::OsStr::new(&custom_name),
-                )
+            let result = if !moving && rules.iter().any(|rule| *rule != filesystem::CopyRule::Global) {
+                filesystem::preview_copy_with_rules(&sources, &destination, conflict, &rules)
             } else {
                 filesystem::preview_transfer(&sources, &destination, conflict, moving)
             }
@@ -10473,7 +10471,7 @@ impl Explorer {
                     clipboard,
                     destination,
                     conflict,
-                    custom_name,
+                    rules,
                     preview,
                     ..
                 } => {
@@ -10518,42 +10516,80 @@ impl Explorer {
                                 ConflictPolicy::SkipIfIdentical,
                                 "Skip only matching contents — reject different or unverifiable files",
                             ).changed();
-                            let allows_custom_name = !clipboard.cut && clipboard.paths.len() == 1;
-                            let mut name_changed = false;
-                            let custom_valid = custom_name.is_empty()
-                                || (filesystem::valid_name(custom_name)
-                                    && custom_name.len() <= 255
-                                    && !custom_name.chars().any(char::is_control));
-                            if allows_custom_name {
+                            let mut rule_changed = false;
+                            if !clipboard.cut && !rules.is_empty() {
                                 ui.separator();
-                                ui.label("Exact destination name (optional, single-item copy)");
-                                name_changed = ui
-                                    .add_sized(
-                                        [ui.available_width().min(360.0), 28.0],
-                                        egui::TextEdit::singleline(custom_name).hint_text(
-                                            "Leave blank for the selected conflict policy",
-                                        ),
-                                    )
-                                    .changed();
-                                if !custom_valid {
-                                    ui.colored_label(
-                                        Color32::LIGHT_RED,
-                                        "Use 1–255 bytes, no slash or control characters, and not . or ..",
-                                    );
-                                } else if !custom_name.is_empty() {
-                                    ui.small("An exact name must be available. A collision aborts without overwriting or adding a suffix.");
-                                }
+                                ui.label("Individual copy choices (optional)");
+                                ui.small("Global uses the policy above; Exact name never overwrites or adds a suffix.");
+                                egui::ScrollArea::vertical().max_height(205.0).show_rows(
+                                    ui, 56.0, rules.len(), |ui, rows| {
+                                        for index in rows {
+                                            let rule = &mut rules[index];
+                                            ui.push_id(index, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    let source = clipboard.paths[index].display().to_string();
+                                                    ui.label(shorten(&source, 34)).on_hover_text(source);
+                                                    let selected = match rule {
+                                                        filesystem::CopyRule::Global => "Global policy",
+                                                        filesystem::CopyRule::KeepBoth => "Keep both",
+                                                        filesystem::CopyRule::SkipExisting => "Skip existing",
+                                                        filesystem::CopyRule::AbortOnConflict => "Require free",
+                                                        filesystem::CopyRule::SkipIfIdentical => "Skip identical",
+                                                        filesystem::CopyRule::ExactName(_) => "Exact name",
+                                                    };
+                                                    egui::ComboBox::from_id_salt("copy-rule")
+                                                        .selected_text(selected)
+                                                        .show_ui(ui, |ui| {
+                                                            rule_changed |= ui.selectable_value(rule, filesystem::CopyRule::Global, "Global policy").changed();
+                                                            rule_changed |= ui.selectable_value(rule, filesystem::CopyRule::KeepBoth, "Keep both").changed();
+                                                            rule_changed |= ui.selectable_value(rule, filesystem::CopyRule::SkipExisting, "Skip existing").changed();
+                                                            rule_changed |= ui.selectable_value(rule, filesystem::CopyRule::AbortOnConflict, "Require free").changed();
+                                                            rule_changed |= ui.selectable_value(rule, filesystem::CopyRule::SkipIfIdentical, "Skip identical").changed();
+                                                            if ui.selectable_label(matches!(rule, filesystem::CopyRule::ExactName(_)), "Exact name…").clicked()
+                                                                && !matches!(rule, filesystem::CopyRule::ExactName(_)) {
+                                                                    *rule = filesystem::CopyRule::ExactName(std::ffi::OsString::new());
+                                                                    rule_changed = true;
+                                                                }
+                                                        });
+                                                });
+                                                if let filesystem::CopyRule::ExactName(name) = rule {
+                                                    let mut value = name.to_string_lossy().into_owned();
+                                                    if ui.add_sized(
+                                                        [ui.available_width().min(350.0), 23.0],
+                                                        egui::TextEdit::singleline(&mut value).hint_text("Required exact destination name"),
+                                                    ).changed() {
+                                                        *name = value.into();
+                                                        rule_changed = true;
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    },
+                                );
                             }
-                            if policy_changed || name_changed {
+                            let rules_valid = rules.iter().all(|rule| match rule {
+                                filesystem::CopyRule::ExactName(name) => {
+                                    let value = name.to_string_lossy();
+                                    filesystem::valid_name(&value)
+                                        && name.as_encoded_bytes().len() <= 255
+                                        && !value.chars().any(char::is_control)
+                                }
+                                _ => true,
+                            });
+                            if !rules_valid {
+                                ui.colored_label(Color32::LIGHT_RED,
+                                    "Each exact name needs 1–255 bytes, no slash, control characters, . or ..");
+                            }
+                            if policy_changed || rule_changed {
                                 refresh_paste_preview = Some((
                                     clipboard.clone(),
                                     destination.clone(),
                                     *conflict,
-                                    custom_name.clone(),
+                                    rules.clone(),
                                 ));
                             }
                             ui.separator();
-                            let can_start = if policy_changed || name_changed || !custom_valid {
+                            let can_start = if policy_changed || rule_changed || !rules_valid {
                                 false
                             } else {
                                 match preview {
@@ -10625,20 +10661,17 @@ impl Explorer {
                                     .add_enabled(can_start, egui::Button::new("Start transfer"))
                                     .clicked()
                                 {
-                                    action =
-                                        Some(if allows_custom_name && !custom_name.is_empty() {
-                                            Action::CopyAs {
-                                                source: clipboard.paths[0].clone(),
-                                                destination: destination.clone(),
-                                                name: custom_name.clone().into(),
-                                            }
-                                        } else {
-                                            Self::paste_action(
-                                                clipboard.clone(),
-                                                destination.clone(),
-                                                *conflict,
-                                            )
-                                        });
+                                    action = Some(if !clipboard.cut
+                                        && rules.iter().any(|rule| *rule != filesystem::CopyRule::Global) {
+                                        Action::CopyWithRules {
+                                            sources: clipboard.paths.clone(),
+                                            destination: destination.clone(),
+                                            conflict: *conflict,
+                                            rules: rules.clone(),
+                                        }
+                                    } else {
+                                        Self::paste_action(clipboard.clone(), destination.clone(), *conflict)
+                                    });
                                     dismiss = true;
                                 }
                             });
@@ -11080,9 +11113,9 @@ impl Explorer {
         if let Some((path, generation)) = requested_analysis {
             self.start_deep_analysis(path, generation);
         }
-        if let Some((clipboard, destination, conflict, custom_name)) = refresh_paste_preview {
+        if let Some((clipboard, destination, conflict, rules)) = refresh_paste_preview {
             let generation =
-                self.request_paste_preview(&clipboard, &destination, conflict, &custom_name);
+                self.request_paste_preview(&clipboard, &destination, conflict, &rules);
             if let Some(Dialog::PasteOptions {
                 preview_generation,
                 preview,
@@ -11094,7 +11127,7 @@ impl Explorer {
             }
         }
         if let Some(action) = action {
-            if let Action::Copy { sources, .. } | Action::Move { sources, .. } = &action {
+            if let Action::Copy { sources, .. } | Action::CopyWithRules { sources, .. } | Action::Move { sources, .. } = &action {
                 self.clipboard = Some(Clipboard {
                     paths: sources.clone(),
                     cut: matches!(&action, Action::Move { .. }),
