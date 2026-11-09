@@ -2638,6 +2638,7 @@ pub fn preview_copy_with_rules(
     )
 }
 
+#[cfg(test)]
 pub fn preview_copy_with_rules_cancellable(
     sources: &[PathBuf],
     destination: &Path,
