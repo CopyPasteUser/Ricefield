@@ -258,6 +258,37 @@ impl Inspection {
         ) && matches!(self.source_identity, IdentityStatus::SameSnapshot)
     }
 
+    /// v1 journals saved no source inode. A user may still choose a completely
+    /// new Copy preview from the *currently visible path*, never replay Move.
+    pub fn can_offer_unproven_fresh_copy(&self) -> bool {
+        matches!(
+            self.record.state,
+            State::Prepared | State::StagedVerified | State::Published
+        ) && matches!(
+            self.source,
+            PathStatus::File | PathStatus::Directory | PathStatus::Symlink
+        ) && matches!(self.source_identity, IdentityStatus::NotRecorded)
+    }
+
+    /// Legacy v2 recorded the original inode, but not the private stage's.
+    /// The explicit adoption action checks everything again before recording
+    /// fresh stage evidence; this observation alone is never provenance.
+    #[cfg(target_os = "linux")]
+    pub fn can_offer_legacy_stage_adoption(&self) -> bool {
+        self.record.state == State::StagedVerified
+            && self.record.source_identity.is_some()
+            && self.record.staged_identity.is_none()
+            && self.record.staging_directory_identity.is_none()
+            && self.record.destination_identity.is_none()
+            && matches!(self.source_identity, IdentityStatus::SameSnapshot)
+            && matches!(self.destination, PathStatus::Missing)
+            && matches!(self.staging, Some(PathStatus::Directory))
+            && matches!(
+                self.source,
+                PathStatus::File | PathStatus::Directory | PathStatus::Symlink
+            )
+    }
+
     /// Display-only eligibility from the asynchronous recovery scan. The
     /// worker must repeat all identity and content checks before mutation.
     #[cfg(target_os = "linux")]
@@ -909,6 +940,15 @@ pub fn publish_verified_stage(id: &str, cancelled: &AtomicBool) -> io::Result<()
     publish_verified_stage_in(&journal_directory()?, id, cancelled)
 }
 
+/// Opt-in upgrade of an unpublished v2 stage after verifying current source
+/// identity, complete staged bytes and private-directory ownership. Only the
+/// journal gains newly observed inode evidence; neither tree is mutated.
+/// Publication and discard must independently recheck their preconditions.
+#[cfg(target_os = "linux")]
+pub fn adopt_legacy_verified_stage(id: &str, cancelled: &AtomicBool) -> io::Result<()> {
+    adopt_legacy_verified_stage_in(&journal_directory()?, id, cancelled)
+}
+
 /// Explicit rollback of an *unpublished private stage only*. The original is
 /// never unlinked. Once intent is durably recorded, an interruption leaves a
 /// `DiscardingStage` journal that can be resumed, but never republished.
@@ -987,6 +1027,101 @@ fn require_unpublished_unchanged_source(record: &Record) -> io::Result<()> {
             "Destination exists; private stage discard is unsafe",
         )),
     }
+}
+
+#[cfg(target_os = "linux")]
+fn adopt_legacy_verified_stage_in(
+    directory: &Path,
+    id: &str,
+    cancelled: &AtomicBool,
+) -> io::Result<()> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+
+    if !valid_id(id) {
+        return Err(invalid_input("Invalid recovery record ID"));
+    }
+    check_private_directory(&fs::symlink_metadata(directory)?)?;
+    let path = directory.join(format!("{id}.toml"));
+    let (record, _) = read_record(&path)?;
+    if record.state != State::StagedVerified
+        || record.source_identity.is_none()
+        || record.staged_identity.is_some()
+        || record.staging_directory_identity.is_some()
+        || record.destination_identity.is_some()
+    {
+        return Err(invalid_data("Not an eligible unpublished v2 staged copy"));
+    }
+    require_unpublished_unchanged_source(&record)?;
+    if cancelled.load(Ordering::Relaxed) {
+        return Err(io::Error::new(io::ErrorKind::Interrupted, "Adoption cancelled"));
+    }
+    let staging = record
+        .staging
+        .as_ref()
+        .ok_or_else(|| invalid_data("Missing private stage"))?;
+    // Read-only full comparison is intentionally outside the journal lock.
+    if !matches!(
+        compare_staged_copy(&record.source, &staging.join("payload"), cancelled),
+        Comparison::Identical { .. }
+    ) {
+        return Err(invalid_data("Legacy stage and original are not verified identical"));
+    }
+
+    let _lock = lock_journal_directory(directory)?;
+    if read_record(&path)?.0 != record {
+        return Err(invalid_data("Legacy journal changed during verification"));
+    }
+    require_unpublished_unchanged_source(&record)?;
+    if cancelled.load(Ordering::Relaxed) {
+        return Err(io::Error::new(io::ErrorKind::Interrupted, "Adoption cancelled"));
+    }
+    let (_, stage_fd) = open_private_stage(&record)?;
+    // Ensure the pinned private directory contains only its expected payload.
+    // Never follow a symlink at the payload's final component.
+    let anchored = PathBuf::from(format!("/proc/self/fd/{}", stage_fd.as_raw_fd()));
+    let mut entries = fs::read_dir(&anchored)?;
+    match entries.next() {
+        Some(Ok(entry)) if entry.file_name() == "payload" => {}
+        _ => return Err(invalid_data("Legacy staging contains unexpected entries")),
+    }
+    if entries.next().is_some() {
+        return Err(invalid_data("Legacy staging contains extra entries"));
+    }
+    let raw = unsafe {
+        libc::openat(
+            stage_fd.as_raw_fd(),
+            c"payload".as_ptr(),
+            libc::O_PATH | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if raw < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let payload_fd = unsafe { File::from_raw_fd(raw) };
+    let payload_identity = identity_of(&payload_fd.metadata()?);
+    let named_identity = identity_of(&fs::symlink_metadata(staging.join("payload"))?);
+    if payload_identity != named_identity {
+        return Err(invalid_data("Legacy payload was substituted"));
+    }
+    if !matches!(
+        compare_staged_copy(&record.source, &anchored.join("payload"), cancelled),
+        Comparison::Identical { .. }
+    ) {
+        return Err(invalid_data("Legacy stage changed during final verification"));
+    }
+    require_unpublished_unchanged_source(&record)?;
+    if cancelled.load(Ordering::Relaxed) {
+        return Err(io::Error::new(io::ErrorKind::Interrupted, "Adoption cancelled"));
+    }
+    if identity_of(&payload_fd.metadata()?) != payload_identity
+        || identity_of(&fs::symlink_metadata(staging.join("payload"))?) != payload_identity
+    {
+        return Err(invalid_data("Legacy payload changed before adoption"));
+    }
+    let mut adopted = record;
+    adopted.staged_identity = Some(payload_identity);
+    adopted.staging_directory_identity = Some(identity_of(&stage_fd.metadata()?));
+    write_record(&path, &adopted, false)
 }
 
 #[cfg(target_os = "linux")]
@@ -2708,6 +2843,107 @@ mod tests {
             scan_incomplete_in(&directory).unwrap_err().kind(),
             io::ErrorKind::InvalidData
         );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    fn downgrade_staged_fixture_to_v2(directory: &Path, record: &Record) {
+        let mut stored = to_stored(record).unwrap();
+        stored.version = 2;
+        stored.staged_identity = None;
+        stored.staging_directory_identity = None;
+        fs::write(
+            directory.join(format!("{}.toml", record.id)),
+            toml::to_string(&stored).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn legacy_v2_file_symlink_and_hardlinked_tree_can_be_adopted_and_published() {
+        for kind in ["file", "symlink", "tree"] {
+            let directory = test_directory();
+            let journal = match kind {
+                "file" => verified_unpublished_fixture(&directory),
+                "symlink" => verified_symlink_fixture(&directory),
+                _ => verified_directory_fixture(&directory),
+            };
+            let record = journal.record().clone();
+            downgrade_staged_fixture_to_v2(&directory, &record);
+            let original = scan_incomplete_in(&directory).unwrap().remove(0);
+            assert!(inspect_record(original).can_offer_legacy_stage_adoption());
+            assert!(!inspect_record(record.clone()).can_offer_legacy_stage_adoption());
+
+            adopt_legacy_verified_stage_in(&directory, &record.id, &AtomicBool::new(false))
+                .unwrap();
+            let upgraded = scan_incomplete_in(&directory).unwrap().remove(0);
+            let inspected = inspect_record(upgraded.clone());
+            assert!(inspected.can_offer_stage_publication());
+            assert!(inspected.can_offer_stage_discard());
+            assert!(upgraded.staged_identity.is_some());
+            assert!(upgraded.staging_directory_identity.is_some());
+            assert!(matches!(fs::symlink_metadata(&record.destination), Err(error) if error.kind() == io::ErrorKind::NotFound));
+
+            publish_verified_stage_in(&directory, &record.id, &AtomicBool::new(false)).unwrap();
+            assert!(matches!(compare_staged_copy(&record.source, &record.destination, &AtomicBool::new(false)), Comparison::Identical { .. }));
+            assert!(fs::symlink_metadata(&record.source).is_ok());
+            assert!(!directory.join(format!("{}.toml", record.id)).exists());
+            fs::remove_dir_all(directory).unwrap();
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn legacy_v2_adoption_refuses_modified_or_unverifiable_data() {
+        for fault in ["source", "stage", "destination", "extra", "cancel"] {
+            let directory = test_directory();
+            let journal = verified_unpublished_fixture(&directory);
+            let record = journal.record().clone();
+            downgrade_staged_fixture_to_v2(&directory, &record);
+            let staging = record.staging.as_ref().unwrap();
+            let cancelled = AtomicBool::new(fault == "cancel");
+            match fault {
+                "source" => fs::write(&record.source, b"tampered original").unwrap(),
+                "stage" => fs::write(staging.join("payload"), b"tampered stage").unwrap(),
+                "destination" => fs::write(&record.destination, b"unrelated").unwrap(),
+                "extra" => fs::write(staging.join("surprise"), b"unrelated").unwrap(),
+                "cancel" => {}
+                _ => unreachable!(),
+            }
+            assert!(adopt_legacy_verified_stage_in(&directory, &record.id, &cancelled).is_err(), "case: {fault}");
+            let unchanged = scan_incomplete_in(&directory).unwrap().remove(0);
+            assert!(unchanged.staged_identity.is_none(), "case: {fault}");
+            assert!(unchanged.staging_directory_identity.is_none(), "case: {fault}");
+            assert!(fs::symlink_metadata(&record.source).is_ok(), "case: {fault}");
+            fs::remove_dir_all(directory).unwrap();
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn legacy_v1_can_only_offer_a_new_unproven_copy_preview() {
+        let directory = test_directory();
+        let journal = verified_unpublished_fixture(&directory);
+        let record = journal.record();
+        let mut stored = to_stored(record).unwrap();
+        stored.version = 1;
+        stored.source_identity = None;
+        stored.staged_identity = None;
+        stored.staging_directory_identity = None;
+        fs::write(
+            directory.join(format!("{}.toml", record.id)),
+            toml::to_string(&stored).unwrap(),
+        )
+        .unwrap();
+        let inspected = inspect_record(scan_incomplete_in(&directory).unwrap().remove(0));
+        assert!(inspected.can_offer_unproven_fresh_copy());
+        assert!(!inspected.can_offer_fresh_copy());
+        assert!(!inspected.can_offer_legacy_stage_adoption());
+        assert!(adopt_legacy_verified_stage_in(&directory, &record.id, &AtomicBool::new(false)).is_err());
+        fs::remove_file(&record.source).unwrap();
+        let missing = inspect_record(scan_incomplete_in(&directory).unwrap().remove(0));
+        assert!(!missing.can_offer_unproven_fresh_copy());
         fs::remove_dir_all(directory).unwrap();
     }
 
