@@ -4819,12 +4819,22 @@ impl Explorer {
             return None;
         }
         entry
-                .rename_undo
-                .as_ref()
-                .map(|candidate| candidate.action())
-                .or_else(|| entry.batch_rename_undo.as_ref().map(|candidate| candidate.action()))
-                .or_else(|| entry.creation_undo.as_ref().map(|candidate| candidate.action()))
-                .map(|action| (entry.id, action))
+            .rename_undo
+            .as_ref()
+            .map(|candidate| candidate.action())
+            .or_else(|| {
+                entry
+                    .batch_rename_undo
+                    .as_ref()
+                    .map(|candidate| candidate.action())
+            })
+            .or_else(|| {
+                entry
+                    .creation_undo
+                    .as_ref()
+                    .map(|candidate| candidate.action())
+            })
+            .map(|action| (entry.id, action))
     }
 
     fn start_undo(&mut self, origin_id: u64, action: Action) {
@@ -7758,18 +7768,18 @@ impl Explorer {
     /// Renderers only draw the row; navigation and window spawning live here.
     fn place_response(&mut self, ui: &mut egui::Ui, response: egui::Response, path: PathBuf) {
         let new_tab_shortcut = response.has_focus()
-            && ui.input(|input| {
-                input.modifiers.shift && input.key_pressed(egui::Key::Enter)
-            });
+            && ui.input(|input| input.modifiers.shift && input.key_pressed(egui::Key::Enter));
         let open_here = response.clicked()
             || (response.has_focus()
                 && !new_tab_shortcut
                 && ui.input(|input| {
-                    input.key_pressed(egui::Key::Enter)
-                        || input.key_pressed(egui::Key::Space)
+                    input.key_pressed(egui::Key::Enter) || input.key_pressed(egui::Key::Space)
                 }));
         response
-            .on_hover_text(format!("{}\nRight-click for Places actions · Shift+Enter: new tab", path.display()))
+            .on_hover_text(format!(
+                "{}\nRight-click for Places actions · Shift+Enter: new tab",
+                path.display()
+            ))
             .context_menu(|ui| {
                 if ui.button("Open").clicked() {
                     self.navigate(path.clone());
@@ -8050,12 +8060,11 @@ impl Explorer {
                                 }
                                 ui.add_space(8.0);
                                 for (label, path) in self.places.clone() {
-                                    let response = ui
-                                        .add_sized(
-                                            [ui.available_width(), 29.0],
-                                            egui::Button::new(label)
-                                                .selected(self.current().path == path),
-                                        );
+                                    let response = ui.add_sized(
+                                        [ui.available_width(), 29.0],
+                                        egui::Button::new(label)
+                                            .selected(self.current().path == path),
+                                    );
                                     self.place_response(ui, response, path);
                                 }
                                 ui.separator();

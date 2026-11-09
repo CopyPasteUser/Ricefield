@@ -2063,7 +2063,9 @@ fn perform_with_progress_and_items(
                 fs::remove_dir(path)?;
             } else {
                 let current = fs::symlink_metadata(path)?;
-                if !snapshot.is_file() || !current.is_file() || current.len() != 0
+                if !snapshot.is_file()
+                    || !current.is_file()
+                    || current.len() != 0
                     || current.nlink() != 1
                 {
                     return Err(io::Error::new(
@@ -6996,13 +6998,18 @@ mod tests {
         };
         let report = perform_with_report(&operation, &AtomicBool::new(false), &mut |_| {});
         assert!(report.result.is_ok());
-        let undo = report.creation_undo.expect("new empty folder should offer Undo");
+        let undo = report
+            .creation_undo
+            .expect("new empty folder should offer Undo");
         let folder = root.join("created");
         fs::write(folder.join("keep.txt"), b"important").unwrap();
         assert!(perform(&undo.action()).is_err());
         assert_eq!(fs::read(folder.join("keep.txt")).unwrap(), b"important");
         let report = perform_with_report(
-            &Action::NewFolder { parent: root.clone(), name: "untouched".into() },
+            &Action::NewFolder {
+                parent: root.clone(),
+                name: "untouched".into(),
+            },
             &AtomicBool::new(false),
             &mut |_| {},
         );
@@ -7016,7 +7023,10 @@ mod tests {
     fn new_folder_undo_refuses_substituted_inode() {
         let root = test_root();
         let report = perform_with_report(
-            &Action::NewFolder { parent: root.clone(), name: "created".into() },
+            &Action::NewFolder {
+                parent: root.clone(),
+                name: "created".into(),
+            },
             &AtomicBool::new(false),
             &mut |_| {},
         );
@@ -7033,14 +7043,22 @@ mod tests {
     fn new_file_undo_refuses_content_changes() {
         let root = test_root();
         let report = perform_with_report(
-            &Action::NewFile { parent: root.clone(), name: "created.txt".into() },
+            &Action::NewFile {
+                parent: root.clone(),
+                name: "created.txt".into(),
+            },
             &AtomicBool::new(false),
             &mut |_| {},
         );
-        let undo = report.creation_undo.expect("empty new file should offer Undo");
+        let undo = report
+            .creation_undo
+            .expect("empty new file should offer Undo");
         fs::write(root.join("created.txt"), b"content from another action").unwrap();
         assert!(perform(&undo.action()).is_err());
-        assert_eq!(fs::read(root.join("created.txt")).unwrap(), b"content from another action");
+        assert_eq!(
+            fs::read(root.join("created.txt")).unwrap(),
+            b"content from another action"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
