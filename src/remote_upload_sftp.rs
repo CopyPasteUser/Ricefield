@@ -1047,16 +1047,25 @@ mod tests {
             .stderr(Stdio::null())
             .status()
             .unwrap();
-        assert!(status.success(), "child must observe an aborted real SFTP stage");
+        assert!(
+            status.success(),
+            "child must observe an aborted real SFTP stage"
+        );
         let (uploads, probes) =
             remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap();
         assert!(probes.is_empty());
         assert_eq!(uploads.len(), 1);
         let stage = PathBuf::from(&fixture.client.path)
             .join(format!(".ricefield-upload-{}", uploads[0].id));
-        assert_eq!(fs::read(stage.join("payload")).unwrap(), b"pinned-source-content\n");
+        assert_eq!(
+            fs::read(stage.join("payload")).unwrap(),
+            b"pinned-source-content\n"
+        );
         assert!(!Path::new(&format!("{}/example.txt", fixture.client.path)).exists());
-        assert_eq!(fs::read(&fixture.source).unwrap(), b"pinned-source-content\n");
+        assert_eq!(
+            fs::read(&fixture.source).unwrap(),
+            b"pinned-source-content\n"
+        );
 
         upload_with_client(
             fixture.request(),
@@ -1065,13 +1074,20 @@ mod tests {
             Some(&fixture.journal),
         )
         .unwrap();
-        assert_eq!(fs::read(stage.join("payload")).unwrap(), b"pinned-source-content\n");
+        assert_eq!(
+            fs::read(stage.join("payload")).unwrap(),
+            b"pinned-source-content\n"
+        );
         assert_eq!(
             fs::read(format!("{}/example.txt", fixture.client.path)).unwrap(),
             b"pinned-source-content\n"
         );
         let (retained, _) = remote_upload_journal::inspect_evidence_in(&fixture.journal).unwrap();
-        assert_eq!(retained.len(), 1, "retry must not remove the cancelled stage");
+        assert_eq!(
+            retained.len(),
+            1,
+            "retry must not remove the cancelled stage"
+        );
     }
 
     #[test]

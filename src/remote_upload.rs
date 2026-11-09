@@ -1311,7 +1311,10 @@ mod tests {
             cancelled.store(true, Ordering::Release);
             let result = worker.join().unwrap();
             server.stall_stage_response.store(false, Ordering::Release);
-            assert!(reached_stage, "upload never reached the committed private PUT");
+            assert!(
+                reached_stage,
+                "upload never reached the committed private PUT"
+            );
             result.unwrap_err()
         });
         assert!(error.contains("cancelled"), "{error}");
@@ -1320,7 +1323,7 @@ mod tests {
         let (uploads, probes) = remote_upload_journal::inspect_evidence_in(&journal).unwrap();
         assert!(probes.is_empty());
         assert_eq!(uploads.len(), 1);
-        let stage = uploads[0].stage_uri.split("/share/").last().unwrap();
+        let stage = uploads[0].stage_uri.rsplit_once("/share/").unwrap().1;
         assert_eq!(server.path(stage), b"verified upload bytes");
 
         // A new connection may publish only to the still-vacant final name;

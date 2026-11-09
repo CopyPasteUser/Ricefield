@@ -706,7 +706,10 @@ mod tests {
         }
         if std::env::var_os("RICEFIELD_TEST_SMB_FAIL_CLEANUP").is_some() {
             let error = result.expect_err("failed SMB cleanup must retain evidence");
-            assert!(error.contains("SMB cleanup connection interrupted"), "{error}");
+            assert!(
+                error.contains("SMB cleanup connection interrupted"),
+                "{error}"
+            );
             return;
         }
         panic!("SMB child-process crash checkpoint not reached: {result:?}");
@@ -827,7 +830,10 @@ mod tests {
                 .stderr(Stdio::null())
                 .status()
                 .unwrap();
-            assert!(status.success(), "{case}: child did not observe injected failure");
+            assert!(
+                status.success(),
+                "{case}: child did not observe injected failure"
+            );
             let journal = root.join(format!("rust-smb-crash-journal-{case}"));
             let (uploads, probes) = remote_upload_journal::inspect_evidence_in(&journal).unwrap();
             assert!(probes.is_empty());
@@ -835,10 +841,16 @@ mod tests {
             let stage = root
                 .join("share")
                 .join(format!(".ricefield-upload-{}", uploads[0].id));
-            assert_eq!(fs::read(stage.join("payload")).unwrap(), fs::read(&source).unwrap());
+            assert_eq!(
+                fs::read(stage.join("payload")).unwrap(),
+                fs::read(&source).unwrap()
+            );
             let destination = root.join("share").join(&name);
             if case == "cancel" {
-                assert!(!destination.exists(), "cancellation published a final target");
+                assert!(
+                    !destination.exists(),
+                    "cancellation published a final target"
+                );
                 upload_with_target(
                     samba_request(&root, &name),
                     &AtomicBool::new(false),
@@ -858,7 +870,10 @@ mod tests {
                 assert!(retry_error.contains("SMB publication may be ambiguous"));
             }
             assert_eq!(fs::read(&destination).unwrap(), fs::read(&source).unwrap());
-            assert_eq!(fs::read(stage.join("payload")).unwrap(), fs::read(&source).unwrap());
+            assert_eq!(
+                fs::read(stage.join("payload")).unwrap(),
+                fs::read(&source).unwrap()
+            );
             let (after_reconnect, _) =
                 remote_upload_journal::inspect_evidence_in(&journal).unwrap();
             assert_eq!(after_reconnect.len(), if case == "cancel" { 1 } else { 2 });
