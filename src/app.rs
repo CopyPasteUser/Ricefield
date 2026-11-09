@@ -5162,6 +5162,35 @@ impl Explorer {
         }
     }
 
+    fn paste_action_with_rules(
+        clipboard: Clipboard,
+        destination: PathBuf,
+        conflict: ConflictPolicy,
+        rules: &[filesystem::CopyRule],
+    ) -> Action {
+        if !clipboard.cut
+            && clipboard.paths.len() == 1
+            && let [filesystem::CopyRule::ExactName(name)] = rules
+        {
+            return Action::CopyAs {
+                source: clipboard.paths[0].clone(),
+                destination,
+                name: name.clone(),
+            };
+        }
+        if !clipboard.cut
+            && rules.iter().any(|rule| *rule != filesystem::CopyRule::Global)
+        {
+            return Action::CopyWithRules {
+                sources: clipboard.paths,
+                destination,
+                conflict,
+                rules: rules.to_vec(),
+            };
+        }
+        Self::paste_action(clipboard, destination, conflict)
+    }
+
     fn paste(&mut self) {
         self.request_desktop_paste(PasteMode::Immediate);
     }
@@ -10702,26 +10731,12 @@ impl Explorer {
                                     .add_enabled(can_start, egui::Button::new("Start transfer"))
                                     .clicked()
                                 {
-                                    action = Some(
-                                        if !clipboard.cut
-                                            && rules
-                                                .iter()
-                                                .any(|rule| *rule != filesystem::CopyRule::Global)
-                                        {
-                                            Action::CopyWithRules {
-                                                sources: clipboard.paths.clone(),
-                                                destination: destination.clone(),
-                                                conflict: *conflict,
-                                                rules: rules.clone(),
-                                            }
-                                        } else {
-                                            Self::paste_action(
-                                                clipboard.clone(),
-                                                destination.clone(),
-                                                *conflict,
-                                            )
-                                        },
-                                    );
+                                    action = Some(Self::paste_action_with_rules(
+                                        clipboard.clone(),
+                                        destination.clone(),
+                                        *conflict,
+                                        rules,
+                                    ));
                                     dismiss = true;
                                 }
                             });

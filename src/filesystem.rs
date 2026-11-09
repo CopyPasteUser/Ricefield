@@ -2724,16 +2724,16 @@ fn plan_transfer_with_rules(
             )));
         }
         for (index, rule) in rules.iter().enumerate() {
-            if let CopyRule::ExactName(name) = rule {
-                if !valid_exact_name(name) {
-                    return Err(PlanFailure::at(
-                        index,
-                        io::Error::new(
-                            io::ErrorKind::InvalidInput,
-                            "Invalid exact filename (1–255 bytes, no slash, control characters, . or ..)",
-                        ),
-                    ));
-                }
+            if let CopyRule::ExactName(name) = rule
+                && !valid_exact_name(name)
+            {
+                return Err(PlanFailure::at(
+                    index,
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "Invalid exact filename (1–255 bytes, no slash, control characters, . or ..)",
+                    ),
+                ));
             }
         }
     }
@@ -5975,7 +5975,7 @@ mod tests {
         fs::write(&source, b"intact").unwrap();
         let cancelled = AtomicBool::new(true);
         let result = preview_copy_with_rules_cancellable(
-            &[source.clone()],
+            std::slice::from_ref(&source),
             &destination,
             ConflictPolicy::KeepBoth,
             &[CopyRule::Global],
