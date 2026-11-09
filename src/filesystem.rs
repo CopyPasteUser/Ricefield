@@ -4240,7 +4240,10 @@ mod tests {
         assert!(error.to_string().contains("injected staging sync failure"));
         assert_eq!(fs::read(&source).unwrap(), b"original content");
         assert!(!destination.exists());
-        assert_eq!(fs::read(relocated.join("payload")).unwrap(), b"original content");
+        assert_eq!(
+            fs::read(relocated.join("payload")).unwrap(),
+            b"original content"
+        );
         assert_eq!(
             fs::read(substituted_path.unwrap().join("important.txt")).unwrap(),
             b"not RiceField data"
