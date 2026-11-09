@@ -495,6 +495,8 @@ fn upload_with_target(
             &format!("hardlink {} {}", quoted(&stage), quoted(&destination)),
             &commit_guard,
         )?;
+        #[cfg(test)]
+        kill_test_process_at("post-publish");
         cleanup(target, &dir, &["payload"], &commit_guard)
     })();
     result.map_err(|error| format!("{error}. SMB publication may be ambiguous; inspect {stage_uri}/payload and {destination_uri} before discarding local evidence"))?;
@@ -615,7 +617,11 @@ mod tests {
     fn real_samba_rust_uploader_crash_keeps_server_and_journal_evidence() {
         run_samba_crash_child_if_requested();
         let root = samba_root();
-        for (case, checkpoint) in [("probe", "probe-first-put"), ("stage", "stage-put")] {
+        for (case, checkpoint) in [
+            ("probe", "probe-first-put"),
+            ("stage", "stage-put"),
+            ("published", "post-publish"),
+        ] {
             let name = format!("rust-smb-crash-{case}.txt");
             let source = root.join(&name);
             fs::write(&source, b"signed SMB crash source retained\n").unwrap();
@@ -666,7 +672,29 @@ mod tests {
                     b"signed SMB crash source retained\n"
                 );
             }
-            assert!(!root.join("share").join(&name).exists());
+            if case == "published" {
+                assert_eq!(
+                    fs::read(root.join("share").join(&name)).unwrap(),
+                    b"signed SMB crash source retained\n"
+                );
+                let retry_error = upload_with_target(
+                    samba_request(&root, &name),
+                    &AtomicBool::new(false),
+                    &samba_target(),
+                    Some(&journal),
+                )
+                .unwrap_err();
+                assert!(retry_error.contains("SMB publication may be ambiguous"));
+                assert_eq!(
+                    fs::read(root.join("share").join(&name)).unwrap(),
+                    b"signed SMB crash source retained\n"
+                );
+                let (retry_uploads, _) =
+                    remote_upload_journal::inspect_evidence_in(&journal).unwrap();
+                assert_eq!(retry_uploads.len(), 2, "reconnect retains both attempts");
+            } else {
+                assert!(!root.join("share").join(&name).exists());
+            }
             assert_eq!(
                 fs::read(&source).unwrap(),
                 b"signed SMB crash source retained\n"

@@ -4598,6 +4598,7 @@ impl Explorer {
                     for record in &self.remote_journal_records {
                         ui.group(|ui| {
                             ui.strong(format!("Remote upload {}", record.id));
+                            ui.colored_label(Color32::LIGHT_YELLOW, "State: UNKNOWN / NOT SERVER-VERIFIED — publication and cleanup may have succeeded or failed");
                             ui.label("Intended destination:");
                             ui.monospace(&record.destination_uri);
                             ui.label("Private stage (may or may not exist):");
@@ -4633,6 +4634,7 @@ impl Explorer {
                     for record in &self.remote_probe_records {
                         ui.group(|ui| {
                             ui.strong(format!("Remote safety probe {}", record.id));
+                            ui.colored_label(Color32::LIGHT_YELLOW, "State: PROBE UNCERTAIN — inspect the prefix independently; this is not a user file");
                             ui.label("Private safety-probe prefix:");
                             ui.monospace(&record.prefix_uri);
                             ui.small(if record.prefix_uri.starts_with("sftp://") || record.prefix_uri.starts_with("smb://") {

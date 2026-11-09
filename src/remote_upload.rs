@@ -811,6 +811,7 @@ mod tests {
         stage_put_seen: Arc<AtomicBool>,
         stall_probe_response: Arc<AtomicBool>,
         probe_put_seen: Arc<AtomicBool>,
+        drop_publish_response: Arc<AtomicBool>,
         worker: Option<thread::JoinHandle<()>>,
     }
 
@@ -819,6 +820,7 @@ mod tests {
         stage_seen: &'a AtomicBool,
         probe_response: &'a AtomicBool,
         probe_seen: &'a AtomicBool,
+        drop_publish_response: &'a AtomicBool,
     }
 
     impl MockDav {
@@ -861,12 +863,14 @@ mod tests {
             let stage_put_seen = Arc::new(AtomicBool::new(false));
             let stall_probe_response = Arc::new(AtomicBool::new(stall_probe));
             let probe_put_seen = Arc::new(AtomicBool::new(false));
+            let drop_publish_response = Arc::new(AtomicBool::new(false));
             let files = Arc::clone(&state);
             let alive = Arc::clone(&running);
             let stage_stall = Arc::clone(&stall_stage_response);
             let put_seen = Arc::clone(&stage_put_seen);
             let probe_stall = Arc::clone(&stall_probe_response);
             let probe_seen = Arc::clone(&probe_put_seen);
+            let lost_publish_reply = Arc::clone(&drop_publish_response);
             let worker = thread::spawn(move || {
                 while alive.load(Ordering::Relaxed) {
                     match listener.accept() {
@@ -876,6 +880,7 @@ mod tests {
                             let put_seen = Arc::clone(&put_seen);
                             let probe_stall = Arc::clone(&probe_stall);
                             let probe_seen = Arc::clone(&probe_seen);
+                            let lost_publish_reply = Arc::clone(&lost_publish_reply);
                             thread::spawn(move || {
                                 handle_dav(
                                     stream,
@@ -888,6 +893,7 @@ mod tests {
                                         stage_seen: put_seen.as_ref(),
                                         probe_response: probe_stall.as_ref(),
                                         probe_seen: probe_seen.as_ref(),
+                                        drop_publish_response: lost_publish_reply.as_ref(),
                                     },
                                 )
                             });
@@ -907,6 +913,7 @@ mod tests {
                 stage_put_seen,
                 stall_probe_response,
                 probe_put_seen,
+                drop_publish_response,
                 worker: Some(worker),
             }
         }
@@ -1029,6 +1036,16 @@ mod tests {
             _ => (405, Vec::new()),
         };
         drop(entries);
+        // The real server may commit a conditional MOVE but lose the TCP
+        // response. The client must treat this as uncertain, never as proof
+        // of failure or permission to replay the request.
+        if method == "MOVE"
+            && path.contains("/.ricefield-upload-")
+            && status == 201
+            && stalls.drop_publish_response.load(Ordering::Acquire)
+        {
+            return;
+        }
         // An actual child process can be killed after the server has stored
         // the private stage, while its HTTP request is still incomplete.
         if method == "PUT" && path.contains("/.ricefield-upload-") && status == 201 {
@@ -1159,6 +1176,62 @@ mod tests {
         assert!(!persisted.contains("password"));
         assert!(!persisted.contains("secret"));
         fs::remove_dir_all(journals).unwrap();
+        fs::remove_file(file).unwrap();
+        fs::remove_dir(folder).unwrap();
+    }
+
+    #[test]
+    fn lost_webdav_publish_ack_keeps_journal_even_when_server_committed() {
+        let server = MockDav::start(false, false, false);
+        server.drop_publish_response.store(true, Ordering::Release);
+        let (folder, file) = fixture_file("lost-reply.txt");
+        let journal = folder.join("evidence");
+        let error = super::upload_with_journal_directory(
+            request(file.clone(), &server),
+            &AtomicBool::new(false),
+            Some(&journal),
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("Check both the final destination"),
+            "{error}"
+        );
+        assert_eq!(server.path("lost-reply.txt"), b"verified upload bytes");
+        assert_eq!(fs::read(&file).unwrap(), b"verified upload bytes");
+        let (uploads, probes) = remote_upload_journal::inspect_evidence_in(&journal).unwrap();
+        assert!(probes.is_empty());
+        assert_eq!(
+            uploads.len(),
+            1,
+            "lost acknowledgement must preserve evidence"
+        );
+        assert!(uploads[0].destination_uri.ends_with("/lost-reply.txt"));
+        let remote_stages = server
+            .state
+            .lock()
+            .unwrap()
+            .keys()
+            .filter(|path| path.contains("/.ricefield-upload-"))
+            .count();
+        assert_eq!(
+            remote_stages, 0,
+            "MOVE transferred the stage to its destination"
+        );
+        // A fresh connection after the lost acknowledgement must see a
+        // collision, not infer a failed first request or replace its result.
+        server.drop_publish_response.store(false, Ordering::Release);
+        let retry_error = super::upload_with_journal_directory(
+            request(file.clone(), &server),
+            &AtomicBool::new(false),
+            Some(&journal),
+        )
+        .unwrap_err();
+        assert!(retry_error.contains("HTTP 412"), "{retry_error}");
+        assert_eq!(server.path("lost-reply.txt"), b"verified upload bytes");
+        let (uploads_after_reconnect, _) =
+            remote_upload_journal::inspect_evidence_in(&journal).unwrap();
+        assert_eq!(uploads_after_reconnect.len(), 2);
+        fs::remove_dir_all(journal).unwrap();
         fs::remove_file(file).unwrap();
         fs::remove_dir(folder).unwrap();
     }

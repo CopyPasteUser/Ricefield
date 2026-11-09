@@ -97,6 +97,10 @@ This does **not** make RiceField the default file manager or require RiceBowl.
 
 ## Safety and known limits
 
+If a WebDAV, SFTP or signed-SMB upload is interrupted, consult the
+[manual remote recovery checklist](docs/REMOTE-RECOVERY-RUNBOOK.md) before
+retrying or removing a stage. A timed-out publish may already have succeeded.
+
 - Remote browsing is **read-only by default**, with explicit bounded no-overwrite downloads. WebDAV, OpenSSH-SFTP and SMB2/3 expose **conditional single-file uploads** after live, independent-client no-overwrite server probes, a pinned local snapshot and full staged-byte verification. SFTP requires trusted SSH keys and an exclusive hardlink; SMB requires `smbclient`, signed authenticated access (credentials piped privately) and an exclusive server-side hardlink. Servers without the verified feature remain read-only. Synced credential-free journals preserve uncertain probes and stages for human review under **Review safely…**, without remote recovery retries or cleanup. SMB stages inherit the NAS share ACLs, so use only a trusted write-restricted share. MTP upload and all remote rename/deletion remain disabled; [physical NAS/disconnect acceptance](docs/REMOTE-WRITE-SAFETY.md) is still an open 1.0 gate.
 - Cross-device moves preserve their sources after verified copies; cleanup requires a separate decision.
 - Completed local copy publication now syncs both the staging and destination directories after the atomic rename. A failed durability barrier retains the source and, for journaled cross-device moves, recovery evidence; this does not replace physical power-loss testing.
