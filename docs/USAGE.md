@@ -96,9 +96,19 @@ copies them to the local folder under the pointer, or the focused folder if
 the desktop does not report a pointer position. Drops onto non-folder controls
 are ignored. Remote tabs remain read-only.
 
-To drag **out** to another application, the context action **Drag to another
-app…** still needs an installed `ripdrag` or `dragon` helper. Direct native
-drag-out is not yet supported by this version of eframe/winit.
+To drag **out** to another application, select up to 128 local files/folders
+and press **Ctrl+Shift+D**, or choose **Drag to another app…** from the
+file's context menu. An installed `ripdrag` or `dragon` starts a native
+drag-source window; if neither is installed, RiceField explains the
+limitation and you can use **Ctrl+C** and paste into the target app instead.
+Remote files must first be downloaded. Direct in-process drag-out from a
+file tile is not supported by this version of eframe/winit.
+
+On Wayland with XWayland available (`WAYLAND_DISPLAY` and `DISPLAY` set),
+launch `ricefield --xwayland-dnd` to explicitly choose the native X11 XDND
+backend for incoming file drops. This is optional because XWayland may alter
+display scaling, input methods or other desktop integration. Use the normal
+Wayland launch if that works better for your session.
 
 ## Search, filters and duplicate candidates
 
