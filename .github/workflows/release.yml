@@ -3,6 +3,13 @@ name: Linux release bundle
 on:
   workflow_dispatch:
   push:
+    # A reviewed version bump on main publishes only after the full bundle job.
+    branches:
+      - main
+    paths:
+      - Cargo.toml
+      # Allows a reviewed workflow repair to retry an unpublished release.
+      - .github/workflows/release.yml
     tags:
       - 'v0.3.*'
       - 'v0.4.*'
@@ -109,7 +116,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/v0.') || startsWith(github.ref, 'refs/tags/v1.0.')
+    if: startsWith(github.ref, 'refs/tags/v0.') || startsWith(github.ref, 'refs/tags/v1.0.') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     needs: bundle
     runs-on: ubuntu-24.04
     permissions:
@@ -119,18 +126,53 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Validate tag matches Cargo package version
+      - name: Resolve and verify the release tag
+        id: release_tag
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           expected_tag="v$(sed -nE 's/^version = "([^"]+)"$/\1/p' Cargo.toml)"
-          test "$GITHUB_REF_NAME" = "$expected_tag"
+          echo "tag=$expected_tag" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            test "$GITHUB_REF_NAME" = "$expected_tag"
+          else
+            test "$GITHUB_REF_NAME" = main
+            [[ "$expected_tag" =~ ^v1\.0\.[0-9]+$ ]]
+          fi
+
+          # Re-running a version-bump workflow must never republish a release.
+          if gh release view "$expected_tag" >/dev/null 2>&1; then
+            echo 'already_published=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo 'already_published=false' >> "$GITHUB_OUTPUT"
+
+          # A GitHub Actions-created tag deliberately does not recursively
+          # trigger tag-push workflows; this job publishes its verified bundle.
+          if [[ "$GITHUB_REF_TYPE" != tag ]]; then
+            existing_ref="$(gh api "repos/$GH_REPO/git/ref/tags/$expected_tag" --jq '.object.sha' 2>/dev/null || true)"
+            if [[ -n "$existing_ref" ]]; then
+              echo "Release tag $expected_tag already exists without a published release; inspect manually." >&2
+              exit 1
+            fi
+            annotated_sha="$(gh api -X POST "repos/$GH_REPO/git/tags" \
+              -f tag="$expected_tag" \
+              -f message="RiceField $expected_tag — owner-approved stable release" \
+              -f object="$GITHUB_SHA" -f type=commit --jq '.sha')"
+            gh api -X POST "repos/$GH_REPO/git/refs" \
+              -f ref="refs/tags/$expected_tag" -f sha="$annotated_sha" >/dev/null
+          fi
       - name: Download verified workflow bundle
+        if: steps.release_tag.outputs.already_published != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: gh run download "$GITHUB_RUN_ID" --name ricefield-release-bundle --dir dist
       - name: Publish GitHub release from existing tag
+        if: steps.release_tag.outputs.already_published != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -138,8 +180,9 @@ jobs:
         run: |
           set -euo pipefail
           (cd dist && sha256sum --check -- *.sha256)
+          tag="${{ steps.release_tag.outputs.tag }}"
           options=(--verify-tag --generate-notes)
-          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+          if [[ "$tag" == *-* ]]; then
             options+=(--prerelease)
           fi
-          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.sha256 "${options[@]}"
+          gh release create "$tag" dist/*.tar.gz dist/*.sha256 "${options[@]}"

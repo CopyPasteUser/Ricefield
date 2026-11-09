@@ -14,10 +14,12 @@ The actionable owner test cases and reporting template are in
 The historical version gates below remain evidence, not claims of acceptance.
 
 **Release sequence:** version/lockfile and scope documentation are frozen in a
-reviewed commit, Rust and package CI must pass, then an annotated `v1.0.0`
-tag on that exact commit triggers the independent release workflow. That
-workflow repeats validation, checks reproducible bundles and SHA-256 files,
-and publishes the GitHub release only after those checks pass. Hardware test
+reviewed commit and PR CI must pass. A version-changing `Cargo.toml` push to
+`main` runs the independent release workflow. Only after its full Rust/GUI,
+reproducible archive, checksum, install and rollback checks pass does its
+restricted publish job create an annotated `v1.0.0` tag on the tested commit
+and upload the verified GitHub release assets. Existing tag-triggered releases
+remain supported. A release already published is not repeated. Hardware test
 cases not personally verified stay unchecked in the acceptance ledger.
 
 ## Build a preview bundle
