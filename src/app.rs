@@ -1397,6 +1397,15 @@ fn archive_stem(path: &Path) -> String {
     "Archive".into()
 }
 
+/// Keep the full Properties dialog inside the usable viewport. Reserve space
+/// for the title bar and a permanent Close button outside the scrolling body.
+fn properties_dialog_limits(viewport: Vec2) -> (f32, f32, f32) {
+    let max_width = (viewport.x - 20.0).max(180.0);
+    let max_height = (viewport.y - 24.0).max(160.0);
+    let body_height = (max_height - 96.0).clamp(64.0, 480.0);
+    (max_width, max_height, body_height)
+}
+
 fn accept_property_result(dialog: &mut Option<Dialog>, message: PropertyResult) {
     if let Some(Dialog::Properties {
         path,
@@ -11421,204 +11430,213 @@ impl Explorer {
                     generation,
                     ..
                 } => {
-                    shell_components::show_dialog(
-                        context,
-                        i18n::tr("Properties"),
-                        true,
-                        Some(460.0),
-                        |ui| {
-                            match details {
-                                Some(Ok(snapshot)) => {
-                                    for (name, value) in &snapshot.lines {
-                                        ui.horizontal_wrapped(|ui| {
-                                            ui.strong(format!("{name}:"));
-                                            ui.label(value);
-                                        });
-                                    }
-                                }
-                                Some(Err(error)) => {
-                                    ui.colored_label(
-                                        Color32::RED,
-                                        format!("Cannot read properties: {error}"),
-                                    );
-                                }
-                                None => {
-                                    ui.horizontal(|ui| {
-                                        ui.spinner();
-                                        ui.label(i18n::tr("Reading file properties…"));
-                                    });
-                                }
-                            }
-                            #[cfg(unix)]
-                            if let Some(Ok(snapshot)) = details.as_ref()
-                                && !snapshot.is_symlink
-                            {
-                                ui.separator();
-                                let name = if snapshot.is_dir {
-                                    "Calculate folder size"
-                                } else {
-                                    "Calculate SHA-256"
-                                };
-                                if ui
-                                    .add_enabled(!analysis_busy, egui::Button::new(name))
-                                    .clicked()
-                                {
-                                    *analysis = None;
-                                    requested_analysis = Some((path.clone(), *generation));
-                                }
-                                if analysis_busy {
-                                    ui.horizontal(|ui| {
-                                        ui.spinner();
-                                        ui.label("Analysing in background…");
-                                    });
-                                }
-                                if let Some(result) = analysis {
-                                    match result {
-                                        Ok(result) => {
-                                            ui.label(
-                                                egui::RichText::new(result.as_str()).monospace(),
+                    let (max_width, max_height, body_height) =
+                        properties_dialog_limits(context.content_rect().size());
+                    egui::Window::new(i18n::tr("Properties"))
+                        .collapsible(false)
+                        .resizable(true)
+                        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+                        .default_width(460.0_f32.min(max_width))
+                        .max_width(max_width)
+                        .max_height(max_height)
+                        .show(context, |ui| {
+                            egui::ScrollArea::vertical()
+                                .max_height(body_height)
+                                .show(ui, |ui| {
+                                    match details {
+                                        Some(Ok(snapshot)) => {
+                                            for (name, value) in &snapshot.lines {
+                                                ui.horizontal_wrapped(|ui| {
+                                                    ui.strong(format!("{name}:"));
+                                                    ui.label(value);
+                                                });
+                                            }
+                                        }
+                                        Some(Err(error)) => {
+                                            ui.colored_label(
+                                                Color32::RED,
+                                                format!("Cannot read properties: {error}"),
                                             );
                                         }
-                                        Err(error) => {
-                                            ui.colored_label(Color32::RED, error.as_str());
+                                        None => {
+                                            ui.horizontal(|ui| {
+                                                ui.spinner();
+                                                ui.label(i18n::tr("Reading file properties…"));
+                                            });
                                         }
                                     }
-                                }
-                            }
-                            #[cfg(unix)]
-                            if let Some(Ok(snapshot)) = details.as_ref() {
-                                ui.separator();
-                                if snapshot.is_symlink {
-                                    ui.label("Symlink permissions cannot be changed here.");
-                                }
-                                ui.horizontal(|ui| {
-                                    ui.label("Mode (octal):");
-                                    ui.add_sized([100.0, 25.0], egui::TextEdit::singleline(mode));
-                                    let parsed = u32::from_str_radix(mode.trim(), 8)
-                                        .ok()
-                                        .filter(|number| *number <= 0o777);
-                                    if ui
-                                        .add_enabled(
-                                            parsed.is_some() && !snapshot.is_symlink,
-                                            egui::Button::new("Apply"),
-                                        )
-                                        .clicked()
+                                    #[cfg(unix)]
+                                    if let Some(Ok(snapshot)) = details.as_ref()
+                                        && !snapshot.is_symlink
                                     {
-                                        action = Some(Action::SetMode {
-                                            path: path.clone(),
-                                            mode: parsed
-                                                .expect("button only enabled for valid mode"),
-                                            expected: snapshot.metadata.clone(),
-                                        });
-                                        dismiss = true;
+                                        ui.separator();
+                                        let name = if snapshot.is_dir {
+                                            "Calculate folder size"
+                                        } else {
+                                            "Calculate SHA-256"
+                                        };
+                                        if ui
+                                            .add_enabled(!analysis_busy, egui::Button::new(name))
+                                            .clicked()
+                                        {
+                                            *analysis = None;
+                                            requested_analysis = Some((path.clone(), *generation));
+                                        }
+                                        if analysis_busy {
+                                            ui.horizontal(|ui| {
+                                                ui.spinner();
+                                                ui.label("Analysing in background…");
+                                            });
+                                        }
+                                        if let Some(result) = analysis {
+                                            match result {
+                                                Ok(result) => {
+                                                    ui.label(
+                                                        egui::RichText::new(result.as_str()).monospace(),
+                                                    );
+                                                }
+                                                Err(error) => {
+                                                    ui.colored_label(Color32::RED, error.as_str());
+                                                }
+                                            }
+                                        }
                                     }
-                                });
-                                #[cfg(target_os = "linux")]
-                                ui.horizontal_wrapped(|ui| {
-                                    use std::os::unix::fs::MetadataExt;
-                                    ui.label("Owner UID:");
-                                    ui.add_sized([84.0, 25.0], egui::TextEdit::singleline(owner));
-                                    ui.label("Group GID:");
-                                    ui.add_sized([84.0, 25.0], egui::TextEdit::singleline(group));
-                                    let parsed = owner
-                                        .trim()
-                                        .parse::<u32>()
-                                        .ok()
-                                        .filter(|uid| *uid != u32::MAX)
-                                        .zip(
-                                            group
+                                    #[cfg(unix)]
+                                    if let Some(Ok(snapshot)) = details.as_ref() {
+                                        ui.separator();
+                                        if snapshot.is_symlink {
+                                            ui.label("Symlink permissions cannot be changed here.");
+                                        }
+                                        ui.horizontal(|ui| {
+                                            ui.label("Mode (octal):");
+                                            ui.add_sized([100.0, 25.0], egui::TextEdit::singleline(mode));
+                                            let parsed = u32::from_str_radix(mode.trim(), 8)
+                                                .ok()
+                                                .filter(|number| *number <= 0o777);
+                                            if ui
+                                                .add_enabled(
+                                                    parsed.is_some() && !snapshot.is_symlink,
+                                                    egui::Button::new("Apply"),
+                                                )
+                                                .clicked()
+                                            {
+                                                action = Some(Action::SetMode {
+                                                    path: path.clone(),
+                                                    mode: parsed
+                                                        .expect("button only enabled for valid mode"),
+                                                    expected: snapshot.metadata.clone(),
+                                                });
+                                                dismiss = true;
+                                            }
+                                        });
+                                        #[cfg(target_os = "linux")]
+                                        ui.horizontal_wrapped(|ui| {
+                                            use std::os::unix::fs::MetadataExt;
+                                            ui.label("Owner UID:");
+                                            ui.add_sized([84.0, 25.0], egui::TextEdit::singleline(owner));
+                                            ui.label("Group GID:");
+                                            ui.add_sized([84.0, 25.0], egui::TextEdit::singleline(group));
+                                            let parsed = owner
                                                 .trim()
                                                 .parse::<u32>()
                                                 .ok()
-                                                .filter(|gid| *gid != u32::MAX),
-                                        );
-                                    let changed = parsed.is_some_and(|(uid, gid)| {
-                                        uid != snapshot.metadata.uid()
-                                            || gid != snapshot.metadata.gid()
-                                    });
-                                    if ui
-                                        .add_enabled(
-                                            changed && !snapshot.is_symlink,
-                                            egui::Button::new("Apply owner/group"),
-                                        )
-                                        .clicked()
-                                    {
-                                        let (uid, gid) =
-                                            parsed.expect("owner/group button requires valid IDs");
-                                        action = Some(Action::SetOwnership {
-                                            path: path.clone(),
-                                            uid,
-                                            gid,
-                                            expected: snapshot.metadata.clone(),
+                                                .filter(|uid| *uid != u32::MAX)
+                                                .zip(
+                                                    group
+                                                        .trim()
+                                                        .parse::<u32>()
+                                                        .ok()
+                                                        .filter(|gid| *gid != u32::MAX),
+                                                );
+                                            let changed = parsed.is_some_and(|(uid, gid)| {
+                                                uid != snapshot.metadata.uid()
+                                                    || gid != snapshot.metadata.gid()
+                                            });
+                                            if ui
+                                                .add_enabled(
+                                                    changed && !snapshot.is_symlink,
+                                                    egui::Button::new("Apply owner/group"),
+                                                )
+                                                .clicked()
+                                            {
+                                                let (uid, gid) =
+                                                    parsed.expect("owner/group button requires valid IDs");
+                                                action = Some(Action::SetOwnership {
+                                                    path: path.clone(),
+                                                    uid,
+                                                    gid,
+                                                    expected: snapshot.metadata.clone(),
+                                                });
+                                                dismiss = true;
+                                            }
                                         });
-                                        dismiss = true;
+                                        #[cfg(target_os = "linux")]
+                                    ui.small("Ownership changes follow your account's Linux permissions; no sudo or privilege escalation.");
+                                        #[cfg(target_os = "linux")]
+                                    ui.vertical(|ui| {
+                                        ui.separator();
+                                        ui.label("Create a POSIX access ACL for one additional user:");
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.label("User UID:");
+                                            ui.add_sized([100.0, 25.0], egui::TextEdit::singleline(acl_user));
+                                            ui.label("Rights (rwx):");
+                                            ui.add_sized([75.0, 25.0], egui::TextEdit::singleline(acl_permissions));
+                                        });
+                                        let parsed = acl_user
+                                            .trim()
+                                            .parse::<u32>()
+                                            .ok()
+                                            .filter(|uid| *uid != u32::MAX)
+                                            .zip(filesystem::parse_acl_rwx(acl_permissions));
+                                        if ui
+                                            .add_enabled(
+                                                parsed.is_some() && !snapshot.is_symlink,
+                                                egui::Button::new("Create ACL entry"),
+                                            )
+                                            .clicked()
+                                        {
+                                            let (uid, permissions) = parsed.expect("ACL button requires a valid UID and rights");
+                                            action = Some(Action::CreateNamedUserAcl {
+                                                path: path.clone(),
+                                                uid,
+                                                permissions,
+                                                expected: snapshot.metadata.clone(),
+                                            });
+                                            dismiss = true;
+                                        }
+                                        ui.small("Creates an ACL only if none is found. Group rights are preserved. Avoid simultaneous ACL edits from other programs: Linux does not guarantee atomic no-replace for this attribute. Requires filesystem ACL support and ordinary Linux permissions.");
+                                    });
+                                        #[cfg(target_os = "linux")]
+                                    ui.vertical(|ui| {
+                                        ui.separator();
+                                        ui.label("Add an extended attribute (existing values are never overwritten):");
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.label("Name:");
+                                            ui.add_sized([170.0, 25.0], egui::TextEdit::singleline(attribute_name));
+                                            ui.label("Text value:");
+                                            ui.add_sized([170.0, 25.0], egui::TextEdit::singleline(attribute_value));
+                                        });
+                                        let valid = attribute_name.starts_with("user.")
+                                            && attribute_name.len() > 5
+                                            && attribute_name.len() <= 255
+                                            && !attribute_name.as_bytes().contains(&0)
+                                            && attribute_value.len() <= 4096
+                                            && !snapshot.is_symlink;
+                                        if ui.add_enabled(valid, egui::Button::new("Create attribute")).clicked() {
+                                            action = Some(Action::CreateUserAttribute {
+                                                path: path.clone(),
+                                                name: attribute_name.clone(),
+                                                value: attribute_value.clone(),
+                                                expected: snapshot.metadata.clone(),
+                                            });
+                                            dismiss = true;
+                                        }
+                                        ui.small("Only user.* names and up to 4 KiB of UTF-8 text. A conflicting attribute is left untouched.");
+                                    });
                                     }
                                 });
-                                #[cfg(target_os = "linux")]
-                            ui.small("Ownership changes follow your account's Linux permissions; no sudo or privilege escalation.");
-                                #[cfg(target_os = "linux")]
-                            ui.vertical(|ui| {
-                                ui.separator();
-                                ui.label("Create a POSIX access ACL for one additional user:");
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.label("User UID:");
-                                    ui.add_sized([100.0, 25.0], egui::TextEdit::singleline(acl_user));
-                                    ui.label("Rights (rwx):");
-                                    ui.add_sized([75.0, 25.0], egui::TextEdit::singleline(acl_permissions));
-                                });
-                                let parsed = acl_user
-                                    .trim()
-                                    .parse::<u32>()
-                                    .ok()
-                                    .filter(|uid| *uid != u32::MAX)
-                                    .zip(filesystem::parse_acl_rwx(acl_permissions));
-                                if ui
-                                    .add_enabled(
-                                        parsed.is_some() && !snapshot.is_symlink,
-                                        egui::Button::new("Create ACL entry"),
-                                    )
-                                    .clicked()
-                                {
-                                    let (uid, permissions) = parsed.expect("ACL button requires a valid UID and rights");
-                                    action = Some(Action::CreateNamedUserAcl {
-                                        path: path.clone(),
-                                        uid,
-                                        permissions,
-                                        expected: snapshot.metadata.clone(),
-                                    });
-                                    dismiss = true;
-                                }
-                                ui.small("Creates an ACL only if none is found. Group rights are preserved. Avoid simultaneous ACL edits from other programs: Linux does not guarantee atomic no-replace for this attribute. Requires filesystem ACL support and ordinary Linux permissions.");
-                            });
-                                #[cfg(target_os = "linux")]
-                            ui.vertical(|ui| {
-                                ui.separator();
-                                ui.label("Add an extended attribute (existing values are never overwritten):");
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.label("Name:");
-                                    ui.add_sized([170.0, 25.0], egui::TextEdit::singleline(attribute_name));
-                                    ui.label("Text value:");
-                                    ui.add_sized([170.0, 25.0], egui::TextEdit::singleline(attribute_value));
-                                });
-                                let valid = attribute_name.starts_with("user.")
-                                    && attribute_name.len() > 5
-                                    && attribute_name.len() <= 255
-                                    && !attribute_name.as_bytes().contains(&0)
-                                    && attribute_value.len() <= 4096
-                                    && !snapshot.is_symlink;
-                                if ui.add_enabled(valid, egui::Button::new("Create attribute")).clicked() {
-                                    action = Some(Action::CreateUserAttribute {
-                                        path: path.clone(),
-                                        name: attribute_name.clone(),
-                                        value: attribute_value.clone(),
-                                        expected: snapshot.metadata.clone(),
-                                    });
-                                    dismiss = true;
-                                }
-                                ui.small("Only user.* names and up to 4 KiB of UTF-8 text. A conflicting attribute is left untouched.");
-                            });
-                            }
-                            if ui.button("Close").clicked() {
+                            ui.separator();
+                            if ui.button(i18n::tr("Close")).clicked() {
                                 dismiss = true;
                             }
                         },
@@ -11895,8 +11913,8 @@ mod tests {
         PendingPaste, PropertyResult, PropertySnapshot, Tab, TabSnapshot, ViewResult,
         accept_property_result, active_after_swap, choose_paste_clipboard, commit_local_view,
         drop_action, elapsed_label, next_search_repaint_delay, project_local_view,
-        read_property_snapshot, remaining_cut_paths, resolve_split_tabs, retain_visible_selection,
-        retry_unstarted_items, transfer_progress_details,
+        properties_dialog_limits, read_property_snapshot, remaining_cut_paths, resolve_split_tabs,
+        retain_visible_selection, retry_unstarted_items, transfer_progress_details,
     };
     use crate::clipboard;
     use crate::config::Config;
@@ -11904,6 +11922,7 @@ mod tests {
     use crate::location::Location;
     use crate::transfer_history;
     use crate::volume::RemoteEntry;
+    use eframe::egui::Vec2;
     use std::collections::BTreeSet;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -12597,6 +12616,18 @@ mod tests {
         assert!(snapshot.lines.iter().any(|(key, _)| key == "Size"));
         #[cfg(unix)]
         assert_eq!(snapshot.mode.len(), 3);
+    }
+
+    #[test]
+    fn properties_dialog_limits_keep_close_button_visible() {
+        for (width, height) in [(680.0, 440.0), (800.0, 600.0), (1920.0, 1080.0)] {
+            let (max_width, max_height, body_height) =
+                properties_dialog_limits(Vec2::new(width, height));
+            assert!(max_width <= width - 20.0);
+            assert!(max_height <= height - 24.0);
+            assert!(body_height + 96.0 <= max_height);
+            assert!(body_height <= 480.0);
+        }
     }
 
     #[test]
