@@ -2,47 +2,35 @@
 
 # RiceField
 
-**One Linux file manager. Seven unmistakable desktop styles.**
+**One Linux file manager. Seven distinct desktop styles.**
 
-A fast, customizable **Rust + egui** file manager, standalone today and designed for the [RiceBowl desktop](https://github.com/CopyPasteUser/Ricebowl).
+A customizable **Rust + egui** file manager for Linux, usable standalone or alongside [RiceBowl](https://github.com/CopyPasteUser/Ricebowl).
 
-[Install](#install) · [Screenshot gallery](docs/screenshots/) · [User guide](docs/USAGE.md) · [1.0 readiness](docs/1.0-STATUS.md)
+[Install](#install) · [Screenshot gallery](docs/screenshots/README.md) · [User guide](docs/USAGE.md) · [1.0 status](docs/1.0-STATUS.md)
 
 [![Rust checks](https://github.com/CopyPasteUser/Ricefield/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/Ricefield/actions/workflows/ci.yml)
 
 </div>
 
-## Choose your desktop
+| Windows 7 · Aero | Frutiger Aero |
+| :---: | :---: |
+| [![Windows 7 shell](docs/screenshots/win7.png)](docs/screenshots/win7.png) | [![Frutiger Aero shell](docs/screenshots/frutiger-aero.png)](docs/screenshots/frutiger-aero.png) |
 
-Each rice changes the navigation, toolbar, density, color, icons and workflow—not just a coat of paint. All seven run the **same real file manager**.
+[View all seven styles](docs/screenshots/README.md): Windows 98, XP Luna, Windows 7, Windows 10, Frutiger Aero, ChromeOS and macOS. The window manager controls the window decorations.
 
-| Windows 98 · Classic Explorer | Windows XP · Luna |
-|:---:|:---:|
-| [![Original Windows 98-inspired Classic shell](docs/screenshots/win98.png)](docs/screenshots/win98.png) | [![Windows XP Luna-inspired tasks pane](docs/screenshots/xp-luna.png)](docs/screenshots/xp-luna.png) |
-| **Windows 7 · Aero** | **Windows 10 · Ribbon** |
-| [![Windows 7-style Explorer shell](docs/screenshots/win7.png)](docs/screenshots/win7.png) | [![Windows 10-inspired Explorer Ribbon](docs/screenshots/win10.png)](docs/screenshots/win10.png) |
-| **Frutiger Aero · Blue Skies** | **ChromeOS · Files** |
-| [![Frutiger Aero-inspired aqua shell](docs/screenshots/frutiger-aero.png)](docs/screenshots/frutiger-aero.png) | [![ChromeOS-inspired Files shell](docs/screenshots/chromeos.png)](docs/screenshots/chromeos.png) |
-| **macOS · Finder** | **Interactive views** |
-| [![macOS Finder-inspired shell](docs/screenshots/macos.png)](docs/screenshots/macos.png) | [ChromeOS grid + More](docs/screenshots/README.md#chromeos--files-rice) · [Windows 98 Tools](docs/screenshots/README.md#windows-98--classic-explorer) · [All compact and split views](docs/screenshots/) |
+## Features
 
-The details are intentional: 98 has a dense gray menu and tree, XP a blue tasks pane, 7 an Aero command bar, 10 a Ribbon, Frutiger a spacious two-line aqua file view and glass shelf, ChromeOS rounded two-line file rows and a Files toolbar, and macOS a striped Finder detail view. Original vectors replace proprietary icons and logos. **Window decorations are controlled by RiceBowl or your Linux window manager**, not these file-manager themes.
+- **Everyday file management:** tabs, split view, bookmarks, search, previews, drag-and-drop, copy/move/rename/trash and `Open With`.
+- **Guarded operations:** no-overwrite conflict previews, transfer history, selective session Undo and recovery diagnostics.
+- **Archives:** browse and extract ZIP, TAR, 7z and RAR with libarchive.
+- **Network and devices:** browse SMB, SFTP, WebDAV and MTP; manage removable media through UDisks2/Polkit.
+- **Customization:** seven built-in themes, custom TOML appearances and optional RiceBowl RiceProfile integration.
 
-## File management
-
-- **Browse:** tabs, split panes, bookmarks, folder tree, list/grid views and session restore. Right-click a Places shortcut to open it in the current tab, a new tab, or a separate window, or copy its path; Shift+Enter opens the focused Places row in a new tab.
-- **Organize:** copy, move, rename, cycle-safe batch rename, trash, file permissions, guarded new POSIX named-user ACL grants, progress and conflict previews. **Paste with options** provides per-file keep-both, skip-existing, require-free and skip-identical choices for both copies and moves, including exact custom target names; no option overwrites a destination. Open With can use installed MIME handlers or the desktop's application chooser portal when available.
-- **Drag and drop:** copy selected files into folders, other tabs, breadcrumbs, folder-tree entries or split panes; hold Shift to move. Native incoming file drops work locally, while outgoing drops to other apps still use an optional `ripdrag`/`dragon` helper.
-- **Undo and transfers:** `Ctrl+Z` / Edit → Undo reverses the latest eligible operation (guarded rename, complete batch rename, or an unchanged empty created file/folder); older eligible operations remain individually accessible in Transfers during this session. Copy, deletion and cross-volume moves do not have automatic Undo. Failed local Copy/Move batches can reopen an explicit preview for only never-attempted items, without replaying uncertain results. After restart, private read-only history keeps up to 24 file-specific diagnostics per operation (failures first), without replay or destructive Undo.
-- **Find and inspect:** search, saved filters, cancellable background filtering/sorting for very large local folders, file-type vector icons, thumbnails, Quick Look, extensionless raster-image detection, local/network UTF-8/UTF-16 text and safe binary/hex fallback, optional PDF/media previews. Right-click ZIP, TAR, 7z or RAR archives → **Browse / extract archive…** → **Extract all** or selected entries into a new collision-free folder (installed libarchive required).
-- **Reach storage:** SMB, SFTP, WebDAV and MTP discovery/browsing with folders opening in the current or a new tab, navigable breadcrumbs, selectable/sortable file rows, previews, queued downloads and optional credential storage. WebDAV, SFTP and signed SMB2/3 additionally offer narrowly guarded **single-file uploads** only after live server collision-safety probes; removable USB and encrypted-volume actions use UDisks2/Polkit.
-- **Customize:** seven built-in rices plus user TOML files for palettes, spacing, navigation and layout.
-
-**Release status: `1.0.0-rc.21` development candidate, not stable 1.0.** The preceding merged update passed [Rust/GUI/benchmark CI](https://github.com/CopyPasteUser/Ricefield/actions/runs/42580810310) and [signed SMB safety CI](https://github.com/CopyPasteUser/Ricefield/actions/runs/42580810468). The [final 1.0 execution plan](ROADMAP.md#final-10-execution-plan-after-rc21) lists remaining software gates. Remote write/recovery support remains intentionally limited to independently verified protocols, and physical Linux Mint/NAS/USB acceptance is still open. Keep your existing file manager installed. [Owner acceptance checklist](docs/OWNER-ACCEPTANCE-1.0.md).
+**Status:** `1.0.0-rc.21` is a release candidate, **not stable 1.0**. Physical desktop, USB and NAS acceptance remains open. Keep your existing file manager installed.
 
 ## Install
 
-Target: Linux x86_64 (Ubuntu 24.04 release builds support Linux Mint 22). The command is `ricefield`. Installation and updates automatically register the application-menu entry with an absolute PNG icon path (and retain the scalable SVG for icon themes). They also remove the old `rice-explorer` executable, launcher, icon and interrupted-install launchers. Older user configuration and themes are kept to avoid data loss.
+Linux x86_64 (Ubuntu 24.04 / Linux Mint 22); building from source requires a current [Rust toolchain](https://rustup.rs/).
 
 ```bash
 sudo apt install build-essential pkg-config libxcb-render0-dev \
@@ -55,67 +43,24 @@ bash install.sh
 ricefield
 ```
 
-Requires a current stable [Rust toolchain](https://rustup.rs/) when building from source. The installation is user-local and does not replace your default file manager. Release builds and checksums: [Releases](https://github.com/CopyPasteUser/Ricefield/releases) · [Release guide](RELEASE.md).
+Installation is user-local and creates an application-menu entry; it does not replace your default file manager. [Release builds](https://github.com/CopyPasteUser/Ricefield/releases) · [Release guide](RELEASE.md).
 
-Optional for the signed SMB upload path: install the distribution's `smbclient`
-package (`sudo apt install smbclient` on Linux Mint/Ubuntu). On servers
-without atomic no-replace hardlinks the upload will remain disabled.
-
-Try a specific rice:
+Choose a style or validate a custom theme:
 
 ```bash
-ricefield --theme win98 ~/Documents
 ricefield --theme xp-luna ~/Documents
-ricefield --theme win7 ~/Downloads
-ricefield --theme win10 ~/Downloads
 ricefield --theme frutiger-aero ~/Pictures
-ricefield --theme chromeos ~/Downloads
 ricefield --theme macos
-ricefield --theme-file /path/to/custom-rice.toml
 ricefield --check-theme-file /path/to/custom-rice.toml
 ```
 
-RiceBowl can also select the initial profile with `RICEBOWL_RICE=windows7 ricefield`
-(or `RICEBOWL_THEME`). Names such as `windows-xp`, `windows10` and
-`frutiger-aero` map to their bundled RiceField shells. An explicit `--theme`
-has priority; unknown RiceBowl names leave the saved appearance unchanged.
-Launcher-selected themes are **session-only**: saving unrelated preferences does
-not replace your chosen default. Selecting a theme inside RiceField still saves it.
+## Safety and documentation
 
-**RiceProfile v1 (optional Wayland integration):** In an opt-in RiceBowl labwc
-session, compatible RiceField installations may receive
-`RICEBOWL_RICEFIELD_THEME_FILE=/absolute/session/ricefield.riceprofile.toml`.
-RiceField validates the owner-private, data-only TOML and reloads accepted
-changes while running (Linux file events request an immediate refresh, with a
-three-second safety check on filesystems without working notifications);
-rejected updates keep
-the last working theme. `ricefield --check-theme-file PATH` performs the same
-validation without opening a window. The supported v1 fields are
-`format_version = 1`, `name`, an existing `base_theme` ID and the
-`[appearance]` fields `accent`, `surface`, `text` (hex colors). Unknown fields,
-base themes and versions are rejected. Explicit `--theme`/`--theme-file` wins;
-outside RiceBowl the standalone themes and persisted preferences are unchanged.
-This does **not** make RiceField the default file manager or require RiceBowl.
+Local Undo covers **only eligible operations**; copies, deletions and cross-volume moves are not automatically reversible. Remote browsing is read-only by default. Verified WebDAV, SFTP and signed SMB servers may support **guarded single-file uploads**, but not remote rename/delete; interrupted uploads require manual review. Cross-device moves preserve the source after copying.
 
-## Safety and known limits
+[Remote capability limits](docs/REMOTE-1.0-SCOPE.md) · [Recovery runbook](docs/REMOTE-RECOVERY-RUNBOOK.md) · [Owner acceptance checklist](docs/OWNER-ACCEPTANCE-1.0.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md)
 
-If a WebDAV, SFTP or signed-SMB upload is interrupted, consult the
-[manual remote recovery checklist](docs/REMOTE-RECOVERY-RUNBOOK.md) before
-retrying or removing a stage. A timed-out publish may already have succeeded.
-Remote rename/delete and MTP writes remain intentionally unsupported in 1.0;
-see the [remote capability and acceptance contract](docs/REMOTE-1.0-SCOPE.md).
-
-- Remote browsing is **read-only by default**, with explicit bounded no-overwrite downloads. WebDAV, OpenSSH-SFTP and SMB2/3 expose **conditional single-file uploads** after live, independent-client no-overwrite server probes, a pinned local snapshot and full staged-byte verification. SFTP requires trusted SSH keys and an exclusive hardlink; SMB requires `smbclient`, signed authenticated access (credentials piped privately) and an exclusive server-side hardlink. Servers without the verified feature remain read-only. Synced credential-free journals preserve uncertain probes and stages for human review under **Review safely…**, without remote recovery retries or cleanup. SMB stages inherit the NAS share ACLs, so use only a trusted write-restricted share. MTP upload and all remote rename/deletion remain disabled; [physical NAS/disconnect acceptance](docs/REMOTE-WRITE-SAFETY.md) is still an open 1.0 gate.
-- Cross-device moves preserve their sources after verified copies; cleanup requires a separate decision.
-- Completed local copy publication now syncs both the staging and destination directories after the atomic rename. A failed durability barrier retains the source and, for journaled cross-device moves, recovery evidence; this does not replace physical power-loss testing.
-- Remote-to-local file and folder downloads now sync the private staging parent before publication and both affected directories after atomic no-overwrite publication. Four real process-crash checkpoints exercise the unpublished-stage and completed-target states; neither these checks nor disposable Samba integration proves actual NAS power-loss durability.
-- Batch rename has guarded session-only Undo, not full crash recovery. Inspect any interrupted batch.
-- USB mount, unmount, eject and explicit LUKS Unlock/Lock rely on UDisks2/Polkit. Lock requires the decrypted filesystem to be unmounted; PowerOff accepts a verified locked LUKS USB container but rejects open/malformed mappings and mounted siblings. Real-device/Polkit acceptance is still open.
-- Cross-device Move creates a verified copy and **keeps the source**. Its private crash journal supports read-only inspection, explicitly confirmed resolution of already-published copies, and guarded no-overwrite publication of a verified, unchanged staged file, symlink or bounded directory on Linux. Nested metadata and hardlinks must match exactly; oversized or uncertain trees still require manual review. There is no automatic rollback, broad replay or source deletion. Test risky operations with disposable files.
-
-[Detailed 1.0 status](docs/1.0-STATUS.md) · [Owner acceptance tests](docs/OWNER-ACCEPTANCE-1.0.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md)
-
-## Develop
+## Development
 
 ```bash
 cargo fmt --all -- --check
@@ -125,4 +70,4 @@ cargo test --locked --all-targets
 
 [Contributing](CONTRIBUTING.md) · [MIT License](LICENSE)
 
-RiceField is not affiliated with Microsoft, Apple or Google. All included theme artwork is original.
+RiceField is independent of Microsoft, Apple and Google; included artwork is original.
