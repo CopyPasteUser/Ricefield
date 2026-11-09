@@ -636,7 +636,10 @@ pub fn sidebar_section(
         // headings. Keep the expanded state in egui's persistent UI memory so
         // collapsing a pane never mutates file-manager or theme state.
         let id = ui.make_persistent_id(("luna-task-pane", theme.id.as_str(), index));
-        let expanded = ui.data_mut(|data| data.get_persisted::<bool>(id).unwrap_or(true));
+        let expanded = ui.data_mut(|data| {
+            data.get_persisted::<bool>(id)
+                .unwrap_or(section != SidebarSection::Volumes)
+        });
         let heading = luna_section_title(section);
         let display_title = if ui.available_width() < 185.0 {
             match section {
@@ -745,10 +748,14 @@ pub fn sidebar_section(
             SidebarSection::Volumes => "VOLUMES",
         }
     };
-    if theme.sidebar_section_mode() == SidebarSectionMode::Collapsible {
+    // Volumes is called Locations in Finder. Hide device/network inventories
+    // until requested, across both flat and collapsible rice layouts.
+    if section == SidebarSection::Volumes
+        || theme.sidebar_section_mode() == SidebarSectionMode::Collapsible
+    {
         egui::CollapsingHeader::new(title)
             .id_salt((theme.id.as_str(), index))
-            .default_open(true)
+            .default_open(section != SidebarSection::Volumes)
             .show(ui, contents);
     } else {
         ui.label(
