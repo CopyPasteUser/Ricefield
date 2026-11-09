@@ -1971,10 +1971,7 @@ mod tests {
 
         publish_verified_stage_in(&directory, &journal.record().id, &AtomicBool::new(false))
             .unwrap();
-        assert_eq!(
-            fs::read_link(&source).unwrap(),
-            Path::new("absent-target")
-        );
+        assert_eq!(fs::read_link(&source).unwrap(), Path::new("absent-target"));
         assert_eq!(
             fs::read_link(&destination).unwrap(),
             Path::new("absent-target")
