@@ -36,6 +36,10 @@ impl FoldedNames {
         self.ends.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.ends.is_empty()
+    }
+
     /// Exact owned heap footprint, excluding allocator metadata.
     pub fn heap_capacity_bytes(&self) -> usize {
         self.data.capacity() + self.ends.capacity() * std::mem::size_of::<usize>()
@@ -315,7 +319,7 @@ mod tests {
         for (index, entry) in entries.iter().enumerate() {
             assert_eq!(&names[index], entry.name.to_lowercase().as_str());
         }
-        assert_eq!(FoldedNames::default().len(), 0);
+        assert!(FoldedNames::default().is_empty());
 
         for index in 0..100_000 {
             entries.push(Entry {
