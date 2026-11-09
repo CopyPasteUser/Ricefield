@@ -207,9 +207,8 @@ fn xdg_user_dir(home: &Path, config: &str, key: &str) -> Option<PathBuf> {
         return None;
     };
     // Reject unexpanded shell syntax rather than ever interpreting it.
-    (!value.contains(['`', '\\', '"'])
-        && !value.trim_start_matches("$HOME").contains('$'))
-    .then_some(path)
+    (!value.contains(['`', '\\', '"']) && !value.trim_start_matches("$HOME").contains('$'))
+        .then_some(path)
 }
 
 fn sidebar_places_from_config(home: &Path, user_dirs: &str) -> Vec<(&'static str, PathBuf)> {
@@ -580,8 +579,9 @@ mod tests {
         assert!(places.contains(&("Desktop", home.join("Schreibtisch"))));
         assert!(places.contains(&("Documents", home.join("Dokumente"))));
         assert!(places.contains(&("Downloads", home.join("Downloads"))));
-        assert!(sidebar_places_from_config(&home, "")
-            .contains(&("Downloads", home.join("Downloads"))));
+        assert!(
+            sidebar_places_from_config(&home, "").contains(&("Downloads", home.join("Downloads")))
+        );
         assert!(!places.iter().any(|(name, _)| *name == "Music"));
         assert!(!places.iter().any(|(name, _)| *name == "Pictures"));
         assert_eq!(places.last().unwrap(), &("Filesystem", PathBuf::from("/")));
