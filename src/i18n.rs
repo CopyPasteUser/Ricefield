@@ -167,7 +167,6 @@ fn translate(language: Language, source: &'static str) -> &'static str {
         "Credentials are never stored in the URL. Saving uses your Linux keyring." => {
             "Zugangsdaten stehen nie in der URL. Speichern erfolgt über den Linux-Schlüsselbund."
         }
-        "Browse shares" => "Freigaben anzeigen",
         "More locations" => "Weitere Orte",
         "SMB, SFTP, WebDAV or MTP address (no passwords in the URL):" => {
             "SMB-, SFTP-, WebDAV- oder MTP-Adresse (kein Passwort in der URL):"
