@@ -10,9 +10,10 @@ use std::{
     ffi::OsString,
     fs::{self, DirBuilder, File, OpenOptions},
     io::{self, Read, Write},
+    os::fd::AsRawFd,
     os::unix::{
         ffi::OsStringExt,
-        fs::{DirBuilderExt, MetadataExt},
+        fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
     },
     path::{Component, Path, PathBuf},
     process::{Command, ExitStatus, Stdio},
@@ -219,7 +220,11 @@ fn checked_download_name(uri: &str, encoded_name: &str) -> Result<OsString, Stri
     file_name(encoded_name)
 }
 
-struct StagingDirectory(PathBuf);
+// Keep an open descriptor to the directory we created. A different process
+// can rename the directory and put an unrelated one at the same path while a
+// download is running. Recursive cleanup by that pathname would then delete
+// somebody else's files.
+struct StagingDirectory(PathBuf, File);
 
 impl StagingDirectory {
     fn create(destination: &Path) -> Result<Self, String> {
@@ -233,7 +238,14 @@ impl StagingDirectory {
                 std::process::id()
             ));
             match DirBuilder::new().mode(0o700).create(&path) {
-                Ok(()) => return Ok(Self(path)),
+                Ok(()) => {
+                    let handle = OpenOptions::new()
+                        .read(true)
+                        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+                        .open(&path)
+                        .map_err(|error| format!("Cannot pin download staging: {error}"))?;
+                    return Ok(Self(path, handle));
+                }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
                 Err(error) => {
                     return Err(format!("Cannot create private download staging: {error}"));
@@ -242,13 +254,65 @@ impl StagingDirectory {
         }
         Err("Cannot allocate unique download staging directory".into())
     }
+
+    fn still_at_original_path(&self) -> bool {
+        match (fs::symlink_metadata(&self.0), self.1.metadata()) {
+            (Ok(path), Ok(pinned)) => {
+                path.is_dir() && path.dev() == pinned.dev() && path.ino() == pinned.ino()
+            }
+            _ => false,
+        }
+    }
+
+    fn cleanup_with(&self, after_check: impl FnOnce()) {
+        // If the name was replaced or the staging directory was deliberately
+        // moved elsewhere, preserve it for manual inspection. The check is
+        // advisory: the actual recursive deletion must stay descriptor-bound
+        // even if the path is swapped immediately afterward.
+        if !self.still_at_original_path() {
+            return;
+        }
+        after_check();
+
+        // /proc/self/fd pins traversal to the original inode on Linux. Do
+        // not call remove_dir_all(self.0): it could delete a different tree
+        // substituted at the original path during cancellation or failure.
+        let pinned_path = PathBuf::from(format!("/proc/self/fd/{}", self.1.as_raw_fd()));
+        let Ok(entries) = fs::read_dir(&pinned_path) else {
+            // Without procfs, leave a private staging directory rather than
+            // risking a pathname-based recursive delete.
+            return;
+        };
+        for entry in entries {
+            let Ok(entry) = entry else {
+                return;
+            };
+            let Ok(kind) = entry.file_type() else {
+                return;
+            };
+            let outcome = if kind.is_dir() {
+                fs::remove_dir_all(entry.path())
+            } else {
+                fs::remove_file(entry.path())
+            };
+            if outcome.is_err() {
+                return;
+            }
+        }
+
+        // Only remove the root by name after its contents are gone and its
+        // identity still matches. A final concurrent swap to a *nonempty*
+        // directory cannot destroy that directory: remove_dir is not recursive.
+        if self.still_at_original_path() {
+            let _ = fs::remove_dir(&self.0);
+        }
+    }
 }
 
 impl Drop for StagingDirectory {
     fn drop(&mut self) {
-        // Only our exclusively created directory is cleaned up. An abrupt
-        // process exit leaves the incomplete data there for manual inspection.
-        let _ = fs::remove_dir_all(&self.0);
+        // An abrupt process exit still leaves private staging for inspection.
+        self.cleanup_with(|| {});
     }
 }
 
@@ -690,6 +754,71 @@ mod tests {
         );
         let missing = inspect_staging(&target.join("not-created")).unwrap();
         assert!(missing.directories.is_empty());
+        fs::remove_dir_all(target).unwrap();
+    }
+
+    #[test]
+    fn staging_cleanup_removes_owned_file_and_nested_folder() {
+        let target = private_fixture("staging-cleanup");
+        let stage = StagingDirectory::create(&target).unwrap();
+        let path = stage.0.clone();
+        fs::write(path.join("partial"), b"incomplete").unwrap();
+        fs::create_dir_all(path.join("folder/nested")).unwrap();
+        fs::write(path.join("folder/nested/file.txt"), b"incomplete").unwrap();
+
+        drop(stage);
+        assert!(!path.exists());
+        fs::remove_dir_all(target).unwrap();
+    }
+
+    #[test]
+    fn staging_cleanup_preserves_directory_replaced_before_drop() {
+        let target = private_fixture("staging-replaced-before-drop");
+        let stage = StagingDirectory::create(&target).unwrap();
+        let path = stage.0.clone();
+        fs::write(path.join("partial"), b"original staging").unwrap();
+        let moved = target.join("moved-stage");
+        fs::rename(&path, &moved).unwrap();
+        fs::create_dir(&path).unwrap();
+        fs::write(path.join("important.txt"), b"user data").unwrap();
+
+        drop(stage);
+        assert_eq!(fs::read(path.join("important.txt")).unwrap(), b"user data");
+        assert_eq!(
+            fs::read(moved.join("partial")).unwrap(),
+            b"original staging"
+        );
+        fs::remove_dir_all(target).unwrap();
+    }
+
+    #[test]
+    fn staging_cleanup_is_pinned_even_if_name_changes_during_drop() {
+        let target = private_fixture("staging-replaced-during-drop");
+        let stage = StagingDirectory::create(&target).unwrap();
+        let path = stage.0.clone();
+        fs::create_dir_all(path.join("folder/nested")).unwrap();
+        fs::write(path.join("folder/nested/partial"), b"incomplete").unwrap();
+        let moved = target.join("renamed-stage");
+
+        // Reproduce the narrow check/delete race deterministically: the
+        // directory is swapped *after* checking that its pathname matches.
+        stage.cleanup_with(|| {
+            fs::rename(&path, &moved).unwrap();
+            fs::create_dir(&path).unwrap();
+            fs::create_dir_all(path.join("folder/nested")).unwrap();
+            fs::write(path.join("folder/nested/important.txt"), b"user data").unwrap();
+        });
+
+        assert_eq!(
+            fs::read(path.join("folder/nested/important.txt")).unwrap(),
+            b"user data"
+        );
+        assert!(!moved.join("folder").exists());
+        drop(stage);
+        assert_eq!(
+            fs::read(path.join("folder/nested/important.txt")).unwrap(),
+            b"user data"
+        );
         fs::remove_dir_all(target).unwrap();
     }
 
