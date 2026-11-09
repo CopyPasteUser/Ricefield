@@ -6,12 +6,12 @@ Automated CI results do not count as physical Mint, NAS or USB evidence.
 Use the exact candidate commit/version tested; do not silently substitute a
 later development build.
 
-The source snapshot preceding `1.0.0-rc.21` passed
-[GitHub CI #945](https://github.com/CopyPasteUser/Ricefield/actions/runs/42522259044)
-with 416 Rust tests, two additional signed-Samba uploader integration tests,
-Linux release, installation, GUI and performance checks. **First verify the
-actual `rc.21` commit's own green CI before hardware testing.** This is
-automated evidence only; **all boxes below require owner verification**.
+The latest `main` snapshot, including per-source copy and move policies, passed
+[GitHub Rust/GUI/benchmarks CI](https://github.com/CopyPasteUser/Ricefield/actions/runs/42567134024)
+and [SMB protocol safety CI](https://github.com/CopyPasteUser/Ricefield/actions/runs/42567134038).
+These runs are automated evidence only, not tests on the owner's Mint/NAS/USB
+hardware. **Always record and test one exact commit and its binary/checksum;**
+all boxes below still require owner verification.
 
 ## Preparation and safety
 
@@ -113,6 +113,17 @@ automated evidence only; **all boxes below require owner verification**.
 - [ ] **B11 Error paths:** attempt a read-only directory, inaccessible
   folder, too-long filename, self-copy and disappearing source. Confirm
   actionable errors, no UI hang and no mutation of unrelated files.
+- [ ] **B12 Individual paste decisions:** Copy at least three disposable files
+  with conflicting names using different per-file Keep both / Skip existing /
+  Require free choices. Verify the preview identifies planned names and skips;
+  Require free must reject the entire batch before any copy. Then repeat the
+  mixed choices using Cut/Move and confirm skipped sources stay in place.
+- [ ] **B13 Exact-name and identical-content cases:** Copy a single file to a
+  manually selected target name. Attempt an existing name and a second source
+  with the same exact target name: each batch must fail without modifying
+  original/destination. Set Skip only matching contents for one source in a
+  larger Copy and Move batch; an equal target is skipped, but a different or
+  unreadable target aborts the batch before any earlier source is moved.
 
 ## C. Search, previews, archives and desktop helpers
 

@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased — per-item copy and move decisions (automated CI verified)
+
+- Paste with options now supports an independent conflict rule for every
+  source in a multi-file **copy or move**: use the global policy, Keep both,
+  Skip existing, Require free, or Skip only matching contents. Copies may
+  additionally specify an exact target name, which must be free.
+- Run a cancellable, side-effect-free asynchronous preview, then revalidate
+  the **whole** ordered batch on the mutation worker before the first write.
+  Invalid or duplicate targets and existing-name conflicts abort early; all
+  transfers use atomic no-overwrite publication. A later I/O failure is still
+  reported as a partial batch and never falsely described as rolled back.
+- Moves preserve skipped cut sources and keep the original after verified
+  cross-volume publication. Exact-name moves, replacement and automatic source
+  cleanup remain deliberately disabled until separately proven safe.
+- Add regression tests for mixed policy batches, source preservation, invalid
+  name/length choices, competing target creation and abort-before-write.
+  [Rust/GUI/benchmarks](https://github.com/CopyPasteUser/Ricefield/actions/runs/42567134024)
+  and [SMB protocol](https://github.com/CopyPasteUser/Ricefield/actions/runs/42567134038)
+  passed on the candidate commits. Physical device sign-off remains open.
+
 ## 1.0.0-rc.21 — recoverable network operations (owner acceptance pending)
 
 - Consolidate the narrow conditional SFTP/SMB single-file writers, durable
