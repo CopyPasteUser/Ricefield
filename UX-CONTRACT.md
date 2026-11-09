@@ -220,6 +220,13 @@ evidence. Crash/timeout records appear in a background-loaded recovery review
 with copyable URIs and an optional two-step confirmation that discards **only
 the local record** after separate server-side verification. No automatic
 server queries, retries or DELETE requests run during recovery.
+Recovery review scans each private journal entry independently: a corrupted,
+symlinked or incomplete temporary artifact produces a persistent warning but
+does not hide unrelated readable upload/probe records. A warning never grants
+permission to retry, publish or delete anything. The strict full-directory
+validation still gates new network writes; inspection's partial visibility
+does not weaken that fail-closed rule. The user can rescan after independent
+manual investigation; invalid entries have no acknowledgement action.
 Remote preview reads only a bounded first-32-KiB prefix on a cancellable worker;
 larger text is explicitly marked incomplete, and binary/control-bearing bytes
 use the shared escaped 256-byte hex preview. The preview does not imply a

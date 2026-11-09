@@ -48,6 +48,15 @@ pub struct ProbeRecord {
     pub created_unix_seconds: u64,
 }
 
+/// Read-only recovery inspection. A damaged entry must not hide other valid
+/// evidence, and no entry is ever silently discarded or used for replay.
+#[derive(Debug, Default)]
+pub struct EvidenceInspection {
+    pub uploads: Vec<Record>,
+    pub probes: Vec<ProbeRecord>,
+    pub warnings: Vec<String>,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StoredProbeRecord {
@@ -280,26 +289,87 @@ impl PendingProbe {
     }
 }
 
-pub fn inspect_incomplete() -> io::Result<Vec<Record>> {
+/// Best-effort *inspection only*: show intact records even when another
+/// journal entry is corrupt, a symlink, or a leftover temporary file.
+/// Upload admission continues to use the strict scans above and fails closed.
+pub fn inspect_evidence_for_review() -> io::Result<EvidenceInspection> {
     let directory = journal_directory()?;
     match fs::symlink_metadata(&directory) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            Ok(EvidenceInspection::default())
+        }
         Err(error) => Err(error),
-        Ok(_) => scan_in(&directory),
+        Ok(_) => inspect_evidence_for_review_in(&directory),
     }
 }
 
-pub fn inspect_incomplete_probes() -> io::Result<Vec<ProbeRecord>> {
-    let directory = journal_directory()?;
-    match fs::symlink_metadata(&directory) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(error) => Err(error),
-        Ok(_) => scan_probes_in(&directory),
+fn inspect_evidence_for_review_in(directory: &Path) -> io::Result<EvidenceInspection> {
+    check_private_directory(directory)?;
+    let mut inspection = EvidenceInspection::default();
+    let mut scanned = 0usize;
+    for entry in fs::read_dir(directory)? {
+        scanned += 1;
+        if scanned > MAX_RECORDS * 2 {
+            inspection.warnings.push(format!(
+                "Recovery directory contains more than {} entries; review is incomplete",
+                MAX_RECORDS * 2
+            ));
+            break;
+        }
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            inspection.warnings.push("Non-UTF8 recovery filename requires manual review".into());
+            continue;
+        };
+        let (kind, id) = if let Some(id) = name.strip_suffix(".toml") {
+            ("upload", id)
+        } else if let Some(id) = name.strip_suffix(".probe") {
+            ("probe", id)
+        } else if name.starts_with('.') && name.ends_with(".tmp") {
+            inspection.warnings.push(format!(
+                "Temporary recovery artifact {name} remains; inspect it manually, never delete it automatically"
+            ));
+            continue;
+        } else {
+            continue;
+        };
+        if id.len() != 32 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            inspection.warnings.push(format!(
+                "Unexpected {kind} evidence filename {name}; entry was not opened"
+            ));
+            continue;
+        }
+        let result = if kind == "upload" {
+            read_record(&entry.path()).and_then(|record| {
+                if record.id != id {
+                    return Err(invalid_data("Recovery upload ID differs from filename"));
+                }
+                inspection.uploads.push(record);
+                Ok(())
+            })
+        } else {
+            read_probe_record(&entry.path()).and_then(|record| {
+                if record.id != id {
+                    return Err(invalid_data("Recovery probe ID differs from filename"));
+                }
+                inspection.probes.push(record);
+                Ok(())
+            })
+        };
+        if let Err(error) = result {
+            inspection.warnings.push(format!(
+                "Unreadable {kind} evidence {name}: {error}; inspect manually"
+            ));
+        }
     }
-}
-
-pub fn inspect_evidence() -> io::Result<(Vec<Record>, Vec<ProbeRecord>)> {
-    Ok((inspect_incomplete()?, inspect_incomplete_probes()?))
+    inspection.uploads.sort_by(|left, right| {
+        right.created_unix_seconds.cmp(&left.created_unix_seconds).then_with(|| left.id.cmp(&right.id))
+    });
+    inspection.probes.sort_by(|left, right| {
+        right.created_unix_seconds.cmp(&left.created_unix_seconds).then_with(|| left.id.cmp(&right.id))
+    });
+    Ok(inspection)
 }
 
 #[cfg(test)]
@@ -686,6 +756,54 @@ mod tests {
         retire_in(&directory, &uploads[0]).unwrap();
         retire_probe_in(&directory, &probes[0]).unwrap();
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn review_keeps_valid_evidence_visible_when_other_records_are_damaged() {
+        let directory = isolated_directory();
+        let (stage, destination) = urls();
+        let probe_uri = "smb://nas.example/media/.ricefield-safety-0123456789abcdef0123456789abcdef";
+        let upload = PendingUpload::begin_in(&directory, &stage, &destination).unwrap();
+        let probe = PendingProbe::begin_in(&directory, probe_uri).unwrap();
+        drop(upload);
+        drop(probe);
+
+        let bad_id = "abcdefabcdefabcdefabcdefabcdefab";
+        let bad_upload = directory.join(format!("{bad_id}.toml"));
+        std::os::unix::fs::symlink("/etc/passwd", &bad_upload).unwrap();
+        let bad_probe = directory.join(format!("{bad_id}.probe"));
+        fs::write(&bad_probe, "not a journal record").unwrap();
+        let temporary = directory.join(format!(".{bad_id}.tmp"));
+        fs::write(&temporary, "interrupted before publication").unwrap();
+
+        assert!(inspect_evidence_in(&directory).is_err());
+        let inspection = inspect_evidence_for_review_in(&directory).unwrap();
+        assert_eq!(inspection.uploads.len(), 1);
+        assert_eq!(inspection.uploads[0].stage_uri, stage);
+        assert_eq!(inspection.probes.len(), 1);
+        assert_eq!(inspection.probes[0].prefix_uri, probe_uri);
+        assert_eq!(inspection.warnings.len(), 3);
+        assert!(inspection.warnings.iter().any(|warning| warning.contains(".tmp")));
+
+        // Review cannot mutate or repair an unknown entry, but the intact
+        // records can still be acknowledged independently after server review.
+        retire_in(&directory, &inspection.uploads[0]).unwrap();
+        retire_probe_in(&directory, &inspection.probes[0]).unwrap();
+        assert!(bad_upload.symlink_metadata().is_ok());
+        assert!(bad_probe.exists());
+        assert!(temporary.exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn review_refuses_a_symlinked_recovery_directory() {
+        let directory = isolated_directory();
+        let other = isolated_directory();
+        fs::create_dir(&other).unwrap();
+        std::os::unix::fs::symlink(&other, &directory).unwrap();
+        assert!(inspect_evidence_for_review_in(&directory).is_err());
+        fs::remove_file(directory).unwrap();
+        fs::remove_dir(other).unwrap();
     }
 
     #[test]
