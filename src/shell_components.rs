@@ -624,6 +624,10 @@ pub fn win10_sidebar_response(
     response.on_hover_text(label)
 }
 
+fn sidebar_default_open(section: SidebarSection) -> bool {
+    section != SidebarSection::Volumes
+}
+
 pub fn sidebar_section(
     ui: &mut egui::Ui,
     theme: &Theme,
@@ -638,7 +642,7 @@ pub fn sidebar_section(
         let id = ui.make_persistent_id(("luna-task-pane", theme.id.as_str(), index));
         let expanded = ui.data_mut(|data| {
             data.get_persisted::<bool>(id)
-                .unwrap_or(section != SidebarSection::Volumes)
+                .unwrap_or(sidebar_default_open(section))
         });
         let heading = luna_section_title(section);
         let display_title = if ui.available_width() < 185.0 {
@@ -755,7 +759,7 @@ pub fn sidebar_section(
     {
         egui::CollapsingHeader::new(title)
             .id_salt((theme.id.as_str(), index))
-            .default_open(section != SidebarSection::Volumes)
+            .default_open(sidebar_default_open(section))
             .show(ui, contents);
     } else {
         ui.label(
@@ -830,6 +834,14 @@ pub fn small_error(ui: &mut egui::Ui, message: impl Into<String>) {
 #[cfg(test)]
 mod luna_tests {
     use super::*;
+
+    #[test]
+    fn locations_is_initially_collapsed_but_places_remains_expanded() {
+        assert!(!sidebar_default_open(SidebarSection::Volumes));
+        assert!(sidebar_default_open(SidebarSection::Places));
+        assert!(sidebar_default_open(SidebarSection::Favorites));
+        assert!(sidebar_default_open(SidebarSection::Tasks));
+    }
 
     #[test]
     fn luna_task_panes_have_distinct_labels() {
