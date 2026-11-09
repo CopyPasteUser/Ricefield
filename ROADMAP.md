@@ -479,6 +479,11 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   A new process independently inspects the durable state, staged-to-published
   inode evidence and intact source bytes. This is crash-process fault injection,
   **not** simulated sudden power loss, automatic recovery or safe source cleanup.
+- [x] Extend the explicit stage-recovery crash matrix to dangling symlinks and
+  nested directory trees with preserved hardlink topology. At each of five
+  process-exit checkpoints, verify the source, saved state, no-overwrite
+  collision refusal and safe manual publish/resolve. This does **not** certify
+  real power loss, device removal or arbitrary concurrent writers.
 - [x] Reclaim structurally valid `Completed` journal entries only when the
   bounded journal capacity is exhausted, validating with the same no-follow
   reader used for recovery. Keep incomplete, malformed or changing records,

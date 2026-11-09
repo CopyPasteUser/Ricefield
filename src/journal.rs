@@ -1702,6 +1702,25 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
+    fn verified_symlink_fixture(directory: &Path) -> Journal {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let source = directory.join("source-link");
+        let destination = directory.join("destination-link");
+        // Intentionally dangling: recovery must inspect the link itself.
+        symlink("absent-target", &source).unwrap();
+        let mut journal = Journal::begin_in(directory, &source, &destination).unwrap();
+        let staging = directory.join(".ricefield-staging-link-fixture");
+        fs::create_dir(&staging).unwrap();
+        fs::set_permissions(&staging, fs::Permissions::from_mode(0o700)).unwrap();
+        journal.set_staging(&staging).unwrap();
+        symlink("absent-target", staging.join("payload")).unwrap();
+        File::open(&staging).unwrap().sync_all().unwrap();
+        journal.advance(State::StagedVerified).unwrap();
+        journal
+    }
+
+    #[cfg(target_os = "linux")]
     fn match_modified_time(source: &Path, target: &Path) {
         let modified = fs::symlink_metadata(source).unwrap().modified().unwrap();
         File::open(target)
@@ -1720,6 +1739,7 @@ mod tests {
         fs::create_dir(source.join("sub")).unwrap();
         fs::write(source.join("sub/child.txt"), b"safe nested bytes").unwrap();
         fs::write(source.join("root.txt"), b"root bytes").unwrap();
+        fs::hard_link(source.join("root.txt"), source.join("root-hardlink.txt")).unwrap();
         let mut journal = Journal::begin_in(directory, &source, &destination).unwrap();
         let staging = directory.join(".ricefield-staging-directory-fixture");
         fs::create_dir(&staging).unwrap();
@@ -1730,6 +1750,7 @@ mod tests {
         fs::create_dir(payload.join("sub")).unwrap();
         fs::write(payload.join("sub/child.txt"), b"safe nested bytes").unwrap();
         fs::write(payload.join("root.txt"), b"root bytes").unwrap();
+        fs::hard_link(payload.join("root.txt"), payload.join("root-hardlink.txt")).unwrap();
         match_modified_time(
             &source.join("sub/child.txt"),
             &payload.join("sub/child.txt"),
@@ -1943,32 +1964,22 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn stage_resume_supports_symlinks_without_following_their_targets() {
-        use std::os::unix::fs::{PermissionsExt, symlink};
-
         let directory = test_directory();
+        let journal = verified_symlink_fixture(&directory);
         let source = directory.join("source-link");
         let destination = directory.join("destination-link");
-        symlink("unrelated-target", &source).unwrap();
-        let mut journal = Journal::begin_in(&directory, &source, &destination).unwrap();
-        let staging = directory.join(".ricefield-staging-link");
-        fs::create_dir(&staging).unwrap();
-        fs::set_permissions(&staging, fs::Permissions::from_mode(0o700)).unwrap();
-        journal.set_staging(&staging).unwrap();
-        symlink("unrelated-target", staging.join("payload")).unwrap();
-        File::open(&staging).unwrap().sync_all().unwrap();
-        journal.advance(State::StagedVerified).unwrap();
 
         publish_verified_stage_in(&directory, &journal.record().id, &AtomicBool::new(false))
             .unwrap();
         assert_eq!(
             fs::read_link(&source).unwrap(),
-            Path::new("unrelated-target")
+            Path::new("absent-target")
         );
         assert_eq!(
             fs::read_link(&destination).unwrap(),
-            Path::new("unrelated-target")
+            Path::new("absent-target")
         );
-        assert!(!directory.join("unrelated-target").exists());
+        assert!(!directory.join("absent-target").exists());
         assert!(scan_incomplete_in(&directory).unwrap().is_empty());
         fs::remove_dir_all(directory).unwrap();
     }
@@ -2595,6 +2606,106 @@ mod tests {
             );
             assert!(scan_incomplete_in(&directory).unwrap().is_empty());
             fs::remove_dir_all(directory).unwrap();
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn abrupt_exit_recovery_preserves_symlinks_and_nested_trees() {
+        const PHASE: &str = "RICEFIELD_TEST_RECOVERY_CRASH";
+        const ROOT: &str = "RICEFIELD_TEST_RECOVERY_ROOT";
+        if env::var_os(PHASE).is_some() {
+            let directory = PathBuf::from(env::var_os(ROOT).expect("Fixture path provided"));
+            let record = scan_incomplete_in(&directory).unwrap().remove(0);
+            publish_verified_stage_in(&directory, &record.id, &AtomicBool::new(false)).unwrap();
+            panic!("Missing crash checkpoint");
+        }
+
+        for kind in ["symlink", "directory"] {
+            for (phase, expected_state, published) in [
+                ("before_rename", State::StagedVerified, false),
+                ("after_stage_sync", State::StagedVerified, true),
+                ("after_both_sync", State::StagedVerified, true),
+                ("published", State::Published, true),
+                ("completed", State::Completed, true),
+            ] {
+                let directory = test_directory();
+                let journal = match kind {
+                    "symlink" => verified_symlink_fixture(&directory),
+                    _ => verified_directory_fixture(&directory),
+                };
+                let record = journal.record().clone();
+                let status = std::process::Command::new(env::current_exe().unwrap())
+                    .arg("journal::tests::abrupt_exit_recovery_preserves_symlinks_and_nested_trees")
+                    .arg("--exact")
+                    .env(PHASE, phase)
+                    .env(ROOT, &directory)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .unwrap();
+                assert_eq!(status.code(), Some(53), "{kind} at {phase}");
+                let saved = read_record(&directory.join(format!("{}.toml", record.id)))
+                    .unwrap()
+                    .0;
+                assert_eq!(saved.state, expected_state, "{kind} at {phase}");
+                let assert_payload = |path: &Path| match kind {
+                    "symlink" => {
+                        assert!(fs::symlink_metadata(path).unwrap().file_type().is_symlink());
+                        assert_eq!(fs::read_link(path).unwrap(), Path::new("absent-target"));
+                        assert!(!directory.join("absent-target").exists());
+                    }
+                    _ => {
+                        use std::os::unix::fs::MetadataExt;
+                        assert_eq!(
+                            fs::read(path.join("sub/child.txt")).unwrap(),
+                            b"safe nested bytes"
+                        );
+                        assert_eq!(fs::read(path.join("root.txt")).unwrap(), b"root bytes");
+                        assert_eq!(
+                            fs::metadata(path.join("root.txt")).unwrap().ino(),
+                            fs::metadata(path.join("root-hardlink.txt")).unwrap().ino(),
+                            "Hardlink topology changed after recovery"
+                        );
+                    }
+                };
+                assert_payload(&record.source);
+                assert_eq!(fs::symlink_metadata(&record.destination).is_ok(), published);
+                if !published {
+                    let stage_payload = record.staging.as_ref().unwrap().join("payload");
+                    assert_payload(&stage_payload);
+                    // An intervening file must not be overwritten by a retry,
+                    // regardless of the staged object type.
+                    fs::write(&record.destination, b"other writer").unwrap();
+                    assert_eq!(
+                        publish_verified_stage_in(&directory, &record.id, &AtomicBool::new(false))
+                            .unwrap_err()
+                            .kind(),
+                        io::ErrorKind::AlreadyExists
+                    );
+                    assert_eq!(fs::read(&record.destination).unwrap(), b"other writer");
+                    fs::remove_file(&record.destination).unwrap();
+                    publish_verified_stage_in(&directory, &record.id, &AtomicBool::new(false))
+                        .unwrap();
+                } else if expected_state != State::Completed {
+                    assert_payload(&record.destination);
+                    assert_eq!(inspect_publication(&saved), PublicationEvidence::SameInode);
+                    // A crash after rename can only be resolved by fresh
+                    // content verification, never replayed over that name.
+                    assert!(
+                        publish_verified_stage_in(&directory, &record.id, &AtomicBool::new(false))
+                            .is_err()
+                    );
+                    resolve_verified_copy_in(&directory, &record.id, &AtomicBool::new(false))
+                        .unwrap();
+                } else {
+                    assert!(scan_incomplete_in(&directory).unwrap().is_empty());
+                }
+                assert_payload(&record.source);
+                assert_payload(&record.destination);
+                assert!(scan_incomplete_in(&directory).unwrap().is_empty());
+                fs::remove_dir_all(directory).unwrap();
+            }
         }
     }
 
