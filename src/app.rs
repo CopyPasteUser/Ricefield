@@ -49,12 +49,6 @@ const MAX_RECENT_OPERATIONS: usize = transfer_history::MAX_RECORDS;
 const CLIPBOARD_WAIT: Duration = Duration::from_secs(2);
 const MAX_CLOSED_TABS: usize = 16;
 
-/// Keep the default Places area focused; secondary folders remain accessible
-/// from the collapsed More locations section, the address bar and folder tree.
-fn primary_sidebar_place(label: &str) -> bool {
-    matches!(label, "Home" | "Downloads" | "Documents" | "Pictures")
-}
-
 /// Render saved network addresses as useful human labels, not full protocol URIs.
 fn network_favorite_label(uri: &str) -> String {
     let rest = uri.split_once("://").map_or(uri, |(_, rest)| rest);
@@ -8201,12 +8195,6 @@ impl Explorer {
                         let mut render_section = |ui: &mut egui::Ui| match section {
                             SidebarSection::Tasks => self.sidebar_tasks(ui),
                             SidebarSection::Places => {
-                                let primary_places = self
-                                    .places
-                                    .iter()
-                                    .filter(|(label, _)| primary_sidebar_place(label))
-                                    .cloned()
-                                    .collect::<Vec<_>>();
                                 if theme.shell_kind() == ShellKind::Chromeos {
                                     let home = config::home();
                                     let response = chromeos::sidebar_response(
@@ -8221,6 +8209,9 @@ impl Explorer {
                                         ("Downloads", FilesNavIcon::Download),
                                         ("Documents", FilesNavIcon::Folder),
                                         ("Pictures", FilesNavIcon::Image),
+                                        ("Music", FilesNavIcon::Music),
+                                        ("Videos", FilesNavIcon::Video),
+                                        ("Desktop", FilesNavIcon::Folder),
                                     ] {
                                         let path = home.join(name);
                                         if self
@@ -8241,7 +8232,7 @@ impl Explorer {
                                     return;
                                 }
                                 if theme.shell_kind() == ShellKind::Classic {
-                                    for (label, path) in primary_places.clone() {
+                                    for (label, path) in self.places.clone() {
                                         let icon = if path == Path::new("/") {
                                             TreeIcon::Disk
                                         } else if path == config::home() {
@@ -8261,10 +8252,11 @@ impl Explorer {
                                     return;
                                 }
                                 if theme.shell_kind() == ShellKind::Finder {
-                                    for (name, path) in primary_places.clone() {
+                                    for (name, path) in self.places.clone() {
                                         let icon = match name {
                                             "Downloads" => FinderNavIcon::Downloads,
                                             "Pictures" => FinderNavIcon::Pictures,
+                                            "Music" => FinderNavIcon::Music,
                                             _ if path == Path::new("/") => FinderNavIcon::Computer,
                                             _ => FinderNavIcon::Home,
                                         };
@@ -8281,7 +8273,7 @@ impl Explorer {
                                     return;
                                 }
                                 if theme.shell_kind() == ShellKind::Aqua {
-                                    for (name, path) in primary_places.clone() {
+                                    for (name, path) in self.places.clone() {
                                         let label = if path == Path::new("/") {
                                             "Filesystem"
                                         } else {
@@ -8308,7 +8300,7 @@ impl Explorer {
                                     return;
                                 }
                                 if theme.shell_kind() == ShellKind::Ribbon {
-                                    for (name, path) in primary_places.clone() {
+                                    for (name, path) in self.places.clone() {
                                         let label = if path == Path::new("/") {
                                             "Linux filesystem"
                                         } else {
@@ -8332,7 +8324,7 @@ impl Explorer {
                                 }
                                 if theme.shell_kind() == ShellKind::Luna {
                                     use shell_components::{LunaLinkIcon as Icon, luna_link};
-                                    for (label, path) in primary_places.clone() {
+                                    for (label, path) in self.places.clone() {
                                         let title = if path == Path::new("/") {
                                             "My Computer"
                                         } else {
@@ -8359,7 +8351,7 @@ impl Explorer {
                                     return;
                                 }
                                 if theme.shell_kind() == ShellKind::Aero {
-                                    for (name, path) in primary_places.clone() {
+                                    for (name, path) in self.places.clone() {
                                         if !matches!(
                                             name,
                                             "Documents" | "Music" | "Pictures" | "Videos"
@@ -8381,7 +8373,7 @@ impl Explorer {
                                     return;
                                 }
                                 ui.add_space(8.0);
-                                for (label, path) in primary_places.clone() {
+                                for (label, path) in self.places.clone() {
                                     let response = ui.add_sized(
                                         [ui.available_width(), 29.0],
                                         egui::Button::new(label)
@@ -8694,150 +8686,168 @@ impl Explorer {
                                 if self.volume_busy {
                                     ui.small("Device operation in progress…");
                                 }
-                                for volume in self.device_volumes.clone() {
-                                    if !volume.mount_paths.is_empty() {
-                                        continue;
-                                    }
-                                    let title = format!(
-                                        "{}: {}",
-                                        if volume.removable { "Removable" } else { "USB" },
-                                        volume.label
-                                    );
-                                    let action_label = if volume.encrypted {
-                                        if volume.unlocked {
-                                            format!("Lock {title}…")
-                                        } else {
-                                            format!("Unlock {title}…")
-                                        }
-                                    } else {
-                                        format!("Mount {title}")
-                                    };
-                                    let response = ui
-                                        .add_enabled(
-                                            !self.volume_busy,
-                                            egui::Button::new(action_label),
-                                        )
-                                        .on_hover_text(format!(
-                                            "{} · UDisks2/Polkit removable-device operation",
-                                            volume.device
-                                        ));
-                                    if response.clicked() {
-                                        if volume.encrypted {
-                                            if volume.unlocked {
-                                                self.volume_confirm =
-                                                    Some(VolumeAction::LockEncrypted(
-                                                        volume.object_path.clone(),
-                                                    ));
-                                            } else {
-                                                volume::clear_password(
-                                                    &mut self.volume_unlock_password,
-                                                );
-                                                self.volume_unlock_target = Some((
-                                                    volume.object_path.clone(),
-                                                    title.clone(),
-                                                ));
+                                let inactive_devices = self
+                                    .device_volumes
+                                    .iter()
+                                    .filter(|device| device.mount_paths.is_empty())
+                                    .cloned()
+                                    .collect::<Vec<_>>();
+                                if !inactive_devices.is_empty() {
+                                    let count = inactive_devices.len();
+                                    let label = format!("{} ({count})", i18n::tr("Other devices"));
+                                    ui.collapsing(label, |ui| {
+                                        for volume in inactive_devices {
+                                            if !volume.mount_paths.is_empty() {
+                                                continue;
                                             }
-                                        } else {
-                                            self.start_volume_action(
-                                                VolumeAction::MountDevice(
-                                                    volume.object_path.clone(),
-                                                ),
-                                                false,
+                                            let title = format!(
+                                                "{}: {}",
+                                                if volume.removable { "Removable" } else { "USB" },
+                                                volume.label
                                             );
-                                        }
-                                    }
-                                    if volume.ejectable || volume.can_power_off {
-                                        response.context_menu(|ui| {
-                                            if volume.ejectable
-                                                && ui
-                                                    .add_enabled(
-                                                        !self.volume_busy,
-                                                        egui::Button::new("Eject drive…"),
-                                                    )
-                                                    .clicked()
-                                            {
-                                                self.volume_confirm =
-                                                    Some(VolumeAction::EjectDrive(
-                                                        volume.drive_path.clone(),
-                                                    ));
-                                                ui.close();
-                                            }
-                                            if volume.can_power_off
-                                                && ui
-                                                    .add_enabled(
-                                                        !self.volume_busy,
-                                                        egui::Button::new(
-                                                            "Safely power off USB drive…",
+                                            let action_label = if volume.encrypted {
+                                                if volume.unlocked {
+                                                    format!("Lock {title}…")
+                                                } else {
+                                                    format!("Unlock {title}…")
+                                                }
+                                            } else {
+                                                format!("Mount {title}")
+                                            };
+                                            let response = ui
+                                                .add_enabled(
+                                                    !self.volume_busy,
+                                                    egui::Button::new(action_label),
+                                                )
+                                                .on_hover_text(format!(
+                                                    "{} · UDisks2/Polkit removable-device operation",
+                                                    volume.device
+                                                ));
+                                            if response.clicked() {
+                                                if volume.encrypted {
+                                                    if volume.unlocked {
+                                                        self.volume_confirm =
+                                                            Some(VolumeAction::LockEncrypted(
+                                                                volume.object_path.clone(),
+                                                            ));
+                                                    } else {
+                                                        volume::clear_password(
+                                                            &mut self.volume_unlock_password,
+                                                        );
+                                                        self.volume_unlock_target = Some((
+                                                            volume.object_path.clone(),
+                                                            title.clone(),
+                                                        ));
+                                                    }
+                                                } else {
+                                                    self.start_volume_action(
+                                                        VolumeAction::MountDevice(
+                                                            volume.object_path.clone(),
                                                         ),
-                                                    )
-                                                    .clicked()
-                                            {
-                                                self.volume_confirm =
-                                                    Some(VolumeAction::PowerOffDrive(
-                                                        volume.drive_path.clone(),
-                                                    ));
-                                                ui.close();
+                                                        false,
+                                                    );
+                                                }
                                             }
-                                        });
-                                    }
+                                            if volume.ejectable || volume.can_power_off {
+                                                response.context_menu(|ui| {
+                                                    if volume.ejectable
+                                                        && ui
+                                                            .add_enabled(
+                                                                !self.volume_busy,
+                                                                egui::Button::new("Eject drive…"),
+                                                            )
+                                                            .clicked()
+                                                    {
+                                                        self.volume_confirm =
+                                                            Some(VolumeAction::EjectDrive(
+                                                                volume.drive_path.clone(),
+                                                            ));
+                                                        ui.close();
+                                                    }
+                                                    if volume.can_power_off
+                                                        && ui
+                                                            .add_enabled(
+                                                                !self.volume_busy,
+                                                                egui::Button::new(
+                                                                    "Safely power off USB drive…",
+                                                                ),
+                                                            )
+                                                            .clicked()
+                                                    {
+                                                        self.volume_confirm =
+                                                            Some(VolumeAction::PowerOffDrive(
+                                                                volume.drive_path.clone(),
+                                                            ));
+                                                        ui.close();
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    });
                                 }
-                                for uri in self.config.remote_favorites.clone() {
-                                    if !matches!(
-                                        Location::parse(uri.clone().into()),
-                                        Ok(Location::Remote(_))
-                                    ) {
-                                        continue;
-                                    }
-                                    let display = network_favorite_label(&uri);
-                                    let remote_clicked = if chromeos_shell {
-                                        chromeos::sidebar_link(
-                                            ui,
-                                            &theme,
-                                            &shorten(&display, 24),
-                                            false,
-                                            FilesNavIcon::Network,
-                                        )
-                                    } else if classic_shell {
-                                        let response = classic98::tree_link(
-                                            ui,
-                                            &shorten(&display, 25),
-                                            false,
-                                            TreeIcon::Network,
-                                        );
-                                        classic98::activated(ui, &response)
-                                    } else if finder_shell {
-                                        finder::sidebar_link(
-                                            ui,
-                                            &theme,
-                                            &shorten(&display, 24),
-                                            false,
-                                            FinderNavIcon::Network,
-                                        )
-                                    } else if aqua_shell {
-                                        aqua::sidebar_link(
-                                            ui,
-                                            &theme,
-                                            &shorten(&display, 24),
-                                            false,
-                                            aqua::AquaNavIcon::Network,
-                                        )
-                                    } else {
-                                        ui.button(if aero {
-                                            format!("    {}", shorten(&display, 24))
-                                        } else {
-                                            format!("NAS: {}", shorten(&display, 27))
-                                        })
-                                        .on_hover_text(&uri)
-                                        .clicked()
-                                    };
-                                    if remote_clicked {
-                                        self.navigate_remote(uri);
-                                    }
+                                let saved_networks = self.config.remote_favorites.clone();
+                                if !saved_networks.is_empty() {
+                                    let count = saved_networks.len();
+                                    let label = format!("{} ({count})", i18n::tr("Saved network connections"));
+                                    ui.collapsing(label, |ui| {
+                                        for uri in saved_networks {
+                                            if !matches!(
+                                                Location::parse(uri.clone().into()),
+                                                Ok(Location::Remote(_))
+                                            ) {
+                                                continue;
+                                            }
+                                            let display = network_favorite_label(&uri);
+                                            let remote_clicked = if chromeos_shell {
+                                                chromeos::sidebar_link(
+                                                    ui,
+                                                    &theme,
+                                                    &shorten(&display, 24),
+                                                    false,
+                                                    FilesNavIcon::Network,
+                                                )
+                                            } else if classic_shell {
+                                                let response = classic98::tree_link(
+                                                    ui,
+                                                    &shorten(&display, 25),
+                                                    false,
+                                                    TreeIcon::Network,
+                                                );
+                                                classic98::activated(ui, &response)
+                                            } else if finder_shell {
+                                                finder::sidebar_link(
+                                                    ui,
+                                                    &theme,
+                                                    &shorten(&display, 24),
+                                                    false,
+                                                    FinderNavIcon::Network,
+                                                )
+                                            } else if aqua_shell {
+                                                aqua::sidebar_link(
+                                                    ui,
+                                                    &theme,
+                                                    &shorten(&display, 24),
+                                                    false,
+                                                    aqua::AquaNavIcon::Network,
+                                                )
+                                            } else {
+                                                ui.button(if aero {
+                                                    format!("    {}", shorten(&display, 24))
+                                                } else {
+                                                    format!("NAS: {}", shorten(&display, 27))
+                                                })
+                                                .on_hover_text(&uri)
+                                                .clicked()
+                                            };
+                                            if remote_clicked {
+                                                self.navigate_remote(uri);
+                                            }
+                                        }
+                                    });
                                 }
                                 for volume in self.volumes.clone() {
                                     let path = volume.path;
-                                    // Root is always accessible under More locations.
-                                    // Do not waste a persistent device row on it.
+                                    // Root remains in Places; avoid a duplicate device row.
                                     if path == Path::new("/") {
                                         continue;
                                     }
@@ -9010,48 +9020,6 @@ impl Explorer {
                             section,
                             &mut render_section,
                         );
-                        if section == SidebarSection::Places {
-                            let secondary = self
-                                .places
-                                .iter()
-                                .filter(|(label, _)| !primary_sidebar_place(label))
-                                .cloned()
-                                .collect::<Vec<_>>();
-                            if !secondary.is_empty() {
-                                ui.collapsing(i18n::tr("More locations"), |ui| {
-                                    for (label, path) in secondary {
-                                        let selected = self.current().path == path;
-                                        let response = if theme.shell_kind() == ShellKind::Chromeos
-                                        {
-                                            let icon = match label {
-                                                "Music" => FilesNavIcon::Music,
-                                                "Videos" => FilesNavIcon::Video,
-                                                _ => FilesNavIcon::Folder,
-                                            };
-                                            chromeos::sidebar_response(
-                                                ui, &theme, label, selected, icon,
-                                            )
-                                        } else if theme.shell_kind() == ShellKind::Finder {
-                                            let icon = match label {
-                                                "Music" => FinderNavIcon::Music,
-                                                "Downloads" => FinderNavIcon::Downloads,
-                                                "Pictures" => FinderNavIcon::Pictures,
-                                                _ => FinderNavIcon::Folder,
-                                            };
-                                            finder::sidebar_response(
-                                                ui, &theme, label, selected, icon,
-                                            )
-                                        } else {
-                                            ui.add_sized(
-                                                [ui.available_width(), 25.0],
-                                                egui::Button::new(label).selected(selected),
-                                            )
-                                        };
-                                        self.place_response(ui, response, path);
-                                    }
-                                });
-                            }
-                        }
                     }
                 });
             });
@@ -12067,16 +12035,6 @@ mod tests {
             "nas.home.arpa / medien"
         );
         assert_eq!(super::network_favorite_label("smb://nas/"), "nas");
-    }
-
-    #[test]
-    fn primary_places_are_useful_and_secondary_folders_remain_discoverable() {
-        for name in ["Home", "Downloads", "Documents", "Pictures"] {
-            assert!(super::primary_sidebar_place(name));
-        }
-        for name in ["Desktop", "Music", "Videos", "Filesystem"] {
-            assert!(!super::primary_sidebar_place(name));
-        }
     }
 
     #[test]
