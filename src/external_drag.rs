@@ -80,7 +80,7 @@ where
             Err(error) => return Err(format!("Cannot launch {}: {error}", helper.executable())),
         }
     }
-    Err("External drag needs an installed ripdrag or dragon helper. No files were changed.".into())
+    Err("External drag needs ripdrag or dragon (X11/Wayland). No files were changed; use Ctrl+C and paste into the destination app instead.".into())
 }
 
 pub fn launch(paths: &[PathBuf]) -> Result<&'static str, String> {

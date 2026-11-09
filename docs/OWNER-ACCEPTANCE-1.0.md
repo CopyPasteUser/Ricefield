@@ -186,6 +186,11 @@ all boxes below still require owner verification.
   even if the text contains `cut`; the GNOME typed file-cut format must still
   preserve intended Move behavior. On Wayland, distinguish native input
   drag from helper-initiated outgoing drag and record both separately.
+  Explicitly test Ctrl+Shift+D and file-context drag with `ripdrag` or
+  `dragon`, no-helper failure feedback, and `ricefield --xwayland-dnd`
+  on a desktop that exposes both `DISPLAY` and `WAYLAND_DISPLAY`.
+  Compare incoming files, scaling, clipboard and keyboard input against
+  a normal native Wayland launch; never infer native outgoing support.
 
 ## D. NAS, network tabs and guarded single-file uploads
 
