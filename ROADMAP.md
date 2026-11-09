@@ -393,14 +393,14 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   An additional one-item copy option now accepts an exact UTF-8 destination
   name with asynchronous preview and worker-side no-overwrite revalidation;
   an occupied name aborts rather than silently replacing or suffixing it.
-  Batch copies now offer per-item exact-name overrides. Exact-name moves and
-  guarded verified replacement are still open.
+  Batch copies and moves now offer per-item exact-name overrides; same-folder
+  exact-name moves become guarded renames. Verified replacement remains open.
   The additional content-verified **Skip only matching contents** policy now
   compares existing files, nested folders and symlink targets on a bounded
   background preflight, aborts if contents differ or cannot be checked, and
   leaves skipped Move sources intact. It is deliberately **not** verified
-  replacement, exact-name move/override, atomic protection against
-  external writers or Undo. The remaining advanced choices are still open.
+  replacement, atomic protection against uncooperative external source writers
+  or Undo. The remaining advanced choices are still open.
 - [x] Offer a non-destructive per-transfer Keep both / Skip existing choice
   through the universal Actions menu; apply it to multi-item Copy and Move
   on the worker, preserve skipped cut sources, and report counts. Test mixed
@@ -815,10 +815,11 @@ pass. Physical Mint X11/Wayland review is deliberately scheduled *after* the
 
 - [x] Per-source collision decisions for copy and move batches: Keep both, Skip
   existing, Require free, Skip identical or explicit exact name from one
-  virtualized Paste-with-options surface (exact names are copy-only).
+  virtualized Paste-with-options surface (exact names require a free target).
   Async preview and worker preflight independently check every choice; skipped
   move sources remain in place and cross-volume originals are retained.
-  No verified replace/overwrite or per-source exact-name move is enabled.
+  Exact-name same-folder moves perform guarded renames. Verified replace or
+  overwrite is not enabled.
 
 - [x] Prepare an explicit owner test matrix with reproducible disposable
   fixtures, per-case pass/fail IDs, Linux Mint/NAS/USB/RiceBowl/low-memory

@@ -124,6 +124,10 @@ all boxes below still require owner verification.
   original/destination. Set Skip only matching contents for one source in a
   larger Copy and Move batch; an equal target is skipped, but a different or
   unreadable target aborts the batch before any earlier source is moved.
+  Repeat with an exact destination name for Cut/Move: a free name should move
+  the item without an automatic suffix, including a rename within the same
+  folder. Existing names, invalid names and duplicate batch targets must
+  refuse the entire batch without moving any source.
 
 ## C. Search, previews, archives and desktop helpers
 

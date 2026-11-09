@@ -10601,11 +10601,7 @@ impl Explorer {
                             if !rules.is_empty() {
                                 ui.separator();
                                 ui.label("Individual transfer choices (optional)");
-                                ui.small(if clipboard.cut {
-                                    "Global uses the policy above. Custom target names are available for copies only."
-                                } else {
-                                    "Global uses the policy above; Exact name never overwrites or adds a suffix."
-                                });
+                                ui.small("Global uses the policy above; Exact name never overwrites or adds a suffix. Moving to a new name in the same folder renames the item.");
                                 egui::ScrollArea::vertical().max_height(205.0).show_rows(
                                     ui, 56.0, rules.len(), |ui, rows| {
                                         for index in rows {
@@ -10630,7 +10626,7 @@ impl Explorer {
                                                             rule_changed |= ui.selectable_value(rule, filesystem::TransferRule::SkipExisting, "Skip existing").changed();
                                                             rule_changed |= ui.selectable_value(rule, filesystem::TransferRule::AbortOnConflict, "Require free").changed();
                                                             rule_changed |= ui.selectable_value(rule, filesystem::TransferRule::SkipIfIdentical, "Skip identical").changed();
-                                                            if !clipboard.cut && ui.selectable_label(matches!(rule, filesystem::TransferRule::ExactName(_)), "Exact name…").clicked()
+                                                            if ui.selectable_label(matches!(rule, filesystem::TransferRule::ExactName(_)), "Exact name…").clicked()
                                                                 && !matches!(rule, filesystem::TransferRule::ExactName(_)) {
                                                                     *rule = filesystem::TransferRule::ExactName(std::ffi::OsString::new());
                                                                     rule_changed = true;
