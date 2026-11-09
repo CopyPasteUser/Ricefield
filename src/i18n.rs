@@ -12,16 +12,15 @@ enum Language {
 fn language_from_environment(get: impl Fn(&str) -> Option<String>) -> Language {
     for key in ["LC_ALL", "LC_MESSAGES", "LANGUAGE", "LANG"] {
         if let Some(value) = get(key) {
-            if let Some(locale) = value.split(':').next() {
-                if locale == "C" || locale == "POSIX" {
-                    return Language::English;
-                }
-                if locale.split(['_', '-', '.']).next() == Some("de") {
-                    return Language::German;
-                }
-                if !locale.is_empty() {
-                    return Language::English;
-                }
+            let locale = value.split(':').next().unwrap_or("");
+            if locale == "C" || locale == "POSIX" {
+                return Language::English;
+            }
+            if locale.split(['_', '-', '.']).next() == Some("de") {
+                return Language::German;
+            }
+            if !locale.is_empty() {
+                return Language::English;
             }
         }
     }

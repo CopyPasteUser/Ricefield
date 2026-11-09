@@ -11885,10 +11885,11 @@ mod tests {
     use crate::transfer_history;
     use crate::volume::RemoteEntry;
     use std::collections::BTreeSet;
+    use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::time::{Duration, Instant};
+    use std::time::{Duration, Instant, SystemTime};
 
     #[test]
     fn individual_move_choices_dispatch_as_move_and_global_choices_keep_legacy_path() {
