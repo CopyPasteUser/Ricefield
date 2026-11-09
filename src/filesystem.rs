@@ -4544,13 +4544,19 @@ mod tests {
             .unwrap();
         let file_rows = property_lines(&file).unwrap();
         assert_eq!(
-            file_rows.iter().find(|(label, _)| label == "Size").unwrap().1,
+            file_rows
+                .iter()
+                .find(|(label, _)| label == "Size")
+                .unwrap()
+                .1,
             "3.0 MiB"
         );
         let dir_rows = property_lines(&root).unwrap();
-        assert!(dir_rows
-            .iter()
-            .any(|(label, value)| label == "Size" && value.contains("Not calculated")));
+        assert!(
+            dir_rows
+                .iter()
+                .any(|(label, value)| label == "Size" && value.contains("Not calculated"))
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
