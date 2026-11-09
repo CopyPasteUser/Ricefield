@@ -5087,8 +5087,6 @@ impl Explorer {
                                                     if let Some(error) = &item.detail {
                                                         details.push_str(&format!("\n{error}"));
                                                     }
-                                                    ui.monospace(shorten(&name, 54))
-                                                        .on_hover_text(details);
                                                     let path = item.target.as_ref().unwrap_or(&item.source);
                                                     if ui.small_button("Inspect")
                                                         .on_hover_text(format!("Open the containing folder in a new tab: {}. No files are changed.", path.display()))
@@ -5096,6 +5094,8 @@ impl Explorer {
                                                     {
                                                         inspect_location = path.parent().map(Path::to_path_buf);
                                                     }
+                                                    ui.monospace(shorten(&name, 34))
+                                                        .on_hover_text(details);
                                                 });
                                             }
                                         });
