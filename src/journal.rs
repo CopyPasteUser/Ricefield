@@ -1000,7 +1000,7 @@ fn same_stage_inode(saved: &ObjectIdentity, current: &fs::Metadata) -> bool {
 
 #[cfg(target_os = "linux")]
 fn discard_verified_stage_in(directory: &Path, id: &str, cancelled: &AtomicBool) -> io::Result<()> {
-    use std::os::fd::AsRawFd;
+    use std::os::{fd::AsRawFd, unix::fs::MetadataExt};
 
     if !valid_id(id) {
         return Err(invalid_input("Invalid recovery record ID"));
