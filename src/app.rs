@@ -1545,6 +1545,10 @@ pub struct Explorer {
     volume_receiver: Receiver<Result<(String, Option<String>), String>>,
     volume_connect_open: bool,
     volume_connect_uri: String,
+    volume_connect_smb: bool,
+    volume_connect_server: String,
+    volume_connect_share: String,
+    volume_connect_show_discovery: bool,
     volume_connect_user: String,
     volume_connect_domain: String,
     volume_connect_password: String,
@@ -1824,6 +1828,10 @@ impl Explorer {
             volume_receiver,
             volume_connect_open: false,
             volume_connect_uri: String::new(),
+            volume_connect_smb: true,
+            volume_connect_server: String::new(),
+            volume_connect_share: String::new(),
+            volume_connect_show_discovery: false,
             volume_connect_user: String::new(),
             volume_connect_domain: String::new(),
             volume_connect_password: String::new(),
@@ -3108,6 +3116,17 @@ impl Explorer {
     }
 
     fn open_network_login(&mut self, uri: String) {
+        self.volume_connect_smb = uri.is_empty() || uri.starts_with("smb://");
+        self.volume_connect_server = if self.volume_connect_smb {
+            uri.strip_prefix("smb://")
+                .unwrap_or("")
+                .trim_end_matches('/')
+                .to_owned()
+        } else {
+            String::new()
+        };
+        self.volume_connect_share.clear();
+        self.volume_connect_show_discovery = false;
         self.volume_connect_uri = uri;
         self.volume_connect_user.clear();
         self.volume_connect_domain.clear();
@@ -3242,68 +3261,261 @@ impl Explorer {
     fn volume_dialog(&mut self, context: &egui::Context) {
         if self.volume_connect_open {
             let mut open = true;
+            let mut close_from_footer = false;
             let mut connect = false;
-            egui::Window::new(i18n::tr("Connect to network location"))
+            let mut browse_shares = false;
+            let height = (context.content_rect().height() - 32.0).max(220.0);
+            let width = (context.content_rect().width() - 32.0).max(260.0);
+            egui::Window::new(i18n::tr("Connect to NAS / network"))
                 .open(&mut open)
                 .collapsible(false)
-                .resizable(false)
-                .default_width(420.0)
+                .resizable(true)
+                .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+                .default_width(460.0_f32.min(width))
+                .max_width(width)
+                .max_height(height)
                 .show(context, |ui| {
-                    ui.label(i18n::tr("SMB, SFTP, WebDAV or MTP address (no passwords in the URL):"));
-                    ui.add_sized(
-                        [ui.available_width().min(420.0), 26.0],
-                        egui::TextEdit::singleline(&mut self.volume_connect_uri)
-                            .hint_text("smb://server/share"),
-                    );
-                    // A saved password belongs to one server; editing its
-                    // address must not send the secret to a different host.
-                    if self
-                        .keyring_loaded_uri
-                        .as_ref()
-                        .is_some_and(|loaded| loaded != &self.volume_connect_uri)
-                    {
-                        volume::clear_password(&mut self.volume_connect_password);
-                        self.volume_connect_user.clear();
-                        self.volume_connect_domain.clear();
-                        self.volume_connect_remember = false;
-                        self.keyring_loaded_uri = None;
-                    }
+                    egui::ScrollArea::vertical()
+                        .max_height((height - 96.0).max(116.0))
+                        .show(ui, |ui| {
+                            ui.heading(i18n::tr("Connect to your NAS"));
+                            ui.small(i18n::tr("Enter its IP/hostname, or find a NAS on your local network."));
+                            ui.add_space(8.0);
+                            ui.horizontal(|ui| {
+                                ui.selectable_value(
+                                    &mut self.volume_connect_smb,
+                                    true,
+                                    i18n::tr("SMB / NAS"),
+                                );
+                                ui.selectable_value(
+                                    &mut self.volume_connect_smb,
+                                    false,
+                                    i18n::tr("Other protocols"),
+                                );
+                            });
+                            ui.separator();
+                            if self.volume_connect_smb {
+                                ui.label(i18n::tr("Server or IP address"));
+                                ui.add_sized(
+                                    [ui.available_width(), 27.0],
+                                    egui::TextEdit::singleline(&mut self.volume_connect_server)
+                                        .hint_text("192.168.178.66 / nas.local / \\\\nas\\share"),
+                                );
+                                ui.label(i18n::tr("Share name (optional)"));
+                                ui.add_sized(
+                                    [ui.available_width(), 27.0],
+                                    egui::TextEdit::singleline(&mut self.volume_connect_share)
+                                        .hint_text("medien"),
+                                );
+                                ui.small(i18n::tr("Leave the share empty to browse available folders first."));
+                                if ui
+                                    .add_enabled(
+                                        !self.discovery_busy,
+                                        egui::Button::new(i18n::tr("Find NAS on network")),
+                                    )
+                                    .clicked()
+                                {
+                                    self.volume_connect_show_discovery = true;
+                                    self.start_discovery();
+                                }
+                                if self.volume_connect_show_discovery {
+                                    if self.discovery_busy {
+                                        ui.horizontal(|ui| {
+                                            ui.spinner();
+                                            ui.label(i18n::tr("Searching for advertised NAS servers…"));
+                                        });
+                                    }
+                                    if let Some(error) = &self.discovery_error {
+                                        ui.colored_label(Color32::LIGHT_RED, error);
+                                    } else if !self.discovery_busy && self.discovery_hosts.is_empty() {
+                                        ui.small(i18n::tr("No NAS found. Enter its IP address manually."));
+                                    }
+                                    egui::ScrollArea::vertical()
+                                        .max_height(156.0)
+                                        .show(ui, |ui| {
+                                            for host in self.discovery_hosts.clone() {
+                                                if ui
+                                                    .add_sized(
+                                                        [ui.available_width(), 29.0],
+                                                        egui::Button::new(&host.label),
+                                                    )
+                                                    .on_hover_text(format!("{} · {}", host.uri, host.source))
+                                                    .clicked()
+                                                {
+                                                    self.volume_connect_server = host
+                                                        .uri
+                                                        .trim_start_matches("smb://")
+                                                        .trim_end_matches('/')
+                                                        .to_owned();
+                                                    self.volume_connect_share.clear();
+                                                }
+                                            }
+                                        });
+                                }
+                            } else {
+                                ui.label(i18n::tr("Network address"));
+                                ui.add_sized(
+                                    [ui.available_width(), 27.0],
+                                    egui::TextEdit::singleline(&mut self.volume_connect_uri)
+                                        .hint_text("sftp://server/path · davs://server/share"),
+                                );
+                                ui.small(i18n::tr("SFTP, WebDAV and MTP use a full network URI."));
+                            }
+
+                            // An address edit must never reuse a saved password
+                            // from a different server/share.
+                            let target = if self.volume_connect_smb {
+                                crate::location::smb_target(
+                                    &self.volume_connect_server,
+                                    &self.volume_connect_share,
+                                )
+                                .map_err(str::to_owned)
+                            } else {
+                                match Location::parse(self.volume_connect_uri.clone().into()) {
+                                    Ok(Location::Remote(remote)) => Ok(remote.uri),
+                                    _ => Err("Enter a valid SFTP, WebDAV or MTP address".into()),
+                                }
+                            };
+                            let previous_uri = self.volume_connect_uri.clone();
+                            if self.volume_connect_smb {
+                                self.volume_connect_uri = target.as_ref().cloned().unwrap_or_default();
+                            }
+                            if self.volume_connect_uri != previous_uri
+                                || self
+                                    .keyring_loaded_uri
+                                    .as_ref()
+                                    .is_some_and(|loaded| loaded != &self.volume_connect_uri)
+                            {
+                                if self.volume_connect_uri != previous_uri
+                                    || self.keyring_loaded_uri.is_some()
+                                {
+                                    volume::clear_password(&mut self.volume_connect_password);
+                                    self.keyring_loaded_uri = None;
+                                    self.volume_connect_remember = false;
+                                }
+                            }
+                            match &target {
+                                Ok(uri) => {
+                                    ui.small(format!("{}: {uri}", i18n::tr("Target")));
+                                }
+                                Err(error) => {
+                                    ui.colored_label(Color32::LIGHT_RED, error);
+                                }
+                            }
+
+                            let selecting_share = self.volume_connect_smb
+                                && target
+                                    .as_ref()
+                                    .is_ok_and(|uri| crate::location::smb_needs_share_selection(uri));
+                            if selecting_share {
+                                ui.small(i18n::tr("Browse the NAS to pick a share, then enter credentials if needed."));
+                            } else {
+                                ui.add_space(8.0);
+                                ui.label(i18n::tr("Username (optional)"));
+                                ui.add_sized(
+                                    [ui.available_width(), 26.0],
+                                    egui::TextEdit::singleline(&mut self.volume_connect_user)
+                                        .hint_text(i18n::tr("NAS username")),
+                                );
+                                ui.label(i18n::tr("Password (optional)"));
+                                ui.add_sized(
+                                    [ui.available_width(), 26.0],
+                                    egui::TextEdit::singleline(&mut self.volume_connect_password)
+                                        .password(true)
+                                        .hint_text(i18n::tr("NAS password")),
+                                );
+                                ui.collapsing(i18n::tr("Advanced login options"), |ui| {
+                                    ui.label(i18n::tr("Domain / workgroup (optional):"));
+                                    ui.add_sized(
+                                        [ui.available_width(), 26.0],
+                                        egui::TextEdit::singleline(&mut self.volume_connect_domain)
+                                            .hint_text("WORKGROUP"),
+                                    );
+                                    ui.checkbox(
+                                        &mut self.volume_connect_remember,
+                                        i18n::tr("Remember login in Linux keyring"),
+                                    )
+                                    .on_hover_text(i18n::tr("Only after a successful connection. Requires libsecret-tools and an unlocked Secret Service; never stored in RiceField settings."));
+                                    ui.horizontal(|ui| {
+                                        if ui
+                                            .add_enabled(
+                                                !self.keyring_busy && target.is_ok(),
+                                                egui::Button::new(i18n::tr("Use saved login")),
+                                            )
+                                            .clicked()
+                                        {
+                                            self.request_keyring(false);
+                                        }
+                                        if ui
+                                            .add_enabled(
+                                                !self.keyring_busy && target.is_ok(),
+                                                egui::Button::new(i18n::tr("Forget saved login")),
+                                            )
+                                            .clicked()
+                                        {
+                                            self.request_keyring(true);
+                                        }
+                                        if self.keyring_busy {
+                                            ui.spinner();
+                                        }
+                                    });
+                                    ui.small(i18n::tr("Credentials are never stored in the URL. Saving uses your Linux keyring."));
+                                });
+                            }
+                            ui.add_space(4.0);
+                        });
                     ui.separator();
-                    ui.label(i18n::tr("Username (leave empty for server default):"));
-                    ui.add_sized(
-                        [ui.available_width().min(420.0), 26.0],
-                        egui::TextEdit::singleline(&mut self.volume_connect_user)
-                            .hint_text(i18n::tr("NAS username")),
-                    );
-                    ui.label(i18n::tr("Domain / workgroup (optional):"));
-                    ui.add_sized(
-                        [ui.available_width().min(420.0), 26.0],
-                        egui::TextEdit::singleline(&mut self.volume_connect_domain)
-                            .hint_text("WORKGROUP"),
-                    );
-                    ui.label(i18n::tr("Password (leave empty for guest / existing session):"));
-                    ui.add_sized(
-                        [ui.available_width().min(420.0), 26.0],
-                        egui::TextEdit::singleline(&mut self.volume_connect_password)
-                            .password(true)
-                            .hint_text(i18n::tr("NAS password")),
-                    );
-                    ui.checkbox(&mut self.volume_connect_remember, i18n::tr("Remember login in Linux keyring"))
-                        .on_hover_text(i18n::tr("Only after a successful connection. Requires libsecret-tools and an unlocked Secret Service; never stored in RiceField settings."));
-                    ui.horizontal(|ui| {
-                        if ui.add_enabled(!self.keyring_busy, egui::Button::new(i18n::tr("Use saved login"))).clicked() {
-                            self.request_keyring(false);
+                    let ready = if self.volume_connect_smb {
+                        crate::location::smb_target(
+                            &self.volume_connect_server,
+                            &self.volume_connect_share,
+                        )
+                        .ok()
+                    } else {
+                        match Location::parse(self.volume_connect_uri.clone().into()) {
+                            Ok(Location::Remote(remote)) => Some(remote.uri),
+                            _ => None,
                         }
-                        if ui.add_enabled(!self.keyring_busy, egui::Button::new(i18n::tr("Forget saved login"))).clicked() {
-                            self.request_keyring(true);
-                        }
-                        if self.keyring_busy { ui.spinner(); }
+                    };
+                    let selecting_share = ready.as_ref().is_some_and(|uri| {
+                        self.volume_connect_smb
+                            && crate::location::smb_needs_share_selection(uri)
                     });
-                    ui.small(i18n::tr("Passwords are never included in the URL. Saving is opt-in and uses your desktop's encrypted Secret Service."));
-                    connect = ui.add_enabled(!self.volume_busy, egui::Button::new(i18n::tr("Connect"))).clicked();
+                    ui.horizontal(|ui| {
+                        if ui.button(i18n::tr("Cancel")).clicked() {
+                            close_from_footer = true;
+                        }
+                        if ui
+                            .add_enabled(
+                                !self.volume_busy && ready.is_some(),
+                                egui::Button::new(if selecting_share {
+                                    i18n::tr("Browse shares")
+                                } else {
+                                    i18n::tr("Connect")
+                                }),
+                            )
+                            .clicked()
+                        {
+                            browse_shares = selecting_share;
+                            connect = !selecting_share;
+                        }
+                        if self.volume_busy {
+                            ui.spinner();
+                        }
+                    });
                 });
-            self.volume_connect_open = open;
-            if connect {
+            if browse_shares {
+                if let Ok(uri) = crate::location::smb_target(
+                    &self.volume_connect_server,
+                    &self.volume_connect_share,
+                ) {
+                    self.navigate_remote(uri);
+                    self.volume_connect_open = false;
+                    volume::clear_password(&mut self.volume_connect_password);
+                    self.volume_connect_remember = false;
+                    self.keyring_loaded_uri = None;
+                }
+            } else if connect {
                 match Location::parse(self.volume_connect_uri.clone().into()) {
                     Ok(Location::Remote(remote)) => {
                         let credentials = MountCredentials {
@@ -3338,7 +3550,7 @@ impl Explorer {
                     }
                     Err(error) => self.status = Some((error.into(), true)),
                 }
-            } else if !open {
+            } else if !open || close_from_footer {
                 volume::clear_password(&mut self.volume_connect_password);
                 self.volume_connect_remember = false;
                 self.keyring_loaded_uri = None;
