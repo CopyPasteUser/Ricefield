@@ -1,10 +1,12 @@
 # RiceField 1.0 — Owner acceptance checklist
 
-**Status:** prepared for an owner-run test campaign; **not yet signed off**.
-Only mark a check after actually observing it on the indicated hardware.
-Automated CI results do not count as physical Mint, NAS or USB evidence.
-Use the exact candidate commit/version tested; do not silently substitute a
-later development build.
+**Status:** owner approved the **daily functional scope** for stable 1.0 on
+2026-11-09 and reported successful SMB uploads after the earlier failure.
+The broader device/fault-injection matrix below is **not fully signed off**.
+Only mark a check after actually observing it on the indicated hardware;
+automated CI results do not count as physical Mint, NAS or USB evidence.
+Record the exact release commit/version tested rather than silently
+substituting a later development build.
 
 The latest `main` snapshot, including per-source copy and move policies, passed
 [GitHub Rust/GUI/benchmarks CI](https://github.com/CopyPasteUser/Ricefield/actions/runs/42567134024)
@@ -234,10 +236,11 @@ only on a new isolated test share, never on the production `medien` library.
   unchanged. Repeat two-client collisions, mid-upload cancel and intentional
   disconnect; inspect stages and journal without automatic replay or cleanup.
   If hardlink capability or share isolation is unavailable, leave writes off.
-- [ ] **D10a Reported SMB upload failure (open, owner reproduction):** share
-  browsing works and a directory can be created, but uploading a regular file
-  fails. Determine whether this is an OS-mounted SMB location or RiceField's
-  direct `smb://` network tab. On a **disposable** test share compare create-
+- [ ] **D10a SMB upload regression (previously reported, now working in owner
+  daily use):** an earlier session could browse and create a folder but not
+  upload a regular file. Determine whether this was an OS-mounted SMB
+  location or RiceField's direct `smb://` network tab. On a **disposable**
+  test share compare create-
   directory, create-file, write/close and no-overwrite publication permissions;
   record the exact UI error and NAS ACLs for files versus directories. For
   direct SMB, inspect signing, exclusive-hardlink capability and private stage
@@ -374,7 +377,8 @@ Not tested / not applicable IDs:
 Startup seconds / idle RSS / idle CPU / 100k result:
 ```
 
-**Stable v1.0.0 exit rule:** all applicable critical `A`, `B`, `D`, `E` and
-`F` no-data-loss cases pass, severe UX/performance regressions are resolved,
-CI remains green and the remaining protocol/feature limitations are honestly
-documented. Never release stable solely because this checklist exists.
+**Release interpretation:** The owner has approved 1.0 for their tested daily
+workflow. This is not a blanket pass for every critical `A`, `B`, `D`, `E` or
+`F` fault-injection case. Keep untested cases unchecked and maintain the same
+no-data-loss, collision-refusal and fail-closed requirements during 1.1
+hardening; report defects explicitly instead of retroactively implying a pass.
