@@ -393,12 +393,13 @@ workflow. Regression tests run in CI; Thunar remains the fallback.
   An additional one-item copy option now accepts an exact UTF-8 destination
   name with asynchronous preview and worker-side no-overwrite revalidation;
   an occupied name aborts rather than silently replacing or suffixing it.
-  Batch per-item name overrides and guarded verified replacement are still open.
+  Batch copies now offer per-item exact-name overrides. Exact-name moves and
+  guarded verified replacement are still open.
   The additional content-verified **Skip only matching contents** policy now
   compares existing files, nested folders and symlink targets on a bounded
   background preflight, aborts if contents differ or cannot be checked, and
   leaves skipped Move sources intact. It is deliberately **not** verified
-  replacement, manual per-item rename/override, atomic protection against
+  replacement, exact-name move/override, atomic protection against
   external writers or Undo. The remaining advanced choices are still open.
 - [x] Offer a non-destructive per-transfer Keep both / Skip existing choice
   through the universal Actions menu; apply it to multi-item Copy and Move
@@ -812,12 +813,12 @@ pass. Physical Mint X11/Wayland review is deliberately scheduled *after* the
 
 ### 1.0 — Code-complete candidate, then owner acceptance
 
-- [x] Per-source collision decisions for copy batches: Keep both, Skip
+- [x] Per-source collision decisions for copy and move batches: Keep both, Skip
   existing, Require free, Skip identical or explicit exact name from one
-  virtualized Paste-with-options surface. Async preview and worker preflight
-  independently check every choice; no replace/overwrite is enabled.
-  Per-source rules for **Move** and verified replacement remain outside the
-  candidate, and cannot be described as implemented.
+  virtualized Paste-with-options surface (exact names are copy-only).
+  Async preview and worker preflight independently check every choice; skipped
+  move sources remain in place and cross-volume originals are retained.
+  No verified replace/overwrite or per-source exact-name move is enabled.
 
 - [x] Prepare an explicit owner test matrix with reproducible disposable
   fixtures, per-case pass/fail IDs, Linux Mint/NAS/USB/RiceBowl/low-memory

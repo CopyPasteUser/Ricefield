@@ -542,10 +542,10 @@ pub enum ConflictPolicy {
     SkipIfIdentical,
 }
 
-/// A single source's explicit choice in a copy batch. `ExactName` always
-/// requires a free target, regardless of the global conflict policy.
+/// A single source's explicit choice in a copy or move batch. `ExactName`
+/// is only available when copying, and always requires a free target.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub enum CopyRule {
+pub enum TransferRule {
     #[default]
     Global,
     KeepBoth,
@@ -555,7 +555,7 @@ pub enum CopyRule {
     ExactName(OsString),
 }
 
-impl CopyRule {
+impl TransferRule {
     fn conflict(&self, global: ConflictPolicy) -> ConflictPolicy {
         match self {
             Self::Global | Self::ExactName(_) => global,
@@ -705,12 +705,20 @@ pub enum Action {
         sources: Vec<PathBuf>,
         destination: PathBuf,
         conflict: ConflictPolicy,
-        rules: Vec<CopyRule>,
+        rules: Vec<TransferRule>,
     },
     Move {
         sources: Vec<PathBuf>,
         destination: PathBuf,
         conflict: ConflictPolicy,
+    },
+    /// Per-source move choices; unlike copy, arbitrary target names are
+    /// deliberately unsupported to preserve move and recovery semantics.
+    MoveWithRules {
+        sources: Vec<PathBuf>,
+        destination: PathBuf,
+        conflict: ConflictPolicy,
+        rules: Vec<TransferRule>,
     },
     Trash {
         paths: Vec<PathBuf>,
@@ -1685,6 +1693,7 @@ pub fn perform_with_report(
         Action::Copy { sources, .. }
         | Action::CopyWithRules { sources, .. }
         | Action::Move { sources, .. }
+        | Action::MoveWithRules { sources, .. }
         | Action::Link { sources, .. } => sources.clone(),
         Action::CopyAs { source, .. } => vec![source.clone()],
         Action::BatchRename { changes } => {
@@ -1791,6 +1800,7 @@ fn perform_with_progress_and_items(
         Action::Copy { sources, .. }
         | Action::CopyWithRules { sources, .. }
         | Action::Move { sources, .. }
+        | Action::MoveWithRules { sources, .. }
         | Action::Link { sources, .. } => sources,
         Action::CopyAs { source, .. } => std::slice::from_ref(source),
         Action::Trash { paths } | Action::Delete { paths } => paths,
@@ -1837,12 +1847,19 @@ fn perform_with_progress_and_items(
             destination,
             conflict,
             rules,
+        }
+        | Action::MoveWithRules {
+            sources,
+            destination,
+            conflict,
+            rules,
         } if !sources.is_empty() => {
+            let moving = matches!(action, Action::MoveWithRules { .. });
             match plan_transfer_with_rules(
                 sources,
                 destination,
                 *conflict,
-                false,
+                moving,
                 Some(rules),
                 cancelled,
             ) {
@@ -1853,7 +1870,7 @@ fn perform_with_progress_and_items(
                     return Err(io::Error::new(
                         failure.error.kind(),
                         format!(
-                            "Copy choices preflight failed at item {} of {}: {}. No files were processed",
+                            "Transfer choices preflight failed at item {} of {}: {}. No items were processed",
                             index + 1,
                             sources.len(),
                             failure.error
@@ -1910,7 +1927,7 @@ fn perform_with_progress_and_items(
                 Action::Copy { .. } | Action::CopyAs { .. } | Action::CopyWithRules { .. } => {
                     estimate_bytes(source, cancelled, 0)
                 }
-                Action::Move { .. } => fs::symlink_metadata(source).map(|metadata| {
+                Action::Move { .. } | Action::MoveWithRules { .. } => fs::symlink_metadata(source).map(|metadata| {
                     if metadata.is_dir() { 0 } else { metadata.len() }
                 }),
                 _ => break,
@@ -2075,7 +2092,7 @@ fn perform_with_progress_and_items(
                 Ok(format!("Copied {} item(s)", sources.len()))
             }
         }
-        Action::Move { sources, .. } => {
+        Action::Move { sources, .. } | Action::MoveWithRules { sources, .. } => {
             if sources.is_empty() {
                 return Ok("Nothing to move".into());
             }
@@ -2609,7 +2626,7 @@ pub fn preview_copy_with_rules(
     sources: &[PathBuf],
     destination: &Path,
     conflict: ConflictPolicy,
-    rules: &[CopyRule],
+    rules: &[TransferRule],
 ) -> io::Result<TransferPlan> {
     preview_copy_with_rules_cancellable(
         sources,
@@ -2624,14 +2641,29 @@ pub fn preview_copy_with_rules_cancellable(
     sources: &[PathBuf],
     destination: &Path,
     conflict: ConflictPolicy,
-    rules: &[CopyRule],
+    rules: &[TransferRule],
+    cancelled: &AtomicBool,
+) -> io::Result<TransferPlan> {
+    preview_transfer_with_rules_cancellable(
+        sources, destination, conflict, false, rules, cancelled,
+    )
+}
+
+/// Read-only preflight shared by copy and move. Exact target names are copy-only.
+/// The worker revalidates the complete plan immediately before publication.
+pub fn preview_transfer_with_rules_cancellable(
+    sources: &[PathBuf],
+    destination: &Path,
+    conflict: ConflictPolicy,
+    moving: bool,
+    rules: &[TransferRule],
     cancelled: &AtomicBool,
 ) -> io::Result<TransferPlan> {
     plan_transfer_with_rules(
         sources,
         destination,
         conflict,
-        false,
+        moving,
         Some(rules),
         cancelled,
     )
@@ -2713,18 +2745,27 @@ fn plan_transfer_with_rules(
     destination: &Path,
     conflict: ConflictPolicy,
     moving: bool,
-    rules: Option<&[CopyRule]>,
+    rules: Option<&[TransferRule]>,
     cancelled: &AtomicBool,
 ) -> Result<TransferPlan, PlanFailure> {
     if let Some(rules) = rules {
-        if moving || rules.len() != sources.len() {
+        if rules.len() != sources.len() {
             return Err(PlanFailure::global(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "Copy choices must match the number of selected sources",
+                "Transfer choices must match the number of selected sources",
             )));
         }
         for (index, rule) in rules.iter().enumerate() {
-            if let CopyRule::ExactName(name) = rule
+            if moving && matches!(rule, TransferRule::ExactName(_)) {
+                return Err(PlanFailure::at(
+                    index,
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "Exact target names are only supported for copy operations",
+                    ),
+                ));
+            }
+            if let TransferRule::ExactName(name) = rule
                 && !valid_exact_name(name)
             {
                 return Err(PlanFailure::at(
@@ -2826,11 +2867,11 @@ fn plan_transfer_with_rules(
             .ok_or_else(|| PlanFailure::at(index, invalid_name()))?;
         let rule = rules.map(|rules| &rules[index]);
         let name = match rule {
-            Some(CopyRule::ExactName(name)) => name.as_os_str(),
+            Some(TransferRule::ExactName(name)) => name.as_os_str(),
             _ => original_name,
         };
         let conflict = rule.map_or(conflict, |rule| rule.conflict(conflict));
-        let exact_name = matches!(rule, Some(CopyRule::ExactName(_)));
+        let exact_name = matches!(rule, Some(TransferRule::ExactName(_)));
         let intended = destination.join(name);
         // A move into its own parent is a deliberate no-op, regardless of the
         // collision policy; never rename the original to a "copy" name.
@@ -5851,9 +5892,9 @@ mod tests {
         fs::write(destination.join("skip.txt"), b"existing skip").unwrap();
         let sources = vec![exact.clone(), keep.clone(), skip.clone()];
         let rules = vec![
-            CopyRule::ExactName(OsString::from("chosen.txt")),
-            CopyRule::KeepBoth,
-            CopyRule::Global,
+            TransferRule::ExactName(OsString::from("chosen.txt")),
+            TransferRule::KeepBoth,
+            TransferRule::Global,
         ];
         let plan =
             preview_copy_with_rules(&sources, &destination, ConflictPolicy::SkipExisting, &rules)
@@ -5908,12 +5949,12 @@ mod tests {
             fs::write(source, b"source remains").unwrap();
         }
         for rules in [
-            vec![CopyRule::ExactName(OsString::from("same.txt")); 2],
+            vec![TransferRule::ExactName(OsString::from("same.txt")); 2],
             vec![
-                CopyRule::Global,
-                CopyRule::ExactName(OsString::from("../unsafe")),
+                TransferRule::Global,
+                TransferRule::ExactName(OsString::from("../unsafe")),
             ],
-            vec![CopyRule::Global],
+            vec![TransferRule::Global],
         ] {
             assert!(
                 preview_copy_with_rules(&sources, &destination, ConflictPolicy::KeepBoth, &rules)
@@ -5941,8 +5982,8 @@ mod tests {
             assert_eq!(fs::read_dir(&destination).unwrap().count(), 0);
         }
         let rules = vec![
-            CopyRule::Global,
-            CopyRule::ExactName(OsString::from("chosen.txt")),
+            TransferRule::Global,
+            TransferRule::ExactName(OsString::from("chosen.txt")),
         ];
         preview_copy_with_rules(&sources, &destination, ConflictPolicy::KeepBoth, &rules).unwrap();
         fs::write(destination.join("chosen.txt"), b"racer").unwrap();
@@ -5978,12 +6019,109 @@ mod tests {
             std::slice::from_ref(&source),
             &destination,
             ConflictPolicy::KeepBoth,
-            &[CopyRule::Global],
+            &[TransferRule::Global],
             &cancelled,
         );
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Interrupted);
         assert_eq!(fs::read(source).unwrap(), b"intact");
         assert_eq!(fs::read_dir(destination).unwrap().count(), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn batch_move_rules_apply_per_source_without_overwriting() {
+        let root = test_root();
+        let destination = root.join("out");
+        let skip_parent = root.join("skip-parent");
+        let keep_parent = root.join("keep-parent");
+        for path in [&destination, &skip_parent, &keep_parent] {
+            fs::create_dir(path).unwrap();
+        }
+        let skip = skip_parent.join("same.txt");
+        let keep = keep_parent.join("same.txt");
+        fs::write(&skip, b"skip me").unwrap();
+        fs::write(&keep, b"move me").unwrap();
+        fs::write(destination.join("same.txt"), b"destination is safe").unwrap();
+        let sources = vec![skip.clone(), keep.clone()];
+        let rules = vec![TransferRule::SkipExisting, TransferRule::KeepBoth];
+        let plan = preview_transfer_with_rules_cancellable(
+            &sources,
+            &destination,
+            ConflictPolicy::AbortOnConflict,
+            true,
+            &rules,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(plan.skipped, 1);
+        assert_eq!(plan.renamed, 1);
+        assert_eq!(plan.items[1].target, destination.join("same (copy).txt"));
+        let report = perform_with_report(
+            &Action::MoveWithRules {
+                sources,
+                destination: destination.clone(),
+                conflict: ConflictPolicy::AbortOnConflict,
+                rules,
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        assert!(report.result.is_ok(), "{:?}", report.result);
+        assert_eq!(report.items[0].state, ItemState::Skipped);
+        assert_eq!(report.items[1].state, ItemState::Completed);
+        assert_eq!(fs::read(skip).unwrap(), b"skip me");
+        assert!(!keep.exists());
+        assert_eq!(fs::read(destination.join("same.txt")).unwrap(), b"destination is safe");
+        assert_eq!(fs::read(destination.join("same (copy).txt")).unwrap(), b"move me");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn batch_move_rules_reject_conflicts_and_copy_only_names_before_any_move() {
+        let root = test_root();
+        let destination = root.join("out");
+        fs::create_dir(&destination).unwrap();
+        let sources = vec![root.join("first.txt"), root.join("second.txt")];
+        for source in &sources {
+            fs::write(source, b"original intact").unwrap();
+        }
+        fs::write(destination.join("second.txt"), b"existing destination").unwrap();
+        let invalid_cases = [
+            vec![TransferRule::Global, TransferRule::AbortOnConflict],
+            vec![
+                TransferRule::Global,
+                TransferRule::ExactName(OsString::from("custom.txt")),
+            ],
+            vec![TransferRule::Global],
+        ];
+        for rules in invalid_cases {
+            assert!(preview_transfer_with_rules_cancellable(
+                &sources,
+                &destination,
+                ConflictPolicy::KeepBoth,
+                true,
+                &rules,
+                &AtomicBool::new(false),
+            )
+            .is_err());
+            let report = perform_with_report(
+                &Action::MoveWithRules {
+                    sources: sources.clone(),
+                    destination: destination.clone(),
+                    conflict: ConflictPolicy::KeepBoth,
+                    rules,
+                },
+                &AtomicBool::new(false),
+                &mut |_| {},
+            );
+            assert!(report.result.is_err());
+            assert!(report.items.iter().all(|item| item.state != ItemState::Completed));
+            for source in &sources {
+                assert_eq!(fs::read(source).unwrap(), b"original intact");
+            }
+            assert!(!destination.join("first.txt").exists());
+            assert_eq!(fs::read(destination.join("second.txt")).unwrap(), b"existing destination");
+        }
         fs::remove_dir_all(root).unwrap();
     }
 
