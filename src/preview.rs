@@ -1,8 +1,9 @@
 //! Bounded, off-thread previews. Never decode arbitrarily large images in the UI thread.
+use image::ImageDecoder;
 use std::{
     fmt::Write as _,
     fs,
-    io::{self, BufReader, Cursor, Read, Seek, SeekFrom},
+    io::{self, BufRead, BufReader, Cursor, Read, Seek, SeekFrom},
     path::Path,
     process::Command,
     sync::atomic::AtomicBool,
@@ -87,20 +88,24 @@ fn decode_image_reader<R: Read + Seek>(
     max_width: u32,
     max_height: u32,
 ) -> io::Result<Thumbnail> {
-    let dimensions = image::ImageReader::new(BufReader::new(&mut *reader))
-        .with_guessed_format()?
-        .into_dimensions()
+    // Construct the decoder once. `into_dimensions()` followed by `decode()`
+    // rebuilt it and reread the compressed file (notably full JPEG inputs).
+    // Inspect the buffered prefix without consuming it. The reader's format
+    // probe otherwise seeks back to zero, discards its read-ahead, and may
+    // read the entire compressed image again for small images.
+    let mut buffered = BufReader::new(reader);
+    let format = image::guess_format(buffered.fill_buf()?).map_err(io::Error::other)?;
+    let decoder = image::ImageReader::with_format(buffered, format)
+        .into_decoder()
         .map_err(io::Error::other)?;
+    let dimensions = decoder.dimensions();
     if u64::from(dimensions.0) * u64::from(dimensions.1) > MAX_IMAGE_PIXELS {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "Image exceeds the 16 MP safety limit",
         ));
     }
-    reader.rewind()?;
-    let image = image::ImageReader::new(BufReader::new(reader))
-        .with_guessed_format()?
-        .decode()
+    let image = image::DynamicImage::from_decoder(decoder)
         .map_err(io::Error::other)?
         .thumbnail(dimensions.0.min(max_width), dimensions.1.min(max_height))
         .to_rgba8();
@@ -559,6 +564,50 @@ mod tests {
         assert!(thumb.width <= 108 && thumb.height <= 108);
         assert_eq!(thumb.rgba.len(), thumb.width * thumb.height * 4);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn jpeg_thumbnail_decodes_from_one_compressed_stream() {
+        struct CountingReader {
+            data: Cursor<Vec<u8>>,
+            read_bytes: usize,
+        }
+
+        impl Read for CountingReader {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                let count = self.data.read(buf)?;
+                self.read_bytes += count;
+                Ok(count)
+            }
+        }
+
+        impl Seek for CountingReader {
+            fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
+                self.data.seek(from)
+            }
+        }
+
+        let source = image::DynamicImage::ImageRgb8(image::ImageBuffer::from_pixel(
+            256,
+            256,
+            image::Rgb([24, 78, 126]),
+        ));
+        let mut bytes = Vec::new();
+        source
+            .write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Jpeg)
+            .unwrap();
+        let compressed_len = bytes.len();
+        let mut reader = CountingReader {
+            data: Cursor::new(bytes),
+            read_bytes: 0,
+        };
+
+        let thumb = decode_image_reader(&mut reader, 108, 108).unwrap();
+        assert_eq!((thumb.width, thumb.height), (108, 108));
+        assert_eq!(thumb.rgba.len(), 108 * 108 * 4);
+        // Format sniffing reads a 16-byte prefix; the decoder must consume
+        // the JPEG only once, never repeat the entire compressed input.
+        assert!(reader.read_bytes <= compressed_len + 16);
     }
 
     #[test]

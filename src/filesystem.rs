@@ -422,7 +422,14 @@ fn scan_with_metadata(
             .is_some_and(|meta| meta.file_type().is_symlink())
             && fs::metadata(&entry_path).is_ok_and(|meta| meta.is_dir());
         entries.push(Entry {
-            name: item.file_name().to_string_lossy().into_owned(),
+            // `item.path()` already contains this filename. Reading it from
+            // the path avoids allocating a second temporary OsString for
+            // every entry in a large directory.
+            name: entry_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
             path: entry_path,
             is_dir: linked_directory
                 || metadata.as_ref().is_some_and(fs::Metadata::is_dir)

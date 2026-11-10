@@ -534,7 +534,7 @@ fn commit_local_view(tab: &mut Tab, visible: Vec<usize>) -> usize {
 
 /// Pure, cancellable file view projection. The scan owns filesystem I/O;
 /// filtering and natural sorting must never touch disk or mutate a tab.
-fn project_local_view(
+pub(crate) fn project_local_view(
     entries: &[Entry],
     folded_names: &file_view::FoldedNames,
     query: &str,
@@ -585,7 +585,10 @@ fn project_local_view(
         return None;
     }
     let sort = config.sort_by.as_str();
-    visible.sort_by(|left, right| {
+    // The source index is the stable tie-breaker for case-folded duplicates.
+    // Unstable sort avoids an O(visible.len()) scratch allocation while
+    // preserving the order users saw for equivalent filenames.
+    visible.sort_unstable_by(|left, right| {
         let a = &entries[*left];
         let b = &entries[*right];
         let folder_order = b.is_dir.cmp(&a.is_dir);
@@ -604,8 +607,13 @@ fn project_local_view(
         } else {
             comparison
         };
-        ordered.then_with(|| natural_cmp(&folded_names[*left], &folded_names[*right]))
+        ordered
+            .then_with(|| natural_cmp(&folded_names[*left], &folded_names[*right]))
+            .then_with(|| left.cmp(right))
     });
+    // Filtered views often leave a sizable geometric Vec capacity behind;
+    // keep only the actual visible indices while this snapshot is retained.
+    visible.shrink_to_fit();
     (!cancelled.load(Ordering::Relaxed)).then_some(visible)
 }
 
@@ -12729,6 +12737,33 @@ mod tests {
                 &AtomicBool::new(true),
             )
             .is_none()
+        );
+    }
+
+    #[test]
+    fn equivalent_casefolded_names_keep_directory_order_in_both_sort_directions() {
+        let entries: Vec<_> = ["a.txt", "A.txt", "b.txt", "a.TXT"]
+            .iter()
+            .map(|name| crate::filesystem::Entry {
+                path: PathBuf::from("/synthetic").join(name),
+                name: (*name).to_owned(),
+                is_dir: false,
+                is_symlink: false,
+                size: 0,
+                modified: None,
+            })
+            .collect();
+        let folded = crate::file_view::FoldedNames::from_entries(&entries);
+        let mut config = Config::default();
+        let cancelled = AtomicBool::new(false);
+        assert_eq!(
+            project_local_view(&entries, &folded, "", false, &config, &cancelled).unwrap(),
+            vec![0, 1, 3, 2]
+        );
+        config.descending = true;
+        assert_eq!(
+            project_local_view(&entries, &folded, "", false, &config, &cancelled).unwrap(),
+            vec![2, 0, 1, 3]
         );
     }
 

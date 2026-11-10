@@ -1,5 +1,5 @@
 //! Explicit disposable lab benchmark. Never scans or mutates user directories.
-use crate::{file_view, filesystem};
+use crate::{app, config, file_view, filesystem};
 use std::{
     fs::{self, File},
     io::{self, Read, Write},
@@ -64,6 +64,24 @@ pub fn run() -> io::Result<()> {
     }
     let compact_names = file_view::FoldedNames::from_entries(&scan.entries);
     let folded_name_index_bytes = compact_names.heap_capacity_bytes();
+    let started = Instant::now();
+    let visible = app::project_local_view(
+        &scan.entries,
+        &compact_names,
+        "",
+        false,
+        &config::Config::default(),
+        &cancelled,
+    )
+    .ok_or_else(|| io::Error::other("Benchmark view projection was cancelled"))?;
+    let view_projection_ms = started.elapsed().as_secs_f64() * 1000.0;
+    if visible.len() != 100_000
+        || scan.entries[visible[0]].name != "file-0.txt"
+        || scan.entries[visible[99_999]].name != "file-99999.txt"
+    {
+        return Err(io::Error::other("Benchmark view ordering was incorrect"));
+    }
+    let retained_view_index_bytes = visible.capacity() * std::mem::size_of::<usize>();
     let mut names: Vec<_> = scan
         .entries
         .iter()
@@ -130,7 +148,7 @@ pub fn run() -> io::Result<()> {
         ));
     }
     println!(
-        "version = {:?}\nentries = 100000\nfixture_ms = {fixture_ms:.3}\nscan_ms = {scan_ms:.3}\nspare_entry_bytes_before = {spare_entry_bytes_before}\nspare_entry_bytes_after = {spare_entry_bytes_after}\nfile_kind_calls = 1000000\nfile_kind_ms = {kind_ms:.3}\nfolded_name_index_bytes = {folded_name_index_bytes}\nlegacy_folded_names_bytes = {legacy_folded_names_bytes}\nnatural_sort_ms = {sort_ms:.3}\nglob_ms = {filter_ms:.3}\nglob_matches = {matches}\nsearch_ms = {search_ms:.3}\nsearch_matches = {}\nsearch_incomplete = {}\ncopy_bytes = 67108864\ncopy_ms = {copy_ms:.3}\ncopy_verified = true\nsource_retained = true",
+        "version = {:?}\nentries = 100000\nfixture_ms = {fixture_ms:.3}\nscan_ms = {scan_ms:.3}\nspare_entry_bytes_before = {spare_entry_bytes_before}\nspare_entry_bytes_after = {spare_entry_bytes_after}\nfile_kind_calls = 1000000\nfile_kind_ms = {kind_ms:.3}\nfolded_name_index_bytes = {folded_name_index_bytes}\nlegacy_folded_names_bytes = {legacy_folded_names_bytes}\nview_projection_ms = {view_projection_ms:.3}\nretained_view_index_bytes = {retained_view_index_bytes}\nnatural_sort_ms = {sort_ms:.3}\nglob_ms = {filter_ms:.3}\nglob_matches = {matches}\nsearch_ms = {search_ms:.3}\nsearch_matches = {}\nsearch_incomplete = {}\ncopy_bytes = 67108864\ncopy_ms = {copy_ms:.3}\ncopy_verified = true\nsource_retained = true",
         env!("CARGO_PKG_VERSION"),
         search.entries.len(),
         search.notice.is_some(),
