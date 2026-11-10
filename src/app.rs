@@ -10493,6 +10493,10 @@ impl Explorer {
         }
         let tab_id = self.tabs[tab_index].id;
         let scan_generation = self.tabs[tab_index].generation;
+        // Keep the immutable directory snapshot alive for the whole frame.
+        // Borrow visible entries from it instead of cloning every name/path
+        // every time rows are painted (particularly costly while scrolling).
+        let entries = Arc::clone(&self.tabs[tab_index].entries);
         if self
             .marquee
             .as_ref()
@@ -10547,12 +10551,11 @@ impl Explorer {
                             let entry = self.tabs[tab_index]
                                 .visible
                                 .get(visible_index)
-                                .and_then(|index| self.tabs[tab_index].entries.get(*index))
-                                .cloned();
+                                .and_then(|index| entries.get(*index));
                             if let Some(entry) = entry {
                                 let rect = self.file_item(
                                     ui,
-                                    &entry,
+                                    entry,
                                     visible_index,
                                     tab_index,
                                     FileCellLayout {
