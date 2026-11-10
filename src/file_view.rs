@@ -298,8 +298,17 @@ impl CompiledGlob {
         if self.len == 0 {
             return true;
         }
+        self.matches_folded(&name.to_lowercase())
+    }
+
+    /// The directory scanner already owns a compact case-folded name index.
+    /// Reuse it during a glob projection instead of allocating per entry.
+    pub fn matches_folded(&self, folded_name: &str) -> bool {
+        if self.len == 0 {
+            return true;
+        }
         let mut states = self.closure(1);
-        for ch in name.to_lowercase().chars() {
+        for ch in folded_name.chars() {
             let matching = self.single | self.literals.get(&ch).copied().unwrap_or_default();
             states = self.closure(((states & matching) << 1) | (states & self.stars));
             if states == 0 {
@@ -397,6 +406,14 @@ mod tests {
         eprintln!("100k folded names: compact={compact_bytes} B legacy={legacy_bytes} B");
         assert!(compact_bytes < legacy_bytes * 3 / 4);
         assert_eq!(&names[100_004], "file-99999.txt");
+    }
+
+    #[test]
+    fn glob_can_match_existing_folded_names_without_allocating_again() {
+        let glob = CompiledGlob::new("*ΣΟΣ?.TXT");
+        for name in ["helloΣΟΣ1.txt", "helloςος1.TXT", "no-match.png", "ΣΟΣ2.txt"] {
+            assert_eq!(glob.matches(name), glob.matches_folded(&name.to_lowercase()));
+        }
     }
 
     #[cfg(target_pointer_width = "64")]

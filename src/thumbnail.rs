@@ -8,7 +8,7 @@ use std::{
     path::PathBuf,
     sync::mpsc::{self, Receiver, Sender},
     thread,
-    time::SystemTime,
+    time::{Duration, Instant, SystemTime},
 };
 
 // Keep roughly one viewport of decoded thumbnails. Each 108x108 image can
@@ -16,6 +16,7 @@ use std::{
 // benefit but retains textures after leaving an image-heavy directory.
 const MAX_CACHED: usize = 48;
 const MAX_PENDING: usize = 48;
+const IDLE_TEXTURE_RETENTION: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct Key {
@@ -52,6 +53,7 @@ pub struct ThumbnailManager {
     pending: VecDeque<Key>,
     active: Option<Key>,
     tick: u64,
+    last_requested: Instant,
     sender: Sender<ResultMessage>,
     receiver: Receiver<ResultMessage>,
 }
@@ -64,6 +66,7 @@ impl Default for ThumbnailManager {
             pending: VecDeque::new(),
             active: None,
             tick: 0,
+            last_requested: Instant::now(),
             sender,
             receiver,
         }
@@ -74,6 +77,7 @@ impl ThumbnailManager {
     /// Cached negative results prevent a corrupt image being decoded every frame.
     pub fn request(&mut self, entry: &Entry) -> Option<(egui::TextureId, egui::Vec2)> {
         let key = Key::from_entry(entry)?;
+        self.last_requested = Instant::now();
         self.tick = self.tick.wrapping_add(1);
         if let Some(cached) = self.cache.get_mut(&key) {
             cached.touched = self.tick;
@@ -95,6 +99,19 @@ impl ThumbnailManager {
 
     pub fn clear_pending(&mut self) {
         self.pending.clear();
+    }
+
+    /// Release GPU/CPU image textures after the user leaves image-heavy views.
+    /// A short grace period keeps quick navigation and view toggles responsive.
+    pub fn release_idle_cache(&mut self) {
+        self.release_idle_cache_at(Instant::now());
+    }
+
+    fn release_idle_cache_at(&mut self, now: Instant) {
+        if now.duration_since(self.last_requested) >= IDLE_TEXTURE_RETENTION {
+            self.cache.clear();
+            self.pending.clear();
+        }
     }
 
     pub fn has_pending(&self) -> bool {
@@ -226,5 +243,23 @@ mod tests {
                 &Key::from_entry(&image(&format!("{}.png", MAX_CACHED + 9))).unwrap()
             )
         );
+    }
+
+    #[test]
+    fn thumbnail_textures_are_released_after_inactivity() {
+        let mut manager = ThumbnailManager::default();
+        let key = Key::from_entry(&image("old.png")).unwrap();
+        manager.cache.insert(
+            key,
+            Cached {
+                texture: None,
+                touched: 1,
+            },
+        );
+        let now = manager.last_requested;
+        manager.release_idle_cache_at(now + IDLE_TEXTURE_RETENTION - Duration::from_millis(1));
+        assert_eq!(manager.cache.len(), 1);
+        manager.release_idle_cache_at(now + IDLE_TEXTURE_RETENTION);
+        assert!(manager.cache.is_empty());
     }
 }
