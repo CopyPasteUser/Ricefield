@@ -224,7 +224,10 @@ mod tests {
             .map(|index| PathBuf::from(format!("/folder-{index}")))
             .collect();
         for index in 0..(MAX_CACHED_CHILDREN / children.len()) {
-            tree.cache_result(PathBuf::from(format!("/branch-{index}")), Ok(children.clone()));
+            tree.cache_result(
+                PathBuf::from(format!("/branch-{index}")),
+                Ok(children.clone()),
+            );
         }
         assert!(tree.get(PathBuf::from("/branch-0").as_path()).is_some());
         tree.cache_result(PathBuf::from("/new-branch"), Ok(children));

@@ -129,7 +129,11 @@ impl Ord for RemoteNameSortKey {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         other.folder.cmp(&self.folder).then_with(|| {
             let order = natural_cmp(&self.display, &other.display);
-            let order = if self.descending { order.reverse() } else { order };
+            let order = if self.descending {
+                order.reverse()
+            } else {
+                order
+            };
             order.then_with(|| natural_cmp(&self.encoded, &other.encoded))
         })
     }
@@ -490,7 +494,8 @@ impl Tab {
         if self.remote_visible_query.as_deref() == Some(self.query.as_str()) {
             return;
         }
-        self.remote_visible = visible_remote_indices(&self.remote_entries, &self.query).map(Arc::new);
+        self.remote_visible =
+            visible_remote_indices(&self.remote_entries, &self.query).map(Arc::new);
         self.remote_visible_query = Some(self.query.clone());
     }
 
@@ -12256,10 +12261,10 @@ mod tests {
         MarqueeSelection, NameMode, PasteMode, PendingPaste, PropertyResult, PropertySnapshot, Tab,
         TabSnapshot, ViewResult, accept_property_result, active_after_swap, choose_paste_clipboard,
         commit_local_view, drop_action, elapsed_label, marquee_from_list_whitespace,
-        needs_drop_targets, next_search_repaint_delay, project_local_view, properties_dialog_limits,
-        refresh_interval,
-        read_property_snapshot, remaining_cut_paths, resolve_split_tabs, retain_visible_selection,
-        retry_unstarted_items, transfer_progress_details,
+        needs_drop_targets, next_search_repaint_delay, project_local_view,
+        properties_dialog_limits, read_property_snapshot, refresh_interval, remaining_cut_paths,
+        resolve_split_tabs, retain_visible_selection, retry_unstarted_items,
+        transfer_progress_details,
     };
     use crate::clipboard;
     use crate::config::Config;
@@ -12529,7 +12534,10 @@ mod tests {
         ];
         super::sort_remote_entries(&mut entries, super::RemoteSort::Name, false);
         assert_eq!(
-            entries.iter().map(|entry| entry.name.as_str()).collect::<Vec<_>>(),
+            entries
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
             ["Folder%202", "Folder%2010", "Photo%202", "Photo%2010"]
         );
     }

@@ -412,7 +412,10 @@ mod tests {
     fn glob_can_match_existing_folded_names_without_allocating_again() {
         let glob = CompiledGlob::new("*ΣΟΣ?.TXT");
         for name in ["helloΣΟΣ1.txt", "helloςος1.TXT", "no-match.png", "ΣΟΣ2.txt"] {
-            assert_eq!(glob.matches(name), glob.matches_folded(&name.to_lowercase()));
+            assert_eq!(
+                glob.matches(name),
+                glob.matches_folded(&name.to_lowercase())
+            );
         }
     }
 

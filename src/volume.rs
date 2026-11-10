@@ -896,7 +896,10 @@ mod tests {
 
     #[test]
     fn remote_labels_decode_display_only_and_escape_unsafe_bytes() {
-        assert!(matches!(display_remote_name_ref("plain.txt"), Cow::Borrowed(_)));
+        assert!(matches!(
+            display_remote_name_ref("plain.txt"),
+            Cow::Borrowed(_)
+        ));
         assert!(matches!(display_remote_name_ref("A%20B"), Cow::Owned(_)));
         assert_eq!(
             display_remote_name("Season%201%20Finale.mkv"),
