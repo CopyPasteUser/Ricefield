@@ -294,21 +294,31 @@ pub fn file_kind_from_name(name: &str) -> &'static str {
     let extension = Path::new(name)
         .extension()
         .and_then(|ext| ext.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    match extension.as_str() {
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico" | "tif" | "tiff" => "Image",
-        "mp3" | "flac" | "wav" | "ogg" | "m4a" | "opus" | "aac" => "Audio",
-        "mkv" | "mp4" | "avi" | "webm" | "mov" | "m4v" | "mpeg" | "mpg" => "Video",
-        "zip" | "7z" | "tar" | "gz" | "xz" | "zst" | "tgz" | "txz" | "tzst" | "rar" | "bz2" => {
-            "Archive"
-        }
-        "rs" | "py" | "js" | "ts" | "tsx" | "jsx" | "html" | "css" | "sh" | "go" | "c" | "cpp"
-        | "h" | "hpp" | "java" | "json" | "yaml" | "yml" | "toml" | "xml" | "sql" => "Code",
-        "pdf" => "PDF",
-        "csv" | "tsv" | "xls" | "xlsx" | "ods" => "Spreadsheet",
-        "ppt" | "pptx" | "odp" => "Presentation",
-        "txt" | "md" | "rtf" | "doc" | "docx" | "odt" => "Document",
+        .unwrap_or("");
+    // Every recognized extension has at most four ASCII bytes. Folding into
+    // a stack buffer avoids a heap allocation for every visible file cell and
+    // each entry inspected by file-type filters, including uppercase names.
+    let mut folded = [0u8; 4];
+    if extension.len() > folded.len() {
+        return "File";
+    }
+    let bytes = &mut folded[..extension.len()];
+    bytes.copy_from_slice(extension.as_bytes());
+    bytes.make_ascii_lowercase();
+    match &*bytes {
+        b"png" | b"jpg" | b"jpeg" | b"gif" | b"webp" | b"svg" | b"bmp" | b"ico" | b"tif"
+        | b"tiff" => "Image",
+        b"mp3" | b"flac" | b"wav" | b"ogg" | b"m4a" | b"opus" | b"aac" => "Audio",
+        b"mkv" | b"mp4" | b"avi" | b"webm" | b"mov" | b"m4v" | b"mpeg" | b"mpg" => "Video",
+        b"zip" | b"7z" | b"tar" | b"gz" | b"xz" | b"zst" | b"tgz" | b"txz" | b"tzst" | b"rar"
+        | b"bz2" => "Archive",
+        b"rs" | b"py" | b"js" | b"ts" | b"tsx" | b"jsx" | b"html" | b"css" | b"sh" | b"go"
+        | b"c" | b"cpp" | b"h" | b"hpp" | b"java" | b"json" | b"yaml" | b"yml" | b"toml"
+        | b"xml" | b"sql" => "Code",
+        b"pdf" => "PDF",
+        b"csv" | b"tsv" | b"xls" | b"xlsx" | b"ods" => "Spreadsheet",
+        b"ppt" | b"pptx" | b"odp" => "Presentation",
+        b"txt" | b"md" | b"rtf" | b"doc" | b"docx" | b"odt" => "Document",
         _ => "File",
     }
 }
@@ -4581,6 +4591,9 @@ mod tests {
             ("slides.PPTX", "Presentation"),
             ("letter.DOCX", "Document"),
             ("mystery", "File"),
+            ("photo.png", "Image"),
+            ("ignored.filenamewithlongextension", "File"),
+            ("unknown.ä", "File"),
         ] {
             assert_eq!(file_kind_from_name(name), kind, "{name}");
         }
