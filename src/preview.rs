@@ -2,7 +2,7 @@
 use std::{
     fmt::Write as _,
     fs,
-    io::{self, Cursor, Read, Seek},
+    io::{self, BufReader, Cursor, Read, Seek, SeekFrom},
     path::Path,
     process::Command,
     sync::atomic::AtomicBool,
@@ -39,8 +39,55 @@ fn image_extension(extension: &str) -> bool {
     )
 }
 
-fn decode_image(bytes: &[u8], max_width: u32, max_height: u32) -> io::Result<Thumbnail> {
-    let dimensions = image::ImageReader::new(Cursor::new(bytes))
+/// Bound all decoder reads and seeks to the original size limit. A file may
+/// grow after the post-open metadata check; streaming must not bypass that cap.
+struct CappedFile<'a> {
+    file: &'a mut fs::File,
+    limit: u64,
+    position: u64,
+}
+
+impl<'a> CappedFile<'a> {
+    fn new(file: &'a mut fs::File, limit: u64) -> Self {
+        Self {
+            file,
+            limit,
+            position: 0,
+        }
+    }
+}
+
+impl Read for CappedFile<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let remaining = self.limit.saturating_sub(self.position) as usize;
+        let available = buffer.len().min(remaining);
+        let count = self.file.read(&mut buffer[..available])?;
+        self.position += count as u64;
+        Ok(count)
+    }
+}
+
+impl Seek for CappedFile<'_> {
+    fn seek(&mut self, offset: SeekFrom) -> io::Result<u64> {
+        let position = self.file.seek(offset)?;
+        if position > self.limit {
+            self.file.seek(SeekFrom::Start(self.position))?;
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Image exceeds input byte limit",
+            ));
+        }
+        self.position = position;
+        Ok(position)
+    }
+}
+
+fn decode_image_reader<R: Read + Seek>(
+    reader: &mut R,
+    max_width: u32,
+    max_height: u32,
+) -> io::Result<Thumbnail> {
+    let dimensions = image::ImageReader::new(BufReader::new(&mut *reader))
         .with_guessed_format()?
         .into_dimensions()
         .map_err(io::Error::other)?;
@@ -50,7 +97,8 @@ fn decode_image(bytes: &[u8], max_width: u32, max_height: u32) -> io::Result<Thu
             "Image exceeds the 16 MP safety limit",
         ));
     }
-    let image = image::ImageReader::new(Cursor::new(bytes))
+    reader.rewind()?;
+    let image = image::ImageReader::new(BufReader::new(reader))
         .with_guessed_format()?
         .decode()
         .map_err(io::Error::other)?
@@ -62,6 +110,10 @@ fn decode_image(bytes: &[u8], max_width: u32, max_height: u32) -> io::Result<Thu
         width: width as usize,
         height: height as usize,
     })
+}
+
+fn decode_image(bytes: &[u8], max_width: u32, max_height: u32) -> io::Result<Thumbnail> {
+    decode_image_reader(&mut Cursor::new(bytes), max_width, max_height)
 }
 
 /// Generate tiny in-memory thumbnails from an already-open regular file.
@@ -93,14 +145,15 @@ pub fn thumbnail(path: &Path) -> io::Result<Option<Thumbnail>> {
     if !opened.is_file() || opened.len() > MAX_THUMBNAIL_BYTES {
         return Ok(None);
     }
-    let mut bytes = Vec::new();
-    (&mut file)
-        .take(MAX_THUMBNAIL_BYTES + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > MAX_THUMBNAIL_BYTES {
+    let result = decode_image_reader(
+        &mut CappedFile::new(&mut file, MAX_THUMBNAIL_BYTES),
+        108,
+        108,
+    );
+    if file.metadata()?.len() > MAX_THUMBNAIL_BYTES {
         return Ok(None);
     }
-    decode_image(&bytes, 108, 108).map(Some)
+    result.map(Some)
 }
 
 fn bounded_external(
@@ -335,19 +388,18 @@ pub fn load(path: &Path) -> io::Result<Preview> {
                 "Image too large for in-app preview (32 MiB limit)".into(),
             ));
         }
-        // Read the same open descriptor just once with an absolute byte cap.
-        // Decoding from memory avoids a second path-open race (e.g. a FIFO
-        // substituted between dimension detection and image::open).
-        let mut bytes = Vec::new();
-        (&mut file)
-            .take(MAX_IMAGE_BYTES + 1)
-            .read_to_end(&mut bytes)?;
-        if bytes.len() as u64 > MAX_IMAGE_BYTES {
+        // Stream from the verified descriptor rather than retaining up to
+        // 32 MiB of compressed bytes alongside the decoded pixel buffer.
+        // The capped reader also prevents a concurrent file growth from
+        // causing unbounded reads or seek-based bypasses.
+        let decoded =
+            decode_image_reader(&mut CappedFile::new(&mut file, MAX_IMAGE_BYTES), 900, 800);
+        if file.metadata()?.len() > MAX_IMAGE_BYTES {
             return Ok(Preview::Info(
                 "Image too large for in-app preview (32 MiB limit)".into(),
             ));
         }
-        return match decode_image(&bytes, 900, 800) {
+        return match decoded {
             Ok(image) => Ok(Preview::Image {
                 rgba: image.rgba,
                 width: image.width,
@@ -506,6 +558,31 @@ mod tests {
         let thumb = thumbnail(&path).unwrap().unwrap();
         assert!(thumb.width <= 108 && thumb.height <= 108);
         assert_eq!(thumb.rgba.len(), thumb.width * thumb.height * 4);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn capped_image_stream_rejects_growth_and_seeks_past_the_byte_limit() {
+        use std::io::Write as _;
+
+        let root = test_root();
+        let path = root.join("growing.png");
+        fs::write(&path, b"abcd").unwrap();
+        let mut file = fs::File::open(&path).unwrap();
+        let mut reader = CappedFile::new(&mut file, 4);
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"ef")
+            .unwrap();
+        assert!(reader.seek(SeekFrom::End(0)).is_err());
+        assert_eq!(reader.stream_position().unwrap(), 0);
+        let mut buffer = [0u8; 8];
+        assert_eq!(reader.read(&mut buffer).unwrap(), 4);
+        assert_eq!(&buffer[..4], b"abcd");
+        assert_eq!(reader.read(&mut buffer).unwrap(), 0);
+        assert!(reader.seek(SeekFrom::Start(5)).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 
