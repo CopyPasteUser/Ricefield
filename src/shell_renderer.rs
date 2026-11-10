@@ -540,7 +540,7 @@ fn paint_file_cell(
     }
     if !visual.grid && matches!(shell, ShellKind::Chromeos | ShellKind::Aqua) {
         let name = shorten(
-            &file.name,
+            &file.name(),
             ((rect.width() * 0.75 - 56.0) / 7.5).max(4.0) as usize,
         );
         painter.text(
@@ -583,16 +583,19 @@ fn paint_file_cell(
     let compact_explorer = explorer_list && rect.width() < 470.0;
     let compact_luna = theme.shell_kind() == ShellKind::Luna && rect.width() < 420.0;
     let name = if visual.grid {
-        shorten(&file.name, 22)
+        shorten(&file.name(), 22)
     } else if compact_luna || compact_explorer {
-        shorten(&file.name, ((rect.width() - 52.0) / 7.0).max(1.0) as usize)
+        shorten(
+            &file.name(),
+            ((rect.width() - 52.0) / 7.0).max(1.0) as usize,
+        )
     } else if explorer_list {
         shorten(
-            &file.name,
+            &file.name(),
             ((rect.width() * 0.50 - 51.0) / 7.0).max(1.0) as usize,
         )
     } else {
-        shorten(&file.name, ((rect.width() * 0.53) / 7.3) as usize)
+        shorten(&file.name(), ((rect.width() * 0.53) / 7.3) as usize)
     };
     let font = FontId::proportional(if visual.grid { 12.5 } else { 13.0 });
     let foreground = theme.palette.text();

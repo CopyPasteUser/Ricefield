@@ -157,7 +157,6 @@ mod tests {
     fn image(name: &str) -> Entry {
         Entry {
             path: PathBuf::from(name),
-            name: name.to_owned(),
             is_dir: false,
             is_symlink: false,
             size: 1,
