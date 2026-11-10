@@ -10,6 +10,8 @@ use std::{
 };
 
 const MAX_CHILDREN: usize = 256;
+// Older, unused branches need not retain their child paths forever.
+const MAX_CACHED_NODES: usize = 128;
 
 struct TreeResult {
     path: PathBuf,
@@ -17,12 +19,18 @@ struct TreeResult {
     result: Result<Vec<PathBuf>, String>,
 }
 
+struct CachedNode {
+    result: Result<Vec<PathBuf>, String>,
+    touched: u64,
+}
+
 pub struct FolderTree {
     sender: Sender<TreeResult>,
     receiver: Receiver<TreeResult>,
-    nodes: HashMap<PathBuf, Result<Vec<PathBuf>, String>>,
+    nodes: HashMap<PathBuf, CachedNode>,
     pending: HashMap<PathBuf, u64>,
     next_revision: u64,
+    tick: u64,
 }
 
 impl FolderTree {
@@ -34,6 +42,24 @@ impl FolderTree {
             nodes: HashMap::new(),
             pending: HashMap::new(),
             next_revision: 0,
+            tick: 0,
+        }
+    }
+
+    fn cache_result(&mut self, path: PathBuf, result: Result<Vec<PathBuf>, String>) {
+        self.tick = self.tick.wrapping_add(1);
+        self.nodes.insert(
+            path,
+            CachedNode {
+                result,
+                touched: self.tick,
+            },
+        );
+        if self.nodes.len() > MAX_CACHED_NODES
+            && let Some(oldest) = self.nodes.iter().min_by_key(|(_, node)| node.touched)
+        {
+            let oldest = oldest.0.clone();
+            self.nodes.remove(&oldest);
         }
     }
 
@@ -42,15 +68,18 @@ impl FolderTree {
         while let Ok(message) = self.receiver.try_recv() {
             if self.pending.get(&message.path) == Some(&message.revision) {
                 self.pending.remove(&message.path);
-                self.nodes.insert(message.path, message.result);
+                self.cache_result(message.path, message.result);
                 changed = true;
             }
         }
         changed
     }
 
-    pub fn get(&self, path: &Path) -> Option<&Result<Vec<PathBuf>, String>> {
-        self.nodes.get(path)
+    pub fn get(&mut self, path: &Path) -> Option<&Result<Vec<PathBuf>, String>> {
+        let node = self.nodes.get_mut(path)?;
+        self.tick = self.tick.wrapping_add(1);
+        node.touched = self.tick;
+        Some(&node.result)
     }
 
     pub fn is_pending(&self, path: &Path) -> bool {
@@ -99,7 +128,13 @@ fn list_directories_with(
         // real directories are traversable and loops are never followed.
         // An unplugged child mount must not hide unrelated tree branches.
         if file_type(&item).is_ok_and(|kind| kind.is_dir()) {
-            entries.push(item.path());
+            let path = item.path();
+            let folded_name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_lowercase();
+            entries.push((path, folded_name));
             if entries.len() > MAX_CHILDREN {
                 return Err(std::io::Error::other(format!(
                     "Folder contains more than {MAX_CHILDREN} subfolders; tree view is limited"
@@ -107,25 +142,13 @@ fn list_directories_with(
             }
         }
     }
-    entries.sort_by(|a, b| {
-        let a_name = a
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_lowercase();
-        let b_name = b
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_lowercase();
-        natural_cmp(&a_name, &b_name)
-    });
-    Ok(entries)
+    entries.sort_by(|a, b| natural_cmp(&a.1, &b.1));
+    Ok(entries.into_iter().map(|(path, _)| path).collect())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{FolderTree, list_directories, list_directories_with};
+    use super::{FolderTree, MAX_CACHED_NODES, list_directories, list_directories_with};
     use std::{ffi::OsStr, fs, os::unix::fs::symlink, path::PathBuf};
 
     #[test]
@@ -162,9 +185,23 @@ mod tests {
         symlink(&root, root.join("loop")).unwrap();
         let children = list_directories(&root).unwrap();
         assert_eq!(children, vec![root.join("folder2"), root.join("folder10")]);
-        let tree = FolderTree::new();
+        let mut tree = FolderTree::new();
         assert!(tree.get(&PathBuf::from("/missing")).is_none());
         fs::remove_file(root.join("loop")).unwrap();
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn old_tree_branches_are_evicted_but_recently_used_branches_survive() {
+        let mut tree = FolderTree::new();
+        for index in 0..MAX_CACHED_NODES {
+            tree.cache_result(PathBuf::from(format!("/branch-{index}")), Ok(Vec::new()));
+        }
+        assert!(tree.get(PathBuf::from("/branch-0").as_path()).is_some());
+        tree.cache_result(PathBuf::from("/new-branch"), Ok(Vec::new()));
+        assert_eq!(tree.nodes.len(), MAX_CACHED_NODES);
+        assert!(tree.get(PathBuf::from("/branch-0").as_path()).is_some());
+        assert!(tree.get(PathBuf::from("/branch-1").as_path()).is_none());
+        assert!(tree.get(PathBuf::from("/new-branch").as_path()).is_some());
     }
 }

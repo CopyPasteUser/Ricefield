@@ -51,6 +51,17 @@ pub fn run() -> io::Result<()> {
     scan.compact();
     let spare_entry_bytes_after =
         (scan.entries.capacity() - scan.entries.len()) * std::mem::size_of::<filesystem::Entry>();
+    let started = Instant::now();
+    let classified = (0..10)
+        .flat_map(|_| scan.entries.iter())
+        .filter(|entry| std::hint::black_box(entry.kind()) == "Document")
+        .count();
+    let kind_ms = started.elapsed().as_secs_f64() * 1000.0;
+    if classified != 1_000_000 {
+        return Err(io::Error::other(
+            "Benchmark file classifications were incorrect",
+        ));
+    }
     let compact_names = file_view::FoldedNames::from_entries(&scan.entries);
     let folded_name_index_bytes = compact_names.heap_capacity_bytes();
     let mut names: Vec<_> = scan
@@ -119,7 +130,7 @@ pub fn run() -> io::Result<()> {
         ));
     }
     println!(
-        "version = {:?}\nentries = 100000\nfixture_ms = {fixture_ms:.3}\nscan_ms = {scan_ms:.3}\nspare_entry_bytes_before = {spare_entry_bytes_before}\nspare_entry_bytes_after = {spare_entry_bytes_after}\nfolded_name_index_bytes = {folded_name_index_bytes}\nlegacy_folded_names_bytes = {legacy_folded_names_bytes}\nnatural_sort_ms = {sort_ms:.3}\nglob_ms = {filter_ms:.3}\nglob_matches = {matches}\nsearch_ms = {search_ms:.3}\nsearch_matches = {}\nsearch_incomplete = {}\ncopy_bytes = 67108864\ncopy_ms = {copy_ms:.3}\ncopy_verified = true\nsource_retained = true",
+        "version = {:?}\nentries = 100000\nfixture_ms = {fixture_ms:.3}\nscan_ms = {scan_ms:.3}\nspare_entry_bytes_before = {spare_entry_bytes_before}\nspare_entry_bytes_after = {spare_entry_bytes_after}\nfile_kind_calls = 1000000\nfile_kind_ms = {kind_ms:.3}\nfolded_name_index_bytes = {folded_name_index_bytes}\nlegacy_folded_names_bytes = {legacy_folded_names_bytes}\nnatural_sort_ms = {sort_ms:.3}\nglob_ms = {filter_ms:.3}\nglob_matches = {matches}\nsearch_ms = {search_ms:.3}\nsearch_matches = {}\nsearch_incomplete = {}\ncopy_bytes = 67108864\ncopy_ms = {copy_ms:.3}\ncopy_verified = true\nsource_retained = true",
         env!("CARGO_PKG_VERSION"),
         search.entries.len(),
         search.notice.is_some(),
