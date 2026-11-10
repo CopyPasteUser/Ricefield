@@ -12,6 +12,8 @@ use std::{
 const MAX_CHILDREN: usize = 256;
 // Older, unused branches need not retain their child paths forever.
 const MAX_CACHED_NODES: usize = 128;
+// Node count alone still permits 128 * 256 retained child PathBuf allocations.
+const MAX_CACHED_CHILDREN: usize = 4_096;
 
 struct TreeResult {
     path: PathBuf,
@@ -55,9 +57,17 @@ impl FolderTree {
                 touched: self.tick,
             },
         );
-        if self.nodes.len() > MAX_CACHED_NODES
-            && let Some(oldest) = self.nodes.iter().min_by_key(|(_, node)| node.touched)
+        while self.nodes.len() > MAX_CACHED_NODES
+            || self
+                .nodes
+                .values()
+                .map(|node| node.result.as_ref().map_or(0, Vec::len))
+                .sum::<usize>()
+                > MAX_CACHED_CHILDREN
         {
+            let Some(oldest) = self.nodes.iter().min_by_key(|(_, node)| node.touched) else {
+                break;
+            };
             let oldest = oldest.0.clone();
             self.nodes.remove(&oldest);
         }
@@ -148,7 +158,9 @@ fn list_directories_with(
 
 #[cfg(test)]
 mod tests {
-    use super::{FolderTree, MAX_CACHED_NODES, list_directories, list_directories_with};
+    use super::{
+        FolderTree, MAX_CACHED_CHILDREN, MAX_CACHED_NODES, list_directories, list_directories_with,
+    };
     use std::{ffi::OsStr, fs, os::unix::fs::symlink, path::PathBuf};
 
     #[test]
@@ -203,5 +215,24 @@ mod tests {
         assert!(tree.get(PathBuf::from("/branch-0").as_path()).is_some());
         assert!(tree.get(PathBuf::from("/branch-1").as_path()).is_none());
         assert!(tree.get(PathBuf::from("/new-branch").as_path()).is_some());
+    }
+
+    #[test]
+    fn tree_cache_limits_total_retained_children() {
+        let mut tree = FolderTree::new();
+        let children: Vec<_> = (0..256)
+            .map(|index| PathBuf::from(format!("/folder-{index}")))
+            .collect();
+        for index in 0..(MAX_CACHED_CHILDREN / children.len()) {
+            tree.cache_result(
+                PathBuf::from(format!("/branch-{index}")),
+                Ok(children.clone()),
+            );
+        }
+        assert!(tree.get(PathBuf::from("/branch-0").as_path()).is_some());
+        tree.cache_result(PathBuf::from("/new-branch"), Ok(children));
+        assert!(tree.get(PathBuf::from("/branch-0").as_path()).is_some());
+        assert!(tree.get(PathBuf::from("/branch-1").as_path()).is_none());
+        assert_eq!(tree.nodes.len(), MAX_CACHED_CHILDREN / 256);
     }
 }

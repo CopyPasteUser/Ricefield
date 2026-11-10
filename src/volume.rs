@@ -2,6 +2,7 @@
 //! handles device permissions and Polkit; RiceField never invokes sudo.
 
 use std::{
+    borrow::Cow,
     collections::{HashSet, VecDeque},
     ffi::OsString,
     io::{Read, Write},
@@ -179,6 +180,9 @@ fn remote_name_matches(encoded: &str, lower_needle: &str) -> bool {
     if encoded.to_lowercase().contains(lower_needle) {
         return true;
     }
+    if !encoded.contains('%') {
+        return false;
+    }
     decode_remote_label(encoded).is_some_and(|name| name.to_lowercase().contains(lower_needle))
 }
 
@@ -186,7 +190,17 @@ fn remote_name_matches(encoded: &str, lower_needle: &str) -> bool {
 /// changing the original URI used for navigation, preview and download.
 /// Invalid UTF-8 or embedded controls remain visibly escaped.
 pub fn display_remote_name(encoded: &str) -> String {
-    decode_remote_label(encoded).unwrap_or_else(|| encoded.to_owned())
+    display_remote_name_ref(encoded).into_owned()
+}
+
+/// Borrow the common unescaped name. Visible SMB rows need not allocate a
+/// display String on every frame when GIO provided a plain filename.
+pub fn display_remote_name_ref(encoded: &str) -> Cow<'_, str> {
+    if !encoded.contains('%') {
+        Cow::Borrowed(encoded)
+    } else {
+        decode_remote_label(encoded).map_or(Cow::Borrowed(encoded), Cow::Owned)
+    }
 }
 
 fn decode_remote_label(encoded: &str) -> Option<String> {
@@ -882,6 +896,11 @@ mod tests {
 
     #[test]
     fn remote_labels_decode_display_only_and_escape_unsafe_bytes() {
+        assert!(matches!(
+            display_remote_name_ref("plain.txt"),
+            Cow::Borrowed(_)
+        ));
+        assert!(matches!(display_remote_name_ref("A%20B"), Cow::Owned(_)));
         assert_eq!(
             display_remote_name("Season%201%20Finale.mkv"),
             "Season 1 Finale.mkv"
@@ -890,6 +909,7 @@ mod tests {
         assert_eq!(display_remote_name("100%25.txt"), "100%.txt");
         for invalid in ["%FF.dat", "line%0Afeed", "a%2Fb", "a%5Cb"] {
             assert_eq!(display_remote_name(invalid), invalid);
+            assert!(matches!(display_remote_name_ref(invalid), Cow::Borrowed(_)));
         }
         assert_eq!(display_remote_name("plain.txt"), "plain.txt");
     }

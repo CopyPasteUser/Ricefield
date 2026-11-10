@@ -45,9 +45,19 @@ use std::{
 };
 
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(350);
+const FOREGROUND_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
+const BACKGROUND_REFRESH_INTERVAL: Duration = Duration::from_secs(15);
 const MAX_RECENT_OPERATIONS: usize = transfer_history::MAX_RECORDS;
 const CLIPBOARD_WAIT: Duration = Duration::from_secs(2);
 const MAX_CLOSED_TABS: usize = 16;
+
+fn refresh_interval(focused: bool) -> Duration {
+    if focused {
+        FOREGROUND_REFRESH_INTERVAL
+    } else {
+        BACKGROUND_REFRESH_INTERVAL
+    }
+}
 
 /// Render saved network addresses as useful human labels, not full protocol URIs.
 fn network_favorite_label(uri: &str) -> String {
@@ -83,14 +93,22 @@ impl RemoteSort {
     }
 }
 fn sort_remote_entries(entries: &mut [volume::RemoteEntry], by: RemoteSort, descending: bool) {
+    if by == RemoteSort::Name {
+        // Decoding during every comparator call can allocate O(n log n) times,
+        // particularly on SMB shares containing percent-encoded spaces.
+        entries.sort_by_cached_key(|entry| RemoteNameSortKey {
+            folder: entry.is_directory,
+            display: volume::display_remote_name(&entry.name),
+            encoded: entry.name.clone(),
+            descending,
+        });
+        return;
+    }
     entries.sort_by(|left, right| {
         // Folder grouping is invariant even when reversing a selected column.
         right.is_directory.cmp(&left.is_directory).then_with(|| {
             let order = match by {
-                RemoteSort::Name => file_view::natural_cmp(
-                    &volume::display_remote_name(&left.name),
-                    &volume::display_remote_name(&right.name),
-                ),
+                RemoteSort::Name => unreachable!("name sort uses cached display names"),
                 RemoteSort::Kind => left.is_regular_file.cmp(&right.is_regular_file).reverse(),
                 RemoteSort::Size => left.reported_size.cmp(&right.reported_size),
             };
@@ -99,6 +117,41 @@ fn sort_remote_entries(entries: &mut [volume::RemoteEntry], by: RemoteSort, desc
         })
     });
 }
+
+struct RemoteNameSortKey {
+    folder: bool,
+    display: String,
+    encoded: String,
+    descending: bool,
+}
+
+impl Ord for RemoteNameSortKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        other.folder.cmp(&self.folder).then_with(|| {
+            let order = natural_cmp(&self.display, &other.display);
+            let order = if self.descending {
+                order.reverse()
+            } else {
+                order
+            };
+            order.then_with(|| natural_cmp(&self.encoded, &other.encoded))
+        })
+    }
+}
+
+impl PartialOrd for RemoteNameSortKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for RemoteNameSortKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
+
+impl Eq for RemoteNameSortKey {}
 
 /// Keep selection and displayed rows aligned with the current filename query,
 /// even while a bounded GIO network search is still in flight. Use decoded names
@@ -264,6 +317,8 @@ struct Tab {
     address: String,
     remote_uri: Option<String>,
     remote_entries: Vec<volume::RemoteEntry>,
+    remote_visible: Option<Arc<Vec<usize>>>,
+    remote_visible_query: Option<String>,
     remote_selected_uri: Option<String>,
     remote_sort: RemoteSort,
     remote_sort_descending: bool,
@@ -303,6 +358,8 @@ impl Tab {
             path,
             remote_uri: None,
             remote_entries: Vec::new(),
+            remote_visible: None,
+            remote_visible_query: None,
             remote_selected_uri: None,
             remote_sort: RemoteSort::Name,
             remote_sort_descending: false,
@@ -413,6 +470,7 @@ impl Tab {
             }
         }
         self.remote_entries.clear();
+        self.invalidate_remote_visible();
         self.remote_selected_uri = None;
         self.cancel_view();
         self.entries = Arc::new(Vec::new());
@@ -425,6 +483,20 @@ impl Tab {
         self.search_pending = None;
         self.dir_mtime = None;
         self.scan_warning = None;
+    }
+
+    fn invalidate_remote_visible(&mut self) {
+        self.remote_visible = None;
+        self.remote_visible_query = None;
+    }
+
+    fn ensure_remote_visible(&mut self) {
+        if self.remote_visible_query.as_deref() == Some(self.query.as_str()) {
+            return;
+        }
+        self.remote_visible =
+            visible_remote_indices(&self.remote_entries, &self.query).map(Arc::new);
+        self.remote_visible_query = Some(self.query.clone());
     }
 
     fn visit(&mut self, location: Location) {
@@ -564,7 +636,7 @@ pub(crate) fn project_local_view(
             && file_view::matches_filter(entry, &config.filter_kind)
             && file_view::matches_size(entry, &config.filter_size)
             && file_view::matches_modified(entry, &config.filter_modified, now)
-            && (!has_name_glob || name_glob.matches(&entry.name()))
+            && (!has_name_glob || name_glob.matches_folded(&folded_names[index]))
             && name_regex.as_ref().is_ok_and(|regex| {
                 regex
                     .as_ref()
@@ -718,6 +790,10 @@ struct DropArea {
     destination: PathBuf,
     rect: Rect,
     folder: bool,
+}
+
+fn needs_drop_targets(internal_drag: bool, external_hover: bool, external_drop: bool) -> bool {
+    internal_drag || external_hover || external_drop
 }
 
 // A drop is a copy unless Shift is held. Never turn a drag onto the source
@@ -1580,6 +1656,7 @@ pub struct Explorer {
     drag_files: Option<DragFiles>,
     marquee: Option<MarqueeSelection>,
     drop_areas: Vec<DropArea>,
+    drop_targets_active: bool,
     scan_sender: Sender<ScanResult>,
     scan_receiver: Receiver<ScanResult>,
     view_sender: Sender<ViewResult>,
@@ -1866,6 +1943,7 @@ impl Explorer {
             drag_files: None,
             marquee: None,
             drop_areas: Vec::new(),
+            drop_targets_active: false,
             scan_sender,
             scan_receiver,
             view_sender,
@@ -4364,6 +4442,7 @@ impl Explorer {
                             tab.remote_sort,
                             tab.remote_sort_descending,
                         );
+                        tab.invalidate_remote_visible();
                         if tab.remote_selected_uri.as_ref().is_some_and(|uri| {
                             !tab.remote_entries.iter().any(|entry| &entry.uri == uri)
                         }) {
@@ -4374,6 +4453,7 @@ impl Explorer {
                     }
                     Err(error) => {
                         tab.remote_entries.clear();
+                        tab.invalidate_remote_visible();
                         tab.remote_selected_uri = None;
                         tab.scan_warning = None;
                         tab.error = Some(error);
@@ -7117,7 +7197,7 @@ impl Explorer {
                 let response = ui
                     .add(egui::Button::new(label).selected(selected))
                     .on_hover_text(format!("{path_hint}\nRight-click for tab actions"));
-                if tab.remote_uri.is_none() {
+                if self.drop_targets_active && tab.remote_uri.is_none() {
                     self.drop_areas.push(DropArea {
                         tab_id: tab.id,
                         destination: tab.path.clone(),
@@ -7759,12 +7839,14 @@ impl Explorer {
                                                     .on_hover_text(
                                                         crumb.path.display().to_string(),
                                                     );
-                                                self.drop_areas.push(DropArea {
-                                                    tab_id: self.current().id,
-                                                    destination: crumb.path.clone(),
-                                                    rect: response.rect,
-                                                    folder: true,
-                                                });
+                                                if self.drop_targets_active {
+                                                    self.drop_areas.push(DropArea {
+                                                        tab_id: self.current().id,
+                                                        destination: crumb.path.clone(),
+                                                        rect: response.rect,
+                                                        folder: true,
+                                                    });
+                                                }
                                                 if response.clicked() {
                                                     self.navigate(crumb.path);
                                                 }
@@ -9134,12 +9216,14 @@ impl Explorer {
             let label = ui
                 .add(egui::Button::new(shorten(&title, 22)).selected(self.current().path == path));
             let label = label.on_hover_text(path.display().to_string());
-            self.drop_areas.push(DropArea {
-                tab_id: self.current().id,
-                destination: path.clone(),
-                rect: label.rect,
-                folder: true,
-            });
+            if self.drop_targets_active {
+                self.drop_areas.push(DropArea {
+                    tab_id: self.current().id,
+                    destination: path.clone(),
+                    rect: label.rect,
+                    folder: true,
+                });
+            }
             if label.clicked() {
                 self.navigate(path.clone());
             }
@@ -9980,12 +10064,14 @@ impl Explorer {
 
     fn file_area(&mut self, ui: &mut egui::Ui, index: usize) {
         let theme = self.theme.clone();
-        self.drop_areas.push(DropArea {
-            tab_id: self.tabs[index].id,
-            destination: self.tabs[index].path.clone(),
-            rect: ui.available_rect_before_wrap(),
-            folder: false,
-        });
+        if self.drop_targets_active {
+            self.drop_areas.push(DropArea {
+                tab_id: self.tabs[index].id,
+                destination: self.tabs[index].path.clone(),
+                rect: ui.available_rect_before_wrap(),
+                folder: false,
+            });
+        }
         if let Some(warning) = self.tabs[index].scan_warning.clone() {
             ui.horizontal_wrapped(|ui| {
                 ui.colored_label(Color32::from_rgb(168, 101, 14), warning);
@@ -10276,14 +10362,18 @@ impl Explorer {
                     }
                 });
                 ui.separator();
-                let visible = visible_remote_indices(&self.current().remote_entries, &self.current().query);
-                let shown_count = visible.as_ref().map_or(self.current().remote_entries.len(), Vec::len);
+                self.current_mut().ensure_remote_visible();
+                let mut visible = self.current().remote_visible.clone();
+                let shown_count = visible.as_ref().map_or(self.current().remote_entries.len(), |indices| indices.len());
                 let selected = self.current().remote_selected_uri.as_ref().and_then(|uri| {
-                    self.current()
-                        .remote_entries
-                        .iter()
-                        .find(|entry| &entry.uri == uri && remote_matches_query(entry, &self.current().query))
-                }).cloned();
+                    let tab = self.current();
+                    let index = tab.remote_entries.iter().position(|entry| &entry.uri == uri)?;
+                    if visible.as_ref().is_none_or(|indices| indices.binary_search(&index).is_ok()) {
+                        Some(tab.remote_entries[index].clone())
+                    } else {
+                        None
+                    }
+                });
                 let mut selected_action = None;
                 ui.horizontal_wrapped(|ui| {
                     if ui.add_enabled(remote_write_safe && !self.remote_upload_busy,
@@ -10360,6 +10450,9 @@ impl Explorer {
                             tab.remote_sort_descending = false;
                         }
                         sort_remote_entries(&mut tab.remote_entries, tab.remote_sort, tab.remote_sort_descending);
+                        tab.invalidate_remote_visible();
+                        tab.ensure_remote_visible();
+                        visible = tab.remote_visible.clone();
                     }
                     let mut open = None;
                     let mut open_new_tab = None;
@@ -10378,7 +10471,7 @@ impl Explorer {
                         for row in rows {
                             let index = visible.as_ref().map_or(row, |indices| indices[row]);
                             let entry = &entries[index];
-                            let display_name = volume::display_remote_name(&entry.name);
+                            let display_name = volume::display_remote_name_ref(&entry.name);
                             let response = shell_renderer::remote_row(
                                 ui, &theme, shell_renderer::RemoteRowVisual {
                                     name: &display_name,
@@ -10638,7 +10731,7 @@ impl Explorer {
         };
         let (rect, response) =
             shell_renderer::file_cell(ui, entry, &self.theme, selected, item, thumbnail);
-        if entry.is_dir {
+        if self.drop_targets_active && entry.is_dir {
             self.drop_areas.push(DropArea {
                 tab_id: self.tabs[tab_index].id,
                 destination: entry.path.clone(),
@@ -12041,7 +12134,10 @@ impl eframe::App for Explorer {
                 }
             }
         }
-        if !self.refresh_in_flight && self.last_refresh_check.elapsed() >= Duration::from_secs(3) {
+        if !self.refresh_in_flight
+            && self.last_refresh_check.elapsed()
+                >= refresh_interval(context.input(|input| input.focused))
+        {
             let folders: Vec<_> = self
                 .tabs
                 .iter()
@@ -12086,6 +12182,13 @@ impl eframe::App for Explorer {
         // Start registration before tabs, breadcrumbs and the sidebar paint.
         // Clearing here used to discard all those targets before hit testing.
         self.drop_areas.clear();
+        self.drop_targets_active = context.input(|input| {
+            needs_drop_targets(
+                self.drag_files.is_some(),
+                !input.raw.hovered_files.is_empty(),
+                !input.raw.dropped_files.is_empty(),
+            )
+        });
         self.chrome_region(ui, true);
         self.recovery_banner(ui);
         self.transfer_strip(ui);
@@ -12097,6 +12200,7 @@ impl eframe::App for Explorer {
         self.preview_panel(ui);
         self.main_panel(ui);
         self.thumbnails.dispatch();
+        self.thumbnails.release_idle_cache();
         self.quick_look_window(&context);
         self.paint_drag_feedback(&context);
         self.finish_drag(&context);
@@ -12157,9 +12261,10 @@ mod tests {
         MarqueeSelection, NameMode, PasteMode, PendingPaste, PropertyResult, PropertySnapshot, Tab,
         TabSnapshot, ViewResult, accept_property_result, active_after_swap, choose_paste_clipboard,
         commit_local_view, drop_action, elapsed_label, marquee_from_list_whitespace,
-        next_search_repaint_delay, project_local_view, properties_dialog_limits,
-        read_property_snapshot, remaining_cut_paths, resolve_split_tabs, retain_visible_selection,
-        retry_unstarted_items, transfer_progress_details,
+        needs_drop_targets, next_search_repaint_delay, project_local_view,
+        properties_dialog_limits, read_property_snapshot, refresh_interval, remaining_cut_paths,
+        resolve_split_tabs, retain_visible_selection, retry_unstarted_items,
+        transfer_progress_details,
     };
     use crate::clipboard;
     use crate::config::Config;
@@ -12420,6 +12525,24 @@ mod tests {
     }
 
     #[test]
+    fn remote_name_sort_preserves_decoded_order_and_encoded_tiebreakers() {
+        let mut entries = vec![
+            remote_entry("Photo%2010", false, None),
+            remote_entry("Photo%202", false, None),
+            remote_entry("Folder%2010", true, None),
+            remote_entry("Folder%202", true, None),
+        ];
+        super::sort_remote_entries(&mut entries, super::RemoteSort::Name, false);
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Folder%202", "Folder%2010", "Photo%202", "Photo%2010"]
+        );
+    }
+
+    #[test]
     fn remote_size_sort_retains_folder_group_and_unknown_size() {
         let mut entries = vec![
             remote_entry("largest", false, Some(500)),
@@ -12464,6 +12587,45 @@ mod tests {
             super::visible_remote_indices(&entries, "notes"),
             Some(vec![1])
         );
+    }
+
+    #[test]
+    fn remote_search_indices_are_reused_until_query_or_entries_change() {
+        let mut tab = Tab::new(1, PathBuf::from("/tmp"));
+        tab.remote_entries = vec![
+            remote_entry("Family%20Photos", true, None),
+            remote_entry("notes", false, None),
+        ];
+        tab.query = "family".into();
+        tab.ensure_remote_visible();
+        let original = Arc::clone(tab.remote_visible.as_ref().unwrap());
+        assert_eq!(original.as_slice(), &[0]);
+        tab.ensure_remote_visible();
+        assert!(Arc::ptr_eq(&original, tab.remote_visible.as_ref().unwrap()));
+        tab.query = "notes".into();
+        tab.ensure_remote_visible();
+        assert_eq!(tab.remote_visible.as_ref().unwrap().as_slice(), &[1]);
+        tab.remote_entries.clear();
+        tab.invalidate_remote_visible();
+        tab.ensure_remote_visible();
+        assert!(tab.remote_visible.as_ref().unwrap().is_empty());
+        tab.query.clear();
+        tab.ensure_remote_visible();
+        assert!(tab.remote_visible.is_none());
+    }
+
+    #[test]
+    fn drop_targets_include_external_drag_even_without_internal_drag() {
+        assert!(!needs_drop_targets(false, false, false));
+        assert!(needs_drop_targets(true, false, false));
+        assert!(needs_drop_targets(false, true, false));
+        assert!(needs_drop_targets(false, false, true));
+    }
+
+    #[test]
+    fn background_refresh_is_slow_but_focus_restores_fast_refresh() {
+        assert_eq!(refresh_interval(true), Duration::from_secs(3));
+        assert_eq!(refresh_interval(false), Duration::from_secs(15));
     }
 
     #[test]
