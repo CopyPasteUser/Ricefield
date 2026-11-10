@@ -105,10 +105,16 @@ fn decode_image_reader<R: Read + Seek>(
             "Image exceeds the 16 MP safety limit",
         ));
     }
-    let image = image::DynamicImage::from_decoder(decoder)
-        .map_err(io::Error::other)?
-        .thumbnail(dimensions.0.min(max_width), dimensions.1.min(max_height))
-        .to_rgba8();
+    let decoded = image::DynamicImage::from_decoder(decoder).map_err(io::Error::other)?;
+    // Small images are already at their target resolution. Resizing them
+    // allocates a second image for no benefit. Consume the final RGBA buffer
+    // instead of cloning it (the common PNG RGBA case is already in this form).
+    let sized = if dimensions.0 > max_width || dimensions.1 > max_height {
+        decoded.thumbnail(dimensions.0.min(max_width), dimensions.1.min(max_height))
+    } else {
+        decoded
+    };
+    let image = sized.into_rgba8();
     let (width, height) = image.dimensions();
     Ok(Thumbnail {
         rgba: image.into_raw(),
@@ -564,6 +570,23 @@ mod tests {
         assert!(thumb.width <= 108 && thumb.height <= 108);
         assert_eq!(thumb.rgba.len(), thumb.width * thumb.height * 4);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn small_rgba_png_preserves_pixels_without_resizing() {
+        let source = image::ImageBuffer::from_fn(32, 24, |x, y| {
+            image::Rgba([x as u8, y as u8, 127, (x + y) as u8])
+        });
+        let mut encoded = Vec::new();
+        image::DynamicImage::ImageRgba8(source.clone())
+            .write_to(&mut Cursor::new(&mut encoded), image::ImageFormat::Png)
+            .unwrap();
+
+        for (max_width, max_height) in [(108, 108), (32, 24)] {
+            let thumb = decode_image(&encoded, max_width, max_height).unwrap();
+            assert_eq!((thumb.width, thumb.height), (32, 24));
+            assert_eq!(thumb.rgba.as_slice(), source.as_raw().as_slice());
+        }
     }
 
     #[test]
