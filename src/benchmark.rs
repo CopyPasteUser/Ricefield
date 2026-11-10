@@ -76,8 +76,8 @@ pub fn run() -> io::Result<()> {
     .ok_or_else(|| io::Error::other("Benchmark view projection was cancelled"))?;
     let view_projection_ms = started.elapsed().as_secs_f64() * 1000.0;
     if visible.len() != 100_000
-        || scan.entries[visible[0]].name != "file-0.txt"
-        || scan.entries[visible[99_999]].name != "file-99999.txt"
+        || scan.entries[visible[0]].name() != "file-0.txt"
+        || scan.entries[visible[99_999]].name() != "file-99999.txt"
     {
         return Err(io::Error::other("Benchmark view ordering was incorrect"));
     }
@@ -85,7 +85,7 @@ pub fn run() -> io::Result<()> {
     let mut names: Vec<_> = scan
         .entries
         .iter()
-        .map(|entry| entry.name.to_lowercase())
+        .map(|entry| entry.name().to_lowercase())
         .collect();
     // Compare exact owned heap capacities against the former representation.
     // These figures are for the filename index, not full-process RSS.
@@ -152,6 +152,13 @@ pub fn run() -> io::Result<()> {
         env!("CARGO_PKG_VERSION"),
         search.entries.len(),
         search.notice.is_some(),
+    );
+    let entry_struct_bytes = std::mem::size_of::<filesystem::Entry>();
+    let retained_entry_headers_bytes = scan.entries.len() * entry_struct_bytes;
+    let duplicated_filename_bytes_avoided: usize =
+        scan.entries.iter().map(|entry| entry.name().len()).sum();
+    println!(
+        "entry_struct_bytes = {entry_struct_bytes}\nretained_entry_headers_bytes = {retained_entry_headers_bytes}\nduplicated_filename_bytes_avoided = {duplicated_filename_bytes_avoided}"
     );
     Ok(())
 }

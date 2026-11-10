@@ -123,7 +123,6 @@ mod tests {
             fs::write(&path, contents).unwrap();
             entries.push(Entry {
                 path,
-                name: name.into(),
                 is_dir: false,
                 is_symlink: false,
                 size: contents.len() as u64,

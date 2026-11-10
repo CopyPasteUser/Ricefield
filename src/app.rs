@@ -551,6 +551,7 @@ pub(crate) fn project_local_view(
     }
     let search = query.to_lowercase();
     let name_glob = file_view::CompiledGlob::new(&config.filter_name_glob);
+    let has_name_glob = !config.filter_name_glob.is_empty();
     let name_regex = file_view::filename_regex(&config.filter_name_regex);
     let now = SystemTime::now();
     let mut visible = Vec::new();
@@ -558,16 +559,16 @@ pub(crate) fn project_local_view(
         if index % 256 == 0 && cancelled.load(Ordering::Relaxed) {
             return None;
         }
-        if (config.show_hidden || !entry.name.starts_with('.'))
+        if (config.show_hidden || !entry.is_hidden())
             && ((content_search && !query.is_empty()) || folded_names[index].contains(&search))
             && file_view::matches_filter(entry, &config.filter_kind)
             && file_view::matches_size(entry, &config.filter_size)
             && file_view::matches_modified(entry, &config.filter_modified, now)
-            && name_glob.matches(&entry.name)
+            && (!has_name_glob || name_glob.matches(&entry.name()))
             && name_regex.as_ref().is_ok_and(|regex| {
                 regex
                     .as_ref()
-                    .is_none_or(|regex| regex.is_match(&entry.name))
+                    .is_none_or(|regex| regex.is_match(&entry.name()))
             })
             && file_view::matches_custom_ranges(
                 entry,
@@ -6012,7 +6013,7 @@ impl Explorer {
             #[cfg(target_os = "windows")]
             let output = Command::new("explorer").arg(&entry.path).spawn();
             if let Err(error) = output {
-                self.status = Some((format!("Cannot open {}: {error}", entry.name), true));
+                self.status = Some((format!("Cannot open {}: {error}", entry.name()), true));
             }
         }
     }
@@ -10751,7 +10752,7 @@ impl Explorer {
             if ui.button("Rename").clicked() {
                 self.dialog = Some(Dialog::Name {
                     mode: NameMode::Rename(entry.path.clone()),
-                    value: entry.name.clone(),
+                    value: entry.name().into_owned(),
                 });
                 ui.close();
             }
@@ -10822,7 +10823,7 @@ impl Explorer {
                         .cloned();
                     ui.horizontal(|ui| {
                         let (title, detail) = if let Some(entry) = chosen {
-                            let title = entry.name.clone();
+                            let title = entry.name().into_owned();
                             let detail = format!(
                                 "{}    {}    Modified {}",
                                 entry.kind(),
@@ -12664,7 +12665,6 @@ mod tests {
             let path = tab.path.join(name);
             tab.selected.insert(path.clone());
             Arc::make_mut(&mut tab.entries).push(crate::filesystem::Entry {
-                name: name.into(),
                 path,
                 is_dir: false,
                 is_symlink: false,
@@ -12700,7 +12700,6 @@ mod tests {
             let name = format!("file{index}.txt");
             entries.push(crate::filesystem::Entry {
                 path: PathBuf::from("/synthetic").join(&name),
-                name: name.clone(),
                 is_dir: false,
                 is_symlink: false,
                 size: index,
@@ -12725,8 +12724,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(visible.len(), 100_000);
-        assert_eq!(shared[visible[0]].name, "file0.txt");
-        assert_eq!(shared[visible[99_999]].name, "file99999.txt");
+        assert_eq!(shared[visible[0]].name(), "file0.txt");
+        assert_eq!(shared[visible[99_999]].name(), "file99999.txt");
         assert!(
             project_local_view(
                 &shared,
@@ -12746,7 +12745,6 @@ mod tests {
             .iter()
             .map(|name| crate::filesystem::Entry {
                 path: PathBuf::from("/synthetic").join(name),
-                name: (*name).to_owned(),
                 is_dir: false,
                 is_symlink: false,
                 size: 0,
@@ -12797,7 +12795,6 @@ mod tests {
         let mut tab = Tab::new(12, PathBuf::from("/synthetic"));
         tab.entries = Arc::new(vec![
             crate::filesystem::Entry {
-                name: "visible".into(),
                 path: "/synthetic/visible".into(),
                 is_dir: false,
                 is_symlink: false,
@@ -12805,7 +12802,6 @@ mod tests {
                 modified: None,
             },
             crate::filesystem::Entry {
-                name: "hidden".into(),
                 path: "/synthetic/hidden".into(),
                 is_dir: false,
                 is_symlink: false,

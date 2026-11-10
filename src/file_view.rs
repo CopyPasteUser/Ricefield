@@ -9,26 +9,79 @@ use std::{
 };
 
 /// Case-folded filenames share one allocation instead of retaining one
-/// `String` allocation (and a 24-byte header) for every directory entry.
-/// Boundaries use native indices so even unusually large directories cannot
-/// overflow a fixed-width offset. This is immutable and cheap to share with
-/// cancellable view workers through `Arc`.
+/// `String` per directory entry. Normally offsets need only 32 bits; a wide
+/// index is retained as a lossless fallback for indexes exceeding 4 GiB.
+/// The immutable result can be shared through `Arc` with view workers.
 #[derive(Default)]
 pub struct FoldedNames {
     data: String,
-    ends: Vec<usize>,
+    ends: NameEnds,
+}
+
+enum NameEnds {
+    Compact(Vec<u32>),
+    Wide(Vec<usize>),
+}
+
+impl Default for NameEnds {
+    fn default() -> Self {
+        Self::Compact(Vec::new())
+    }
+}
+
+impl NameEnds {
+    fn with_capacity(count: usize) -> Self {
+        Self::Compact(Vec::with_capacity(count))
+    }
+
+    fn push(&mut self, end: usize) {
+        if let Self::Compact(ends) = self {
+            if let Ok(compact) = u32::try_from(end) {
+                ends.push(compact);
+                return;
+            }
+            let mut wide = Vec::with_capacity(ends.capacity().max(ends.len() + 1));
+            wide.extend(ends.iter().copied().map(|value| value as usize));
+            *self = Self::Wide(wide);
+        }
+        if let Self::Wide(ends) = self {
+            ends.push(end);
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Compact(ends) => ends.len(),
+            Self::Wide(ends) => ends.len(),
+        }
+    }
+
+    fn get(&self, index: usize) -> usize {
+        match self {
+            Self::Compact(ends) => ends[index] as usize,
+            Self::Wide(ends) => ends[index],
+        }
+    }
+
+    fn capacity_bytes(&self) -> usize {
+        match self {
+            Self::Compact(ends) => ends.capacity() * std::mem::size_of::<u32>(),
+            Self::Wide(ends) => ends.capacity() * std::mem::size_of::<usize>(),
+        }
+    }
 }
 
 impl FoldedNames {
     pub fn from_entries(entries: &[Entry]) -> Self {
-        let mut data = String::with_capacity(entries.iter().map(|entry| entry.name.len()).sum());
-        let mut ends = Vec::with_capacity(entries.len());
+        let mut data = String::with_capacity(entries.iter().map(|entry| entry.name().len()).sum());
+        let mut ends = NameEnds::with_capacity(entries.len());
         for entry in entries {
             // Use full Unicode string folding. Lowercasing individual chars
             // would change context-sensitive mappings (e.g. Greek sigma).
-            data.push_str(&entry.name.to_lowercase());
+            data.push_str(&entry.name().to_lowercase());
             ends.push(data.len());
         }
+        data.shrink_to_fit();
         Self { data, ends }
     }
 
@@ -37,12 +90,12 @@ impl FoldedNames {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.ends.is_empty()
+        self.ends.len() == 0
     }
 
     /// Exact owned heap footprint, excluding allocator metadata.
     pub fn heap_capacity_bytes(&self) -> usize {
-        self.data.capacity() + self.ends.capacity() * std::mem::size_of::<usize>()
+        self.data.capacity() + self.ends.capacity_bytes()
     }
 }
 
@@ -50,8 +103,12 @@ impl Index<usize> for FoldedNames {
     type Output = str;
 
     fn index(&self, index: usize) -> &str {
-        let end = self.ends[index];
-        let start = if index == 0 { 0 } else { self.ends[index - 1] };
+        let end = self.ends.get(index);
+        let start = if index == 0 {
+            0
+        } else {
+            self.ends.get(index - 1)
+        };
         &self.data[start..end]
     }
 }
@@ -307,7 +364,6 @@ mod tests {
             .into_iter()
             .map(|name| Entry {
                 path: PathBuf::from(name),
-                name: name.into(),
                 is_dir: false,
                 is_symlink: false,
                 size: 0,
@@ -317,14 +373,13 @@ mod tests {
         let names = FoldedNames::from_entries(&entries);
         assert_eq!(names.len(), entries.len());
         for (index, entry) in entries.iter().enumerate() {
-            assert_eq!(&names[index], entry.name.to_lowercase().as_str());
+            assert_eq!(&names[index], entry.name().to_lowercase().as_str());
         }
         assert!(FoldedNames::default().is_empty());
 
         for index in 0..100_000 {
             entries.push(Entry {
                 path: PathBuf::from(format!("file-{index}.txt")),
-                name: format!("file-{index}.txt"),
                 is_dir: false,
                 is_symlink: false,
                 size: 0,
@@ -334,7 +389,7 @@ mod tests {
         let names = FoldedNames::from_entries(&entries);
         let legacy = entries
             .iter()
-            .map(|entry| entry.name.to_lowercase())
+            .map(|entry| entry.name().to_lowercase())
             .collect::<Vec<_>>();
         let legacy_bytes = legacy.capacity() * std::mem::size_of::<String>()
             + legacy.iter().map(String::capacity).sum::<usize>();
@@ -342,6 +397,20 @@ mod tests {
         eprintln!("100k folded names: compact={compact_bytes} B legacy={legacy_bytes} B");
         assert!(compact_bytes < legacy_bytes * 3 / 4);
         assert_eq!(&names[100_004], "file-99999.txt");
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn name_offsets_promote_losslessly_past_four_gibibytes() {
+        let mut ends = super::NameEnds::with_capacity(3);
+        ends.push(17);
+        ends.push(u32::MAX as usize);
+        ends.push(u32::MAX as usize + 1);
+        assert_eq!(ends.len(), 3);
+        assert_eq!(ends.get(0), 17);
+        assert_eq!(ends.get(1), u32::MAX as usize);
+        assert_eq!(ends.get(2), u32::MAX as usize + 1);
+        assert!(matches!(ends, super::NameEnds::Wide(_)));
     }
 
     #[test]
@@ -375,7 +444,6 @@ mod tests {
         let now = SystemTime::now();
         let mut entry = Entry {
             path: PathBuf::from("movie.mkv"),
-            name: "movie.mkv".into(),
             is_dir: false,
             is_symlink: false,
             size: 100 * 1024 * 1024,
@@ -442,7 +510,6 @@ mod tests {
     fn filters_never_treat_folders_as_media() {
         let entry = Entry {
             path: PathBuf::from("/tmp/photo.jpg"),
-            name: "photo.jpg".into(),
             is_dir: true,
             is_symlink: false,
             size: 0,
@@ -475,7 +542,6 @@ mod tests {
         let now = SystemTime::now();
         let mut entry = Entry {
             path: PathBuf::from("paper.pdf"),
-            name: "paper.pdf".into(),
             is_dir: false,
             is_symlink: false,
             size: 3 * 1024 * 1024,

@@ -1,5 +1,6 @@
 use crate::journal::{Comparison, Journal, State, compare_for_recovery};
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     ffi::{OsStr, OsString},
     fs::{self, File, FileTimes, OpenOptions},
@@ -270,7 +271,6 @@ impl Transfer<'_> {
 #[derive(Clone)]
 pub struct Entry {
     pub path: PathBuf,
-    pub name: String,
     pub is_dir: bool,
     pub is_symlink: bool,
     pub size: u64,
@@ -278,13 +278,32 @@ pub struct Entry {
 }
 
 impl Entry {
+    /// The filename is already stored in `path`. Borrow it directly rather
+    /// than retaining a second name allocation for every directory entry.
+    /// Invalid UTF-8 is rendered with exactly the same lossy replacement as
+    /// the previous stored String, without allocating for normal filenames.
+    pub fn name(&self) -> Cow<'_, str> {
+        self.path.file_name().unwrap_or_default().to_string_lossy()
+    }
+
+    pub fn is_hidden(&self) -> bool {
+        self.path
+            .file_name()
+            .is_some_and(|name| name.as_encoded_bytes().first() == Some(&b'.'))
+    }
+
     pub fn kind(&self) -> &'static str {
         if self.is_symlink {
             "Link"
         } else if self.is_dir {
             "Folder"
         } else {
-            file_kind_from_name(&self.name)
+            file_kind_from_extension(
+                self.path
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .unwrap_or(""),
+            )
         }
     }
 }
@@ -295,6 +314,10 @@ pub fn file_kind_from_name(name: &str) -> &'static str {
         .extension()
         .and_then(|ext| ext.to_str())
         .unwrap_or("");
+    file_kind_from_extension(extension)
+}
+
+fn file_kind_from_extension(extension: &str) -> &'static str {
     // Every recognized extension has at most four ASCII bytes. Folding into
     // a stack buffer avoids a heap allocation for every visible file cell and
     // each entry inspected by file-type filters, including uppercase names.
@@ -422,14 +445,6 @@ fn scan_with_metadata(
             .is_some_and(|meta| meta.file_type().is_symlink())
             && fs::metadata(&entry_path).is_ok_and(|meta| meta.is_dir());
         entries.push(Entry {
-            // `item.path()` already contains this filename. Reading it from
-            // the path avoids allocating a second temporary OsString for
-            // every entry in a large directory.
-            name: entry_path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned(),
             path: entry_path,
             is_dir: linked_directory
                 || metadata.as_ref().is_some_and(fs::Metadata::is_dir)
@@ -616,7 +631,6 @@ pub fn search_with_options(
             }
             if name_match || content_match {
                 results.push(Entry {
-                    name,
                     path: entry.path(),
                     is_dir: metadata.is_dir()
                         || (metadata.file_type().is_symlink()
@@ -4753,10 +4767,51 @@ mod tests {
             let linked_file = scan
                 .entries
                 .iter()
-                .find(|entry| entry.name == "file-link")
+                .find(|entry| entry.name() == "file-link")
                 .unwrap();
             assert!(!linked_file.is_dir && linked_file.is_symlink);
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scanned_and_searched_names_match_their_paths_even_for_non_utf8_filenames() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let root = test_root();
+        let regular = root.join("résumé.jpg");
+        let invalid = root.join(std::ffi::OsString::from_vec(b"photo-\xff.png".to_vec()));
+        let hidden = root.join(std::ffi::OsString::from_vec(b".hidden-\xff.txt".to_vec()));
+        fs::write(&regular, b"one").unwrap();
+        fs::write(&invalid, b"two").unwrap();
+        fs::write(&hidden, b"three").unwrap();
+        let cancelled = AtomicBool::new(false);
+        let scan = scan_cancellable(&root, &cancelled).unwrap();
+        let search = search_with_options(&root, "photo", true, false, false, &cancelled).unwrap();
+        assert_eq!(scan.entries.len(), 3);
+        assert_eq!(search.entries.len(), 1);
+        for entry in scan.entries.iter().chain(&search.entries) {
+            assert_eq!(
+                entry.name(),
+                entry.path.file_name().unwrap().to_string_lossy()
+            );
+        }
+        assert!(
+            scan.entries
+                .iter()
+                .any(|entry| entry.name() == "photo-�.png")
+        );
+        assert!(
+            scan.entries
+                .iter()
+                .any(|entry| entry.path == hidden && entry.is_hidden())
+        );
+        assert!(
+            scan.entries.iter().any(|entry| entry.path == invalid
+                && !entry.is_hidden()
+                && entry.kind() == "Image")
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -8720,12 +8775,12 @@ mod tests {
         assert!(
             scan.entries
                 .iter()
-                .any(|entry| entry.name == "readable.txt")
+                .any(|entry| entry.name() == "readable.txt")
         );
         assert!(
             scan.entries
                 .iter()
-                .any(|entry| entry.name == "offline-mount" && entry.is_dir)
+                .any(|entry| entry.name() == "offline-mount" && entry.is_dir)
         );
         fs::remove_dir_all(root).unwrap();
     }
