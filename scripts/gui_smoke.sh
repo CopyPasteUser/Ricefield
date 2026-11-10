@@ -115,13 +115,15 @@ for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sideba
   import -window "$window_id" "screenshots/$theme.png"
   identify -format '%wx%h\n' "screenshots/$theme.png"
   # Exercise actual primary-button rubber-band selection in a populated list.
-  # Starting below the items and ending above the last files must select
-  # multiple visible rows; move the pointer away before comparing to avoid
-  # mistaking a mere hover effect for a selection.
+  # Start on the trailing whitespace *inside* a row: this is the explicit
+  # list marquee hit target. Starting below the last item can instead be
+  # captured by the ScrollArea and turn into a file drop at the destination.
+  # Move across at least three rows, then move away to avoid hover effects.
   if [[ "$theme" == win7 ]]; then
-    xdotool mousemove --window "$window_id" 1050 425
+    xdotool mousemove --window "$window_id" 1050 307
     xdotool mousedown 1
-    xdotool mousemove --sync --window "$window_id" 218 250
+    sleep 0.15
+    xdotool mousemove --sync --window "$window_id" 218 240
     sleep 0.35
     xdotool mouseup 1
     xdotool mousemove --window "$window_id" 1060 550
