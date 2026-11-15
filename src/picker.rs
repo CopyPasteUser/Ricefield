@@ -79,7 +79,7 @@ fn valid_name(name: &str) -> bool {
         && name != "."
         && name != ".."
         && !name.contains(['/', '\\', '\0'])
-        && name.as_bytes().len() <= 255
+        && name.len() <= 255
 }
 
 fn file_uri(path: &Path) -> Result<String, String> {
@@ -426,10 +426,10 @@ impl eframe::App for Picker {
                 ui.label("RiceField");
             });
             ui.horizontal(|ui| {
-                if ui.button("↑").on_hover_text("Parent folder").clicked() {
-                    if let Some(parent) = self.folder.parent() {
-                        self.navigate(parent.to_path_buf());
-                    }
+                if ui.button("↑").on_hover_text("Parent folder").clicked()
+                    && let Some(parent) = self.folder.parent()
+                {
+                    self.navigate(parent.to_path_buf());
                 }
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut self.address).desired_width(f32::INFINITY),
