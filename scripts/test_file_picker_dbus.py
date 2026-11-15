@@ -42,6 +42,10 @@ class DBusIntegration(unittest.TestCase):
             "    sys.stdout.write('uris = [\"file:///tmp/a.txt\", \"file:///tmp/b.txt\"]\\n')\n"
             "else:\n"
             "    sys.stdout.write('uris = [\"file:///tmp/ricefield%20test.txt\"]\\n')\n"
+            "    if b'[[filters]]' in data:\n"
+            "        sys.stdout.write('selected_filter = 0\\n')\n"
+            "    if b'id = \"readonly\"' in data:\n"
+            "        sys.stdout.write('[[selections]]\\nid = \"readonly\"\\nvalue = \"false\"\\n')\n"
         )
         self.fake.chmod(0o700)
         self.backend = subprocess.Popen(
