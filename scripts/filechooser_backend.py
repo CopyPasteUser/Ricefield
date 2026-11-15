@@ -81,14 +81,15 @@ def serialize_request(mode: str, title: str, options: dict[str, object]) -> byte
         filters = []
     if len(filters) > 64:
         raise ValueError("Too many filters")
+    filter_sections = []
     for entry in filters:
         name, rules = entry
-        lines.extend(["[[filters]]", f"name = {quoted(str(name)[:128])}"])
+        filter_sections.extend(["[[filters]]", f"name = {quoted(str(name)[:128])}"])
         if len(rules) > 128:
             raise ValueError("Too many filter rules")
         valid_rules = [[int(kind), str(pattern)[:256]] for kind, pattern in rules
                        if int(kind) in (0, 1) and pattern]
-        lines.append("rules = [" + ", ".join(
+        filter_sections.append("rules = [" + ", ".join(
             f"[{kind}, {quoted(pattern)}]" for kind, pattern in valid_rules) + "]")
     current_filter = unpack_variant(options.get("current_filter"))
     if current_filter is not None:
@@ -100,8 +101,9 @@ def serialize_request(mode: str, title: str, options: dict[str, object]) -> byte
     choices = unpack_variant(options.get("choices", []))
     if len(choices) > 32:
         raise ValueError("Too many choice controls")
+    choice_sections = []
     for identifier, label, values, selected in choices:
-        lines.extend(["[[choices]]", f"id = {quoted(str(identifier))}",
+        choice_sections.extend(["[[choices]]", f"id = {quoted(str(identifier))}",
                       f"label = {quoted(str(label)[:128])}",
                       "options = [" + ", ".join(
                           f"[{quoted(str(key))}, {quoted(str(caption))}]" for key, caption in values) + "]",
@@ -111,6 +113,8 @@ def serialize_request(mode: str, title: str, options: dict[str, object]) -> byte
         if not 0 < len(files) <= 128:
             raise ValueError("SaveFiles requires 1–128 filenames")
         lines.append("files = [" + ", ".join(quoted(filename(item)) for item in files) + "]")
+    lines.extend(filter_sections)
+    lines.extend(choice_sections)
     result = ("\n".join(lines) + "\n").encode("utf-8")
     if len(result) > MAX_PAYLOAD:
         raise ValueError("Portal request is too large")
