@@ -19,6 +19,22 @@ Non-UTF-8 local paths remain usable but are excluded from saved TOML sessions.
 Open a separate window with **Ctrl+Shift+N**. Its session does not replace the
 primary window's saved tabs.
 
+## External drag-and-drop and RiceBowl live profiles
+
+**Drag to another app…** (Ctrl+Shift+D) uses an installed `ripdrag` or
+`dragon` native drag-source window. RiceField now checks the helper's exit
+status asynchronously, so an unsuccessful launch is not mistaken for a
+completed drag. Native Wayland in-process outgoing DnD remains unavailable
+in the current eframe/winit stack; incoming drops may use the documented
+`--xwayland-dnd` mode. Internal copy/move dragging remains independent.
+
+The optional RiceBowl `RICEBOWL_RICEFIELD_THEME_FILE` session profile is
+monitored through inotify. When RiceBowl replaces its private session folder,
+RiceField re-registers the watcher. While the watch works, a 30-second safety
+poll replaces frequent three-second metadata checks. If the watch cannot be
+registered, a three-second fallback remains; normal standalone operation
+does not depend on RiceBowl.
+
 ## Recovery reminders
 
 When an interrupted local or remote transfer leaves recovery evidence, use

@@ -20,6 +20,7 @@ use std::{
 pub struct Watcher {
     events: Receiver<()>,
     stop: Arc<AtomicBool>,
+    active: Arc<AtomicBool>,
 }
 
 impl Watcher {
@@ -28,6 +29,8 @@ impl Watcher {
         let filename = path.file_name()?.as_bytes().to_vec();
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
+        let active = Arc::new(AtomicBool::new(false));
+        let thread_active = Arc::clone(&active);
         let context = context.clone();
         let (sender, events) = mpsc::sync_channel(1);
         std::thread::spawn(move || {
@@ -44,11 +47,15 @@ impl Watcher {
                 | libc::IN_ATTRIB
                 | libc::IN_DELETE_SELF
                 | libc::IN_MOVE_SELF;
-            if unsafe { libc::inotify_add_watch(fd, parent.as_ptr(), mask) } < 0 {
-                return;
-            }
+            let mut watch_id = -1;
             let mut buffer = [0u8; 8192];
             while !thread_stop.load(Ordering::Relaxed) {
+                if watch_id < 0 {
+                    // RiceBowl may replace the parent directory; keep watching
+                    // the current path rather than a retired directory inode.
+                    watch_id = unsafe { libc::inotify_add_watch(fd, parent.as_ptr(), mask) };
+                    thread_active.store(watch_id >= 0, Ordering::Relaxed);
+                }
                 let mut pollfd = libc::pollfd {
                     fd,
                     events: libc::POLLIN,
@@ -62,18 +69,35 @@ impl Watcher {
                 if length <= 0 {
                     continue;
                 }
-                if contains_profile_event(&buffer[..length as usize], &filename) {
+                let bytes = &buffer[..length as usize];
+                if contains_profile_event(bytes, &filename) {
                     let _ = sender.try_send(());
                     context.request_repaint();
                 }
+                if watch_invalidated(bytes, watch_id) {
+                    thread_active.store(false, Ordering::Relaxed);
+                    if watch_id >= 0 {
+                        unsafe { libc::inotify_rm_watch(fd, watch_id) };
+                    }
+                    watch_id = -1;
+                }
             }
+            thread_active.store(false, Ordering::Relaxed);
             drop(descriptor);
         });
-        Some(Self { events, stop })
+        Some(Self {
+            events,
+            stop,
+            active,
+        })
     }
 
     pub fn changed(&self) -> bool {
         self.events.try_recv().is_ok()
+    }
+
+    pub fn active(&self) -> bool {
+        self.active.load(Ordering::Relaxed)
     }
 }
 
@@ -108,6 +132,33 @@ fn contains_profile_event(buffer: &[u8], filename: &[u8]) -> bool {
         }
         let name = &buffer[offset + header..end];
         if name.split(|byte| *byte == 0).next() == Some(filename) {
+            return true;
+        }
+        offset = end;
+    }
+    false
+}
+
+/// Determine whether this watch points to an invalid or moved directory.
+fn watch_invalidated(buffer: &[u8], watch_id: i32) -> bool {
+    let header = std::mem::size_of::<libc::inotify_event>();
+    let mut offset = 0;
+    while let Some(bytes) = buffer.get(offset..offset + header) {
+        let event = unsafe {
+            bytes
+                .as_ptr()
+                .cast::<libc::inotify_event>()
+                .read_unaligned()
+        };
+        let end = offset
+            .saturating_add(header)
+            .saturating_add(event.len as usize);
+        if end > buffer.len() {
+            break;
+        }
+        if event.wd == watch_id
+            && event.mask & (libc::IN_IGNORED | libc::IN_DELETE_SELF | libc::IN_MOVE_SELF) != 0
+        {
             return true;
         }
         offset = end;
@@ -162,6 +213,59 @@ mod tests {
             target
         ));
         assert!(!contains_profile_event(&[0; 3], target));
+        assert!(watch_invalidated(&event(b"", libc::IN_MOVE_SELF), 1));
+        assert!(watch_invalidated(&event(b"", libc::IN_IGNORED), 1));
+        assert!(!watch_invalidated(&event(target, libc::IN_CLOSE_WRITE), 1));
+        assert!(!watch_invalidated(&event(b"", libc::IN_MOVE_SELF), 4));
+    }
+
+    #[test]
+    fn a_replaced_ricebowl_session_directory_is_watched_again() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ricefield-profile-session-{}-{unique}",
+            std::process::id()
+        ));
+        let live = root.join("active");
+        let old = root.join("retired");
+        fs::create_dir_all(&live).unwrap();
+        let target = live.join("ricefield.riceprofile.toml");
+        let context = egui::Context::default();
+        let watcher = Watcher::start(&target, &context).unwrap();
+        let ready = Instant::now() + Duration::from_secs(3);
+        while !watcher.active() && Instant::now() < ready {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(watcher.active(), "initial session watch was not installed");
+
+        fs::rename(&live, &old).unwrap();
+        fs::create_dir(&live).unwrap();
+        // Drain the old directory's invalidation notification so it cannot
+        // be mistaken for an actual update of the newly created profile.
+        std::thread::sleep(Duration::from_millis(200));
+        while watcher.changed() {}
+
+        let deadline = Instant::now() + Duration::from_secs(4);
+        let mut observed = false;
+        let stage = live.join(".riceprofile-test");
+        while Instant::now() < deadline {
+            fs::write(&stage, b"format_version = 1\n").unwrap();
+            fs::rename(&stage, &target).unwrap();
+            if watcher.changed() {
+                observed = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(40));
+        }
+        drop(watcher);
+        fs::remove_dir_all(root).unwrap();
+        assert!(
+            observed,
+            "watch did not recover after replacing session directory"
+        );
     }
 
     #[test]

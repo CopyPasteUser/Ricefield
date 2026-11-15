@@ -73,6 +73,17 @@ fn recovery_notice_visible(current: Option<&str>, hidden: Option<&str>) -> bool 
     current.is_some() && current != hidden
 }
 
+/// RiceBowl already sends file events. Keep a periodic safety scan but
+/// avoid scheduling filesystem metadata workers every three seconds when the
+/// watcher is healthy; restore the fast fallback if the watch is lost.
+fn profile_poll_interval(watcher_active: bool) -> Duration {
+    if watcher_active {
+        Duration::from_secs(30)
+    } else {
+        Duration::from_secs(3)
+    }
+}
+
 fn refresh_interval(focused: bool) -> Duration {
     if focused {
         FOREGROUND_REFRESH_INTERVAL
@@ -1676,6 +1687,7 @@ pub struct Explorer {
     folder_tree: FolderTree,
     tree_expanded: BTreeSet<PathBuf>,
     drag_files: Option<DragFiles>,
+    external_drag: Option<crate::external_drag::DragSession>,
     marquee: Option<MarqueeSelection>,
     drop_areas: Vec<DropArea>,
     drop_targets_active: bool,
@@ -1964,6 +1976,7 @@ impl Explorer {
             folder_tree: FolderTree::new(),
             tree_expanded: BTreeSet::new(),
             drag_files: None,
+            external_drag: None,
             marquee: None,
             drop_areas: Vec::new(),
             drop_targets_active: false,
@@ -2773,13 +2786,25 @@ impl Explorer {
             ));
             return;
         }
-        self.status = Some(match crate::external_drag::launch(&self.selected_paths()) {
-            Ok(helper) => (
-                format!("Opened native {helper} drag source; drag into the target app"),
-                false,
-            ),
-            Err(error) => (error, true),
-        });
+        if self.external_drag.is_some() {
+            self.status = Some((
+                "An external drag source is already active; finish it before starting another"
+                    .into(),
+                true,
+            ));
+            return;
+        }
+        match crate::external_drag::launch(&self.selected_paths()) {
+            Ok(session) => {
+                let helper = session.helper;
+                self.external_drag = Some(session);
+                self.status = Some((
+                    format!("Opened native {helper} drag source; drag into the target app"),
+                    false,
+                ));
+            }
+            Err(error) => self.status = Some((error, true)),
+        }
     }
 
     fn spawn_window(&mut self) {
@@ -3954,6 +3979,38 @@ impl Explorer {
     }
 
     fn poll_background(&mut self, context: &egui::Context) {
+        let drag_result = self
+            .external_drag
+            .as_ref()
+            .map(|session| (session.helper, session.completed.try_recv()));
+        if let Some((helper, result)) = drag_result {
+            match result {
+                Ok(Ok(status)) if status.success() => {
+                    self.external_drag = None;
+                }
+                Ok(Ok(status)) => {
+                    self.external_drag = None;
+                    self.status = Some((
+                        format!(
+                            "{helper} could not complete external drag (exit {status}); use Ctrl+C and paste if drag-and-drop is unavailable"
+                        ),
+                        true,
+                    ));
+                }
+                Ok(Err(error)) => {
+                    self.external_drag = None;
+                    self.status = Some((format!("{helper} drag helper failed: {error}"), true));
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.external_drag = None;
+                    self.status = Some((
+                        format!("{helper} drag helper exited without a result"),
+                        true,
+                    ));
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
         while let Some(error) = self.config_writer.next_error() {
             self.status = Some((format!("Cannot save preferences: {error}"), true));
         }
@@ -12193,7 +12250,14 @@ impl eframe::App for Explorer {
             // network/filesystem's inode or timestamp precision here.
             self.reload_theme_file(&context, true);
         }
-        if self.theme_file.is_some() && self.theme_last_check.elapsed() >= Duration::from_secs(3) {
+        if self.theme_file.is_some()
+            && self.theme_last_check.elapsed()
+                >= profile_poll_interval(
+                    self.theme_watcher
+                        .as_ref()
+                        .is_some_and(theme_events::Watcher::active),
+                )
+        {
             self.theme_last_check = Instant::now();
             self.reload_theme_file(&context, false);
         }
@@ -12340,7 +12404,7 @@ mod tests {
         MarqueeSelection, NameMode, PasteMode, PendingPaste, PropertyResult, PropertySnapshot, Tab,
         TabSnapshot, ViewResult, accept_property_result, active_after_swap, choose_paste_clipboard,
         commit_local_view, drop_action, elapsed_label, marquee_from_list_whitespace,
-        needs_drop_targets, next_search_repaint_delay, project_local_view,
+        needs_drop_targets, next_search_repaint_delay, profile_poll_interval, project_local_view,
         properties_dialog_limits, read_property_snapshot, recovery_notice_digest,
         recovery_notice_visible, refresh_interval, remaining_cut_paths, resolve_split_tabs,
         retain_visible_selection, retry_unstarted_items, transfer_progress_details,
@@ -12358,6 +12422,12 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant, SystemTime};
+
+    #[test]
+    fn ricebowl_profile_polling_uses_events_with_fallback() {
+        assert_eq!(profile_poll_interval(true), Duration::from_secs(30));
+        assert_eq!(profile_poll_interval(false), Duration::from_secs(3));
+    }
 
     #[test]
     fn recovery_reminder_hides_only_the_same_evidence_and_survives_reordering() {

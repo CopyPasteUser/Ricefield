@@ -9,7 +9,8 @@
 use std::{
     io,
     path::PathBuf,
-    process::{Child, Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
+    sync::mpsc::{self, Receiver},
     thread,
 };
 
@@ -62,7 +63,12 @@ fn validate_paths(paths: &[PathBuf]) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn launch_with<F>(paths: &[PathBuf], mut start: F) -> Result<&'static str, String>
+pub struct DragSession {
+    pub helper: &'static str,
+    pub completed: Receiver<io::Result<ExitStatus>>,
+}
+
+fn launch_with<F>(paths: &[PathBuf], mut start: F) -> Result<DragSession, String>
 where
     F: FnMut(Helper, &[PathBuf]) -> io::Result<Child>,
 {
@@ -70,11 +76,15 @@ where
     for helper in Helper::candidates() {
         match start(helper, paths) {
             Ok(mut child) => {
-                // Avoid zombies without blocking egui while the user drags.
+                // Reap off-thread and report helper failures to the UI.
+                let (sender, completed) = mpsc::channel();
                 thread::spawn(move || {
-                    let _ = child.wait();
+                    let _ = sender.send(child.wait());
                 });
-                return Ok(helper.executable());
+                return Ok(DragSession {
+                    helper: helper.executable(),
+                    completed,
+                });
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(error) => return Err(format!("Cannot launch {}: {error}", helper.executable())),
@@ -83,7 +93,7 @@ where
     Err("External drag needs ripdrag or dragon (X11/Wayland). No files were changed; use Ctrl+C and paste into the destination app instead.".into())
 }
 
-pub fn launch(paths: &[PathBuf]) -> Result<&'static str, String> {
+pub fn launch(paths: &[PathBuf]) -> Result<DragSession, String> {
     launch_with(paths, |helper, paths| helper.configure(paths).spawn())
 }
 
@@ -97,6 +107,20 @@ mod tests {
         assert!(validate_paths(&[PathBuf::from("relative")]).is_err());
         assert!(validate_paths(&[PathBuf::from("/tmp/a b\n --untrusted")]).is_ok());
         assert!(validate_paths(&vec![PathBuf::from("/tmp/file"); 129]).is_err());
+    }
+
+    #[test]
+    fn failed_helper_exit_is_reported_without_blocking_gui() {
+        use std::time::Duration;
+        let files = [PathBuf::from("/tmp/ricefield-drag-source")];
+        let session = launch_with(&files, |_, _| Command::new("false").spawn()).unwrap();
+        let status = session
+            .completed
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap()
+            .unwrap();
+        assert!(!status.success());
+        assert_eq!(session.helper, "ripdrag");
     }
 
     #[test]
