@@ -30,6 +30,10 @@ performance, Linux integration, then visual polish.
   safe data-source API; retain the existing optional helper in the meantime.
 - Improve direct RiceBowl event integration, remaining translations and
   measured idle RAM only when profiling identifies a concrete bottleneck.
+  The 1.1 thumbnail-worker follow-up replaces per-image OS thread creation
+  with a lazy single bounded decoder that exits after inactivity; CI reports
+  settled/peak RSS, PSS and thread counts. Physical Mint/Thunar comparisons
+  remain separate hardware evidence.
 
 ## Historical final 1.0 execution plan (after rc.21)
 

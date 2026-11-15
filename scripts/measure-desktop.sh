@@ -33,6 +33,9 @@ done
 mapped_ns="$(date +%s%N)"
 # Allow startup/initial scans to settle before sampling ten idle seconds.
 sleep 3
+threads_before="$(awk '/^Threads:/ {print $2}' "/proc/$app_pid/status")"
+rss_start_kib="$(awk '/^VmRSS:/ {print $2}' "/proc/$app_pid/status")"
+pss_start_kib="$(awk '/^Pss:/ {print $2}' "/proc/$app_pid/smaps_rollup")"
 ticks_before="$(awk '{print $14 + $15}' "/proc/$app_pid/stat")"
 idle_start_ns="$(date +%s%N)"
 sleep 10
@@ -43,11 +46,16 @@ rss_kib="$(awk '/^VmRSS:/ {print $2}' "/proc/$app_pid/status")"
 anon_kib="$(awk '/^RssAnon:/ {print $2}' "/proc/$app_pid/status")"
 file_kib="$(awk '/^RssFile:/ {print $2}' "/proc/$app_pid/status")"
 pss_kib="$(awk '/^Pss:/ {print $2}' "/proc/$app_pid/smaps_rollup")"
+threads_after="$(awk '/^Threads:/ {print $2}' "/proc/$app_pid/status")"
+peak_rss_kib="$(awk '/^VmHWM:/ {print $2}' "/proc/$app_pid/status")"
 clock_ticks="$(getconf CLK_TCK)"
 awk -v version="$("$binary" --version)" -v start="$start_ns" -v mapped="$mapped_ns" \
   -v first="$ticks_before" -v last="$ticks_after" -v hz="$clock_ticks" \
   -v idle_start="$idle_start_ns" -v idle_end="$idle_end_ns" -v rss="$rss_kib" \
   -v anon="$anon_kib" -v file="$file_kib" -v pss="$pss_kib" \
+  -v begin_rss="$rss_start_kib" -v begin_pss="$pss_start_kib" \
+  -v peak="$peak_rss_kib" -v threads_before="$threads_before" \
+  -v threads_after="$threads_after" \
   'BEGIN {
     printf "version = \"%s\"\n", version;
     print "display = \"Xvfb / software GL\"";
@@ -58,5 +66,10 @@ awk -v version="$("$binary" --version)" -v start="$start_ns" -v mapped="$mapped_
     printf "idle_rss_anon_kib = %d\n", anon;
     printf "idle_rss_file_kib = %d\n", file;
     printf "idle_pss_kib = %d\n", pss;
+    printf "settled_rss_kib = %d\n", begin_rss;
+    printf "settled_pss_kib = %d\n", begin_pss;
+    printf "peak_rss_kib = %d\n", peak;
+    printf "threads_before_idle = %d\n", threads_before;
+    printf "threads_after_idle = %d\n", threads_after;
   }' > "$output"
 cat "$output"

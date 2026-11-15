@@ -6,7 +6,7 @@ use eframe::egui;
 use std::{
     collections::{HashMap, VecDeque},
     path::PathBuf,
-    sync::mpsc::{self, Receiver, Sender},
+    sync::mpsc::{self, Receiver, Sender, SyncSender, TrySendError},
     thread,
     time::{Duration, Instant, SystemTime},
 };
@@ -17,6 +17,9 @@ use std::{
 const MAX_CACHED: usize = 48;
 const MAX_PENDING: usize = 48;
 const IDLE_TEXTURE_RETENTION: Duration = Duration::from_secs(5);
+// Decoder threads are expensive to create and retain stack address space.
+// Reuse one bounded worker while browsing images, then release it after idle.
+const IDLE_WORKER_RETENTION: Duration = Duration::from_secs(15);
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct Key {
@@ -56,6 +59,7 @@ pub struct ThumbnailManager {
     last_requested: Instant,
     sender: Sender<ResultMessage>,
     receiver: Receiver<ResultMessage>,
+    request_sender: Option<SyncSender<Key>>,
 }
 
 impl Default for ThumbnailManager {
@@ -69,11 +73,79 @@ impl Default for ThumbnailManager {
             last_requested: Instant::now(),
             sender,
             receiver,
+            request_sender: None,
         }
     }
 }
 
 impl ThumbnailManager {
+    fn spawn_worker(&self) -> SyncSender<Key> {
+        Self::spawn_worker_with_timeout(self.sender.clone(), IDLE_WORKER_RETENTION)
+    }
+
+    fn spawn_worker_with_timeout(
+        results: Sender<ResultMessage>,
+        idle_timeout: Duration,
+    ) -> SyncSender<Key> {
+        let (requests, incoming) = mpsc::sync_channel::<Key>(1);
+        thread::Builder::new()
+            .name("ricefield-thumbnail".into())
+            .spawn(move || {
+                while let Ok(key) = incoming.recv_timeout(idle_timeout) {
+                    // Malformed image decoders must never wedge the queue.
+                    let result =
+                        std::panic::catch_unwind(|| preview::thumbnail(&key.path).ok().flatten())
+                            .ok()
+                            .flatten();
+                    if results.send(ResultMessage { key, result }).is_err() {
+                        break;
+                    }
+                }
+            })
+            .expect("Cannot start thumbnail decoder");
+        requests
+    }
+
+    fn submit(&mut self, key: Key) {
+        if self.request_sender.is_none() {
+            self.request_sender = Some(self.spawn_worker());
+        }
+        // The decoder may have retired after being idle. Reopen the bounded
+        // channel once; never block the egui event loop on a worker.
+        for attempt in 0..2 {
+            let result = self
+                .request_sender
+                .as_ref()
+                .expect("thumbnail request sender")
+                .try_send(key.clone());
+            match result {
+                Ok(()) => {
+                    self.active = Some(key);
+                    return;
+                }
+                Err(TrySendError::Full(_)) => {
+                    self.pending.push_front(key);
+                    return;
+                }
+                Err(TrySendError::Disconnected(_)) if attempt == 0 => {
+                    self.request_sender = Some(self.spawn_worker());
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    // Keep the existing negative cache semantics if a worker
+                    // cannot receive after a restart, rather than spin.
+                    self.tick = self.tick.wrapping_add(1);
+                    self.cache.insert(
+                        key,
+                        Cached {
+                            texture: None,
+                            touched: self.tick,
+                        },
+                    );
+                    return;
+                }
+            }
+        }
+    }
     /// Cached negative results prevent a corrupt image being decoded every frame.
     pub fn request(&mut self, entry: &Entry) -> Option<(egui::TextureId, egui::Vec2)> {
         let key = Key::from_entry(entry)?;
@@ -155,15 +227,7 @@ impl ThumbnailManager {
         let Some(key) = self.pending.pop_front() else {
             return;
         };
-        let sender = self.sender.clone();
-        self.active = Some(key.clone());
-        thread::spawn(move || {
-            // Malformed image decoders must never permanently wedge the queue.
-            let result = std::panic::catch_unwind(|| preview::thumbnail(&key.path).ok().flatten())
-                .ok()
-                .flatten();
-            let _ = sender.send(ResultMessage { key, result });
-        });
+        self.submit(key);
     }
 }
 
@@ -243,6 +307,51 @@ mod tests {
                 &Key::from_entry(&image(&format!("{}.png", MAX_CACHED + 9))).unwrap()
             )
         );
+    }
+
+    #[test]
+    fn lazy_worker_uses_one_bounded_channel_and_retires_after_idle() {
+        let mut manager = ThumbnailManager::default();
+        assert!(manager.request_sender.is_none(), "idle UI must not create a decoder");
+
+        let missing = image("/tmp/ricefield-thumbnail-worker-no-such-file.png");
+        manager.request(&missing);
+        manager.dispatch();
+        assert!(manager.active.is_some());
+
+        let context = egui::Context::default();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while manager.active.is_some() && Instant::now() < deadline {
+            manager.poll(&context);
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(manager.active.is_none(), "worker must send a completion");
+        assert!(manager.cache.contains_key(&Key::from_entry(&missing).unwrap()));
+    }
+
+    #[test]
+    fn expired_worker_channel_disconnects_cleanly() {
+        let (sender, receiver) = mpsc::channel();
+        let requests = ThumbnailManager::spawn_worker_with_timeout(
+            sender,
+            Duration::from_millis(10),
+        );
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            match requests.try_send(Key {
+                path: PathBuf::from("/tmp/not-a-file.png"),
+                size: 1,
+                modified: None,
+            }) {
+                Err(TrySendError::Disconnected(_)) => return,
+                Ok(()) => {
+                    let _ = receiver.recv_timeout(Duration::from_millis(100));
+                }
+                Err(TrySendError::Full(_)) => {}
+            }
+            thread::sleep(Duration::from_millis(15));
+        }
+        panic!("worker did not release its channel after idle");
     }
 
     #[test]
