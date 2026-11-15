@@ -93,14 +93,14 @@ installed under the system data directory; no existing GTK/Thunar file picker
 is removed. **Do not activate this on a production desktop until the
 independent GUI and portal tests have passed on your own machine.**
 
-\`\`\`bash
+```bash
 bash install.sh
 sudo python3 scripts/default_file_picker.py enable --scope system \
   --binary "$HOME/.local/bin/ricefield"
 python3 scripts/default_file_picker.py enable
-\`\`\`
+```
 
-Use \`restore\` (user scope first, then administrator system scope) to undo
+Use `restore` (user scope first, then administrator system scope) to undo
 the configuration. This affects portal-aware applications, not applications
 that call GtkFileChooserNative or GtkFileChooserDialog without portal routing.
 See [file picker setup and verification](docs/DEFAULT_FILE_PICKER.md).
