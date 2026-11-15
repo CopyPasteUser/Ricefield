@@ -312,7 +312,10 @@ mod tests {
     #[test]
     fn lazy_worker_uses_one_bounded_channel_and_retires_after_idle() {
         let mut manager = ThumbnailManager::default();
-        assert!(manager.request_sender.is_none(), "idle UI must not create a decoder");
+        assert!(
+            manager.request_sender.is_none(),
+            "idle UI must not create a decoder"
+        );
 
         let missing = image("/tmp/ricefield-thumbnail-worker-no-such-file.png");
         manager.request(&missing);
@@ -326,16 +329,18 @@ mod tests {
             thread::sleep(Duration::from_millis(5));
         }
         assert!(manager.active.is_none(), "worker must send a completion");
-        assert!(manager.cache.contains_key(&Key::from_entry(&missing).unwrap()));
+        assert!(
+            manager
+                .cache
+                .contains_key(&Key::from_entry(&missing).unwrap())
+        );
     }
 
     #[test]
     fn expired_worker_channel_disconnects_cleanly() {
         let (sender, receiver) = mpsc::channel();
-        let requests = ThumbnailManager::spawn_worker_with_timeout(
-            sender,
-            Duration::from_millis(10),
-        );
+        let requests =
+            ThumbnailManager::spawn_worker_with_timeout(sender, Duration::from_millis(10));
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
             match requests.try_send(Key {
