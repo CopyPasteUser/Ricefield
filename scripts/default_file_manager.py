@@ -119,8 +119,21 @@ def dbus_activation(binary: Path) -> bytes:
             f"Exec={shlex.quote(str(binary))} --file-manager-service\n").encode()
 
 
+def source_bytes(path: Path, max_bytes: int) -> bytes:
+    """Never follow a swapped symlink while reading an administrator source."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= max_bytes:
+            raise RuntimeError(f"Unsafe or oversized installation source: {path}")
+        contents = stream.read(max_bytes + 1)
+        if len(contents) != info.st_size:
+            raise RuntimeError(f"Source changed during installation: {path}")
+        return contents
+
+
 def system_launcher(project: Path) -> bytes:
-    data = (project / "assets/ricefield.desktop").read_text()
+    data = source_bytes(project / "assets/ricefield.desktop", 65536).decode("utf-8")
     if "Exec=ricefield %U\n" not in data:
         raise RuntimeError("Unexpected RiceField launcher: update system installer")
     return data.replace("Exec=ricefield %U\n",
@@ -146,12 +159,12 @@ def settings(user: bool, prefix: Path | None, binary: Path, project: Path) -> di
         if not regular(binary) or not os.access(binary, os.X_OK):
             raise RuntimeError("Provide a regular executable RiceField binary with --binary")
         changes = {
-            root / "usr/local/bin/ricefield": (binary.read_bytes(), 0o755),
+            root / "usr/local/bin/ricefield": (source_bytes(binary, 256 * 1024 * 1024), 0o755),
             data / "applications/ricefield.desktop": (system_launcher(project), 0o644),
             data / "icons/hicolor/scalable/apps/ricefield.svg":
-                ((project / "assets/ricefield.svg").read_bytes(), 0o644),
+                (source_bytes(project / "assets/ricefield.svg", 2 * 1024 * 1024), 0o644),
             data / "icons/hicolor/256x256/apps/ricefield.png":
-                ((project / "assets/ricefield.png").read_bytes(), 0o644),
+                (source_bytes(project / "assets/ricefield.png", 8 * 1024 * 1024), 0o644),
         }
         helper_path = data / "xfce4/helpers/ricefield.desktop"
         binary = root / "usr/local/bin/ricefield"
