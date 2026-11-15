@@ -414,11 +414,12 @@ impl Picker {
 }
 
 impl eframe::App for Picker {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
         if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
-        egui::TopBottomPanel::top("picker_toolbar").show(ctx, |ui| {
+        ui.vertical(|ui| {
             ui.horizontal(|ui| {
                 ui.heading(&self.request.title);
                 ui.separator();
@@ -471,8 +472,9 @@ impl eframe::App for Picker {
                 }
             });
         });
-        egui::CentralPanel::default().show(ctx, |ui| {
+        ui.vertical(|ui| {
             egui::ScrollArea::vertical()
+                .max_height((ui.available_height() - 180.0).max(180.0))
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     for entry in self.entries.clone() {
@@ -487,7 +489,7 @@ impl eframe::App for Picker {
                                 self.selected.clear();
                                 self.selected.insert(entry.path);
                                 if self.request.mode == "open" && !self.folder_mode() {
-                                    self.choose(ctx);
+                                    self.choose(&ctx);
                                 }
                             }
                             break;
@@ -513,7 +515,7 @@ impl eframe::App for Picker {
                     }
                 });
         });
-        egui::TopBottomPanel::bottom("picker_actions").show(ctx, |ui| {
+        ui.vertical(|ui| {
             if self.request.mode == "save" {
                 ui.horizontal(|ui| {
                     ui.label("Filename:");
