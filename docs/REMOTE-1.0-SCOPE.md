@@ -51,10 +51,16 @@ races additionally test their journal locking, pinned content, independently
 authenticated clients and actual publish sequence; tests of the low-level
 hardlink/MOVE primitive alone are insufficient to validate that composition.
 
-## Synology DS214+ owner acceptance (still open)
+## Synology NAS: daily usage confirmed; safety acceptance still open
 
-The owner must create a **new disposable, empty, user-owned test share** on
-the Synology with separate credentials. Never use the `medien` share or any
+The owner reports that everyday NAS access and SMB file uploads work
+(SMB upload success on 2026-11-09, NAS use reconfirmed 2026-11-15).
+This is real hardware experience, not evidence that server-specific ACL,
+atomic no-replace publication under concurrent writers, crash handling and
+network-loss behavior passed the controlled matrix.
+
+For the remaining checks, use a **new disposable, empty, user-owned test
+share** on the Synology with separate credentials. Never use the `medien` share or any
 production library. Check beforehand that backups exist, the account cannot
 write to unrelated shares, and RiceField has no privileged network mounts
 that bypass this isolation.
