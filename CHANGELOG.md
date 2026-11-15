@@ -2,6 +2,10 @@
 
 ## Unreleased — 1.1 preparation (not published)
 
+- Native RiceField Open/Save file picker and opt-in XDG FileChooser backend
+  with D-Bus cancellation, multi-select, filtered selection and reversible
+  installer. Release CI checks both the protocol and shipped registration.
+
 - Local and system-wide **opt-in standard file-manager** registration with
   XDG directory MIME defaults, XFCE helper and FileManager1 activation.
   Original files are snapshotted; symlink conflicts, foreign edits and
@@ -14,10 +18,12 @@
   without claiming an unmeasured laptop improvement.
 - Recover RiceBowl live profile watchers after session directory replacement,
   and report external ripdrag/dragon helper failures asynchronously.
-- Release policy now supports 1.1 previews and enforces an explicit owner
-  acceptance ledger for stable 1.1; release-bundle smoke tests also exercise
-  default manager activation and rollback. Full native drag-out and the
-  remaining special NAS tests are **not** marked complete.
+- Release policy supports 1.1 previews and an explicit version-matched
+  publication tag, without a redundant manual acceptance ledger (the owner
+  reported hands-on acceptance completed on 2026-11-15). The release workflow
+  now exercises the native FileChooser protocol, D-Bus backend, shipped portal
+  registration and rollback in addition to default-manager activation.
+  Native embedded drag-out remains deferred with a documented helper fallback.
 
 ## 1.0.0 — 2026-11-09
 
