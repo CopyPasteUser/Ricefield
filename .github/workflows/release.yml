@@ -10,7 +10,10 @@ on:
       - scripts/package-release.sh
       - scripts/release_policy.py
       - scripts/default_file_manager.py
-      - docs/RELEASE-1.1-ACCEPTANCE.toml
+      - scripts/default_file_picker.py
+      - scripts/filechooser_backend.py
+      - scripts/test_file_picker.py
+      - scripts/test_file_picker_dbus.py
   push:
     # A reviewed version bump on main publishes only after the full bundle job.
     branches:
@@ -19,7 +22,6 @@ on:
       - Cargo.toml
       # Allows a reviewed workflow repair to retry an unpublished release.
       - .github/workflows/release.yml
-      - docs/RELEASE-1.1-ACCEPTANCE.toml
     tags:
       - 'v0.3.*'
       - 'v0.4.*'
@@ -61,7 +63,7 @@ jobs:
           # mirror retries as PR CI; a blocked mirror must fail visibly.
           for attempt in 1 2; do
             if timeout 150s sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update &&
-               timeout 180s sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libgl1-mesa-dev xvfb xauth xdotool imagemagick libgl1-mesa-dri libxkbcommon-x11-0 libarchive13t64 openssh-client openssh-sftp-server samba smbclient; then
+               timeout 180s sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libgl1-mesa-dev xvfb xauth xdotool imagemagick libgl1-mesa-dri libxkbcommon-x11-0 libarchive13t64 python3-gi openssh-client openssh-sftp-server samba smbclient; then
               exit 0
             fi
             echo "Release dependencies failed on attempt $attempt; retrying if possible" >&2
@@ -74,10 +76,14 @@ jobs:
         run: bash scripts/test_install_transaction.sh
       - name: Desktop measurement retry contract
         run: bash scripts/test_ci_desktop_measurement.sh
-      - name: Release version, tag, owner sign-off and prerelease policy
+      - name: Release version, exact tag and prerelease policy
         run: python3 scripts/test_release_policy.py
       - name: Default file manager transactional and rollback checks
         run: python3 scripts/test_default_file_manager.py
+      - name: FileChooser protocol and reversible registration
+        run: python3 scripts/test_file_picker.py
+      - name: FileChooser D-Bus request/response and cancellation
+        run: dbus-run-session -- /usr/bin/python3 scripts/test_file_picker_dbus.py
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked --all-targets
@@ -138,6 +144,17 @@ jobs:
             python3 "$bundle_dir/scripts/default_file_manager.py" restore \
             --scope system --test-root "$fake_system"
           test ! -e "$fake_system/usr/local/bin/ricefield"
+          # Exercise the shipped FileChooser registration, not only its source tests.
+          RICEFIELD_DEFAULTS_TEST_ROOT=1 HOME="$test_home" \
+            python3 "$bundle_dir/scripts/default_file_picker.py" enable \
+            --scope system --test-root "$fake_system" --binary "$bundle_dir/ricefield"
+          test -f "$fake_system/usr/share/xdg-desktop-portal/portals/ricefield.portal"
+          test -f "$fake_system/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.ricefield.service"
+          test -f "$fake_system/usr/local/libexec/ricefield/filechooser_backend.py"
+          RICEFIELD_DEFAULTS_TEST_ROOT=1 HOME="$test_home" \
+            python3 "$bundle_dir/scripts/default_file_picker.py" restore \
+            --scope system --test-root "$fake_system"
+          test ! -e "$fake_system/usr/share/xdg-desktop-portal/portals/ricefield.portal"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ricefield-release-bundle
@@ -169,9 +186,8 @@ jobs:
         run: |
           set -euo pipefail
           expected_tag="v$(sed -nE 's/^version = "([^"]+)"$/\1/p' Cargo.toml)"
-          # Stable 1.1 needs a matching, explicit owner sign-off in the
-          # tagged commit. 1.1 main pushes only build preview artifacts;
-          # publishing requires a deliberate v1.1.* tag. Preserve historic
+          # 1.1 main pushes only build preview artifacts; publishing
+          # requires a deliberate, exactly matching v1.1.* tag. Preserve historic
           # 1.0 main-branch publishing and RC tags.
           policy="$(python3 scripts/release_policy.py --mode publish \
             --version "${expected_tag#v}" --ref-type "$GITHUB_REF_TYPE" \
