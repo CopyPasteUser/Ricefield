@@ -74,7 +74,7 @@ class ProtocolTests(unittest.TestCase):
 
     def test_rejects_oversized_and_untrusted_result(self):
         with self.assertRaises(ValueError):
-            backend.serialize_request("open", "a" * 17000, {"filters": []})
+            backend.quoted("a" * 17000)
         with self.assertRaises(ValueError):
             backend.parse_result(b'uris = ["/tmp/no-uri"]\n', "open", {})
         with self.assertRaises(ValueError):
@@ -97,7 +97,8 @@ class SetupTests(unittest.TestCase):
         self.env = {**os.environ, "HOME": str(self.home),
                     "XDG_CONFIG_HOME": str(self.home / ".config"),
                     "XDG_STATE_HOME": str(self.root / "state"),
-                    "RICEFIELD_DEFAULTS_TEST_ROOT": "1"}
+                    "RICEFIELD_DEFAULTS_TEST_ROOT": "1",
+                    "XDG_CURRENT_DESKTOP": "XFCE"}
 
     def call(self, *args, code=0):
         result = subprocess.run([sys.executable, str(SCRIPT), *args],
@@ -115,9 +116,7 @@ class SetupTests(unittest.TestCase):
                    "--test-root", str(root))
         self.call(*command)
         self.call(*command)
-        updated = existing.read_text()
-        self.assertIn("org.freedesktop.impl.portal.FileChooser=ricefield;*", updated)
-        self.assertIn("org.freedesktop.impl.portal.ScreenCast=wlr", updated)
+        self.assertEqual(existing.read_text(), original)
         self.assertTrue((root / "usr/share/xdg-desktop-portal/portals/ricefield.portal").exists())
         self.assertIn("Name=org.freedesktop.impl.portal.desktop.ricefield",
                       (root / "usr/share/dbus-1/services/"
@@ -128,13 +127,15 @@ class SetupTests(unittest.TestCase):
         self.call("restore", "--scope", "system", "--test-root", str(root))
         self.assertEqual(existing.read_text(), original)
         self.assertFalse((root / "usr/share/xdg-desktop-portal/portals/ricefield.portal").exists())
+        self.assertFalse((root / "usr/local/libexec/ricefield/ricefield-picker").exists())
 
     def test_user_config_and_conflict_detection(self):
         initial = "[preferred]\ndefault=gtk\n"
-        file = self.config / "portals.conf"
+        file = self.config / "xfce-portals.conf"
         file.write_text(initial)
         self.call("enable")
         self.assertIn("FileChooser=ricefield;*", file.read_text())
+        self.assertIn("default=gtk", file.read_text())
         file.write_text(file.read_text() + "org.freedesktop.impl.portal.ScreenCast=gtk\n")
         self.call("restore", code=1)
         self.assertIn("ScreenCast=gtk", file.read_text())
