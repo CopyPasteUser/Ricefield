@@ -175,8 +175,12 @@ def run_picker(binary: str, payload: bytes, mode: str, options: dict[str, object
         return 2, {}
     if cancelled.is_set():
         return 1, {}
-    if process.returncode != 0 or len(output) > MAX_PAYLOAD or not output:
-        return 2 if process.returncode != 0 else 1, {}
+    if process.returncode != 0:
+        return (1 if process.returncode == 1 else 2), {}
+    if len(output) > MAX_PAYLOAD:
+        return 2, {}
+    if not output:
+        return 1, {}
     return 0, parse_result(output, mode, options)
 
 
