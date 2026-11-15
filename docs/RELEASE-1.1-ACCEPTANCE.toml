@@ -1,0 +1,17 @@
+# Deliberately unsigned. Do NOT mark checks true based only on cloud CI.
+# Stable v1.1.0 publication is prohibited until the owner documents evidence
+# and explicitly signs off. RC bundles remain available for safe testing.
+[release]
+version = "1.1.0"
+decision = "pending"
+approved_by = ""
+approved_at = ""
+
+[checks]
+mint_xfce_filesystem = false
+ricebowl_wayland_session = false
+real_nas_failure_isolation = false
+removable_media_recovery = false
+system_default_and_rollback = false
+keyboard_and_accessibility = false
+release_and_installer = false

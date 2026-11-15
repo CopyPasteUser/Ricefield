@@ -50,7 +50,7 @@ bash install.sh
 ricefield
 ```
 
-Installation is user-local and creates an application-menu entry; it does not replace your default file manager. [Release builds](https://github.com/CopyPasteUser/Ricefield/releases) · [Release guide](RELEASE.md).
+Installation is user-local and creates an application-menu entry; it does not replace your default file manager. **1.1 is in release preparation, not yet published;** see [release policy and remaining acceptance](RELEASE.md). [Release builds](https://github.com/CopyPasteUser/Ricefield/releases) · [Release guide](RELEASE.md).
 
 Choose a style or validate a custom theme:
 
