@@ -38,6 +38,8 @@ class DBusIntegration(unittest.TestCase):
             "data = sys.stdin.buffer.read()\n"
             "if b'title = \"CANCEL\"' in data:\n"
             "    time.sleep(30)\n"
+            "elif b'mode = \"save_files\"' in data:\n"
+            "    sys.stdout.write('uris = [\"file:///tmp/a.txt\", \"file:///tmp/b.txt\"]\\n')\n"
             "else:\n"
             "    sys.stdout.write('uris = [\"file:///tmp/ricefield%20test.txt\"]\\n')\n"
         )
@@ -72,9 +74,9 @@ class DBusIntegration(unittest.TestCase):
             self.backend.kill()
             self.backend.communicate(timeout=5)
 
-    def call_picker(self, handle, title, options):
+    def call_picker(self, handle, title, options, method="OpenFile"):
         return self.conn.call_sync(
-            BUS, PATH, IFACE, "OpenFile",
+            BUS, PATH, IFACE, method,
             GLib.Variant("(osssa{sv})", (handle, "com.example.Test", "", title, options)),
             GLib.VariantType.new("(ua{sv})"), Gio.DBusCallFlags.NONE, 10000, None
         ).unpack()
@@ -92,6 +94,22 @@ class DBusIntegration(unittest.TestCase):
         self.assertEqual(response["uris"], ["file:///tmp/ricefield%20test.txt"])
         self.assertEqual(response["choices"], [("readonly", "false")])
         self.assertEqual(response["current_filter"], filter_value)
+
+    def test_save_file_and_multiple_named_files(self):
+        code, response = self.call_picker(
+            "/org/freedesktop/portal/desktop/request/test/save1", "SAVE",
+            {"current_name": GLib.Variant("s", "report.txt")},
+            method="SaveFile",
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(response["uris"], ["file:///tmp/ricefield%20test.txt"])
+        code, response = self.call_picker(
+            "/org/freedesktop/portal/desktop/request/test/save2", "SAVE FILES",
+            {"files": GLib.Variant("aay", [b"a.txt\x00", b"b.txt\x00"])},
+            method="SaveFiles",
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(response["uris"], ["file:///tmp/a.txt", "file:///tmp/b.txt"])
 
     def test_close_cancels_inflight_request(self):
         handle = "/org/freedesktop/portal/desktop/request/test/cancel1"
