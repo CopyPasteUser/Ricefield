@@ -33,7 +33,8 @@ performance, Linux integration, then visual polish.
   The 1.1 thumbnail-worker follow-up replaces per-image OS thread creation
   with a lazy single bounded decoder that exits after inactivity; CI reports
   settled/peak RSS, PSS and thread counts. Physical Mint/Thunar comparisons
-  remain separate hardware evidence.
+  remain separate hardware evidence. For identical ThinkPad/Thunar workloads,
+  use the read-only [host memory profiler](docs/PERFORMANCE_HOST.md).
 
 ## Historical final 1.0 execution plan (after rc.21)
 
