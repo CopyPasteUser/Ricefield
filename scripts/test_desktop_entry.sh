@@ -30,6 +30,12 @@ for mode in default custom; do
   if command -v desktop-file-validate >/dev/null 2>&1; then
     desktop-file-validate "$launcher"
   fi
+  python3 "$project_dir/scripts/default_file_manager.py" enable
+  if bash "$project_dir/uninstall.sh" >/dev/null 2>&1; then
+    echo 'Uninstall must refuse to leave behind active folder defaults' >&2
+    exit 1
+  fi
+  python3 "$project_dir/scripts/default_file_manager.py" restore
   bash "$project_dir/uninstall.sh"
   test ! -e "$launcher"
   test ! -e "$data_dir/icons/hicolor/scalable/apps/ricefield.svg"

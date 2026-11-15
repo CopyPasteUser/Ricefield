@@ -19,6 +19,14 @@ Non-UTF-8 local paths remain usable but are excluded from saved TOML sessions.
 Open a separate window with **Ctrl+Shift+N**. Its session does not replace the
 primary window's saved tabs.
 
+## RiceField as your default Linux file manager
+
+RiceField can be configured as the user-specific or administrator-managed
+**system-wide default**, including XDG directory handlers, Xfce preferred
+applications and future FileManager1 activation. It does not forcibly replace
+the running Thunar process. All changes require explicit activation and have
+validated rollback; see [Default file manager](DEFAULT_FILE_MANAGER.md).
+
 ## External drag-and-drop and RiceBowl live profiles
 
 **Drag to another app…** (Ctrl+Shift+D) uses an installed `ripdrag` or

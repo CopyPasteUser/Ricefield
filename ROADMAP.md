@@ -36,6 +36,19 @@ performance, Linux integration, then visual polish.
   remain separate hardware evidence. For identical ThinkPad/Thunar workloads,
   use the read-only [host memory profiler](docs/PERFORMANCE_HOST.md).
 
+## Sprint 3 — default Linux file manager integration (post-1.0)
+
+- User-opt-in XDG `inode/directory`, Xfce exo preferred helper and
+  FileManager1 activation are integrated with an exact rollback receipt.
+- System-wide installation is an **explicit administrator action**: it
+  publishes a real root-owned binary and desktop entry, configures
+  `/etc/xdg` defaults, and preserves replaced files.
+- Higher-precedence per-user or desktop-specific overrides stay respected;
+  no script removes Thunar, steals the active D-Bus owner, or edits another
+  account without consent. See `docs/DEFAULT_FILE_MANAGER.md`.
+- CI uses only disposable XDG paths and a fake system filesystem root.
+  Physical Mint/Xfce/RiceBowl acceptance remains outstanding.
+
 ## Historical final 1.0 execution plan (after rc.21)
 
 The checklist below records the pre-release plan. Its open items are **not**
