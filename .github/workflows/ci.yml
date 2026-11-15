@@ -50,6 +50,8 @@ jobs:
         run: bash scripts/test_ci_desktop_measurement.sh
       - name: User/system default-manager transaction and rollback
         run: python3 scripts/test_default_file_manager.py
+      - name: FileChooser protocol, isolation and rollback
+        run: python3 scripts/test_file_picker.py
       - name: Release 1.1 version, acceptance and tag policy
         run: python3 scripts/test_release_policy.py
       - name: Read-only host memory profiler smoke
