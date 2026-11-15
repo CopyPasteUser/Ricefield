@@ -46,6 +46,8 @@ install -Dm755 -- "$binary_path" "$bundle_dir/ricefield"
 install -Dm755 -- "$repo_dir/scripts/install-binary.sh" "$bundle_dir/install.sh"
 install -Dm755 -- "$repo_dir/scripts/install_desktop_entry.sh" \
   "$bundle_dir/scripts/install_desktop_entry.sh"
+install -Dm755 -- "$repo_dir/scripts/default_file_manager.py" \
+  "$bundle_dir/scripts/default_file_manager.py"
 install -Dm755 -- "$repo_dir/scripts/cleanup_legacy.sh" \
   "$bundle_dir/scripts/cleanup_legacy.sh"
 install -Dm755 -- "$repo_dir/scripts/install_transaction.sh" \

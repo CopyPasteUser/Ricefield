@@ -11,6 +11,13 @@ esac
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/scripts/user_install_lock.sh"
 ricefield_lock_installation
+# A default association to a removed binary would leave external folder
+# launchers broken. Require an explicit, verified restore first.
+defaults_receipt="${XDG_STATE_HOME:-$user_home/.local/state}/ricefield/default-file-manager/receipt.json"
+if [[ -e "$defaults_receipt" || -L "$defaults_receipt" ]]; then
+  echo 'RiceField is configured as the user default; run python3 scripts/default_file_manager.py restore before uninstalling.' >&2
+  exit 1
+fi
 rm -f -- \
   "$user_home/.local/bin/ricefield" \
   "$data_dir/applications/ricefield.desktop" \

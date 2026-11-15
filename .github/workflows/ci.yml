@@ -48,6 +48,8 @@ jobs:
         run: bash scripts/test_install_transaction.sh
       - name: Desktop measurement retry contract
         run: bash scripts/test_ci_desktop_measurement.sh
+      - name: User/system default-manager transaction and rollback
+        run: python3 scripts/test_default_file_manager.py
       - name: Read-only host memory profiler smoke
         run: bash scripts/test_host_memory_profile.sh
       - run: cargo fmt --all -- --check

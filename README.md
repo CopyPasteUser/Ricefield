@@ -61,6 +61,30 @@ ricefield --theme macos
 ricefield --check-theme-file /path/to/custom-rice.toml
 ```
 
+## Default file manager for Linux Mint, Xfce and RiceBowl
+
+The ordinary installer keeps your existing default file manager intact. To opt in
+for your user session, after `bash install.sh` run:
+
+```bash
+python3 scripts/default_file_manager.py enable
+xdg-mime query default inode/directory
+```
+
+To install RiceField as the administrator-managed system default for **all users
+without their own overrides**, run:
+
+```bash
+sudo python3 scripts/default_file_manager.py enable --scope system \
+  --binary "$HOME/.local/bin/ricefield"
+```
+
+Both modes retain exact recovery snapshots and refuse unsafe overwrites on
+rollback. Thunar stays installed. Existing per-user XDG settings still have
+higher precedence than system defaults; the signed-in user's default can be
+activated separately. See the [complete default-manager setup, verification
+and rollback guide](docs/DEFAULT_FILE_MANAGER.md).
+
 ## Safety and documentation
 
 Local Undo covers **only eligible operations**; copies, deletions and cross-volume moves are not automatically reversible. Remote browsing is read-only by default. Verified WebDAV, SFTP and signed SMB servers may support **guarded single-file uploads**, but not remote rename/delete; interrupted uploads require manual review. Cross-device moves preserve the source after copying.
