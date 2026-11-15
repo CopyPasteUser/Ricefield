@@ -22,6 +22,37 @@ DESCRIPTOR = ("[portal]\n"
               f"Interfaces={PORTAL_KEY}\n")
 
 
+def active_portal_config(config: Path) -> tuple[Path, bytes]:
+    """Preserve the active portal routing table, not just its FileChooser key.
+
+    xdg-desktop-portal 1.18 loads a single portals.conf. A new user override
+    containing only FileChooser could silently disable ScreenCast/Settings.
+    """
+    desktops = [name.lower() for name in os.environ.get("XDG_CURRENT_DESKTOP", "").split(":")
+                if name and all(ch.isalnum() or ch in "_-" for ch in name)]
+    filename = f"{desktops[0]}-portals.conf" if desktops else "portals.conf"
+    destination = config / "xdg-desktop-portal" / filename
+    existing = transaction.read_optional(destination)
+    if existing is not None:
+        return destination, existing
+    home = Path(os.environ["HOME"])
+    data = Path(os.environ.get("XDG_DATA_HOME", str(home / ".local/share")))
+    config_dirs = os.environ.get("XDG_CONFIG_DIRS", "/etc/xdg").split(":")
+    data_dirs = os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(":")
+    roots = [*(Path(value) / "xdg-desktop-portal" for value in config_dirs if value),
+             Path("/etc/xdg-desktop-portal"),
+             data / "xdg-desktop-portal",
+             *(Path(value) / "xdg-desktop-portal" for value in data_dirs if value)]
+    for root in roots:
+        for name in [*(f"{desktop}-portals.conf" for desktop in desktops), "portals.conf"]:
+            source = root / name
+            data_bytes = transaction.read_optional(source)
+            if data_bytes is not None:
+                return destination, data_bytes
+    raise RuntimeError(
+        "No existing portal routing config found: refusing to disable other portal backends")
+
+
 def defaults(user: bool, prefix: Path | None, binary: Path | None) -> dict[Path, tuple[bytes, int]]:
     project = Path(__file__).resolve().parent.parent
     source = project / "scripts/filechooser_backend.py"
@@ -30,40 +61,31 @@ def defaults(user: bool, prefix: Path | None, binary: Path | None) -> dict[Path,
         config = Path(os.environ.get("XDG_CONFIG_HOME", str(home / ".config")))
         if not home.is_absolute() or not config.is_absolute():
             raise RuntimeError("HOME and XDG_CONFIG_HOME must be absolute")
-        # A user's portal selection can only use the administrator-registered
-        # backend, not an unregistered service from ~/.local/share.
-        portal_config = config / "xdg-desktop-portal/portals.conf"
+        portal_config, baseline = active_portal_config(config)
         return {portal_config: (
-            transaction.update_ini(transaction.read_optional(portal_config),
-                                   PORTAL_KEY, "ricefield;*", "preferred"), 0o600
+            transaction.update_ini(baseline, PORTAL_KEY, "ricefield;*", "preferred"), 0o600
         )}
     root = prefix or Path("/")
     if binary is None:
         raise RuntimeError("System enable requires --binary")
     if not transaction.regular(binary) or not os.access(binary, os.X_OK):
         raise RuntimeError("Supply a regular executable --binary")
-    installed_binary = root / "usr/local/bin/ricefield"
+    installed_binary = root / "usr/local/libexec/ricefield/ricefield-picker"
     backend = root / "usr/local/libexec/ricefield/filechooser_backend.py"
     portal = root / "usr/share/xdg-desktop-portal/portals/ricefield.portal"
     service = root / "usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.ricefield.service"
-    portal_config = root / "etc/xdg-desktop-portal/portals.conf"
     exec_line = " ".join(shlex.quote(s) for s in
                          ("/usr/bin/python3",
                           "/usr/local/libexec/ricefield/filechooser_backend.py",
-                          "--binary", "/usr/local/bin/ricefield"))
-    changes = {
+                          "--binary", "/usr/local/libexec/ricefield/ricefield-picker"))
+    return {
         installed_binary: (transaction.source_bytes(binary, 256 * 1024 * 1024), 0o755),
         backend: (transaction.source_bytes(source, 1024 * 1024), 0o644),
         portal: (DESCRIPTOR.encode("utf-8"), 0o644),
         service: (("[D-BUS Service]\n"
                    f"Name={PORTAL_BUS}\n"
                    f"Exec={exec_line}\n").encode("utf-8"), 0o644),
-        portal_config: (
-            transaction.update_ini(transaction.read_optional(portal_config),
-                                   PORTAL_KEY, "ricefield;*", "preferred"), 0o644
-        ),
     }
-    return changes
 
 
 def state_dir(user: bool, prefix: Path | None) -> Path:
