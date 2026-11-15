@@ -23,6 +23,7 @@ mod metadata;
 mod open_with;
 mod operation_queue;
 mod portal;
+mod picker;
 mod preview;
 mod remote_download;
 mod remote_upload;
@@ -58,6 +59,13 @@ fn xwayland_dnd_available(wayland: bool, x11: bool) -> bool {
 }
 
 fn main() -> eframe::Result {
+    // Portal picker is isolated from the ordinary Explorer and its settings.
+    if env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--file-picker")) {
+        if env::args_os().len() != 2 {
+            invalid_argument("--file-picker must be used on its own");
+        }
+        return picker::run();
+    }
     let mut selected_theme = None;
     let mut theme_file = None;
     let mut check_theme_file = None;
@@ -70,7 +78,7 @@ fn main() -> eframe::Result {
         match arg.to_str() {
             Some("--help" | "-h") => {
                 println!(
-                    "RiceField {}\nUsage: ricefield [--theme ID] [--theme-file FILE] [LOCATION ...]\n       ricefield --check-theme-file FILE\n\n--version        Show the package version\n--list-themes    Show bundled profiles\n--theme ID       Select a RiceBowl visual profile\n--theme-file FILE  Load an external editable TOML theme or RiceProfile v1\n--check-theme-file FILE  Validate an external theme/RiceProfile without opening a GUI\n--separate-window  Open a secondary window without saving its tab session\n--file-manager-service  Offer FileManager1 on the session bus (opt-in; existing owner wins)\n--xwayland-dnd  Use XWayland/XDND for incoming external file drops (requires both displays)\n--benchmark      Measure disposable 100k-entry and verified-copy fixtures\n\nLocations accept local paths, file://, smb://, sftp://, dav(s):// and mtp:// URIs. Network tabs offer read-only browsing, previews and explicit local downloads. WebDAV, SFTP and SMB offer conditional single-file uploads after server-specific atomic no-replace probes; unsupported servers fail closed and MTP writes remain disabled. Credentials belong in RiceField's connection prompt, never in command-line URIs.\n\nLocal Archive menu: browse, verify, extract selected, and create ZIP/tar.gz/tar.xz/tar.zst/7z (system libarchive required); masked password prompts and optional AES-256 ZIP creation. Encrypted 7z/RAR support depends on the system backend.\n\nKeyboard: F3 two-folder split view, Ctrl+Shift+N separate window, Ctrl+L path, Ctrl+F search, Ctrl+T/W open/close tab, Ctrl+Shift+T reopen, Ctrl+Shift+PageUp/PageDown reorder; Ctrl+C/X/V copy/cut/paste, Ctrl+Shift+D native external drag helper, F2 rename, Delete trash, Shift+Delete permanent delete, Ctrl+A select all, Ctrl+D duplicate file, Alt+Enter properties, Space preview, Ctrl+H hidden, Ctrl+R refresh.",
+                    "RiceField {}\nUsage: ricefield [--theme ID] [--theme-file FILE] [LOCATION ...]\n       ricefield --check-theme-file FILE\n\n--version        Show the package version\n--list-themes    Show bundled profiles\n--theme ID       Select a RiceBowl visual profile\n--theme-file FILE  Load an external editable TOML theme or RiceProfile v1\n--check-theme-file FILE  Validate an external theme/RiceProfile without opening a GUI\n--separate-window  Open a secondary window without saving its tab session\n--file-manager-service  Offer FileManager1 on the session bus (opt-in; existing owner wins)\n--file-picker  Internal bounded selection protocol for XDG FileChooser\n--xwayland-dnd  Use XWayland/XDND for incoming external file drops (requires both displays)\n--benchmark      Measure disposable 100k-entry and verified-copy fixtures\n\nLocations accept local paths, file://, smb://, sftp://, dav(s):// and mtp:// URIs. Network tabs offer read-only browsing, previews and explicit local downloads. WebDAV, SFTP and SMB offer conditional single-file uploads after server-specific atomic no-replace probes; unsupported servers fail closed and MTP writes remain disabled. Credentials belong in RiceField's connection prompt, never in command-line URIs.\n\nLocal Archive menu: browse, verify, extract selected, and create ZIP/tar.gz/tar.xz/tar.zst/7z (system libarchive required); masked password prompts and optional AES-256 ZIP creation. Encrypted 7z/RAR support depends on the system backend.\n\nKeyboard: F3 two-folder split view, Ctrl+Shift+N separate window, Ctrl+L path, Ctrl+F search, Ctrl+T/W open/close tab, Ctrl+Shift+T reopen, Ctrl+Shift+PageUp/PageDown reorder; Ctrl+C/X/V copy/cut/paste, Ctrl+Shift+D native external drag helper, F2 rename, Delete trash, Shift+Delete permanent delete, Ctrl+A select all, Ctrl+D duplicate file, Alt+Enter properties, Space preview, Ctrl+H hidden, Ctrl+R refresh.",
                     env!("CARGO_PKG_VERSION")
                 );
                 return Ok(());
