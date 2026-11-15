@@ -250,6 +250,18 @@ fn translate(language: Language, source: &'static str) -> &'static str {
         }
         "Sign in" => "Anmelden",
         "File transfer recovery" => "Dateiübertragungen wiederherstellen",
+        "Review safely…" => "Sicher prüfen…",
+        "Hide reminder" => "Hinweis ausblenden",
+        "Review recovery records…" => "Wiederherstellungseinträge prüfen…",
+        "Some remote recovery evidence needs attention" => {
+            "Einige Wiederherstellungsnachweise benötigen Aufmerksamkeit"
+        }
+        "Recovery records remain available even when their reminder is hidden." => {
+            "Wiederherstellungseinträge bleiben auch bei ausgeblendetem Hinweis zugänglich."
+        }
+        "Hide this notice without deleting recovery records. It will reappear when the evidence changes. You can still open recovery from Transfers." => {
+            "Nur diesen Hinweis ausblenden, ohne Wiederherstellungsdaten zu löschen. Bei geänderten Einträgen erscheint er erneut. Die Wiederherstellung bleibt über Übertragungen erreichbar."
+        }
         "Recovery never deletes original files or overwrites destinations. Confirmed actions can publish a verified private stage, discard only an unpublished private stage, or retire a verified publication record. No action runs automatically." => {
             "Die Wiederherstellung löscht niemals Originaldateien und überschreibt keine Ziele. Bestätigte Aktionen können einen geprüften privaten Zwischenstand veröffentlichen, nur unveröffentlichte Zwischenstände verwerfen oder einen bestätigten Veröffentlichungsnachweis abschließen. Keine Aktion startet automatisch."
         }

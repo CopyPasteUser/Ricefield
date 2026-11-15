@@ -141,6 +141,8 @@ pub struct Config {
     pub bookmarks: Vec<PathBuf>,
     pub remote_favorites: Vec<String>,
     pub remote_download_directory: Option<PathBuf>,
+    /// Digest of explicitly hidden recovery evidence. Never removes a journal.
+    pub hidden_recovery_notice_fingerprint: Option<String>,
     pub restore_session: bool,
     // Local absolute paths and validated network URIs share this legacy TOML
     // string field, so existing saved sessions remain readable.
@@ -173,6 +175,7 @@ impl Default for Config {
             bookmarks: Vec::new(),
             remote_favorites: Vec::new(),
             remote_download_directory: None,
+            hidden_recovery_notice_fingerprint: None,
             restore_session: true,
             session_tabs: Vec::new(),
             session_active: 0,
@@ -645,7 +648,23 @@ mod tests {
         assert!(config.show_hidden);
         assert!(config.remote_favorites.is_empty());
         assert!(config.remote_download_directory.is_none());
+        assert!(config.hidden_recovery_notice_fingerprint.is_none());
         assert_eq!(config.active_filter_count(), 0);
+    }
+
+    #[test]
+    fn hidden_recovery_reminder_roundtrips_without_changing_old_preferences() {
+        let config = Config {
+            hidden_recovery_notice_fingerprint: Some("9a1b2c3d".into()),
+            ..Config::default()
+        };
+        let encoded = toml::to_string(&config).unwrap();
+        let restored: Config = toml::from_str(&encoded).unwrap();
+        assert_eq!(
+            restored.hidden_recovery_notice_fingerprint,
+            config.hidden_recovery_notice_fingerprint
+        );
+        assert_eq!(restored.theme, "win7");
     }
 
     #[test]

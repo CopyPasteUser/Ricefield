@@ -32,6 +32,7 @@ use eframe::egui::{self, Align2, Color32, Key, Modifiers, Pos2, Rect, Vec2};
 use std::{
     collections::{BTreeSet, HashMap, HashSet, VecDeque},
     fs,
+    hash::{Hash, Hasher},
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     process::Command,
@@ -50,6 +51,27 @@ const BACKGROUND_REFRESH_INTERVAL: Duration = Duration::from_secs(15);
 const MAX_RECENT_OPERATIONS: usize = transfer_history::MAX_RECORDS;
 const CLIPBOARD_WAIT: Duration = Duration::from_secs(2);
 const MAX_CLOSED_TABS: usize = 16;
+
+/// Fingerprint a set of recovery warnings without persisting source paths,
+/// credentials, or journal payloads into the preferences file. A new record,
+/// state transition, scan failure or warning changes the digest and restores
+/// the notification. Sorting avoids repeated popups after equivalent rescans.
+fn recovery_notice_digest(items: impl IntoIterator<Item = String>) -> Option<String> {
+    let mut items: Vec<_> = items.into_iter().collect();
+    if items.is_empty() {
+        return None;
+    }
+    items.sort_unstable();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for item in items {
+        item.hash(&mut hasher);
+    }
+    Some(format!("{:016x}", hasher.finish()))
+}
+
+fn recovery_notice_visible(current: Option<&str>, hidden: Option<&str>) -> bool {
+    current.is_some() && current != hidden
+}
 
 fn refresh_interval(focused: bool) -> Duration {
     if focused {
@@ -1769,6 +1791,7 @@ pub struct Explorer {
     recovery_loading: bool,
     recovery_rescan_requested: bool,
     recovery_open: bool,
+    recovery_notice_fingerprint: Option<String>,
     recovery_comparison_sender: Sender<(u64, String, bool, journal::Comparison)>,
     recovery_comparison_receiver: Receiver<(u64, String, bool, journal::Comparison)>,
     recovery_comparison_active: Option<String>,
@@ -2055,6 +2078,7 @@ impl Explorer {
             recovery_loading: false,
             recovery_rescan_requested: false,
             recovery_open: false,
+            recovery_notice_fingerprint: None,
             recovery_comparison_sender,
             recovery_comparison_receiver,
             recovery_comparison_active: None,
@@ -4179,6 +4203,7 @@ impl Explorer {
                         self.recovery_error = Some(error.to_string());
                     }
                 }
+                self.update_recovery_notice_fingerprint();
                 if std::mem::take(&mut self.recovery_rescan_requested) {
                     self.check_unfinished_moves();
                 }
@@ -4202,6 +4227,7 @@ impl Explorer {
                     self.remote_journal_error = Some(error);
                 }
             }
+            self.update_recovery_notice_fingerprint();
             if std::mem::take(&mut self.remote_journal_rescan_requested) {
                 self.check_unfinished_webdav_uploads();
             }
@@ -4661,13 +4687,48 @@ impl Explorer {
         }
     }
 
+    /// Recompute only after the asynchronous journal inspections complete,
+    /// rather than hashing up to hundreds of entries on each rendered frame.
+    /// This preference affects *only* the passive reminder, never scanning,
+    /// warning details, upload admission, or the recovery records themselves.
+    fn update_recovery_notice_fingerprint(&mut self) {
+        let mut items: Vec<String> = self
+            .recovery_records
+            .iter()
+            .map(|entry| format!("local:{}:{:?}", entry.record.id, entry.record.state))
+            .collect();
+        items.extend(
+            self.remote_journal_records
+                .iter()
+                .map(|entry| format!("upload:{}", entry.id)),
+        );
+        items.extend(
+            self.remote_probe_records
+                .iter()
+                .map(|entry| format!("probe:{}", entry.id)),
+        );
+        items.extend(
+            self.remote_journal_warnings
+                .iter()
+                .map(|warning| format!("warning:{warning}")),
+        );
+        if let Some(error) = &self.recovery_error {
+            items.push(format!("local-error:{error}"));
+        }
+        if let Some(error) = &self.remote_journal_error {
+            items.push(format!("remote-error:{error}"));
+        }
+        self.recovery_notice_fingerprint = recovery_notice_digest(items);
+    }
+
     fn recovery_banner(&mut self, ui: &mut egui::Ui) {
-        if self.recovery_records.is_empty()
-            && self.recovery_error.is_none()
-            && self.remote_journal_records.is_empty()
-            && self.remote_probe_records.is_empty()
-            && self.remote_journal_error.is_none()
-        {
+        let Some(fingerprint) = self.recovery_notice_fingerprint.clone() else {
+            return;
+        };
+        if !recovery_notice_visible(
+            Some(&fingerprint),
+            self.config.hidden_recovery_notice_fingerprint.as_deref(),
+        ) {
             return;
         }
         egui::Panel::top("unfinished_move_notice")
@@ -4682,6 +4743,8 @@ impl Explorer {
                         Color32::WHITE,
                         if self.recovery_error.is_some() || self.remote_journal_error.is_some() {
                             "File transfer recovery records need attention".to_owned()
+                        } else if !self.remote_journal_warnings.is_empty() {
+                            "Some remote recovery evidence needs attention".to_owned()
                         } else if !self.remote_journal_records.is_empty()
                             || !self.remote_probe_records.is_empty()
                         {
@@ -4698,8 +4761,16 @@ impl Explorer {
                             )
                         },
                     );
-                    if ui.button("Review safely…").clicked() {
+                    if ui.button(i18n::tr("Review safely…")).clicked() {
                         self.recovery_open = true;
+                    }
+                    if ui
+                        .button(i18n::tr("Hide reminder"))
+                        .on_hover_text(i18n::tr("Hide this notice without deleting recovery records. It will reappear when the evidence changes. You can still open recovery from Transfers."))
+                        .clicked()
+                    {
+                        self.config.hidden_recovery_notice_fingerprint = Some(fingerprint);
+                        self.dirty_config = true;
                     }
                 });
             });
@@ -5320,6 +5391,14 @@ impl Explorer {
                     ui.small(i18n::tr("Cancellation stops future work; already completed items are not undone."));
                 } else {
                     ui.label(i18n::tr("No transfer is running."));
+                }
+                if self.recovery_notice_fingerprint.is_some() {
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.button(i18n::tr("Review recovery records…")).clicked() {
+                            self.recovery_open = true;
+                        }
+                        ui.small(i18n::tr("Recovery records remain available even when their reminder is hidden."));
+                    });
                 }
                 ui.separator();
                 ui.strong(i18n::template("Waiting ({count})", &[("count", self.operation_queue.len().to_string())]));
@@ -12262,9 +12341,9 @@ mod tests {
         TabSnapshot, ViewResult, accept_property_result, active_after_swap, choose_paste_clipboard,
         commit_local_view, drop_action, elapsed_label, marquee_from_list_whitespace,
         needs_drop_targets, next_search_repaint_delay, project_local_view,
-        properties_dialog_limits, read_property_snapshot, refresh_interval, remaining_cut_paths,
-        resolve_split_tabs, retain_visible_selection, retry_unstarted_items,
-        transfer_progress_details,
+        properties_dialog_limits, read_property_snapshot, recovery_notice_digest,
+        recovery_notice_visible, refresh_interval, remaining_cut_paths, resolve_split_tabs,
+        retain_visible_selection, retry_unstarted_items, transfer_progress_details,
     };
     use crate::clipboard;
     use crate::config::Config;
@@ -12279,6 +12358,42 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant, SystemTime};
+
+    #[test]
+    fn recovery_reminder_hides_only_the_same_evidence_and_survives_reordering() {
+        let current =
+            recovery_notice_digest(vec!["upload:id-1".into(), "local:id-2:Prepared".into()])
+                .unwrap();
+        assert_eq!(
+            recovery_notice_digest(vec!["local:id-2:Prepared".into(), "upload:id-1".into(),]),
+            Some(current.clone())
+        );
+        assert!(recovery_notice_visible(Some(&current), None));
+        assert!(!recovery_notice_visible(Some(&current), Some(&current)));
+        assert!(!recovery_notice_visible(None, Some(&current)));
+        let new_upload = recovery_notice_digest(vec![
+            "local:id-2:Prepared".into(),
+            "upload:id-1".into(),
+            "upload:id-3".into(),
+        ])
+        .unwrap();
+        assert!(recovery_notice_visible(Some(&new_upload), Some(&current)));
+        let changed_state =
+            recovery_notice_digest(vec!["upload:id-1".into(), "local:id-2:Published".into()])
+                .unwrap();
+        assert!(recovery_notice_visible(
+            Some(&changed_state),
+            Some(&current)
+        ));
+        let new_error = recovery_notice_digest(vec![
+            "upload:id-1".into(),
+            "local:id-2:Prepared".into(),
+            "remote-error:cannot read journal".into(),
+        ])
+        .unwrap();
+        assert!(recovery_notice_visible(Some(&new_error), Some(&current)));
+        assert_eq!(recovery_notice_digest(Vec::new()), None);
+    }
 
     #[test]
     fn marquee_replaces_selection_and_supports_reverse_rectangle() {
