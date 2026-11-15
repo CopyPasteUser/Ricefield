@@ -6,7 +6,6 @@ use eframe::egui;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeSet, HashMap},
-    ffi::OsStr,
     io::{self, Read},
     os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
@@ -89,7 +88,7 @@ fn file_uri(path: &Path) -> Result<String, String> {
     }
     let mut uri = String::from("file://");
     for byte in path.as_os_str().as_bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'_' | b'.' | b'~') {
+        if byte.is_ascii_alphanumeric() || matches!(*byte, b'/' | b'-' | b'_' | b'.' | b'~') {
             uri.push(char::from(*byte));
         } else {
             uri.push_str(&format!("%{byte:02X}"));
@@ -228,7 +227,13 @@ impl Picker {
         let choice_values = request
             .choices
             .iter()
-            .map(|choice| choice.selected.clone())
+            .map(|choice| {
+                if choice.options.is_empty() && choice.selected.is_empty() {
+                    "false".to_owned()
+                } else {
+                    choice.selected.clone()
+                }
+            })
             .collect();
         let file_name = request.current_name.clone();
         let mut picker = Self {
@@ -342,10 +347,12 @@ impl Picker {
                 vec![path]
             }
             "save_files" => {
-                if !self.folder.is_dir() {
+                let destination = self.selected.iter().next().filter(|path| path.is_dir())
+                    .unwrap_or(&self.folder);
+                if !destination.is_dir() {
                     return Err("Choose a valid destination folder".into());
                 }
-                let paths = self.request.files.iter().map(|name| self.folder.join(name)).collect::<Vec<_>>();
+                let paths = self.request.files.iter().map(|name| destination.join(name)).collect::<Vec<_>>();
                 if paths.iter().any(|path| path.exists()) {
                     return Err("Destination contains a requested filename. Choose another folder.".into());
                 }
@@ -489,8 +496,6 @@ impl eframe::App for Picker {
             }
             for (idx, choice) in self.request.choices.iter().enumerate() {
                 if choice.options.is_empty() {
-                    ui.checkbox(&mut (self.choice_values[idx] == "true"), &choice.label);
-                    // A checkbox uses its own temporary value; persist it below.
                     let mut selected = self.choice_values[idx] == "true";
                     if ui.checkbox(&mut selected, &choice.label).changed() {
                         self.choice_values[idx] = selected.to_string();
@@ -536,8 +541,13 @@ pub fn run() -> eframe::Result {
         eprintln!("ricefield picker: request too large");
         std::process::exit(2);
     }
-    let request: Request = toml::from_str(&input)
-        .unwrap_or_else(|error| panic!("Invalid file picker input: {error}"));
+    let request: Request = match toml::from_str(&input) {
+        Ok(request) => request,
+        Err(error) => {
+            eprintln!("ricefield picker: invalid input: {error}");
+            std::process::exit(2);
+        }
+    };
     if let Err(error) = validate_request(&request) {
         eprintln!("ricefield picker: {error}");
         std::process::exit(2);
