@@ -581,7 +581,7 @@ impl eframe::App for Picker {
                     "Save"
                 };
                 if ui.button(label).clicked() {
-                    self.choose(ctx);
+                    self.choose(&ctx);
                 }
                 if ui.button("Cancel").clicked() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
