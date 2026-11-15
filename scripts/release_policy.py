@@ -13,8 +13,14 @@ import sys
 import tomllib
 from pathlib import Path
 
-VERSION = re.compile(r"(?:0\.[3-9]\.(?:0|[1-9]\d*)|1\.[01]\.(?:0|[1-9]\d*))"
-                     r"(?:-(?:alpha|beta|rc)\.(?:0|[1-9]\d*))?\Z")
+# Preserve the original 0.3–1.0 package naming contract exactly.
+LEGACY_VERSION = re.compile(
+    r"(?:0\.[3-9]\.[0-9]+|1\.0\.[0-9]+)(?:-[A-Za-z0-9.-]+)?\Z"
+)
+# New 1.1 prereleases use intentionally narrow semantic qualifiers.
+VERSION_11 = re.compile(
+    r"1\.1\.(?:0|[1-9]\d*)(?:-(?:alpha|beta|rc)\.(?:0|[1-9]\d*))?\Z"
+)
 SIGNOFF_CHECKS = (
     "mint_xfce_filesystem",
     "ricebowl_wayland_session",
@@ -31,7 +37,7 @@ class PolicyError(ValueError):
 
 
 def check_version(version: str) -> None:
-    if not VERSION.fullmatch(version):
+    if not (LEGACY_VERSION.fullmatch(version) or VERSION_11.fullmatch(version)):
         raise PolicyError(
             f"Unsupported release version {version!r}; accepted 0.3–0.9, 1.0, "
             "and 1.1 with optional alpha/beta/rc numeric qualifiers"
