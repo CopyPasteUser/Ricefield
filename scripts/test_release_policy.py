@@ -32,8 +32,8 @@ def manifest(version: str, approve: bool, *, missing: str = "") -> str:
 
 class ReleasePolicyTests(unittest.TestCase):
     def test_historical_versions_and_valid_rc_are_supported(self):
-        for version in ("0.3.0", "0.9.27", "1.0.0", "1.0.1",
-                        "1.1.0", "1.1.0-rc.1", "1.1.2-beta.2"):
+        for version in ("0.3.0", "0.3.0-preview1", "0.9.27", "1.0.0",
+                        "1.0.1-custom.7", "1.1.0", "1.1.0-rc.1", "1.1.2-beta.2"):
             policy.check_version(version)
         for version in ("0.2.0", "1.2.0", "2.0.0", "1.1", "1.1.0-rc",
                         "1.1.0-dev", "1.1.0-rc.01", "1.1.00", "../../tag"):
