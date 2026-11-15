@@ -12,10 +12,10 @@ if [[ "$(uname -s)" != 'Linux' || "$release_arch" != 'x86_64' ]]; then
   echo 'Only Linux x86_64 release bundles are supported by this script' >&2
   exit 1
 fi
-if [[ ! "$release_version" =~ ^(0\.[3-9]\.[0-9]+|1\.0\.[0-9]+)(-[A-Za-z0-9.-]+)?$ ]]; then
-  echo 'Expected a valid 0.3.x through 1.0.x version in Cargo.toml' >&2
-  exit 1
-fi
+# The shared Python policy and publish job must agree on allowed versions.
+# A preview 1.1 RC is bundleable without enabling a stable 1.1 release.
+python3 "$repo_dir/scripts/release_policy.py" \
+  --mode bundle --version "$release_version" >/dev/null
 if [[ ! "$source_epoch" =~ ^[0-9]+$ ]]; then
   echo 'SOURCE_DATE_EPOCH must be a nonnegative integer' >&2
   exit 1

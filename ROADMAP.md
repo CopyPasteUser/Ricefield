@@ -36,6 +36,20 @@ performance, Linux integration, then visual polish.
   remain separate hardware evidence. For identical ThinkPad/Thunar workloads,
   use the read-only [host memory profiler](docs/PERFORMANCE_HOST.md).
 
+## Sprint 4 — 1.1 release-hardening (post-1.0)
+
+- The 1.1 release pipeline accepts explicitly tagged alpha/beta/RC previews,
+  but **never auto-publishes** 1.1 on a Cargo version bump to main.
+- Stable 1.1 remains blocked by the version-specific, unsigned owner
+  acceptance ledger (`docs/RELEASE-1.1-ACCEPTANCE.toml`) until physical
+  Mint/XFCE, RiceBowl Wayland, NAS fault-isolation, removable-media, default
+  handler rollback, accessibility and package checks are actually verified.
+- Release CI tests real disposable signed Samba uploads and FileManager1,
+  package reproducibility, GUI, startup/idle measurements and bundled default
+  activation/rollback. Tag and version policy has fail-closed unit tests.
+- This sprint does **not** publish a v1.1.0 tag. In-process Wayland drag-out
+  remains separately tracked in issue #189; D-Bus zbus-6 migration in #185.
+
 ## Sprint 3 — default Linux file manager integration (post-1.0)
 
 - User-opt-in XDG `inode/directory`, Xfce exo preferred helper and

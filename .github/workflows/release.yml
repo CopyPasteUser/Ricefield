@@ -2,6 +2,15 @@ name: Linux release bundle
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/release.yml
+      - scripts/package-release.sh
+      - scripts/release_policy.py
+      - scripts/default_file_manager.py
+      - docs/RELEASE-1.1-ACCEPTANCE.toml
   push:
     # A reviewed version bump on main publishes only after the full bundle job.
     branches:
@@ -10,6 +19,7 @@ on:
       - Cargo.toml
       # Allows a reviewed workflow repair to retry an unpublished release.
       - .github/workflows/release.yml
+      - docs/RELEASE-1.1-ACCEPTANCE.toml
     tags:
       - 'v0.3.*'
       - 'v0.4.*'
@@ -19,6 +29,7 @@ on:
       - 'v0.8.*'
       - 'v0.9.*'
       - 'v1.0.*'
+      - 'v1.1.*'
 
 permissions:
   contents: read
@@ -50,7 +61,7 @@ jobs:
           # mirror retries as PR CI; a blocked mirror must fail visibly.
           for attempt in 1 2; do
             if timeout 150s sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update &&
-               timeout 180s sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libgl1-mesa-dev xvfb xauth xdotool imagemagick libgl1-mesa-dri libxkbcommon-x11-0 libarchive13t64; then
+               timeout 180s sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libgl1-mesa-dev xvfb xauth xdotool imagemagick libgl1-mesa-dri libxkbcommon-x11-0 libarchive13t64 openssh-client openssh-sftp-server samba smbclient; then
               exit 0
             fi
             echo "Release dependencies failed on attempt $attempt; retrying if possible" >&2
@@ -63,9 +74,15 @@ jobs:
         run: bash scripts/test_install_transaction.sh
       - name: Desktop measurement retry contract
         run: bash scripts/test_ci_desktop_measurement.sh
+      - name: Release version, tag, owner sign-off and prerelease policy
+        run: python3 scripts/test_release_policy.py
+      - name: Default file manager transactional and rollback checks
+        run: python3 scripts/test_default_file_manager.py
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked --all-targets
+      - name: Signed SMB uploader with disposable Samba
+        run: RICEFIELD_RUST_SMB_CHECK=1 timeout -k 10s 6m bash scripts/test_smb_atomicity.sh
       - name: Native FileManager1 protocol on a private session bus
         run: dbus-run-session -- env RICEFIELD_TEST_BUS=1 cargo test --locked desktop::tests::private_bus_roundtrip_and_existing_owner_are_respected -- --ignored --exact
       - run: cargo build --locked --release
@@ -102,8 +119,25 @@ jobs:
           bundle_dir="$(find "$unpack_dir" -mindepth 1 -maxdepth 1 -type d -print -quit)"
           HOME="$test_home" bash "$bundle_dir/install.sh"
           HOME="$test_home" "$test_home/.local/bin/ricefield" --version
+          # Verify the actual shipped default-manager tool, its rollback
+          # receipt and the uninstall guard with disposable user state.
+          HOME="$test_home" python3 "$bundle_dir/scripts/default_file_manager.py" enable
+          if HOME="$test_home" bash "$bundle_dir/uninstall.sh"; then
+            echo 'Bundle uninstaller bypassed active file-manager defaults' >&2
+            exit 1
+          fi
+          HOME="$test_home" python3 "$bundle_dir/scripts/default_file_manager.py" restore
           HOME="$test_home" bash "$bundle_dir/uninstall.sh"
           test ! -e "$test_home/.local/bin/ricefield"
+          fake_system="$(mktemp -d)"
+          RICEFIELD_DEFAULTS_TEST_ROOT=1 HOME="$test_home" \
+            python3 "$bundle_dir/scripts/default_file_manager.py" enable \
+            --scope system --test-root "$fake_system" --binary "$bundle_dir/ricefield"
+          test -x "$fake_system/usr/local/bin/ricefield"
+          RICEFIELD_DEFAULTS_TEST_ROOT=1 HOME="$test_home" \
+            python3 "$bundle_dir/scripts/default_file_manager.py" restore \
+            --scope system --test-root "$fake_system"
+          test ! -e "$fake_system/usr/local/bin/ricefield"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ricefield-release-bundle
@@ -116,7 +150,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/v0.') || startsWith(github.ref, 'refs/tags/v1.0.') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: startsWith(github.ref, 'refs/tags/v0.') || startsWith(github.ref, 'refs/tags/v1.0.') || startsWith(github.ref, 'refs/tags/v1.1.') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     needs: bundle
     runs-on: ubuntu-24.04
     permissions:
@@ -135,13 +169,20 @@ jobs:
         run: |
           set -euo pipefail
           expected_tag="v$(sed -nE 's/^version = "([^"]+)"$/\1/p' Cargo.toml)"
-          echo "tag=$expected_tag" >> "$GITHUB_OUTPUT"
-          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
-            test "$GITHUB_REF_NAME" = "$expected_tag"
-          else
-            test "$GITHUB_REF_NAME" = main
-            [[ "$expected_tag" =~ ^v1\.0\.[0-9]+$ ]]
+          # Stable 1.1 needs a matching, explicit owner sign-off in the
+          # tagged commit. 1.1 main pushes only build preview artifacts;
+          # publishing requires a deliberate v1.1.* tag. Preserve historic
+          # 1.0 main-branch publishing and RC tags.
+          policy="$(python3 scripts/release_policy.py --mode publish \
+            --version "${expected_tag#v}" --ref-type "$GITHUB_REF_TYPE" \
+            --ref-name "$GITHUB_REF_NAME")"
+          if [[ "$policy" == SKIP ]]; then
+            echo "tag=$expected_tag" >> "$GITHUB_OUTPUT"
+            echo 'already_published=true' >> "$GITHUB_OUTPUT"
+            echo 'Release policy: 1.1 main-branch push is preview-only'
+            exit 0
           fi
+          echo "tag=$expected_tag" >> "$GITHUB_OUTPUT"
 
           # Re-running a version-bump workflow must never republish a release.
           if gh release view "$expected_tag" >/dev/null 2>&1; then

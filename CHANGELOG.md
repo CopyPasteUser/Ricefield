@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased — 1.1 preparation (not published)
+
+- Local and system-wide **opt-in standard file-manager** registration with
+  XDG directory MIME defaults, XFCE helper and FileManager1 activation.
+  Original files are snapshotted; symlink conflicts, foreign edits and
+  an uninstall that would leave broken defaults fail closed.
+- Recovery reminders may be hidden **without deleting or changing journal
+  evidence** and reappear for new incidents. Explicit recovery access
+  remains in Transfers.
+- Reuse a bounded, lazy thumbnail decoder worker rather than spawning one
+  thread per image; extend measured RSS/PSS, thread and CPU instrumentation
+  without claiming an unmeasured laptop improvement.
+- Recover RiceBowl live profile watchers after session directory replacement,
+  and report external ripdrag/dragon helper failures asynchronously.
+- Release policy now supports 1.1 previews and enforces an explicit owner
+  acceptance ledger for stable 1.1; release-bundle smoke tests also exercise
+  default manager activation and rollback. Full native drag-out and the
+  remaining special NAS tests are **not** marked complete.
+
 ## 1.0.0 — 2026-11-09
 
 The first stable release for RiceField's documented Linux desktop workflows.

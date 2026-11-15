@@ -1,5 +1,39 @@
 # Release process (Linux x86_64)
 
+## RiceField 1.1 release-readiness (Sprint 4)
+
+RiceField 1.1 is **not yet released**. The `main` package remains 1.0.0
+until the complete owner acceptance and scope decision are documented.
+The packaging pipeline supports a future `1.1.0-rc.1` **preview** without
+mistaking it for a stable 1.1 release.
+
+- `scripts/release_policy.py` validates the same versions for packaging and
+  publication. A 1.1 version bump on `main` never auto-publishes a release.
+- A deliberately created `v1.1.*` tag may publish an **alpha, beta or RC**
+  prerelease only after the complete signed SMB, FileManager1, GUI, installer,
+  checksum and reproducible archive workflow passes.
+- A stable 1.1 tag is rejected unless
+  `docs/RELEASE-1.1-ACCEPTANCE.toml` is explicitly approved by the owner for
+  the **exact version**, and every scope-specific physical gate is checked.
+  The checked-in ledger is presently **unsigned**. CI passing is necessary,
+  not proof of device or accessibility acceptance.
+- Both source-checkout and **unpacked release-bundle** default-file-manager
+  activation, refusal to uninstall an active default, rollback and isolated
+  system-prefix registration are tested. System-wide activation on the
+  owner's laptop still needs a manual Mint/XFCE session check.
+- The old 1.0 release tag and its already published artifacts remain intact.
+  No 1.1 release tag or system mutation is created by this Sprint.
+
+**Before granting 1.1 sign-off:** verify on disposable files all required
+entries in the 1.1 acceptance ledger. Track exact OS/compositor, GUI
+settings, journal outcomes and application behavior. An existing P0 issue
+(https://github.com/CopyPasteUser/Ricefield/issues/84) covers adversarial NAS
+ACL/competition/disconnect tests. Native in-process drag-out remains deferred
+by https://github.com/CopyPasteUser/Ricefield/issues/189; the documented
+`ripdrag`/`dragon` bridge is the 1.1 fallback. Keep zbus 6 migration (#185)
+separate until protocol tests pass.
+
+
 RiceField 1.0.0 is the **first stable release for the declared supported
 workflows**. The owner accepted their daily file-management and SMB-upload
 usage on 2026-11-09. Green CI plus this functional sign-off do **not** prove
