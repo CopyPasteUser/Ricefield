@@ -262,7 +262,10 @@ mod tests {
         }
         drop(watcher);
         fs::remove_dir_all(root).unwrap();
-        assert!(observed, "watch did not recover after replacing session directory");
+        assert!(
+            observed,
+            "watch did not recover after replacing session directory"
+        );
     }
 
     #[test]
