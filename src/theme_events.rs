@@ -85,7 +85,11 @@ impl Watcher {
             thread_active.store(false, Ordering::Relaxed);
             drop(descriptor);
         });
-        Some(Self { events, stop, active })
+        Some(Self {
+            events,
+            stop,
+            active,
+        })
     }
 
     pub fn changed(&self) -> bool {
@@ -134,7 +138,6 @@ fn contains_profile_event(buffer: &[u8], filename: &[u8]) -> bool {
     }
     false
 }
-
 
 /// Determine whether this watch points to an invalid or moved directory.
 fn watch_invalidated(buffer: &[u8], watch_id: i32) -> bool {
