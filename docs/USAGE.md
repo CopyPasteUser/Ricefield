@@ -19,6 +19,16 @@ Non-UTF-8 local paths remain usable but are excluded from saved TOML sessions.
 Open a separate window with **Ctrl+Shift+N**. Its session does not replace the
 primary window's saved tabs.
 
+## Recovery reminders
+
+When an interrupted local or remote transfer leaves recovery evidence, use
+**Review safely…** to inspect the saved records. **Hide reminder** removes
+only the banner for the currently known evidence; it does not delete,
+acknowledge, publish or clean up any local or remote files or journals.
+The choice persists across restarts. If new records, warnings or errors are
+discovered, the banner appears again. To inspect previously hidden records,
+open **Transfers → Review recovery records…**.
+
 ## Transfers and file actions
 
 Use the Actions menu, context menu or keyboard shortcuts. Copy and Move offer

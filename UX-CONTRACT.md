@@ -309,8 +309,12 @@ not silently rolled back; cancelled/unstarted entries remain explicit.
   `Explorer::transfer_strip` displays the latest status with a full-message
   tooltip. Errors must remain visible even in themes without a bottom bar.
 - **Unfinished cross-device moves:** `journal::scan_incomplete` runs on a
-  background thread; `Explorer::recovery_banner` remains visible regardless
-  of theme/status-bar settings. Journal states do not authorize automatic
+  background thread; `Explorer::recovery_banner` is independent of theme
+  and status bar and can be explicitly hidden for the current recovery-evidence
+  fingerprint, including across restarts. Hiding stores only a local digest
+  in preferences, never deletes journal evidence, and never changes remote
+  write admission. Newly detected or changed evidence reopens the reminder;
+  the recovery viewer stays accessible from Transfers. Journal states do not authorize automatic
   deletion, resume or overwriting; verified unpublished file/link publication
   requires a staged-content comparison, fresh checks and two-step confirmation.
   Show source and destination saved-inode evidence independently, with clear missing,
