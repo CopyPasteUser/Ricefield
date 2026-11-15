@@ -39,7 +39,8 @@ def active_portal_config(config: Path) -> tuple[Path, bytes]:
     data = Path(os.environ.get("XDG_DATA_HOME", str(home / ".local/share")))
     config_dirs = os.environ.get("XDG_CONFIG_DIRS", "/etc/xdg").split(":")
     data_dirs = os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(":")
-    roots = [*(Path(value) / "xdg-desktop-portal" for value in config_dirs if value),
+    roots = [config / "xdg-desktop-portal",
+             *(Path(value) / "xdg-desktop-portal" for value in config_dirs if value),
              Path("/etc/xdg-desktop-portal"),
              data / "xdg-desktop-portal",
              *(Path(value) / "xdg-desktop-portal" for value in data_dirs if value)]
