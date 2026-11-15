@@ -144,10 +144,7 @@ fn mime_globs() -> &'static HashMap<String, Vec<String>> {
     static GLOBS: OnceLock<HashMap<String, Vec<String>>> = OnceLock::new();
     GLOBS.get_or_init(|| {
         let mut result: HashMap<String, Vec<String>> = HashMap::new();
-        for source in [
-            "/usr/share/mime/globs2",
-            "/usr/local/share/mime/globs2",
-        ] {
+        for source in ["/usr/share/mime/globs2", "/usr/local/share/mime/globs2"] {
             let Ok(data) = std::fs::read_to_string(source) else {
                 continue;
             };
@@ -174,9 +171,11 @@ fn matches_filter(name: &str, filter: &Filter) -> bool {
     filter.rules.iter().any(|(kind, value)| match kind {
         0 => wildcard(value, name),
         1 => mime_globs().iter().any(|(mime, globs)| {
-            (mime == value || value.strip_suffix("/*").is_some_and(|family| {
-                mime.starts_with(&format!("{family}/"))
-            })) && globs.iter().any(|pattern| wildcard(pattern, name))
+            (mime == value
+                || value
+                    .strip_suffix("/*")
+                    .is_some_and(|family| mime.starts_with(&format!("{family}/"))))
+                && globs.iter().any(|pattern| wildcard(pattern, name))
         }),
         _ => false,
     })
@@ -293,10 +292,7 @@ impl Picker {
                     }
                     if !directory
                         && !self.request.filters.is_empty()
-                        && !matches_filter(
-                            &name,
-                            &self.request.filters[self.current_filter],
-                        )
+                        && !matches_filter(&name, &self.request.filters[self.current_filter])
                     {
                         continue;
                     }
@@ -307,9 +303,9 @@ impl Picker {
                     });
                 }
                 self.entries.sort_by(|a, b| {
-                    b.directory.cmp(&a.directory).then_with(|| {
-                        a.name.to_lowercase().cmp(&b.name.to_lowercase())
-                    })
+                    b.directory
+                        .cmp(&a.directory)
+                        .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
                 });
             }
             Err(error) => self.message = format!("Cannot list directory: {error}"),
@@ -342,19 +338,32 @@ impl Picker {
                 }
                 if path.exists() && self.overwrite_pending.as_ref() != Some(&path) {
                     self.overwrite_pending = Some(path);
-                    return Err("File exists. Click Replace to confirm (no file is changed yet).".into());
+                    return Err(
+                        "File exists. Click Replace to confirm (no file is changed yet).".into(),
+                    );
                 }
                 vec![path]
             }
             "save_files" => {
-                let destination = self.selected.iter().next().filter(|path| path.is_dir())
+                let destination = self
+                    .selected
+                    .iter()
+                    .next()
+                    .filter(|path| path.is_dir())
                     .unwrap_or(&self.folder);
                 if !destination.is_dir() {
                     return Err("Choose a valid destination folder".into());
                 }
-                let paths = self.request.files.iter().map(|name| destination.join(name)).collect::<Vec<_>>();
+                let paths = self
+                    .request
+                    .files
+                    .iter()
+                    .map(|name| destination.join(name))
+                    .collect::<Vec<_>>();
                 if paths.iter().any(|path| path.exists()) {
-                    return Err("Destination contains a requested filename. Choose another folder.".into());
+                    return Err(
+                        "Destination contains a requested filename. Choose another folder.".into(),
+                    );
                 }
                 paths
             }
@@ -362,10 +371,19 @@ impl Picker {
                 if self.selected.is_empty() {
                     vec![self.folder.clone()]
                 } else {
-                    self.selected.iter().filter(|path| path.is_dir()).cloned().collect()
+                    self.selected
+                        .iter()
+                        .filter(|path| path.is_dir())
+                        .cloned()
+                        .collect()
                 }
             }
-            _ => self.selected.iter().filter(|path| path.is_file()).cloned().collect(),
+            _ => self
+                .selected
+                .iter()
+                .filter(|path| path.is_file())
+                .cloned()
+                .collect(),
         };
         if paths.is_empty() {
             return Err("Choose at least one file".into());
@@ -373,10 +391,20 @@ impl Picker {
         if !self.request.multiple && self.request.mode == "open" && paths.len() != 1 {
             return Err("Select one item".into());
         }
-        let uris = paths.iter().map(|path| file_uri(path)).collect::<Result<Vec<_>, _>>()?;
-        let selections = self.request.choices.iter().zip(&self.choice_values).map(|(choice, value)| {
-            Selection { id: choice.id.clone(), value: value.clone() }
-        }).collect();
+        let uris = paths
+            .iter()
+            .map(|path| file_uri(path))
+            .collect::<Result<Vec<_>, _>>()?;
+        let selections = self
+            .request
+            .choices
+            .iter()
+            .zip(&self.choice_values)
+            .map(|(choice, value)| Selection {
+                id: choice.id.clone(),
+                value: value.clone(),
+            })
+            .collect();
         Ok(Reply {
             uris,
             selected_filter: (!self.request.filters.is_empty()).then_some(self.current_filter),
@@ -403,9 +431,13 @@ impl eframe::App for Picker {
                     }
                 }
                 let response = ui.add(
-                    egui::TextEdit::singleline(&mut self.address).desired_width(f32::INFINITY));
+                    egui::TextEdit::singleline(&mut self.address).desired_width(f32::INFINITY),
+                );
                 let go = ui.button("Go").clicked();
-                if go || (response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter))) {
+                if go
+                    || (response.lost_focus()
+                        && ui.input(|input| input.key_pressed(egui::Key::Enter)))
+                {
                     let input = PathBuf::from(&self.address);
                     self.navigate(input);
                 }
@@ -413,8 +445,14 @@ impl eframe::App for Picker {
             ui.horizontal(|ui| {
                 for (name, path) in [
                     ("Home", std::env::var_os("HOME").map(PathBuf::from)),
-                    ("Documents", std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Documents"))),
-                    ("Downloads", std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Downloads"))),
+                    (
+                        "Documents",
+                        std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Documents")),
+                    ),
+                    (
+                        "Downloads",
+                        std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Downloads")),
+                    ),
                     ("Root", Some(PathBuf::from("/"))),
                 ] {
                     if let Some(path) = path
@@ -434,41 +472,46 @@ impl eframe::App for Picker {
             });
         });
         egui::CentralPanel::default().show(ctx, |ui| {
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                for entry in self.entries.clone() {
-                    let marked = self.selected.contains(&entry.path);
-                    let icon = if entry.directory { "📁" } else { "📄" };
-                    let response = ui.selectable_label(marked, format!("{icon}  {}", entry.name));
-                    if response.double_clicked() {
-                        if entry.directory {
-                            self.navigate(entry.path);
-                        } else {
-                            self.selected.clear();
-                            self.selected.insert(entry.path);
-                            if self.request.mode == "open" && !self.folder_mode() {
-                                self.choose(ctx);
-                            }
-                        }
-                        break;
-                    }
-                    if response.clicked() {
-                        if entry.directory && !self.folder_mode() {
-                            self.selected.clear();
-                        } else if self.request.multiple && ui.input(|input| input.modifiers.ctrl) {
-                            if !self.selected.remove(&entry.path) {
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    for entry in self.entries.clone() {
+                        let marked = self.selected.contains(&entry.path);
+                        let icon = if entry.directory { "📁" } else { "📄" };
+                        let response =
+                            ui.selectable_label(marked, format!("{icon}  {}", entry.name));
+                        if response.double_clicked() {
+                            if entry.directory {
+                                self.navigate(entry.path);
+                            } else {
+                                self.selected.clear();
                                 self.selected.insert(entry.path);
+                                if self.request.mode == "open" && !self.folder_mode() {
+                                    self.choose(ctx);
+                                }
                             }
-                        } else {
-                            self.selected.clear();
-                            self.selected.insert(entry.path.clone());
-                            if self.request.mode == "save" && !entry.directory {
-                                self.file_name = entry.name;
-                                self.overwrite_pending = None;
+                            break;
+                        }
+                        if response.clicked() {
+                            if entry.directory && !self.folder_mode() {
+                                self.selected.clear();
+                            } else if self.request.multiple
+                                && ui.input(|input| input.modifiers.ctrl)
+                            {
+                                if !self.selected.remove(&entry.path) {
+                                    self.selected.insert(entry.path);
+                                }
+                            } else {
+                                self.selected.clear();
+                                self.selected.insert(entry.path.clone());
+                                if self.request.mode == "save" && !entry.directory {
+                                    self.file_name = entry.name;
+                                    self.overwrite_pending = None;
+                                }
                             }
                         }
                     }
-                }
-            });
+                });
         });
         egui::TopBottomPanel::bottom("picker_actions").show(ctx, |ui| {
             if self.request.mode == "save" {
@@ -502,11 +545,21 @@ impl eframe::App for Picker {
                     }
                 } else {
                     egui::ComboBox::from_label(&choice.label)
-                        .selected_text(choice.options.iter().find(|(value, _)| value == &self.choice_values[idx])
-                            .map(|(_, label)| label.as_str()).unwrap_or("Choose"))
+                        .selected_text(
+                            choice
+                                .options
+                                .iter()
+                                .find(|(value, _)| value == &self.choice_values[idx])
+                                .map(|(_, label)| label.as_str())
+                                .unwrap_or("Choose"),
+                        )
                         .show_ui(ui, |ui| {
                             for (value, label) in &choice.options {
-                                ui.selectable_value(&mut self.choice_values[idx], value.clone(), label);
+                                ui.selectable_value(
+                                    &mut self.choice_values[idx],
+                                    value.clone(),
+                                    label,
+                                );
                             }
                         });
                 }
@@ -516,9 +569,15 @@ impl eframe::App for Picker {
             }
             ui.separator();
             ui.horizontal(|ui| {
-                let label = if self.overwrite_pending.is_some() { "Replace" }
-                    else if !self.request.accept_label.is_empty() { &self.request.accept_label }
-                    else if self.request.mode == "open" { "Open" } else { "Save" };
+                let label = if self.overwrite_pending.is_some() {
+                    "Replace"
+                } else if !self.request.accept_label.is_empty() {
+                    &self.request.accept_label
+                } else if self.request.mode == "open" {
+                    "Open"
+                } else {
+                    "Save"
+                };
                 if ui.button(label).clicked() {
                     self.choose(ctx);
                 }
@@ -575,7 +634,15 @@ mod tests {
 
     #[test]
     fn names_and_uris_are_safe() {
-        for invalid in ["", ".", "..", "/tmp/secret", "../escape", "a\0b", "foo\\bar"] {
+        for invalid in [
+            "",
+            ".",
+            "..",
+            "/tmp/secret",
+            "../escape",
+            "a\0b",
+            "foo\\bar",
+        ] {
             assert!(!valid_name(invalid));
         }
         assert!(valid_name("Bericht 2026.docx"));
@@ -590,20 +657,29 @@ mod tests {
     fn filters_match_globs_and_do_not_match_other_files() {
         assert!(wildcard("*.docx", "report.docx"));
         assert!(!wildcard("*.docx", "report.txt"));
-        assert!(matches_filter("a.txt", &Filter {
-            name: "Text".into(),
-            rules: vec![(0, "*.txt".into())],
-        }));
+        assert!(matches_filter(
+            "a.txt",
+            &Filter {
+                name: "Text".into(),
+                rules: vec![(0, "*.txt".into())],
+            }
+        ));
     }
 
     #[test]
     fn selection_rejects_traversal_in_save_files() {
         let request = Request {
-            mode: "save_files".into(), title: String::new(),
-            accept_label: String::new(), multiple: false, directory: false,
-            folder: String::new(), current_name: String::new(),
-            files: vec!["../escape".into()], filters: vec![],
-            selected_filter: None, choices: vec![],
+            mode: "save_files".into(),
+            title: String::new(),
+            accept_label: String::new(),
+            multiple: false,
+            directory: false,
+            folder: String::new(),
+            current_name: String::new(),
+            files: vec!["../escape".into()],
+            filters: vec![],
+            selected_filter: None,
+            choices: vec![],
         };
         assert!(validate_request(&request).is_err());
     }
