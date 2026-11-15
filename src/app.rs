@@ -12341,8 +12341,8 @@ mod tests {
         TabSnapshot, ViewResult, accept_property_result, active_after_swap, choose_paste_clipboard,
         commit_local_view, drop_action, elapsed_label, marquee_from_list_whitespace,
         needs_drop_targets, next_search_repaint_delay, project_local_view,
-        properties_dialog_limits, read_property_snapshot, refresh_interval, remaining_cut_paths,
-        recovery_notice_digest, recovery_notice_visible, resolve_split_tabs,
+        properties_dialog_limits, read_property_snapshot, recovery_notice_digest,
+        recovery_notice_visible, refresh_interval, remaining_cut_paths, resolve_split_tabs,
         retain_visible_selection, retry_unstarted_items, transfer_progress_details,
     };
     use crate::clipboard;
@@ -12361,16 +12361,11 @@ mod tests {
 
     #[test]
     fn recovery_reminder_hides_only_the_same_evidence_and_survives_reordering() {
-        let current = recovery_notice_digest(vec![
-            "upload:id-1".into(),
-            "local:id-2:Prepared".into(),
-        ])
-        .unwrap();
+        let current =
+            recovery_notice_digest(vec!["upload:id-1".into(), "local:id-2:Prepared".into()])
+                .unwrap();
         assert_eq!(
-            recovery_notice_digest(vec![
-                "local:id-2:Prepared".into(),
-                "upload:id-1".into(),
-            ]),
+            recovery_notice_digest(vec!["local:id-2:Prepared".into(), "upload:id-1".into(),]),
             Some(current.clone())
         );
         assert!(recovery_notice_visible(Some(&current), None));
@@ -12383,12 +12378,13 @@ mod tests {
         ])
         .unwrap();
         assert!(recovery_notice_visible(Some(&new_upload), Some(&current)));
-        let changed_state = recovery_notice_digest(vec![
-            "upload:id-1".into(),
-            "local:id-2:Published".into(),
-        ])
-        .unwrap();
-        assert!(recovery_notice_visible(Some(&changed_state), Some(&current)));
+        let changed_state =
+            recovery_notice_digest(vec!["upload:id-1".into(), "local:id-2:Published".into()])
+                .unwrap();
+        assert!(recovery_notice_visible(
+            Some(&changed_state),
+            Some(&current)
+        ));
         let new_error = recovery_notice_digest(vec![
             "upload:id-1".into(),
             "local:id-2:Prepared".into(),

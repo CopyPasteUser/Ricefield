@@ -253,7 +253,9 @@ fn translate(language: Language, source: &'static str) -> &'static str {
         "Review safely…" => "Sicher prüfen…",
         "Hide reminder" => "Hinweis ausblenden",
         "Review recovery records…" => "Wiederherstellungseinträge prüfen…",
-        "Some remote recovery evidence needs attention" => "Einige Wiederherstellungsnachweise benötigen Aufmerksamkeit",
+        "Some remote recovery evidence needs attention" => {
+            "Einige Wiederherstellungsnachweise benötigen Aufmerksamkeit"
+        }
         "Recovery records remain available even when their reminder is hidden." => {
             "Wiederherstellungseinträge bleiben auch bei ausgeblendetem Hinweis zugänglich."
         }
