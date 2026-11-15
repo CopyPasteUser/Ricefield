@@ -20,12 +20,12 @@ performance, Linux integration, then visual polish.
 - **Already confirmed in routine use:** NAS/SMB (including uploads), SD-card
   access and USB-stick access. No need to redo basic functionality solely
   because the historical checklist lacked these owner reports.
-- **Still to qualify:** real Synology ACL isolation, competing uploads and
-  disconnected/interrupted writes on disposable shares; preserve fail-closed
-  publication and manual recovery.
-- Continue targeted Mint/Wayland, 4 GB, media mount/unmount/eject, LUKS,
-  unsafe removal, power-loss and accessibility acceptance with explicit
-  per-case evidence.
+- **Owner-reported completion (2026-11-15):** the owner states that the
+  1.1 hands-on NAS, device and desktop acceptance work has been tested.
+  This report removes duplicate manual release gates but does not invent
+  new evidence or change fail-closed remote-write and recovery policies.
+- Additional Mint/Wayland, 4 GB, media, LUKS, failure-injection and
+  accessibility checks may continue as post-release quality work.
 - Pursue native outgoing external drag-and-drop when the framework offers a
   safe data-source API; retain the existing optional helper in the meantime.
 - Improve direct RiceBowl event integration, remaining translations and
@@ -40,13 +40,13 @@ performance, Linux integration, then visual polish.
 
 - The 1.1 release pipeline accepts explicitly tagged alpha/beta/RC previews,
   but **never auto-publishes** 1.1 on a Cargo version bump to main.
-- Stable 1.1 remains blocked by the version-specific, unsigned owner
-  acceptance ledger (`docs/RELEASE-1.1-ACCEPTANCE.toml`) until physical
-  Mint/XFCE, RiceBowl Wayland, NAS fault-isolation, removable-media, default
-  handler rollback, accessibility and package checks are actually verified.
-- Release CI tests real disposable signed Samba uploads and FileManager1,
-  package reproducibility, GUI, startup/idle measurements and bundled default
-  activation/rollback. Tag and version policy has fail-closed unit tests.
+- Stable 1.1 requires an explicit matching version tag and the complete
+  automated release workflow; no manual acceptance TOML blocks publishing.
+  The owner reported the previously requested hands-on acceptance complete.
+- Release CI tests real disposable signed Samba uploads, FileManager1,
+  FileChooser portal protocol/D-Bus, package reproducibility, GUI,
+  startup/idle measurements and bundled default/portal registration rollback.
+  Tag and version policy remains fail-closed for mismatching references.
 - This sprint does **not** publish a v1.1.0 tag. In-process Wayland drag-out
   remains separately tracked in issue #189; D-Bus zbus-6 migration in #185.
 

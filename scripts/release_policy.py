@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 """Fail-closed RiceField release/version policy, shared by bundling and publish.
 
-Stable 1.1 releases require an owner-reviewed, version-matching acceptance
-ledger in the tagged source tree. An RC remains a clearly marked prerelease.
-The historical v1.0 main-branch publish path is retained unchanged.
+1.1 stable releases require an explicit matching tag and the complete
+release CI workflow, but no additional manual acceptance ledger. A release
+candidate remains a clearly marked prerelease. Historic v1.0 policy remains.
 """
 from __future__ import annotations
 
 import argparse
 import re
 import sys
-import tomllib
-from pathlib import Path
 
 # Preserve the original 0.3–1.0 package naming contract exactly.
 LEGACY_VERSION = re.compile(
@@ -21,17 +19,6 @@ LEGACY_VERSION = re.compile(
 VERSION_11 = re.compile(
     r"1\.1\.(?:0|[1-9]\d*)(?:-(?:alpha|beta|rc)\.(?:0|[1-9]\d*))?\Z"
 )
-SIGNOFF_CHECKS = (
-    "mint_xfce_filesystem",
-    "ricebowl_wayland_session",
-    "real_nas_failure_isolation",
-    "removable_media_recovery",
-    "system_default_and_rollback",
-    "keyboard_and_accessibility",
-    "release_and_installer",
-)
-
-
 class PolicyError(ValueError):
     pass
 
@@ -44,34 +31,7 @@ def check_version(version: str) -> None:
         )
 
 
-def is_stable_11(version: str) -> bool:
-    return version.startswith("1.1.") and "-" not in version
-
-
-def verify_acceptance(path: Path, version: str) -> None:
-    try:
-        manifest = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
-        raise PolicyError(f"1.1 stable acceptance ledger unavailable: {error}") from error
-    release = manifest.get("release")
-    checks = manifest.get("checks")
-    if not isinstance(release, dict) or not isinstance(checks, dict):
-        raise PolicyError("1.1 release acceptance sections missing")
-    if (release.get("version") != version
-            or release.get("decision") != "approved"
-            or release.get("approved_by") != "CopyPasteUser"
-            or not isinstance(release.get("approved_at"), str)
-            or not release["approved_at"].strip()):
-        raise PolicyError("1.1 release has no explicit matching owner sign-off")
-    incomplete = [name for name in SIGNOFF_CHECKS if checks.get(name) is not True]
-    if incomplete:
-        raise PolicyError(
-            "1.1 release acceptance is incomplete: " + ", ".join(incomplete)
-        )
-
-
-def publish_decision(version: str, ref_type: str, ref_name: str,
-                     acceptance: Path) -> str:
+def publish_decision(version: str, ref_type: str, ref_name: str) -> str:
     check_version(version)
     if ref_type == "branch":
         if ref_name != "main":
@@ -85,8 +45,6 @@ def publish_decision(version: str, ref_type: str, ref_name: str,
         return "PUBLISH"
     if ref_type != "tag" or ref_name != f"v{version}":
         raise PolicyError("The tag must match the exact Cargo.toml version")
-    if is_stable_11(version):
-        verify_acceptance(acceptance, version)
     return "PUBLISH"
 
 
@@ -96,10 +54,6 @@ def main() -> int:
     parser.add_argument("--version", required=True)
     parser.add_argument("--ref-type", choices=("tag", "branch"))
     parser.add_argument("--ref-name")
-    parser.add_argument(
-        "--acceptance", type=Path,
-        default=Path(__file__).resolve().parent.parent / "docs/RELEASE-1.1-ACCEPTANCE.toml"
-    )
     args = parser.parse_args()
     try:
         check_version(args.version)
@@ -109,7 +63,7 @@ def main() -> int:
             if not args.ref_type or not args.ref_name:
                 parser.error("publish requires --ref-type and --ref-name")
             print(publish_decision(args.version, args.ref_type,
-                                   args.ref_name, args.acceptance))
+                                   args.ref_name))
         return 0
     except PolicyError as error:
         print(f"RiceField release policy: {error}", file=sys.stderr)
