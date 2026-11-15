@@ -1,38 +1,37 @@
 # Release process (Linux x86_64)
 
-## RiceField 1.1 release-readiness (Sprint 4)
+## RiceField 1.1 release-readiness
 
-RiceField 1.1 is **not yet released**. The `main` package remains 1.0.0
-until the complete owner acceptance and scope decision are documented.
-The packaging pipeline supports a future `1.1.0-rc.1` **preview** without
-mistaking it for a stable 1.1 release.
+RiceField 1.1 is **not yet published**. The current main package version is
+1.0.0 until a reviewed version bump and a matching explicit release tag.
+A future 1.1 prerelease can still be published from a matching alpha/beta/RC
+tag; a version bump on main does not publish 1.1 automatically.
 
-- `scripts/release_policy.py` validates the same versions for packaging and
-  publication. A 1.1 version bump on `main` never auto-publishes a release.
-- A deliberately created `v1.1.*` tag may publish an **alpha, beta or RC**
-  prerelease only after the complete signed SMB, FileManager1, GUI, installer,
-  checksum and reproducible archive workflow passes.
-- A stable 1.1 tag is rejected unless
-  `docs/RELEASE-1.1-ACCEPTANCE.toml` is explicitly approved by the owner for
-  the **exact version**, and every scope-specific physical gate is checked.
-  The checked-in ledger is presently **unsigned**. CI passing is necessary,
-  not proof of device or accessibility acceptance.
-- Both source-checkout and **unpacked release-bundle** default-file-manager
-  activation, refusal to uninstall an active default, rollback and isolated
-  system-prefix registration are tested. System-wide activation on the
-  owner's laptop still needs a manual Mint/XFCE session check.
-- The old 1.0 release tag and its already published artifacts remain intact.
-  No 1.1 release tag or system mutation is created by this Sprint.
+**Manual acceptance:** On 2026-11-15 the owner reported that the previously
+listed hands-on acceptance work has already been tested and explicitly
+requested removal of the manual release gates. The old unsigned checklist
+was removed instead of silently marking every individual case as evidenced.
+This statement records owner feedback, not an independently supplied
+per-case test log or a claim about every hardware fault scenario.
 
-**Before granting 1.1 sign-off:** verify on disposable files all required
-entries in the 1.1 acceptance ledger. Track exact OS/compositor, GUI
-settings, journal outcomes and application behavior. An existing P0 issue
-(https://github.com/CopyPasteUser/Ricefield/issues/84) covers adversarial NAS
-ACL/competition/disconnect tests. Native in-process drag-out remains deferred
-by https://github.com/CopyPasteUser/Ricefield/issues/189; the documented
-`ripdrag`/`dragon` bridge is the 1.1 fallback. Keep zbus 6 migration (#185)
-separate until protocol tests pass.
+**Remaining release requirements are executable and version-specific:**
 
+- Review the 1.1 feature scope and release notes; bump Cargo.toml and the
+  matching Cargo.lock package version in a release PR.
+- Validate the **actual candidate** with the release workflow, including
+  Rust checks, disposable signed-SMB and FileManager1 tests, FileChooser
+  D-Bus/protocol tests, all bundled GUIs, install/restore and verified
+  reproducible archives/checksums.
+- Publish only from an explicit `v1.1.0` tag matching the version in the
+  commit. No manually edited acceptance TOML is necessary.
+- Preserve the previously published `v1.0.0` release and avoid modifying
+  installed system defaults or the owner's local desktop during publishing.
+
+Issue #189 (embedded native Wayland drag source) remains deferred with the
+documented ripdrag/dragon helper; issue #185 (zbus 6) remains a separate
+compatibility migration. The owner has declared hands-on NAS qualification
+complete for release purposes; the existing safe remote-write restrictions
+and automated adversarial tests are unchanged.
 
 RiceField 1.0.0 is the **first stable release for the declared supported
 workflows**. The owner accepted their daily file-management and SMB-upload
@@ -53,8 +52,8 @@ reviewed commit and PR CI must pass. A version-changing `Cargo.toml` push to
 reproducible archive, checksum, install and rollback checks pass does its
 restricted publish job create an annotated `v1.0.0` tag on the tested commit
 and upload the verified GitHub release assets. Existing tag-triggered releases
-remain supported. A release already published is not repeated. Hardware test
-cases not personally verified stay unchecked in the acceptance ledger.
+remain supported. A release already published is not repeated. Historical hardware qualification evidence is retained as originally recorded
+in docs/OWNER-ACCEPTANCE-1.0.md.
 
 ## Build a preview bundle
 
