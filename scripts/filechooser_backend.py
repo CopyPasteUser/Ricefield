@@ -16,7 +16,7 @@ import subprocess
 import sys
 import threading
 import tomllib
-from urllib.parse import quote_from_bytes, urlsplit
+from urllib.parse import quote_from_bytes, unquote, urlsplit
 
 LOG = logging.getLogger("ricefield.portal")
 BUS_NAME = "org.freedesktop.impl.portal.desktop.ricefield"
@@ -72,9 +72,8 @@ def serialize_request(mode: str, title: str, options: dict[str, object]) -> byte
     current_file = path_uri(unpack_variant(options.get("current_file")))
     if mode == "save" and current_file:
         folder = current_file.rsplit("/", 1)[0] or folder
-        lines.append("current_name = " + quoted(
-            bytes.fromhex("") .decode() if False else
-            __import__("urllib.parse", fromlist=["unquote"]).unquote(current_file.rsplit("/", 1)[-1])))
+        if not isinstance(unpack_variant(options.get("current_name")), str):
+            lines.append("current_name = " + quoted(unquote(current_file.rsplit("/", 1)[-1])))
     if folder:
         lines.append(f"folder = {quoted(folder)}")
     filters = unpack_variant(options.get("filters", []))
@@ -130,8 +129,10 @@ def parse_result(output: bytes, mode: str, options: dict[str, object]) -> dict[s
     if mode == "save_files" and len(uris) != len(unpack_variant(options.get("files", []))):
         raise ValueError("Missing SaveFiles paths")
     for uri in uris:
+        if not isinstance(uri, str) or len(uri) > 16384:
+            raise ValueError("Invalid URI")
         parsed = urlsplit(uri)
-        if (not isinstance(uri, str) or len(uri) > 16384 or parsed.scheme != "file"
+        if (parsed.scheme != "file"
                 or parsed.netloc not in ("", "localhost") or not parsed.path.startswith("/")
                 or parsed.query or parsed.fragment):
             raise ValueError("Picker returned an unsupported URI")
