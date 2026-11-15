@@ -2788,7 +2788,8 @@ impl Explorer {
         }
         if self.external_drag.is_some() {
             self.status = Some((
-                "An external drag source is already active; finish it before starting another".into(),
+                "An external drag source is already active; finish it before starting another"
+                    .into(),
                 true,
             ));
             return;
@@ -3990,7 +3991,9 @@ impl Explorer {
                 Ok(Ok(status)) => {
                     self.external_drag = None;
                     self.status = Some((
-                        format!("{helper} could not complete external drag (exit {status}); use Ctrl+C and paste if drag-and-drop is unavailable"),
+                        format!(
+                            "{helper} could not complete external drag (exit {status}); use Ctrl+C and paste if drag-and-drop is unavailable"
+                        ),
                         true,
                     ));
                 }
@@ -4000,8 +4003,10 @@ impl Explorer {
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.external_drag = None;
-                    self.status =
-                        Some((format!("{helper} drag helper exited without a result"), true));
+                    self.status = Some((
+                        format!("{helper} drag helper exited without a result"),
+                        true,
+                    ));
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
             }
@@ -12399,10 +12404,9 @@ mod tests {
         MarqueeSelection, NameMode, PasteMode, PendingPaste, PropertyResult, PropertySnapshot, Tab,
         TabSnapshot, ViewResult, accept_property_result, active_after_swap, choose_paste_clipboard,
         commit_local_view, drop_action, elapsed_label, marquee_from_list_whitespace,
-        needs_drop_targets, next_search_repaint_delay, project_local_view,
-        profile_poll_interval, properties_dialog_limits, read_property_snapshot,
-        recovery_notice_digest, recovery_notice_visible, refresh_interval, remaining_cut_paths,
-        resolve_split_tabs,
+        needs_drop_targets, next_search_repaint_delay, profile_poll_interval, project_local_view,
+        properties_dialog_limits, read_property_snapshot, recovery_notice_digest,
+        recovery_notice_visible, refresh_interval, remaining_cut_paths, resolve_split_tabs,
         retain_visible_selection, retry_unstarted_items, transfer_progress_details,
     };
     use crate::clipboard;
