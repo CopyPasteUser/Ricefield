@@ -85,6 +85,26 @@ higher precedence than system defaults; the signed-in user's default can be
 activated separately. See the [complete default-manager setup, verification
 and rollback guide](docs/DEFAULT_FILE_MANAGER.md).
 
+## RiceField as the system FileChooser (experimental, opt-in)
+
+The XDG FileChooser integration uses a standalone RiceField picker and a
+D-Bus backend. On Mint 22/Ubuntu 24.04 the portal descriptor must be
+installed under the system data directory; no existing GTK/Thunar file picker
+is removed. **Do not activate this on a production desktop until the
+independent GUI and portal tests have passed on your own machine.**
+
+```bash
+bash install.sh
+sudo python3 scripts/default_file_picker.py enable --scope system \
+  --binary "$HOME/.local/bin/ricefield"
+python3 scripts/default_file_picker.py enable
+```
+
+Use `restore` (user scope first, then administrator system scope) to undo
+the configuration. This affects portal-aware applications, not applications
+that call GtkFileChooserNative or GtkFileChooserDialog without portal routing.
+See [file picker setup and verification](docs/DEFAULT_FILE_PICKER.md).
+
 ## Safety and documentation
 
 Local Undo covers **only eligible operations**; copies, deletions and cross-volume moves are not automatically reversible. Remote browsing is read-only by default. Verified WebDAV, SFTP and signed SMB servers may support **guarded single-file uploads**, but not remote rename/delete; interrupted uploads require manual review. Cross-device moves preserve the source after copying.
