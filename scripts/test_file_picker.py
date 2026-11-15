@@ -140,6 +140,21 @@ class SetupTests(unittest.TestCase):
         self.call("restore", code=1)
         self.assertIn("ScreenCast=gtk", file.read_text())
 
+    def test_desktop_specific_override_inherits_generic_user_preferences(self):
+        generic = self.config / "portals.conf"
+        original = ("[preferred]\ndefault=gtk\n"
+                    "org.freedesktop.impl.portal.ScreenCast=gtk\n")
+        generic.write_text(original)
+        desktop_specific = self.config / "xfce-portals.conf"
+        self.call("enable")
+        specialized = desktop_specific.read_text()
+        self.assertIn("default=gtk", specialized)
+        self.assertIn("org.freedesktop.impl.portal.ScreenCast=gtk", specialized)
+        self.assertIn("org.freedesktop.impl.portal.FileChooser=ricefield;*", specialized)
+        self.call("restore")
+        self.assertEqual(generic.read_text(), original)
+        self.assertFalse(desktop_specific.exists())
+
     def test_symlink_refused_and_failed_activation_does_not_touch_target(self):
         file = self.config / "portals.conf"
         target = self.root / "precious"
