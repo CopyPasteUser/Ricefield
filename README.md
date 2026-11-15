@@ -28,9 +28,11 @@ A customizable **Rust + egui** file manager for Linux, usable standalone or alon
 - **Customization:** seven built-in themes, custom TOML appearances and optional RiceBowl RiceProfile integration.
 
 **Status:** **RiceField 1.0.0** is the first stable release for the documented
-supported workflows. The owner has accepted their daily file-management and
-SMB-upload usage. This does not constitute exhaustive NAS, USB, power-loss,
-Wayland or accessibility qualification; see the [scope and limitations](docs/1.0-STATUS.md).
+supported workflows. The owner confirms daily use with a real NAS (including successful
+SMB uploads), SD cards and USB sticks as of 2026-11-15. These everyday
+hardware workflows work, but their use does not establish exhaustive NAS
+ACL/concurrent-write, disconnect, unsafe-removal, power-loss, Wayland or
+accessibility qualification; see the [scope and limitations](docs/1.0-STATUS.md).
 Keep an alternative file manager installed and maintain backups of important data.
 
 ## Install

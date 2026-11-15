@@ -2,18 +2,32 @@
 
 **Status:** owner approved the **daily functional scope** for stable 1.0 on
 2026-11-09 and reported successful SMB uploads after the earlier failure.
-The broader device/fault-injection matrix below is **not fully signed off**.
-Only mark a check after actually observing it on the indicated hardware;
-automated CI results do not count as physical Mint, NAS or USB evidence.
-Record the exact release commit/version tested rather than silently
-substituting a later development build.
+The owner further confirmed successful use with a real NAS, SD cards
+and USB sticks on 2026-11-15. This validates ordinary device usability,
+but **not every targeted test case** in the device/fault-injection matrix.
+Only mark a detailed check after observing its specific procedure on the
+indicated hardware; CI does not replace physical testing. Record the exact
+release commit/version for future reproducible acceptance runs.
+
+### Owner-reported hardware usage (2026-11-15)
+
+| Device | Confirmed everyday behavior | Not covered by this report |
+| --- | --- | --- |
+| NAS / SMB | Normal file use; SMB upload previously confirmed working on 2026-11-09 | Concurrent upload, ACL isolation, interrupted write/reconnect |
+| SD cards | Routine file access with RiceField working | Unsafe removal, damaged filesystem, forced media errors |
+| USB sticks | Routine file access with RiceField working | Busy unmount/eject, USB power-off, LUKS, unplug during write |
+
+These first-hand reports are recorded separately from reproducible checklist
+fixtures. No exact tested build, device model, filesystem or per-case log
+was supplied with the 2026-11-15 confirmation.
 
 The latest `main` snapshot, including per-source copy and move policies, passed
 [GitHub Rust/GUI/benchmarks CI](https://github.com/CopyPasteUser/Ricefield/actions/runs/42567134024)
 and [SMB protocol safety CI](https://github.com/CopyPasteUser/Ricefield/actions/runs/42567134038).
-These runs are automated evidence only, not tests on the owner's Mint/NAS/USB
-hardware. **Always record and test one exact commit and its binary/checksum;**
-all boxes below still require owner verification.
+These runs are automated evidence only. Real NAS, SD-card and USB-stick
+day-to-day usage is documented above; the unchecked boxes below mean
+that their **specific** procedures have not been recorded as passed.
+For new cases, record one exact commit and its binary/checksum.
 
 ## Preparation and safety
 

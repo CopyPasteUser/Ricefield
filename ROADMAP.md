@@ -1,23 +1,31 @@
 # RiceField roadmap — 1.0 release and 1.1 follow-up
 
 **Release scope: `1.0.0`.** The owner accepted their daily use of RiceField,
-including SMB file uploads, on 2026-11-09. See [the scope and evidence
-ledger](docs/1.0-STATUS.md) and [owner acceptance
+including SMB file uploads, on 2026-11-09. On 2026-11-15 they
+also confirmed successful routine use with the real NAS, SD cards and
+USB sticks. This is field evidence for normal operation, not a pass
+for controlled failure-injection, ACL or interruption scenarios.
+See [the scope and evidence ledger](docs/1.0-STATUS.md) and [owner acceptance
 matrix](docs/OWNER-ACCEPTANCE-1.0.md). Advanced hardware and fault-injection
 cases that have not been run remain unchecked and must not be presented as
 validated by the 1.0 tag.
 
 **Goal:** a reliable, customizable Linux file manager that can replace
-Thunar for supported workflows. Keep Thunar installed until real Linux Mint
-acceptance passes. Prioritize data integrity, functionality, stability,
+Thunar for supported workflows. Keep Thunar installed as a fallback while
+the targeted hardware safety and interoperability cases remain open. Prioritize data integrity, functionality, stability,
 performance, Linux integration, then visual polish.
 
 ## Next: 1.1 stabilization and desktop integration
 
-- Investigate any real Synology ACL, reconnect or interrupted-upload failures
-  on disposable shares; preserve fail-closed remote publication and recovery.
-- Continue the owner-run Mint/Wayland, 4 GB, removable USB/LUKS, unplug,
-  power-loss and accessibility acceptance matrix with explicit evidence.
+- **Already confirmed in routine use:** NAS/SMB (including uploads), SD-card
+  access and USB-stick access. No need to redo basic functionality solely
+  because the historical checklist lacked these owner reports.
+- **Still to qualify:** real Synology ACL isolation, competing uploads and
+  disconnected/interrupted writes on disposable shares; preserve fail-closed
+  publication and manual recovery.
+- Continue targeted Mint/Wayland, 4 GB, media mount/unmount/eject, LUKS,
+  unsafe removal, power-loss and accessibility acceptance with explicit
+  per-case evidence.
 - Pursue native outgoing external drag-and-drop when the framework offers a
   safe data-source API; retain the existing optional helper in the meantime.
 - Improve direct RiceBowl event integration, remaining translations and
