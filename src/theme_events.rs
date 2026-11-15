@@ -220,6 +220,52 @@ mod tests {
     }
 
     #[test]
+    fn a_replaced_ricebowl_session_directory_is_watched_again() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ricefield-profile-session-{}-{unique}",
+            std::process::id()
+        ));
+        let live = root.join("active");
+        let old = root.join("retired");
+        fs::create_dir_all(&live).unwrap();
+        let target = live.join("ricefield.riceprofile.toml");
+        let context = egui::Context::default();
+        let watcher = Watcher::start(&target, &context).unwrap();
+        let ready = Instant::now() + Duration::from_secs(3);
+        while !watcher.active() && Instant::now() < ready {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(watcher.active(), "initial session watch was not installed");
+
+        fs::rename(&live, &old).unwrap();
+        fs::create_dir(&live).unwrap();
+        // Drain the old directory's invalidation notification so it cannot
+        // be mistaken for an actual update of the newly created profile.
+        std::thread::sleep(Duration::from_millis(200));
+        while watcher.changed() {}
+
+        let deadline = Instant::now() + Duration::from_secs(4);
+        let mut observed = false;
+        let stage = live.join(".riceprofile-test");
+        while Instant::now() < deadline {
+            fs::write(&stage, b"format_version = 1\n").unwrap();
+            fs::rename(&stage, &target).unwrap();
+            if watcher.changed() {
+                observed = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(40));
+        }
+        drop(watcher);
+        fs::remove_dir_all(root).unwrap();
+        assert!(observed, "watch did not recover after replacing session directory");
+    }
+
+    #[test]
     fn atomic_ricebowl_profile_replacement_notifies_egui() {
         let unique = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
