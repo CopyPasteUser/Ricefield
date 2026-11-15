@@ -48,6 +48,10 @@ install -Dm755 -- "$repo_dir/scripts/install_desktop_entry.sh" \
   "$bundle_dir/scripts/install_desktop_entry.sh"
 install -Dm755 -- "$repo_dir/scripts/default_file_manager.py" \
   "$bundle_dir/scripts/default_file_manager.py"
+install -Dm755 -- "$repo_dir/scripts/default_file_picker.py" \
+  "$bundle_dir/scripts/default_file_picker.py"
+install -Dm755 -- "$repo_dir/scripts/filechooser_backend.py" \
+  "$bundle_dir/scripts/filechooser_backend.py"
 install -Dm755 -- "$repo_dir/scripts/cleanup_legacy.sh" \
   "$bundle_dir/scripts/cleanup_legacy.sh"
 install -Dm755 -- "$repo_dir/scripts/install_transaction.sh" \
