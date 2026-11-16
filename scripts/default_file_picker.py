@@ -8,6 +8,7 @@ User scope only changes this account's FileChooser preference.
 from __future__ import annotations
 
 import argparse
+import configparser
 import os
 from pathlib import Path
 import shlex
@@ -20,6 +21,59 @@ PORTAL_BUS = "org.freedesktop.impl.portal.desktop.ricefield"
 DESCRIPTOR = ("[portal]\n"
               f"DBusName={PORTAL_BUS}\n"
               f"Interfaces={PORTAL_KEY}\n")
+
+
+def installed_interfaces(name: str, data: Path, data_dirs: list[str]) -> set[str]:
+    """Read a real installed backend descriptor before referring to it.
+
+    Do not choose a backend based solely on its D-Bus activatable name; only
+    declared interfaces are usable. Honor XDG_DATA_DIRS for vendor packaging.
+    """
+    for base in [data, *(Path(value) for value in data_dirs if value)]:
+        descriptor = base / "xdg-desktop-portal/portals" / f"{name}.portal"
+        raw = transaction.read_optional(descriptor)
+        if raw is None:
+            continue
+        parser = configparser.ConfigParser(interpolation=None)
+        parser.read_string(raw.decode("utf-8", "strict"))
+        if not parser.has_section("portal"):
+            raise RuntimeError(f"Invalid portal backend descriptor: {descriptor}")
+        return {interface.strip() for interface in
+                parser.get("portal", "Interfaces", fallback="").split(";")
+                if interface.strip()}
+    return set()
+
+
+def unconfigured_xfce_baseline(desktops: list[str], data: Path,
+                               data_dirs: list[str]) -> bytes:
+    """Create an explicit, conservative XFCE baseline if none is installed.
+
+    xdg-desktop-portal 1.18 does not provide a reliable universal backend
+    default. In particular, a FileChooser-only override can disable Settings,
+    Screenshot and OpenURI. Prefer GTK for all other implemented interfaces,
+    and use XApp's native Screenshot/Wallpaper where actually installed.
+    """
+    if not desktops or desktops[0] != "xfce":
+        raise RuntimeError(
+            "No existing portal routing config found for this desktop; "
+            "configure the non-FileChooser portal backends before enabling RiceField")
+    gtk = installed_interfaces("gtk", data, data_dirs)
+    if PORTAL_KEY not in gtk:
+        raise RuntimeError(
+            "No existing portal routing config and no usable gtk.portal found. "
+            "Install xdg-desktop-portal-gtk or configure existing portal routing first")
+    xapp = installed_interfaces("xapp", data, data_dirs)
+    lines = [
+        "[preferred]",
+        "default=gtk;",
+        f"{PORTAL_KEY}=ricefield;gtk;",
+    ]
+    for name in ("Screenshot", "Wallpaper"):
+        interface = "org.freedesktop.impl.portal." + name
+        if interface in xapp:
+            fallback = ";gtk" if interface in gtk else ""
+            lines.append(f"{interface}=xapp{fallback};")
+    return ("\\n".join(lines) + "\\n").encode("utf-8")
 
 
 def active_portal_config(config: Path) -> tuple[Path, bytes]:
@@ -50,8 +104,10 @@ def active_portal_config(config: Path) -> tuple[Path, bytes]:
             data_bytes = transaction.read_optional(source)
             if data_bytes is not None:
                 return destination, data_bytes
-    raise RuntimeError(
-        "No existing portal routing config found: refusing to disable other portal backends")
+    # No vendor or user routing config exists (common on Mint XFCE). Create
+    # an explicit base only when its GTK backend really supports FileChooser.
+    # Never synthesize an unfamiliar Wayland/RiceBowl portal policy.
+    return destination, unconfigured_xfce_baseline(desktops, data, data_dirs)
 
 
 def defaults(user: bool, prefix: Path | None, binary: Path | None) -> dict[Path, tuple[bytes, int]]:
