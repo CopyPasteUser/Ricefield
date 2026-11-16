@@ -76,7 +76,7 @@ def unconfigured_xfce_baseline(desktops: list[str], data: Path,
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
-def active_portal_config(config: Path) -> tuple[Path, bytes]:
+def active_portal_config(config: Path) -> tuple[Path, bytes, bool]:
     """Preserve the active portal routing table, not just its FileChooser key.
 
     xdg-desktop-portal 1.18 loads a single portals.conf. A new user override
@@ -88,7 +88,7 @@ def active_portal_config(config: Path) -> tuple[Path, bytes]:
     destination = config / "xdg-desktop-portal" / filename
     existing = transaction.read_optional(destination)
     if existing is not None:
-        return destination, existing
+        return destination, existing, False
     home = Path(os.environ["HOME"])
     data = Path(os.environ.get("XDG_DATA_HOME", str(home / ".local/share")))
     config_dirs = os.environ.get("XDG_CONFIG_DIRS", "/etc/xdg").split(":")
@@ -103,11 +103,11 @@ def active_portal_config(config: Path) -> tuple[Path, bytes]:
             source = root / name
             data_bytes = transaction.read_optional(source)
             if data_bytes is not None:
-                return destination, data_bytes
+                return destination, data_bytes, False
     # No vendor or user routing config exists (common on Mint XFCE). Create
     # an explicit base only when its GTK backend really supports FileChooser.
     # Never synthesize an unfamiliar Wayland/RiceBowl portal policy.
-    return destination, unconfigured_xfce_baseline(desktops, data, data_dirs)
+    return destination, unconfigured_xfce_baseline(desktops, data, data_dirs), True
 
 
 def defaults(user: bool, prefix: Path | None, binary: Path | None) -> dict[Path, tuple[bytes, int]]:
@@ -118,9 +118,12 @@ def defaults(user: bool, prefix: Path | None, binary: Path | None) -> dict[Path,
         config = Path(os.environ.get("XDG_CONFIG_HOME", str(home / ".config")))
         if not home.is_absolute() or not config.is_absolute():
             raise RuntimeError("HOME and XDG_CONFIG_HOME must be absolute")
-        portal_config, baseline = active_portal_config(config)
+        portal_config, baseline, generated = active_portal_config(config)
+        # The verified fallback must remain GTK, not the wildcard that could
+        # choose an unrelated installed backend on XFCE.
+        preferred = "ricefield;gtk;" if generated else "ricefield;*"
         return {portal_config: (
-            transaction.update_ini(baseline, PORTAL_KEY, "ricefield;*", "preferred"), 0o600
+            transaction.update_ini(baseline, PORTAL_KEY, preferred, "preferred"), 0o600
         )}
     root = prefix or Path("/")
     if binary is None:
