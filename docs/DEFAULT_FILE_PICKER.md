@@ -51,9 +51,10 @@ RiceField update does not silently update it.
 **User scope** only updates the active desktop's portal routing preference in
 `$XDG_CONFIG_HOME/xdg-desktop-portal/<desktop>-portals.conf`. If that file
 does not exist, the installer copies the active lower-priority portal
-configuration before changing only `FileChooser`. It deliberately fails
-instead of creating a preference without `ScreenCast`, `Settings`,
-`Screenshot` or the desktop's normal default backend routing.
+configuration before changing only `FileChooser`. If there is no
+existing configuration, XFCE may use a verified GTK fallback as described
+below. Other desktops or installations without a suitable GTK backend
+still fail closed instead of synthesizing an unsafe default.
 
 The preference is:
 
