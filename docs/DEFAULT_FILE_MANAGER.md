@@ -18,7 +18,9 @@ xdg-mime query default inode/directory
 # exo-open --launch FileManager should open RiceField on XFCE.
 ```
 
-The no-argument `bash install.sh` only installs or updates RiceField; switching the default requires the explicit flag above. The status and restore options do not rebuild the application. This is a directory/default-handler integration, not a replacement for native drag-and-drop or non-portal application-specific file chooser dialogs.\n\nThis changes **only the current account** under `$XDG_CONFIG_HOME` and
+The no-argument `bash install.sh` only installs or updates RiceField; switching the default requires the explicit flag above. The status and restore options do not rebuild the application. This is a directory/default-handler integration, not a replacement for native drag-and-drop or non-portal application-specific file chooser dialogs.
+
+This changes **only the current account** under `$XDG_CONFIG_HOME` and
 `$XDG_DATA_HOME`. The script stores original files and their SHA-256 checksums
 under `$XDG_STATE_HOME/ricefield/default-file-manager` (mode 0700).
 It preserves custom associations for unrelated MIME types and creates an
