@@ -11,14 +11,14 @@ replace desktop icons, or override another user's explicit application choices.
 After installing RiceField normally with `bash install.sh`:
 
 ```bash
-python3 scripts/default_file_manager.py status
-python3 scripts/default_file_manager.py enable
+bash install.sh --default-file-manager-status
+bash install.sh --default-file-manager
 xdg-mime query default inode/directory
 # Expected: ricefield.desktop (if no other higher-priority user override)
 # exo-open --launch FileManager should open RiceField on XFCE.
 ```
 
-This changes **only the current account** under `$XDG_CONFIG_HOME` and
+The no-argument `bash install.sh` only installs or updates RiceField; switching the default requires the explicit flag above. The status and restore options do not rebuild the application. This is a directory/default-handler integration, not a replacement for native drag-and-drop or non-portal application-specific file chooser dialogs.\n\nThis changes **only the current account** under `$XDG_CONFIG_HOME` and
 `$XDG_DATA_HOME`. The script stores original files and their SHA-256 checksums
 under `$XDG_STATE_HOME/ricefield/default-file-manager` (mode 0700).
 It preserves custom associations for unrelated MIME types and creates an
@@ -27,7 +27,7 @@ Xfce helper plus a session D-Bus activation descriptor.
 To undo:
 
 ```bash
-python3 scripts/default_file_manager.py restore
+bash install.sh --restore-default-file-manager
 ```
 
 Restoration refuses to overwrite any managed file edited by another program
