@@ -62,6 +62,30 @@ The preference is:
 org.freedesktop.impl.portal.FileChooser=ricefield;*
 ```
 
+**Mint/XFCE without a vendor `portals.conf`:** the user installer now
+checks the installed `gtk.portal` descriptor and only if it advertises
+`FileChooser` creates a desktop-specific
+`$XDG_CONFIG_HOME/xdg-desktop-portal/xfce-portals.conf`:
+
+```ini
+[preferred]
+default=gtk;
+org.freedesktop.impl.portal.FileChooser=ricefield;gtk;
+```
+
+The `default=gtk` route keeps GTK-provided interfaces such as Settings
+and OpenURI available instead of accidentally disabling them through a
+FileChooser-only override. If `xapp.portal` is installed, its declared
+Screenshot/Wallpaper interfaces are explicitly preserved and GTK is used
+as the screenshot fallback where available. The installer **does not**
+fabricate a fallback on unknown desktops or without a verified GTK
+FileChooser backend; it fails without editing the user's routing.
+
+This fallback only applies if **no** existing user, system or vendor routing
+configuration was found. If a configuration already exists, its other keys
+and explicit backend choices remain unchanged. Restore removes a newly
+created XFCE file or restores the exact previous bytes.
+
 Other existing configuration keys are preserved. A conflicting or
 ambiguous configuration stops installation without replacing any files.
 
