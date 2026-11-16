@@ -73,7 +73,7 @@ def unconfigured_xfce_baseline(desktops: list[str], data: Path,
         if interface in xapp:
             fallback = ";gtk" if interface in gtk else ""
             lines.append(f"{interface}=xapp{fallback};")
-    return ("\\n".join(lines) + "\\n").encode("utf-8")
+    return ("\n".join(lines) + "\n").encode("utf-8")
 
 
 def active_portal_config(config: Path) -> tuple[Path, bytes]:
