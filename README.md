@@ -67,7 +67,7 @@ The ordinary installer keeps your existing default file manager intact. To opt i
 for your user session, after `bash install.sh` run:
 
 ```bash
-python3 scripts/default_file_manager.py enable
+bash install.sh --default-file-manager
 xdg-mime query default inode/directory
 ```
 
@@ -78,6 +78,8 @@ without their own overrides**, run:
 sudo python3 scripts/default_file_manager.py enable --scope system \
   --binary "$HOME/.local/bin/ricefield"
 ```
+
+Inspect with `bash install.sh --default-file-manager-status`; undo only the user default with `bash install.sh --restore-default-file-manager` (RiceField remains installed). The no-argument installer never changes the current default. The integration does not replace non-portal GTK application file pickers or provide native external drag-and-drop.
 
 Both modes retain exact recovery snapshots and refuse unsafe overwrites on
 rollback. Thunar stays installed. Existing per-user XDG settings still have
