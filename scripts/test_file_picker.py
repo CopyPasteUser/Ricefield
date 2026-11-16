@@ -163,9 +163,9 @@ class SetupTests(unittest.TestCase):
     def portal(self, name, interfaces):
         descriptor = self.share / "xdg-desktop-portal/portals" / f"{name}.portal"
         descriptor.write_text(
-            "[portal]\\n"
-            f"DBusName=org.freedesktop.impl.portal.desktop.{name}\\n"
-            "Interfaces=" + ";".join(interfaces) + ";\\n"
+            "[portal]\n"
+            f"DBusName=org.freedesktop.impl.portal.desktop.{name}\n"
+            "Interfaces=" + ";".join(interfaces) + ";\n"
         )
 
     def test_missing_xfce_config_uses_gtk_and_xapp_without_disabling_other_portals(self):
