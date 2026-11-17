@@ -134,6 +134,21 @@ for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sideba
     require_visible_change "$fixture_dir/before-selection.png" "$fixture_dir/after-selection.png" \
       'Win7 mouse multi-selection' 12000
   fi
+  # Right-click on unoccupied listing space must open the folder background
+  # menu (not an entry menu). Check native egui interaction, not just Rust
+  # dialog construction. Use a point below the fixture's file rows.
+  if [[ "$theme" == win7 ]]; then
+    xdotool mousemove --window "$window_id" 720 550
+    sleep 0.2
+    import -window "$window_id" "$fixture_dir/blank-menu-before.png"
+    xdotool click 3
+    sleep 0.45
+    import -window "$window_id" "$fixture_dir/blank-menu-after.png"
+    require_visible_change "$fixture_dir/blank-menu-before.png" \
+      "$fixture_dir/blank-menu-after.png" 'Blank area right-click menu' 1000
+    xdotool key Escape
+    sleep 0.2
+  fi
   # Windows 10 has distinct interactive ribbon pages, not merely a painted
   # Home toolbar. Verify that both other pages visibly change the running UI.
   if [[ "$theme" == win10 ]]; then

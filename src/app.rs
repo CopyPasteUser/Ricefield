@@ -10198,6 +10198,31 @@ impl Explorer {
             });
     }
 
+    /// The whitespace menu targets the pane that was clicked, not whichever
+    /// tab happened to be active before the secondary click.
+    fn blank_area_context_menu(&mut self, response: egui::Response, tab_index: usize) {
+        if response.secondary_clicked() && self.active != tab_index {
+            self.tab_command(TabCommand::Activate(tab_index));
+        }
+        response.context_menu(|ui| {
+            let parent = self.tabs[tab_index].path.clone();
+            if ui.button(i18n::tr("New folder")).clicked() {
+                self.dialog = Some(Dialog::Name {
+                    mode: NameMode::Folder(parent.clone()),
+                    value: String::new(),
+                });
+                ui.close();
+            }
+            if ui.button(i18n::tr("New empty file")).clicked() {
+                self.dialog = Some(Dialog::Name {
+                    mode: NameMode::File(parent),
+                    value: String::new(),
+                });
+                ui.close();
+            }
+        });
+    }
+
     fn file_area(&mut self, ui: &mut egui::Ui, index: usize) {
         let theme = self.theme.clone();
         if self.drop_targets_active {
@@ -10234,6 +10259,14 @@ impl Explorer {
             ui.add(egui::Spinner::new());
             ui.label("Loading folder…");
         } else if self.tabs[index].visible.is_empty() {
+            // An empty folder has no file_listing() background to receive
+            // secondary clicks. Register the same hit target for empty and
+            // filtered-to-empty folders, without painting an overlay.
+            let background = ui.interact(
+                ui.available_rect_before_wrap(),
+                ui.make_persistent_id(("file_selection_background", self.tabs[index].id)),
+                egui::Sense::click(),
+            );
             ui.vertical_centered(|ui| {
                 ui.add_space(64.0);
                 let empty_text = if !self.tabs[index].query.is_empty()
@@ -10256,6 +10289,7 @@ impl Explorer {
                     }
                 }
             });
+            self.blank_area_context_menu(background, index);
         } else {
             self.file_listing(ui, index);
         }
@@ -10849,6 +10883,9 @@ impl Explorer {
         if !ui.input(|input| input.pointer.primary_down()) {
             self.marquee = None;
         }
+        // Register the menu after file cells so their own context menus retain
+        // priority; the background response covers only unoccupied space.
+        self.blank_area_context_menu(background, tab_index);
     }
 
     fn file_item(
