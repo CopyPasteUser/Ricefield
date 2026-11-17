@@ -57,10 +57,16 @@ open **Transfers → Review recovery records…**.
 
 Right-click **unoccupied space** in a local folder (including an empty folder
 or a filtered-to-empty list) to create a **New folder** or **New empty file**.
-The name dialog checks the name before creation. In split view, the clicked
-pane is the destination. Right-clicking an existing entry still opens that
-entry's actions; remote network listings remain subject to their separate
-read-only/write restrictions.
+The name dialog checks the name before creation. The same menu also offers
+**Paste** (using the guarded clipboard transfer flow), **Open folder in new
+tab**, **Open folder in new window**, **Open terminal here** and **Folder
+properties**. In split view, actions use the clicked pane as their target.
+The terminal action launches the desktop's configured terminal when supported,
+falling back to installed Linux terminals. The working directory is passed as
+a literal argument, not a shell command; a missing terminal produces a status
+error. Right-clicking an existing entry still opens that entry's actions;
+remote network listings remain subject to their separate read-only/write
+restrictions.
 
 Use the Actions menu, context menu or keyboard shortcuts. Copy and Move offer
 conflict previews; **Keep both** chooses a new name, **Skip existing** leaves
