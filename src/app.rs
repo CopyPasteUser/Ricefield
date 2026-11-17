@@ -11124,6 +11124,15 @@ impl Explorer {
                 self.open_terminal_for(entry.path.clone());
                 ui.close();
             }
+            if !entry.is_dir && ui.button("Create symbolic link").clicked() {
+                // Preserve file symlink creation while simplifying the folder
+                // menu. Other filesystem actions still use the shared engine.
+                self.run_action(Action::Link {
+                    sources: vec![entry.path.clone()],
+                    destination: self.current().path.clone(),
+                });
+                ui.close();
+            }
             if ui.button("Move to Trash").clicked() {
                 if !self.current().selected.contains(&entry.path) {
                     self.select_entry(entry, index, Modifiers::default());
