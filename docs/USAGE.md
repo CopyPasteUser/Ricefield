@@ -65,10 +65,10 @@ The terminal action launches the desktop's configured terminal when supported,
 falling back to installed Linux terminals. The working directory is passed as
 a literal argument, not a shell command; a missing terminal produces a status
 error. Right-clicking a **local folder entry** also offers **Open terminal here**
-and starts the terminal in that clicked folder. The former **Create symbolic
-link** item has been removed from the file-entry context menu. Other per-item
-actions remain available; remote network listings retain their separate
-read-only/write restrictions.
+and starts the terminal in that clicked folder. For folder entries,
+**Open terminal here** replaces **Create symbolic link**; regular files retain
+their symlink action. Other per-item actions remain available; remote network
+listings retain their separate read-only/write restrictions.
 
 Use the Actions menu, context menu or keyboard shortcuts. Copy and Move offer
 conflict previews; **Keep both** chooses a new name, **Skip existing** leaves
