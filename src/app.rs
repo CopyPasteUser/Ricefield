@@ -92,6 +92,62 @@ fn refresh_interval(focused: bool) -> Duration {
     }
 }
 
+/// Keep folder paths as individual OS arguments: no shell, escaping or UTF-8
+/// conversion. Some terminal servers ignore the child's inherited cwd, so
+/// pass their explicit directory flag where supported.
+fn terminal_command(program: &str, folder: &Path) -> Command {
+    let mut command = Command::new(program);
+    command.current_dir(folder);
+    let directory_option = match program {
+        "xdg-terminal-exec" => Some("--dir="),
+        "xfce4-terminal" | "gnome-terminal" | "foot" | "alacritty" | "tilix" => {
+            Some("--working-directory=")
+        }
+        "kitty" => Some("--directory="),
+        "konsole" => Some("--workdir="),
+        _ => None,
+    };
+    if let Some(prefix) = directory_option {
+        let mut argument = std::ffi::OsString::from(prefix);
+        argument.push(folder.as_os_str());
+        command.arg(argument);
+    }
+    command
+}
+
+fn launch_terminal_here(folder: &Path) -> std::io::Result<&'static str> {
+    if !fs::metadata(folder)?.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotADirectory,
+            "selected location is not a directory",
+        ));
+    }
+    // Prefer an XDG-configured default. On systems without xdg-terminal-exec,
+    // try common Linux terminals, then the Debian alternatives launcher.
+    for program in [
+        "xdg-terminal-exec",
+        "xfce4-terminal",
+        "x-terminal-emulator",
+        "foot",
+        "kitty",
+        "alacritty",
+        "gnome-terminal",
+        "konsole",
+        "tilix",
+        "xterm",
+    ] {
+        match terminal_command(program, folder).spawn() {
+            Ok(_) => return Ok(program),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        "no supported terminal emulator found in PATH",
+    ))
+}
+
 /// Render saved network addresses as useful human labels, not full protocol URIs.
 fn network_favorite_label(uri: &str) -> String {
     let rest = uri.split_once("://").map_or(uri, |(_, rest)| rest);
@@ -10198,6 +10254,16 @@ impl Explorer {
             });
     }
 
+    fn open_terminal_for(&mut self, folder: PathBuf) {
+        self.status = Some(match launch_terminal_here(&folder) {
+            Ok(program) => (
+                format!("Opened {program} in {}", folder.display()),
+                false,
+            ),
+            Err(error) => (format!("Cannot open terminal here: {error}"), true),
+        });
+    }
+
     /// The whitespace menu targets the pane that was clicked, not whichever
     /// tab happened to be active before the secondary click.
     fn blank_area_context_menu(&mut self, response: egui::Response, tab_index: usize) {
@@ -10215,9 +10281,32 @@ impl Explorer {
             }
             if ui.button(i18n::tr("New empty file")).clicked() {
                 self.dialog = Some(Dialog::Name {
-                    mode: NameMode::File(parent),
+                    mode: NameMode::File(parent.clone()),
                     value: String::new(),
                 });
+                ui.close();
+            }
+            ui.separator();
+            if ui.button("Paste  Ctrl+V").clicked() {
+                self.paste();
+                ui.close();
+            }
+            ui.separator();
+            if ui.button("Open folder in new tab").clicked() {
+                self.new_tab(parent.clone());
+                ui.close();
+            }
+            if ui.button("Open folder in new window").clicked() {
+                self.spawn_window_for(parent.clone());
+                ui.close();
+            }
+            ui.separator();
+            if ui.button("Open terminal here").clicked() {
+                self.open_terminal_for(parent.clone());
+                ui.close();
+            }
+            if ui.button("Folder properties").clicked() {
+                self.open_properties(parent);
                 ui.close();
             }
         });
