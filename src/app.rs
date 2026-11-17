@@ -123,7 +123,7 @@ fn launch_terminal_here(folder: &Path) -> std::io::Result<&'static str> {
         ));
     }
     // Prefer an XDG-configured default. On systems without xdg-terminal-exec,
-    // try common Linux terminals, then the Debian alternatives launcher.
+    // try XFCE/Debian defaults and other common Linux terminals.
     for program in [
         "xdg-terminal-exec",
         "xfce4-terminal",
@@ -10256,10 +10256,7 @@ impl Explorer {
 
     fn open_terminal_for(&mut self, folder: PathBuf) {
         self.status = Some(match launch_terminal_here(&folder) {
-            Ok(program) => (
-                format!("Opened {program} in {}", folder.display()),
-                false,
-            ),
+            Ok(program) => (format!("Opened {program} in {}", folder.display()), false),
             Err(error) => (format!("Cannot open terminal here: {error}"), true),
         });
     }
