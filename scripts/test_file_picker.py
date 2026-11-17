@@ -94,8 +94,13 @@ class SetupTests(unittest.TestCase):
         shutil.copy2("/bin/true", self.binary)
         self.config = self.home / ".config/xdg-desktop-portal"
         self.config.mkdir(parents=True)
+        self.share = self.root / "share"
+        (self.share / "xdg-desktop-portal/portals").mkdir(parents=True)
         self.env = {**os.environ, "HOME": str(self.home),
                     "XDG_CONFIG_HOME": str(self.home / ".config"),
+                    "XDG_CONFIG_DIRS": str(self.root / "etc/xdg"),
+                    "XDG_DATA_HOME": str(self.home / ".local/share"),
+                    "XDG_DATA_DIRS": str(self.share),
                     "XDG_STATE_HOME": str(self.root / "state"),
                     "RICEFIELD_DEFAULTS_TEST_ROOT": "1",
                     "XDG_CURRENT_DESKTOP": "XFCE"}
@@ -154,6 +159,61 @@ class SetupTests(unittest.TestCase):
         self.call("restore")
         self.assertEqual(generic.read_text(), original)
         self.assertFalse(desktop_specific.exists())
+
+    def portal(self, name, interfaces):
+        descriptor = self.share / "xdg-desktop-portal/portals" / f"{name}.portal"
+        descriptor.write_text(
+            "[portal]\n"
+            f"DBusName=org.freedesktop.impl.portal.desktop.{name}\n"
+            "Interfaces=" + ";".join(interfaces) + ";\n"
+        )
+
+    def test_missing_xfce_config_uses_gtk_and_xapp_without_disabling_other_portals(self):
+        self.portal("gtk", ["org.freedesktop.impl.portal.FileChooser",
+                            "org.freedesktop.impl.portal.Settings",
+                            "org.freedesktop.impl.portal.OpenURI",
+                            "org.freedesktop.impl.portal.Screenshot"])
+        self.portal("xapp", ["org.freedesktop.impl.portal.Screenshot",
+                             "org.freedesktop.impl.portal.Wallpaper"])
+        target = self.config / "xfce-portals.conf"
+        self.assertFalse(target.exists())
+        self.call("enable")
+        content = target.read_text()
+        self.assertIn("default=gtk;", content)
+        self.assertIn("org.freedesktop.impl.portal.FileChooser=ricefield;gtk;", content)
+        self.assertIn("org.freedesktop.impl.portal.Screenshot=xapp;gtk;", content)
+        self.assertIn("org.freedesktop.impl.portal.Wallpaper=xapp;", content)
+        self.call("enable")  # Must be idempotent, never replace the first backup.
+        self.call("restore")
+        self.assertFalse(target.exists())
+        self.assertFalse((self.root / "state/ricefield/default-file-picker/receipt.json").exists())
+
+    def test_missing_xfce_config_without_gtk_fails_closed(self):
+        self.portal("xapp", ["org.freedesktop.impl.portal.Screenshot"])
+        result = self.call("enable", code=1)
+        self.assertIn("xdg-desktop-portal-gtk", result.stderr)
+        self.assertFalse((self.config / "xfce-portals.conf").exists())
+        self.assertFalse((self.root / "state/ricefield/default-file-picker/receipt.json").exists())
+
+    def test_missing_xfce_config_with_gtk_only_keeps_generic_gtk_routing(self):
+        self.portal("gtk", ["org.freedesktop.impl.portal.FileChooser",
+                            "org.freedesktop.impl.portal.Settings"])
+        self.call("enable")
+        content = (self.config / "xfce-portals.conf").read_text()
+        self.assertIn("default=gtk;", content)
+        self.assertNotIn("org.freedesktop.impl.portal.Screenshot=", content)
+        self.call("restore")
+
+    def test_missing_non_xfce_config_fails_even_if_gtk_is_installed(self):
+        self.portal("gtk", ["org.freedesktop.impl.portal.FileChooser"])
+        self.env["XDG_CURRENT_DESKTOP"] = "RiceBowl"
+        self.call("enable", code=1)
+        self.assertFalse((self.config / "ricebowl-portals.conf").exists())
+
+    def test_missing_xfce_config_does_not_use_unrelated_gtk_descriptor(self):
+        self.portal("gtk", ["org.freedesktop.impl.portal.Settings"])
+        self.call("enable", code=1)
+        self.assertFalse((self.config / "xfce-portals.conf").exists())
 
     def test_symlink_refused_and_failed_activation_does_not_touch_target(self):
         file = self.config / "portals.conf"
