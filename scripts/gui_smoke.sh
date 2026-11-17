@@ -149,6 +149,21 @@ for theme in win98 xp-luna win7 win10 frutiger-aero chromeos macos custom-sideba
     xdotool key Escape
     sleep 0.2
   fi
+  # A folder row has its own context menu. It must remain interactive
+  # after replacing the old symlink shortcut with "Open terminal here".
+  # The fixture's first visible rows include real subdirectories.
+  if [[ "$theme" == win7 ]]; then
+    xdotool mousemove --window "$window_id" 260 240
+    sleep 0.2
+    import -window "$window_id" "$fixture_dir/folder-menu-before.png"
+    xdotool click 3
+    sleep 0.45
+    import -window "$window_id" "$fixture_dir/folder-menu-after.png"
+    require_visible_change "$fixture_dir/folder-menu-before.png" \
+      "$fixture_dir/folder-menu-after.png" 'Folder row right-click menu' 1000
+    xdotool key Escape
+    sleep 0.2
+  fi
   # Windows 10 has distinct interactive ribbon pages, not merely a painted
   # Home toolbar. Verify that both other pages visibly change the running UI.
   if [[ "$theme" == win10 ]]; then
