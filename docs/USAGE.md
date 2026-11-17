@@ -55,6 +55,13 @@ open **Transfers → Review recovery records…**.
 
 ## Transfers and file actions
 
+Right-click **unoccupied space** in a local folder (including an empty folder
+or a filtered-to-empty list) to create a **New folder** or **New empty file**.
+The name dialog checks the name before creation. In split view, the clicked
+pane is the destination. Right-clicking an existing entry still opens that
+entry's actions; remote network listings remain subject to their separate
+read-only/write restrictions.
+
 Use the Actions menu, context menu or keyboard shortcuts. Copy and Move offer
 conflict previews; **Keep both** chooses a new name, **Skip existing** leaves
 collisions untouched, and **Require no conflicts** refuses known collisions.
