@@ -11118,11 +11118,10 @@ impl Explorer {
                 }
                 ui.close();
             }
-            if ui.button("Create symbolic link").clicked() {
-                self.run_action(Action::Link {
-                    sources: vec![entry.path.clone()],
-                    destination: self.current().path.clone(),
-                });
+            if entry.is_dir && ui.button("Open terminal here").clicked() {
+                // Use the clicked folder, not the directory currently displayed
+                // or another selected entry. No shell string interpolation.
+                self.open_terminal_for(entry.path.clone());
                 ui.close();
             }
             if ui.button("Move to Trash").clicked() {
