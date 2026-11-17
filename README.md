@@ -1,126 +1,202 @@
 <div align="center">
 
+<img src="assets/ricefield.png" alt="RiceField application icon" width="88">
+
 # RiceField
 
-**One Linux file manager. Seven distinct desktop styles.**
+**A file manager with seven personalities — and one reliable Rust engine.**
 
-A customizable **Rust + egui** file manager for Linux, usable standalone or alongside [RiceBowl](https://github.com/CopyPasteUser/Ricebowl).
+A standalone Linux file manager built with **Rust + egui**. Familiar file management, deliberate data-safety rules and seven genuinely different desktop interfaces. Use it on its own or alongside [RiceBowl](https://github.com/CopyPasteUser/Ricebowl).
 
-[Install](#install) · [Screenshot gallery](docs/screenshots/README.md) · [User guide](docs/USAGE.md) · [1.0 status](docs/1.0-STATUS.md)
+[Explore the interfaces](#seven-desktops-one-engine) · [Get started](#get-started) · [Make it your default](#make-ricefield-your-default) · [Documentation](#documentation)
 
 [![Rust checks](https://github.com/CopyPasteUser/Ricefield/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/Ricefield/actions/workflows/ci.yml)
+[![SMB safety](https://github.com/CopyPasteUser/Ricefield/actions/workflows/smb-safety.yml/badge.svg?branch=main)](https://github.com/CopyPasteUser/Ricefield/actions/workflows/smb-safety.yml)
+
+**Linux x86_64** · **X11 / Wayland-capable UI** · **MIT licensed**
 
 </div>
 
-| Windows 7 · Aero | Frutiger Aero |
+---
+
+## Seven desktops. One engine.
+
+RiceField does not just recolor the same toolbar. Each *rice* has its own navigation, layout, controls and visual language; all seven use the same underlying file operations. Window borders and titlebars are provided by your Linux window manager.
+
+| Windows 7 · Aero | Frutiger Aero · Blue Skies |
 | :---: | :---: |
 | [![Windows 7 shell](docs/screenshots/win7.png)](docs/screenshots/win7.png) | [![Frutiger Aero shell](docs/screenshots/frutiger-aero.png)](docs/screenshots/frutiger-aero.png) |
 
-[View all seven styles](docs/screenshots/README.md): Windows 98, XP Luna, Windows 7, Windows 10, Frutiger Aero, ChromeOS and macOS. The window manager controls the window decorations.
+<details>
+<summary><strong>Explore the other five interfaces</strong> — XP Luna, Windows 98, Windows 10, macOS and ChromeOS</summary>
 
-## Features
+<br>
 
-- **Everyday file management:** tabs, split view, bookmarks, search, previews, drag-and-drop, copy/move/rename/trash and `Open With`.
-- **Desktop integration:** `Ctrl+Shift+D` launches installed `ripdrag`/`dragon` for outbound file drag; `--xwayland-dnd` opts into XWayland incoming XDND. [Usage](docs/USAGE.md).
-- **Guarded operations:** no-overwrite conflict previews, transfer history, selective session Undo and recovery diagnostics.
-- **Archives:** browse and extract ZIP, TAR, 7z and RAR with libarchive.
-- **Network and devices:** browse SMB, SFTP, WebDAV and MTP; manage removable media through UDisks2/Polkit.
-- **Customization:** seven built-in themes, custom TOML appearances and optional RiceBowl RiceProfile integration.
+| Windows XP · Luna | Windows 98 · Classic Explorer | Windows 10 · Ribbon |
+| :---: | :---: | :---: |
+| [![Windows XP Luna shell](docs/screenshots/xp-luna.png)](docs/screenshots/xp-luna.png) | [![Windows 98 shell](docs/screenshots/win98.png)](docs/screenshots/win98.png) | [![Windows 10 shell](docs/screenshots/win10.png)](docs/screenshots/win10.png) |
 
-**Status:** **RiceField 1.0.0** is the first stable release for the documented
-supported workflows. The owner confirms daily use with a real NAS (including successful
-SMB uploads), SD cards and USB sticks as of 2026-11-15. These everyday
-hardware workflows work, but their use does not establish exhaustive NAS
-ACL/concurrent-write, disconnect, unsafe-removal, power-loss, Wayland or
-accessibility qualification; see the [scope and limitations](docs/1.0-STATUS.md).
-Keep an alternative file manager installed and maintain backups of important data.
+| macOS · Finder-inspired | ChromeOS · Files-inspired |
+| :---: | :---: |
+| [![macOS shell](docs/screenshots/macos.png)](docs/screenshots/macos.png) | [![ChromeOS shell](docs/screenshots/chromeos.png)](docs/screenshots/chromeos.png) |
 
-## Install
+</details>
 
-Linux x86_64 (Ubuntu 24.04 / Linux Mint 22); building from source requires a current [Rust toolchain](https://rustup.rs/).
+**[Open the full screenshot gallery →](docs/screenshots/README.md)** — real screenshots of the running application, including split views, compact layouts, menus and dialogs. No screenshot files are modified by this README.
+
+## Built for everyday file work
+
+| Area | What RiceField provides |
+| --- | --- |
+| **Navigate** | Tabs, separate windows, two-pane split view, breadcrumbs, history, favorites and Places |
+| **Organize** | Copy, move, rename, trash, duplicate, symbolic links, clipboard operations, multi-selection and drag selection |
+| **Work faster** | Search and filtering, previews and thumbnails, file properties, `Open With`, folder-background context actions and a terminal launcher |
+| **Keep control** | Per-transfer conflict choices, non-overwriting operations, transfer queue/history, eligible session Undo and recovery inspection |
+| **Open archives** | Browse and extract ZIP, TAR, 7z and RAR archives using libarchive |
+| **Connect storage** | SMB, SFTP, WebDAV and MTP browsing; mounted local/network volumes and UDisks2/Polkit device actions |
+| **Customize** | Seven built-in rice profiles, editable TOML themes and optional live RiceBowl theme integration |
+
+### A few everyday workflows
+
+- **Right-click empty folder space** to create a folder or file, paste, open the location in another tab/window, launch a terminal there or inspect the folder's properties.
+- **Press `F3`** for split view. Each pane has its own location; file actions target the focused pane.
+- **Press `Ctrl+N`** to create a folder, **`Ctrl+T`** for another tab, **`Ctrl+H`** to show hidden files.
+- **Use `Ctrl+Shift+D`** to start an external drag via an installed `ripdrag` or `dragon` helper.
+
+The [user guide](docs/USAGE.md) covers shortcuts, search behavior, transfers, mounted devices, network locations and recovery in detail.
+
+## Get started
+
+**Target:** Linux x86_64, with Ubuntu 24.04 / Linux Mint 22.x as the primary documented environment. Building from source requires a current [Rust toolchain](https://rustup.rs/) (`cargo` and `rustc`).
+
+Install the Linux build dependencies:
 
 ```bash
+sudo apt update
 sudo apt install build-essential pkg-config libxcb-render0-dev \
   libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-0 \
   libssl-dev libgl1-mesa-dev libarchive13t64 xdg-utils curl
+```
 
+Clone, build, install for **your user**, and launch:
+
+```bash
 git clone https://github.com/CopyPasteUser/Ricefield.git
 cd Ricefield
 bash install.sh
 ricefield
 ```
 
-Installation is user-local and creates an application-menu entry; it does not replace your default file manager. **1.1 is in release preparation, not yet published;** see the [release process and automated checks](RELEASE.md). [Release builds](https://github.com/CopyPasteUser/Ricefield/releases) · [Release guide](RELEASE.md).
+`install.sh` builds a release binary and installs the user-local application launcher. It **does not** change your default file manager, replace Thunar or enable the experimental file picker. For packaged builds and checksums, see [GitHub Releases](https://github.com/CopyPasteUser/Ricefield/releases) and the [release guide](RELEASE.md).
 
-Choose a style or validate a custom theme:
+### Pick a desktop
 
 ```bash
 ricefield --theme xp-luna ~/Documents
+ricefield --theme win7 ~/Downloads
 ricefield --theme frutiger-aero ~/Pictures
 ricefield --theme macos
-ricefield --check-theme-file /path/to/custom-rice.toml
 ```
 
-## Default file manager for Linux Mint, Xfce and RiceBowl
+Available IDs: `win98`, `xp-luna`, `win7`, `win10`, `frutiger-aero`, `chromeos`, `macos`.
 
-The ordinary installer keeps your existing default file manager intact. To opt in
-for your user session, after `bash install.sh` run:
+RiceField also supports custom TOML files:
 
 ```bash
-bash install.sh --default-file-manager
+ricefield --check-theme-file /path/to/my-rice.toml
+ricefield --theme-file /path/to/my-rice.toml
+```
+
+See the [theme and session guide](docs/USAGE.md) for live RiceBowl profiles and customization.
+
+## Make RiceField your default
+
+Switching your preferred folder handler is **opt-in**. It is separate from simply installing RiceField and does not uninstall or stop your existing file manager.
+
+| Action | Command |
+| --- | --- |
+| Set as **your** default file manager | `bash install.sh --default-file-manager` |
+| Inspect the current managed registration | `bash install.sh --default-file-manager-status` |
+| Restore the previous user default | `bash install.sh --restore-default-file-manager` |
+
+After activation, verify the directory handler:
+
+```bash
 xdg-mime query default inode/directory
 ```
 
-To install RiceField as the administrator-managed system default for **all users
-without their own overrides**, run:
+The integration covers XDG directory links, Xfce's file-manager helper and new FileManager1 activations. It **does not** replace desktop icons, another user's settings, already-running instances or arbitrary GTK application file dialogs. Restoration preserves backups and refuses to overwrite later edits made by other applications.
 
-```bash
-sudo python3 scripts/default_file_manager.py enable --scope system \
-  --binary "$HOME/.local/bin/ricefield"
-```
+**[Read the complete default-manager guide](docs/DEFAULT_FILE_MANAGER.md)** for user/system scope, verification and rollback.
 
-Inspect with `bash install.sh --default-file-manager-status`; undo only the user default with `bash install.sh --restore-default-file-manager` (RiceField remains installed). The no-argument installer never changes the current default. The integration does not replace non-portal GTK application file pickers or provide native external drag-and-drop.
+### FileChooser integration: experimental
 
-Both modes retain exact recovery snapshots and refuse unsafe overwrites on
-rollback. Thunar stays installed. Existing per-user XDG settings still have
-higher precedence than system defaults; the signed-in user's default can be
-activated separately. See the [complete default-manager setup, verification
-and rollback guide](docs/DEFAULT_FILE_MANAGER.md).
+RiceField also has an **optional XDG FileChooser portal backend** for open/save requests from portal-aware applications. It is **not enabled by the normal installer**, does not replace every GTK file dialog and requires separate system/user registration. Treat it as an advanced opt-in integration and test your desktop before using it for important workflows.
 
-## RiceField as the system FileChooser (experimental, opt-in)
+**[Setup, compatibility and rollback instructions](docs/DEFAULT_FILE_PICKER.md)**
 
-The XDG FileChooser integration uses a standalone RiceField picker and a
-D-Bus backend. On Mint 22/Ubuntu 24.04 the portal descriptor must be
-installed under the system data directory; no existing GTK/Thunar file picker
-is removed. **Do not activate this on a production desktop until the
-independent GUI and portal tests have passed on your own machine.**
+## Safety by design
 
-```bash
-bash install.sh
-sudo python3 scripts/default_file_picker.py enable --scope system \
-  --binary "$HOME/.local/bin/ricefield"
-python3 scripts/default_file_picker.py enable
-```
+RiceField intentionally distinguishes what a local filesystem can do from what an arbitrary network server can safely guarantee.
 
-Use `restore` (user scope first, then administrator system scope) to undo
-the configuration. This affects portal-aware applications, not applications
-that call GtkFileChooserNative or GtkFileChooserDialog without portal routing.
-See [file picker setup and verification](docs/DEFAULT_FILE_PICKER.md).
+| Location / feature | Supported behavior and boundary |
+| --- | --- |
+| **Local files and mounted volumes** | Normal file operations with guarded conflicts; behavior still depends on filesystem capabilities and permissions |
+| **SMB, SFTP and WebDAV** | Browse, preview and download; **guarded single-file uploads** only on supported, validated server configurations |
+| **MTP and unsupported remote writes** | Browse where supported; mutating operations are disabled |
+| **Remote rename/delete/folder creation** | Not supported by the direct remote backends; no implicit overwrite-prone fallback |
+| **Undo** | Available for eligible session operations only; it is **not** a universal reversal of copies, deletes or cross-volume moves |
+| **Interrupted operations** | Show recovery evidence for review; no automatic destructive recovery |
+| **External drag-and-drop** | Outgoing drag uses optional `ripdrag`/`dragon` helpers; XWayland incoming drag has a separate opt-in path |
 
-## Safety and documentation
+The current code is designed to fail closed when remote capabilities or recovery state cannot be trusted. **Keep backups and a second file manager for irreplaceable data.**
 
-Local Undo covers **only eligible operations**; copies, deletions and cross-volume moves are not automatically reversible. Remote browsing is read-only by default. Verified WebDAV, SFTP and signed SMB servers may support **guarded single-file uploads**, but not remote rename/delete; interrupted uploads require manual review. Cross-device moves preserve the source after copying.
+Read the [remote capability matrix](docs/REMOTE-1.0-SCOPE.md), [recovery runbook](docs/REMOTE-RECOVERY-RUNBOOK.md) and [support/verification status](docs/1.0-STATUS.md) before relying on less-common workflows.
 
-[Remote capability limits](docs/REMOTE-1.0-SCOPE.md) · [Recovery runbook](docs/REMOTE-RECOVERY-RUNBOOK.md) · [Owner acceptance checklist](docs/OWNER-ACCEPTANCE-1.0.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md)
+## Project status
 
-## Development
+| Track | Status |
+| --- | --- |
+| **Stable release** | `1.0.0` — first stable release for the documented daily-use scope |
+| **Development branch** | `main` — continued fixes and 1.1 preparation; changes here are **not automatically a 1.1 release** |
+| **Desktop integrations** | Default file-manager switching is opt-in and reversible; FileChooser portal integration is experimental |
+| **Quality gates** | Rust formatting, Clippy, unit/protocol tests, GUI smoke, packaging and rollback checks in CI |
+
+The project's owner has reported everyday use with a NAS (including SMB uploads), SD cards and USB drives. That does **not** imply every ACL, concurrent-write, power-loss, disconnect, Wayland or accessibility edge case has been independently validated.
+
+See [release policy](RELEASE.md), [roadmap](ROADMAP.md) and [changelog](CHANGELOG.md).
+
+## Develop and contribute
 
 ```bash
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked --all-targets
+cargo build --locked --release
 ```
 
-[Contributing](CONTRIBUTING.md) · [MIT License](LICENSE)
+The CI also exercises real disposable SMB fixtures, Xvfb GUI smoke tests, installer rollback and a 100,000-entry benchmark. These are reproducible software checks, **not** a substitute for real-device qualification.
 
-RiceField is independent of Microsoft, Apple and Google; included artwork is original.
+Contributions should preserve existing file-operation semantics and document any new mutation, permission or recovery behavior. Start with [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Documentation
+
+| I want to… | Go to |
+| --- | --- |
+| Learn the interface, shortcuts and everyday operations | [User guide](docs/USAGE.md) |
+| See every rice, split view and compact layout | [Screenshot gallery](docs/screenshots/README.md) |
+| Configure Linux/Xfce/RiceBowl default handling | [Default file manager](docs/DEFAULT_FILE_MANAGER.md) |
+| Configure or restore Open/Save portal dialogs | [FileChooser integration](docs/DEFAULT_FILE_PICKER.md) |
+| Understand network writes and recovery limits | [Remote write scope](docs/REMOTE-1.0-SCOPE.md) · [Recovery runbook](docs/REMOTE-RECOVERY-RUNBOOK.md) |
+| Investigate a problem or measure performance | [Troubleshooting](docs/TROUBLESHOOTING.md) · [Host memory profiling](docs/PERFORMANCE_HOST.md) |
+| Review qualification, releases and future work | [1.0 status](docs/1.0-STATUS.md) · [Owner acceptance](docs/OWNER-ACCEPTANCE-1.0.md) · [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) |
+
+---
+
+<div align="center">
+
+**Built for Linux · Written in Rust · Licensed under [MIT](LICENSE)**
+
+RiceField is independent of Microsoft, Apple and Google. The interface styles are inspired by familiar desktop eras; bundled graphics are original and OS window decorations remain native.
+
+</div>
