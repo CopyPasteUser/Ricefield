@@ -13512,6 +13512,38 @@ mod tests {
     }
 
     #[test]
+    fn terminal_launcher_preserves_directory_path_and_uses_known_flags() {
+        use std::ffi::{OsStr, OsString};
+        use std::os::unix::ffi::OsStringExt;
+
+        // Non-UTF-8 bytes, whitespace, quotes and punctuation must never be
+        // shell-interpreted, lossy-converted or split into multiple arguments.
+        let folder = PathBuf::from(OsString::from_vec(
+            b"/tmp/RiceField folder's $dollars/\xff".to_vec(),
+        ));
+        for (program, prefix) in [
+            ("xdg-terminal-exec", "--dir="),
+            ("xfce4-terminal", "--working-directory="),
+            ("foot", "--working-directory="),
+            ("kitty", "--directory="),
+            ("konsole", "--workdir="),
+        ] {
+            let command = super::terminal_command(program, &folder);
+            assert_eq!(command.get_program(), OsStr::new(program));
+            assert_eq!(command.get_current_dir(), Some(folder.as_path()));
+            let mut expected = OsString::from(prefix);
+            expected.push(folder.as_os_str());
+            assert_eq!(
+                command.get_args().collect::<Vec<_>>(),
+                vec![expected.as_os_str()]
+            );
+        }
+        let generic = super::terminal_command("x-terminal-emulator", &folder);
+        assert_eq!(generic.get_current_dir(), Some(folder.as_path()));
+        assert_eq!(generic.get_args().count(), 0);
+    }
+
+    #[test]
     fn name_dialog_actions_keep_the_original_paths() {
         let parent = PathBuf::from("/initial/folder");
         let source = parent.join("old.txt");
