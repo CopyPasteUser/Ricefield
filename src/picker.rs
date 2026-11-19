@@ -608,7 +608,11 @@ impl Picker {
                                             "File"
                                         })
                                         .size(11.0)
-                                        .color(if marked { egui::Color32::WHITE } else { PICKER_MUTED }),
+                                        .color(if marked {
+                                            egui::Color32::WHITE
+                                        } else {
+                                            PICKER_MUTED
+                                        }),
                                     )
                                     .selected(marked)
                                     .truncate(),
