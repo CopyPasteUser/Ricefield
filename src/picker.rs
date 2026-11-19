@@ -600,8 +600,13 @@ impl Picker {
                                         egui::RichText::new(entry.name.as_str()).size(13.0),
                                     )
                                     .right_text(
-                                        egui::RichText::new(if entry.directory { "Folder" } else { "File" })
-                                            .size(11.0).color(PICKER_MUTED),
+                                        egui::RichText::new(if entry.directory {
+                                            "Folder"
+                                        } else {
+                                            "File"
+                                        })
+                                        .size(11.0)
+                                        .color(PICKER_MUTED),
                                     )
                                     .selected(marked)
                                     .truncate(),
@@ -788,11 +793,8 @@ impl eframe::App for Picker {
         let ctx = ui.ctx().clone();
         // eframe's root Ui is transparent with some renderer/window themes.
         // Paint the entire viewport so unoccupied strips never expose black.
-        ui.painter().rect_filled(
-            ui.max_rect(),
-            0.0,
-            egui::Color32::from_rgb(236, 242, 252),
-        );
+        ui.painter()
+            .rect_filled(ui.max_rect(), 0.0, egui::Color32::from_rgb(236, 242, 252));
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
