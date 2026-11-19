@@ -413,180 +413,437 @@ impl Picker {
     }
 }
 
-impl eframe::App for Picker {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let ctx = ui.ctx().clone();
-        if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        }
-        ui.vertical(|ui| {
-            ui.horizontal(|ui| {
-                ui.heading(&self.request.title);
-                ui.separator();
-                ui.label("RiceField");
-            });
-            ui.horizontal(|ui| {
-                if ui.button("↑").on_hover_text("Parent folder").clicked()
-                    && let Some(parent) = self.folder.parent()
-                {
-                    self.navigate(parent.to_path_buf());
-                }
-                let response = ui.add(
-                    egui::TextEdit::singleline(&mut self.address).desired_width(f32::INFINITY),
+// The portal picker is a transient dialog, not another Explorer window.
+// Use a coherent Luna-inspired layout while leaving the portal wire protocol
+// and the host compositor's actual window decorations untouched.
+const PICKER_BLUE: egui::Color32 = egui::Color32::from_rgb(30, 76, 158);
+const PICKER_NAVY: egui::Color32 = egui::Color32::from_rgb(22, 55, 118);
+const PICKER_LINE: egui::Color32 = egui::Color32::from_rgb(187, 204, 230);
+const PICKER_MUTED: egui::Color32 = egui::Color32::from_rgb(81, 101, 131);
+// egui::ScrollArea::show_rows adds item_spacing.y internally.
+const PICKER_ROW_HEIGHT: f32 = 28.0;
+
+fn picker_style(ctx: &egui::Context) {
+    let mut style = (*ctx.style_of(egui::Theme::Light)).clone();
+    style.visuals = egui::Visuals::light();
+    style.visuals.panel_fill = egui::Color32::from_rgb(236, 242, 252);
+    style.visuals.window_fill = egui::Color32::from_rgb(236, 242, 252);
+    style.visuals.selection.bg_fill = PICKER_BLUE;
+    style.visuals.selection.stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+    style.visuals.widgets.active.bg_fill = egui::Color32::from_rgb(206, 224, 251);
+    style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(225, 236, 252);
+    style.spacing.item_spacing = egui::vec2(8.0, 7.0);
+    style.spacing.button_padding = egui::vec2(9.0, 5.0);
+    ctx.set_style_of(egui::Theme::Light, style);
+    ctx.set_theme(egui::Theme::Light);
+}
+
+impl Picker {
+    fn paint_header(&self, ui: &mut egui::Ui) {
+        egui::Frame::new()
+            .fill(PICKER_BLUE)
+            .inner_margin(egui::Margin::symmetric(16, 13))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(
+                    egui::RichText::new(if self.request.title.trim().is_empty() {
+                        "Choose a file"
+                    } else {
+                        &self.request.title
+                    })
+                    .size(19.0)
+                    .strong()
+                    .color(egui::Color32::WHITE),
                 );
-                let go = ui.button("Go").clicked();
-                if go
-                    || (response.lost_focus()
-                        && ui.input(|input| input.key_pressed(egui::Key::Enter)))
-                {
-                    let input = PathBuf::from(&self.address);
-                    self.navigate(input);
-                }
+                let hint = match self.request.mode.as_str() {
+                    "save" => "Choose where to save your file",
+                    "save_files" => "Choose a destination folder",
+                    _ if self.folder_mode() => "Choose a folder",
+                    _ if self.request.multiple => "Select one or more files",
+                    _ => "Select a file to open",
+                };
+                ui.label(
+                    egui::RichText::new(hint)
+                        .size(12.0)
+                        .color(egui::Color32::from_rgb(226, 237, 255)),
+                );
             });
-            ui.horizontal(|ui| {
-                for (name, path) in [
-                    ("Home", std::env::var_os("HOME").map(PathBuf::from)),
-                    (
-                        "Documents",
-                        std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Documents")),
-                    ),
-                    (
-                        "Downloads",
-                        std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Downloads")),
-                    ),
-                    ("Root", Some(PathBuf::from("/"))),
-                ] {
-                    if let Some(path) = path
-                        && path.is_dir()
-                        && ui.button(name).clicked()
-                    {
-                        self.navigate(path);
-                    }
-                }
-                ui.separator();
-                if ui.checkbox(&mut self.show_hidden, "Hidden files").changed() {
-                    self.refresh();
-                }
-                if ui.button("↻").on_hover_text("Refresh").clicked() {
-                    self.refresh();
-                }
-            });
-        });
-        ui.vertical(|ui| {
-            egui::ScrollArea::vertical()
-                .max_height((ui.available_height() - 180.0).max(180.0))
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    for entry in self.entries.clone() {
-                        let marked = self.selected.contains(&entry.path);
-                        let icon = if entry.directory { "📁" } else { "📄" };
-                        let response =
-                            ui.selectable_label(marked, format!("{icon}  {}", entry.name));
-                        if response.double_clicked() {
-                            if entry.directory {
-                                self.navigate(entry.path);
-                            } else {
-                                self.selected.clear();
-                                self.selected.insert(entry.path);
-                                if self.request.mode == "open" && !self.folder_mode() {
-                                    self.choose(&ctx);
-                                }
-                            }
-                            break;
-                        }
-                        if response.clicked() {
-                            if entry.directory && !self.folder_mode() {
-                                self.selected.clear();
-                            } else if self.request.multiple
-                                && ui.input(|input| input.modifiers.ctrl)
-                            {
-                                if !self.selected.remove(&entry.path) {
-                                    self.selected.insert(entry.path);
-                                }
-                            } else {
-                                self.selected.clear();
-                                self.selected.insert(entry.path.clone());
-                                if self.request.mode == "save" && !entry.directory {
-                                    self.file_name = entry.name;
-                                    self.overwrite_pending = None;
-                                }
-                            }
-                        }
-                    }
-                });
-        });
-        ui.vertical(|ui| {
-            if self.request.mode == "save" {
-                ui.horizontal(|ui| {
-                    ui.label("Filename:");
-                    if ui.text_edit_singleline(&mut self.file_name).changed() {
-                        self.overwrite_pending = None;
-                    }
-                });
+    }
+
+    fn paint_navigation(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            let parent = self.folder.parent().map(Path::to_path_buf);
+            if ui
+                .add_enabled(parent.is_some(), egui::Button::new("Up"))
+                .on_hover_text("Go to parent folder (Alt+Up)")
+                .clicked()
+                && let Some(path) = parent
+            {
+                self.navigate(path);
             }
-            if !self.request.filters.is_empty() {
-                let mut next = self.current_filter;
-                egui::ComboBox::from_label("File type")
-                    .selected_text(&self.request.filters[next].name)
-                    .show_ui(ui, |ui| {
-                        for (idx, filter) in self.request.filters.iter().enumerate() {
-                            ui.selectable_value(&mut next, idx, &filter.name);
+            ui.label(egui::RichText::new("Location").color(PICKER_MUTED));
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut self.address)
+                    .desired_width((ui.available_width() - 150.0).max(100.0))
+                    .id_salt("picker_location"),
+            );
+            let go = ui.button("Go").clicked();
+            if go
+                || (response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)))
+            {
+                self.navigate(PathBuf::from(&self.address));
+            }
+            if ui.button("Reload").on_hover_text("Refresh (F5)").clicked() {
+                self.refresh();
+            }
+        });
+    }
+
+    fn paint_places(&mut self, ui: &mut egui::Ui, height: f32) {
+        egui::Frame::new()
+            .fill(egui::Color32::from_rgb(221, 233, 252))
+            .stroke(egui::Stroke::new(1.0, PICKER_LINE))
+            .inner_margin(egui::Margin::symmetric(10, 12))
+            .show(ui, |ui| {
+                ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(155.0);
+                    ui.set_min_height(height);
+                    ui.label(
+                        egui::RichText::new("PLACES")
+                            .size(11.0)
+                            .strong()
+                            .color(PICKER_NAVY),
+                    );
+                    ui.add_space(8.0);
+                    let home = std::env::var_os("HOME").map(PathBuf::from);
+                    let places = [
+                        ("Home", home.clone()),
+                        ("Desktop", home.as_ref().map(|h| h.join("Desktop"))),
+                        ("Documents", home.as_ref().map(|h| h.join("Documents"))),
+                        ("Downloads", home.as_ref().map(|h| h.join("Downloads"))),
+                        ("Pictures", home.as_ref().map(|h| h.join("Pictures"))),
+                        ("Computer", Some(PathBuf::from("/"))),
+                    ];
+                    for (label, path) in places {
+                        if let Some(path) = path
+                            && path.is_dir()
+                            && ui
+                                .add_sized(
+                                    [ui.available_width(), 31.0],
+                                    egui::Button::new((label, egui::Atom::grow()))
+                                        .selected(self.folder == path),
+                                )
+                                .clicked()
+                        {
+                            self.navigate(path);
+                        }
+                    }
+                    ui.add_space(10.0);
+                    ui.separator();
+                    if ui
+                        .checkbox(&mut self.show_hidden, "Show hidden files")
+                        .changed()
+                    {
+                        self.refresh();
+                    }
+                });
+            });
+    }
+
+    fn paint_files(&mut self, ui: &mut egui::Ui, height: f32, ctx: &egui::Context) {
+        // Defer actions until after the immutable rows are painted. A large
+        // directory should never clone 5,000 entries on every render frame.
+        let mut activated: Option<(PathBuf, bool)> = None;
+        let mut clicked: Option<(PathBuf, bool, String, bool)> = None;
+        egui::Frame::new()
+            .fill(egui::Color32::WHITE)
+            .stroke(egui::Stroke::new(1.0, PICKER_LINE))
+            .inner_margin(egui::Margin::symmetric(10, 10))
+            .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("NAME")
+                            .strong()
+                            .size(11.0)
+                            .color(PICKER_MUTED),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            egui::RichText::new(format!("{} items", self.entries.len()))
+                                .size(11.0)
+                                .color(PICKER_MUTED),
+                        );
+                    });
+                });
+                ui.separator();
+                if self.entries.is_empty() {
+                    ui.add_space(20.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            egui::RichText::new("This folder is empty")
+                                .size(15.0)
+                                .color(PICKER_MUTED),
+                        );
+                        ui.label("Choose another location or adjust the file filter.");
+                    });
+                }
+                egui::ScrollArea::vertical()
+                    .max_height((height - 48.0).max(100.0))
+                    .auto_shrink([false, false])
+                    .show_rows(ui, PICKER_ROW_HEIGHT, self.entries.len(), |ui, rows| {
+                        for index in rows {
+                            let entry = &self.entries[index];
+                            let marked = self.selected.contains(&entry.path);
+                            let response = ui
+                                .add_sized(
+                                    [ui.available_width(), PICKER_ROW_HEIGHT],
+                                    egui::Button::new(
+                                        egui::RichText::new(entry.name.as_str()).size(13.0),
+                                    )
+                                    .right_text(
+                                        egui::RichText::new(if entry.directory {
+                                            "Folder"
+                                        } else {
+                                            "File"
+                                        })
+                                        .size(11.0)
+                                        .color(if marked {
+                                            egui::Color32::WHITE
+                                        } else {
+                                            PICKER_MUTED
+                                        }),
+                                    )
+                                    .selected(marked)
+                                    .truncate(),
+                                )
+                                .on_hover_text(entry.name.as_str());
+                            if response.double_clicked() {
+                                activated = Some((entry.path.clone(), entry.directory));
+                            } else if response.clicked() {
+                                clicked = Some((
+                                    entry.path.clone(),
+                                    entry.directory,
+                                    entry.name.clone(),
+                                    ui.input(|i| i.modifiers.ctrl),
+                                ));
+                            }
                         }
                     });
-                if next != self.current_filter {
-                    self.current_filter = next;
-                    self.selected.clear();
-                    self.refresh();
+            });
+        if let Some((path, directory)) = activated {
+            if directory {
+                self.navigate(path);
+            } else {
+                self.selected.clear();
+                if self.request.mode == "save" {
+                    self.file_name = path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    self.overwrite_pending = None;
+                }
+                self.selected.insert(path);
+                if self.request.mode == "open" && !self.folder_mode() {
+                    self.choose(ctx);
                 }
             }
-            for (idx, choice) in self.request.choices.iter().enumerate() {
-                if choice.options.is_empty() {
-                    let mut selected = self.choice_values[idx] == "true";
-                    if ui.checkbox(&mut selected, &choice.label).changed() {
-                        self.choice_values[idx] = selected.to_string();
-                    }
-                } else {
-                    egui::ComboBox::from_label(&choice.label)
-                        .selected_text(
-                            choice
-                                .options
-                                .iter()
-                                .find(|(value, _)| value == &self.choice_values[idx])
-                                .map(|(_, label)| label.as_str())
-                                .unwrap_or("Choose"),
-                        )
+        } else if let Some((path, directory, name, ctrl)) = clicked {
+            if directory && !self.folder_mode() {
+                self.selected.clear();
+            } else if self.request.multiple && ctrl {
+                if !self.selected.remove(&path) {
+                    self.selected.insert(path);
+                }
+            } else {
+                self.selected.clear();
+                self.selected.insert(path);
+                if self.request.mode == "save" && !directory {
+                    self.file_name = name;
+                    self.overwrite_pending = None;
+                }
+            }
+        }
+    }
+
+    fn paint_footer(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        egui::Frame::new()
+            .fill(egui::Color32::from_rgb(248, 250, 255))
+            .stroke(egui::Stroke::new(1.0, PICKER_LINE))
+            .inner_margin(egui::Margin::symmetric(13, 10))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                if self.request.mode == "save" {
+                    ui.horizontal(|ui| {
+                        ui.label("File name");
+                        if ui
+                            .add(
+                                egui::TextEdit::singleline(&mut self.file_name)
+                                    .desired_width(ui.available_width() - 12.0),
+                            )
+                            .changed()
+                        {
+                            self.overwrite_pending = None;
+                        }
+                    });
+                }
+                if !self.request.filters.is_empty() {
+                    let mut next = self.current_filter;
+                    egui::ComboBox::from_label("File type")
+                        .selected_text(&self.request.filters[next].name)
                         .show_ui(ui, |ui| {
-                            for (value, label) in &choice.options {
-                                ui.selectable_value(
-                                    &mut self.choice_values[idx],
-                                    value.clone(),
-                                    label,
-                                );
+                            for (idx, filter) in self.request.filters.iter().enumerate() {
+                                ui.selectable_value(&mut next, idx, &filter.name);
+                            }
+                        });
+                    if next != self.current_filter {
+                        self.current_filter = next;
+                        self.selected.clear();
+                        self.refresh();
+                    }
+                }
+                if !self.request.choices.is_empty() {
+                    egui::ScrollArea::vertical()
+                        .max_height(105.0)
+                        .show(ui, |ui| {
+                            for (idx, choice) in self.request.choices.iter().enumerate() {
+                                if choice.options.is_empty() {
+                                    let mut selected = self.choice_values[idx] == "true";
+                                    if ui.checkbox(&mut selected, &choice.label).changed() {
+                                        self.choice_values[idx] = selected.to_string();
+                                    }
+                                } else {
+                                    egui::ComboBox::from_label(&choice.label)
+                                        .selected_text(
+                                            choice
+                                                .options
+                                                .iter()
+                                                .find(|(value, _)| {
+                                                    value == &self.choice_values[idx]
+                                                })
+                                                .map(|(_, label)| label.as_str())
+                                                .unwrap_or("Choose"),
+                                        )
+                                        .show_ui(ui, |ui| {
+                                            for (value, label) in &choice.options {
+                                                ui.selectable_value(
+                                                    &mut self.choice_values[idx],
+                                                    value.clone(),
+                                                    label,
+                                                );
+                                            }
+                                        });
+                                }
                             }
                         });
                 }
-            }
-            if !self.message.is_empty() {
-                ui.colored_label(egui::Color32::LIGHT_RED, &self.message);
-            }
-            ui.separator();
-            ui.horizontal(|ui| {
-                let label = if self.overwrite_pending.is_some() {
-                    "Replace"
-                } else if !self.request.accept_label.is_empty() {
-                    &self.request.accept_label
-                } else if self.request.mode == "open" {
-                    "Open"
-                } else {
-                    "Save"
-                };
-                if ui.button(label).clicked() {
-                    self.choose(&ctx);
+                if !self.message.is_empty() {
+                    ui.label(
+                        egui::RichText::new(&self.message)
+                            .color(egui::Color32::from_rgb(165, 38, 38))
+                            .strong(),
+                    );
                 }
-                if ui.button("Cancel").clicked() {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
+                ui.separator();
+                ui.horizontal(|ui| {
+                    let summary = if self.selected.is_empty() {
+                        if self.folder_mode() {
+                            "Current folder"
+                        } else {
+                            "No file selected"
+                        }
+                    } else if self.selected.len() == 1 {
+                        "1 item selected"
+                    } else {
+                        "Multiple items selected"
+                    };
+                    ui.label(egui::RichText::new(summary).size(12.0).color(PICKER_MUTED));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .add_sized([90.0, 32.0], egui::Button::new("Cancel"))
+                            .clicked()
+                        {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                        let label = if self.overwrite_pending.is_some() {
+                            "Replace"
+                        } else if !self.request.accept_label.is_empty() {
+                            &self.request.accept_label
+                        } else if self.request.mode == "open" {
+                            "Open"
+                        } else {
+                            "Save"
+                        };
+                        if ui
+                            .add_sized(
+                                [100.0, 32.0],
+                                egui::Button::new(
+                                    egui::RichText::new(label)
+                                        .color(egui::Color32::WHITE)
+                                        .strong(),
+                                )
+                                .fill(PICKER_BLUE),
+                            )
+                            .clicked()
+                        {
+                            self.choose(ctx);
+                        }
+                    });
+                });
             });
+    }
+}
+
+impl eframe::App for Picker {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        // eframe's root Ui is transparent with some renderer/window themes.
+        // Paint the entire viewport so unoccupied strips never expose black.
+        ui.painter()
+            .rect_filled(ui.max_rect(), 0.0, egui::Color32::from_rgb(236, 242, 252));
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+        if ctx.input(|i| i.modifiers.alt && i.key_pressed(egui::Key::ArrowUp))
+            && let Some(parent) = self.folder.parent()
+        {
+            self.navigate(parent.to_path_buf());
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::F5)) {
+            self.refresh();
+        }
+        if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::H)) {
+            self.show_hidden = !self.show_hidden;
+            self.refresh();
+        }
+
+        ui.vertical(|ui| {
+            self.paint_header(ui);
+            ui.add_space(7.0);
+            self.paint_navigation(ui);
+            ui.add_space(8.0);
+
+            let footer_reserve = if self.request.mode == "save" {
+                185.0
+            } else {
+                144.0
+            };
+            let height = (ui.available_height() - footer_reserve).max(152.0);
+            ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(183.0, height),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| self.paint_places(ui, height),
+                );
+                ui.add_space(3.0);
+                ui.vertical(|ui| {
+                    ui.set_min_width(ui.available_width());
+                    self.paint_files(ui, height, &ctx);
+                });
+            });
+            ui.add_space(10.0);
+            self.paint_footer(ui, &ctx);
         });
     }
 }
@@ -624,7 +881,7 @@ pub fn run() -> eframe::Result {
         "RiceField • File Picker",
         options,
         Box::new(move |creation| {
-            creation.egui_ctx.set_visuals(egui::Visuals::dark());
+            picker_style(&creation.egui_ctx);
             Ok(Box::new(Picker::new(request)))
         }),
     )
