@@ -90,6 +90,9 @@ jobs:
           test -f "$fixture/home/.local/share/applications/ricefield.desktop"
           HOME="$fixture/home" bash "$bundle/uninstall.sh"
           test ! -e "$fixture/home/.local/share/applications/ricefield.desktop"
+      - name: Native FileChooser Open/Save screenshots (Xvfb software GL)
+        run: |
+          timeout -k 10s 90s xvfb-run -e /dev/stderr -a -s '-screen 0 1280x800x24' bash scripts/picker_visual_smoke.sh
       - name: Native GUI smoke (Xvfb software GL)
         run: |
           timeout -k 10s 8m xvfb-run -e /dev/stderr -a -s '-screen 0 1280x800x24' bash scripts/gui_smoke.sh
