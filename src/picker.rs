@@ -442,11 +442,16 @@ impl Picker {
             .inner_margin(egui::Margin::symmetric(16, 13))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.label(egui::RichText::new(if self.request.title.trim().is_empty() {
-                    "Choose a file"
-                } else {
-                    &self.request.title
-                }).size(19.0).strong().color(egui::Color32::WHITE));
+                ui.label(
+                    egui::RichText::new(if self.request.title.trim().is_empty() {
+                        "Choose a file"
+                    } else {
+                        &self.request.title
+                    })
+                    .size(19.0)
+                    .strong()
+                    .color(egui::Color32::WHITE),
+                );
                 let hint = match self.request.mode.as_str() {
                     "save" => "Choose where to save your file",
                     "save_files" => "Choose a destination folder",
@@ -454,16 +459,19 @@ impl Picker {
                     _ if self.request.multiple => "Select one or more files",
                     _ => "Select a file to open",
                 };
-                ui.label(egui::RichText::new(hint)
-                    .size(12.0)
-                    .color(egui::Color32::from_rgb(226, 237, 255)));
+                ui.label(
+                    egui::RichText::new(hint)
+                        .size(12.0)
+                        .color(egui::Color32::from_rgb(226, 237, 255)),
+                );
             });
     }
 
     fn paint_navigation(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             let parent = self.folder.parent().map(Path::to_path_buf);
-            if ui.add_enabled(parent.is_some(), egui::Button::new("↑  Up"))
+            if ui
+                .add_enabled(parent.is_some(), egui::Button::new("↑  Up"))
                 .on_hover_text("Go to parent folder (Alt+Up)")
                 .clicked()
                 && let Some(path) = parent
@@ -477,8 +485,8 @@ impl Picker {
                     .id(egui::Id::new("picker_location")),
             );
             let go = ui.button("Go").clicked();
-            if go || (response.lost_focus()
-                && ui.input(|input| input.key_pressed(egui::Key::Enter)))
+            if go
+                || (response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)))
             {
                 self.navigate(PathBuf::from(&self.address));
             }
@@ -496,8 +504,12 @@ impl Picker {
             .show(ui, |ui| {
                 ui.set_width(155.0);
                 ui.set_min_height(height);
-                ui.label(egui::RichText::new("PLACES")
-                    .size(11.0).strong().color(PICKER_NAVY));
+                ui.label(
+                    egui::RichText::new("PLACES")
+                        .size(11.0)
+                        .strong()
+                        .color(PICKER_NAVY),
+                );
                 ui.add_space(8.0);
                 let home = std::env::var_os("HOME").map(PathBuf::from);
                 let places = [
@@ -511,18 +523,22 @@ impl Picker {
                 for (label, path) in places {
                     if let Some(path) = path
                         && path.is_dir()
-                        && ui.add_sized(
-                            [ui.available_width(), 31.0],
-                            egui::Button::new(label)
-                                .selected(self.folder == path),
-                        ).clicked()
+                        && ui
+                            .add_sized(
+                                [ui.available_width(), 31.0],
+                                egui::Button::new(label).selected(self.folder == path),
+                            )
+                            .clicked()
                     {
                         self.navigate(path);
                     }
                 }
                 ui.add_space(10.0);
                 ui.separator();
-                if ui.checkbox(&mut self.show_hidden, "Show hidden files").changed() {
+                if ui
+                    .checkbox(&mut self.show_hidden, "Show hidden files")
+                    .changed()
+                {
                     self.refresh();
                 }
             });
@@ -540,23 +556,29 @@ impl Picker {
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("NAME").strong().size(11.0)
-                        .color(PICKER_MUTED));
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            ui.label(egui::RichText::new(
-                                format!("{} items", self.entries.len())
-                            ).size(11.0).color(PICKER_MUTED));
-                        },
+                    ui.label(
+                        egui::RichText::new("NAME")
+                            .strong()
+                            .size(11.0)
+                            .color(PICKER_MUTED),
                     );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            egui::RichText::new(format!("{} items", self.entries.len()))
+                                .size(11.0)
+                                .color(PICKER_MUTED),
+                        );
+                    });
                 });
                 ui.separator();
                 if self.entries.is_empty() {
                     ui.add_space(20.0);
                     ui.vertical_centered(|ui| {
-                        ui.label(egui::RichText::new("This folder is empty")
-                            .size(15.0).color(PICKER_MUTED));
+                        ui.label(
+                            egui::RichText::new("This folder is empty")
+                                .size(15.0)
+                                .color(PICKER_MUTED),
+                        );
                         ui.label("Choose another location or adjust the file filter.");
                     });
                 }
@@ -568,19 +590,24 @@ impl Picker {
                             let entry = &self.entries[index];
                             let marked = self.selected.contains(&entry.path);
                             let symbol = if entry.directory { "📁" } else { "📄" };
-                            let response = ui.add_sized(
-                                [ui.available_width(), 28.0],
-                                egui::Button::new(
-                                    egui::RichText::new(format!("{symbol}  {}", entry.name))
-                                        .size(13.0),
-                                ).selected(marked),
-                            ).on_hover_text(entry.name.as_str());
+                            let response = ui
+                                .add_sized(
+                                    [ui.available_width(), 28.0],
+                                    egui::Button::new(
+                                        egui::RichText::new(format!("{symbol}  {}", entry.name))
+                                            .size(13.0),
+                                    )
+                                    .selected(marked),
+                                )
+                                .on_hover_text(entry.name.as_str());
                             if response.double_clicked() {
                                 activated = Some((entry.path.clone(), entry.directory));
                             } else if response.clicked() {
                                 clicked = Some((
-                                    entry.path.clone(), entry.directory,
-                                    entry.name.clone(), ui.input(|i| i.modifiers.ctrl),
+                                    entry.path.clone(),
+                                    entry.directory,
+                                    entry.name.clone(),
+                                    ui.input(|i| i.modifiers.ctrl),
                                 ));
                             }
                         }
@@ -630,10 +657,13 @@ impl Picker {
                 if self.request.mode == "save" {
                     ui.horizontal(|ui| {
                         ui.label("File name");
-                        if ui.add(
-                            egui::TextEdit::singleline(&mut self.file_name)
-                                .desired_width(ui.available_width() - 12.0),
-                        ).changed() {
+                        if ui
+                            .add(
+                                egui::TextEdit::singleline(&mut self.file_name)
+                                    .desired_width(ui.available_width() - 12.0),
+                            )
+                            .changed()
+                        {
                             self.overwrite_pending = None;
                         }
                     });
@@ -666,8 +696,12 @@ impl Picker {
                                 } else {
                                     egui::ComboBox::from_label(&choice.label)
                                         .selected_text(
-                                            choice.options.iter()
-                                                .find(|(value, _)| value == &self.choice_values[idx])
+                                            choice
+                                                .options
+                                                .iter()
+                                                .find(|(value, _)| {
+                                                    value == &self.choice_values[idx]
+                                                })
                                                 .map(|(_, label)| label.as_str())
                                                 .unwrap_or("Choose"),
                                         )
@@ -685,45 +719,57 @@ impl Picker {
                         });
                 }
                 if !self.message.is_empty() {
-                    ui.label(egui::RichText::new(&self.message)
-                        .color(egui::Color32::from_rgb(165, 38, 38)).strong());
+                    ui.label(
+                        egui::RichText::new(&self.message)
+                            .color(egui::Color32::from_rgb(165, 38, 38))
+                            .strong(),
+                    );
                 }
                 ui.separator();
                 ui.horizontal(|ui| {
                     let summary = if self.selected.is_empty() {
-                        if self.folder_mode() { "Current folder" } else { "No file selected" }
+                        if self.folder_mode() {
+                            "Current folder"
+                        } else {
+                            "No file selected"
+                        }
                     } else if self.selected.len() == 1 {
                         "1 item selected"
                     } else {
                         "Multiple items selected"
                     };
                     ui.label(egui::RichText::new(summary).size(12.0).color(PICKER_MUTED));
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            if ui.add_sized([90.0, 32.0], egui::Button::new("Cancel")).clicked() {
-                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                            }
-                            let label = if self.overwrite_pending.is_some() {
-                                "Replace"
-                            } else if !self.request.accept_label.is_empty() {
-                                &self.request.accept_label
-                            } else if self.request.mode == "open" {
-                                "Open"
-                            } else {
-                                "Save"
-                            };
-                            if ui.add_sized(
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .add_sized([90.0, 32.0], egui::Button::new("Cancel"))
+                            .clicked()
+                        {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                        let label = if self.overwrite_pending.is_some() {
+                            "Replace"
+                        } else if !self.request.accept_label.is_empty() {
+                            &self.request.accept_label
+                        } else if self.request.mode == "open" {
+                            "Open"
+                        } else {
+                            "Save"
+                        };
+                        if ui
+                            .add_sized(
                                 [100.0, 32.0],
                                 egui::Button::new(
-                                    egui::RichText::new(label).color(egui::Color32::WHITE)
+                                    egui::RichText::new(label)
+                                        .color(egui::Color32::WHITE)
                                         .strong(),
-                                ).fill(PICKER_BLUE),
-                            ).clicked() {
-                                self.choose(ctx);
-                            }
-                        },
-                    );
+                                )
+                                .fill(PICKER_BLUE),
+                            )
+                            .clicked()
+                        {
+                            self.choose(ctx);
+                        }
+                    });
                 });
             });
     }
@@ -755,7 +801,11 @@ impl eframe::App for Picker {
             self.paint_navigation(ui);
             ui.add_space(8.0);
 
-            let footer_reserve = if self.request.mode == "save" { 185.0 } else { 144.0 };
+            let footer_reserve = if self.request.mode == "save" {
+                185.0
+            } else {
+                144.0
+            };
             let height = (ui.available_height() - footer_reserve).max(152.0);
             ui.horizontal(|ui| {
                 self.paint_places(ui, height);
