@@ -422,7 +422,7 @@ const PICKER_LINE: egui::Color32 = egui::Color32::from_rgb(187, 204, 230);
 const PICKER_MUTED: egui::Color32 = egui::Color32::from_rgb(81, 101, 131);
 
 fn picker_style(ctx: &egui::Context) {
-    let mut style = (*ctx.style()).clone();
+    let mut style = (*ctx.style_of(egui::Theme::Light)).clone();
     style.visuals = egui::Visuals::light();
     style.visuals.panel_fill = egui::Color32::from_rgb(236, 242, 252);
     style.visuals.window_fill = egui::Color32::from_rgb(236, 242, 252);
@@ -432,7 +432,8 @@ fn picker_style(ctx: &egui::Context) {
     style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(225, 236, 252);
     style.spacing.item_spacing = egui::vec2(8.0, 7.0);
     style.spacing.button_padding = egui::vec2(9.0, 5.0);
-    ctx.set_style(style);
+    ctx.set_style_of(egui::Theme::Light, style);
+    ctx.set_theme(egui::Theme::Light);
 }
 
 impl Picker {
@@ -482,7 +483,7 @@ impl Picker {
             let response = ui.add(
                 egui::TextEdit::singleline(&mut self.address)
                     .desired_width((ui.available_width() - 113.0).max(100.0))
-                    .id(egui::Id::new("picker_location")),
+                    .id_salt("picker_location"),
             );
             let go = ui.button("Go").clicked();
             if go
