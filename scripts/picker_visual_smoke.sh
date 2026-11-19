@@ -71,16 +71,35 @@ capture() {
   base64 -w 76 "$output"
   echo
   echo "PICKER_SCREENSHOT_$mode"_END
-  xdotool windowclose "$window"
-  for ((attempt=0; attempt<40; attempt++)); do
+
+  # Exercise the real mouse-driven chooser and verify its contract response,
+  # rather than testing only whether a window was painted and could close.
+  local expected
+  if [[ "$mode" == open ]]; then
+    xdotool mousemove --window "$window" 275 258 click 1
+    sleep 0.3
+    import -window "$window" screenshots/picker-selected.png
+    expected="file://$fixture/files/Notes.txt"
+    xdotool mousemove --window "$window" 673 590 click 1
+  else
+    expected="file://$fixture/files/Monthly%20report.txt"
+    xdotool mousemove --window "$window" 673 550 click 1
+  fi
+  for ((attempt=0; attempt<60; attempt++)); do
     kill -0 "$picker_pid" 2>/dev/null || break
     sleep 0.1
   done
   if kill -0 "$picker_pid" 2>/dev/null; then
-    echo "Picker $mode did not close" >&2
+    echo "Picker $mode did not accept the selected file" >&2
+    cat "$fixture/picker.log" >&2
     exit 1
   fi
-  wait "$picker_pid" || true
+  wait "$picker_pid"
+  if ! grep -Fq -- "$expected" "$fixture/response.toml"; then
+    echo "Picker $mode returned an unexpected file URI" >&2
+    cat "$fixture/response.toml" >&2
+    exit 1
+  fi
   picker_pid=''
 }
 capture open 'Open a document'
