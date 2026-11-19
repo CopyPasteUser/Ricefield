@@ -619,7 +619,8 @@ impl Picker {
             } else {
                 self.selected.clear();
                 if self.request.mode == "save" {
-                    self.file_name = path.file_name()
+                    self.file_name = path
+                        .file_name()
                         .map(|name| name.to_string_lossy().into_owned())
                         .unwrap_or_default();
                     self.overwrite_pending = None;
