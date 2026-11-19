@@ -574,7 +574,7 @@ impl Picker {
                                     egui::RichText::new(format!("{symbol}  {}", entry.name))
                                         .size(13.0),
                                 ).selected(marked),
-                            ).on_hover_text(&entry.name);
+                            ).on_hover_text(entry.name.as_str());
                             if response.double_clicked() {
                                 activated = Some((entry.path.clone(), entry.directory));
                             } else if response.clicked() {
@@ -591,6 +591,12 @@ impl Picker {
                 self.navigate(path);
             } else {
                 self.selected.clear();
+                if self.request.mode == "save" {
+                    self.file_name = path.file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    self.overwrite_pending = None;
+                }
                 self.selected.insert(path);
                 if self.request.mode == "open" && !self.folder_mode() {
                     self.choose(ctx);
