@@ -482,7 +482,7 @@ impl Picker {
             ui.label(egui::RichText::new("Location").color(PICKER_MUTED));
             let response = ui.add(
                 egui::TextEdit::singleline(&mut self.address)
-                    .desired_width((ui.available_width() - 113.0).max(100.0))
+                    .desired_width((ui.available_width() - 150.0).max(100.0))
                     .id_salt("picker_location"),
             );
             let go = ui.button("Go").clicked();
@@ -504,46 +504,46 @@ impl Picker {
             .inner_margin(egui::Margin::symmetric(10, 12))
             .show(ui, |ui| {
                 ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                ui.set_width(155.0);
-                ui.set_min_height(height);
-                ui.label(
-                    egui::RichText::new("PLACES")
-                        .size(11.0)
-                        .strong()
-                        .color(PICKER_NAVY),
-                );
-                ui.add_space(8.0);
-                let home = std::env::var_os("HOME").map(PathBuf::from);
-                let places = [
-                    ("Home", home.clone()),
-                    ("Desktop", home.as_ref().map(|h| h.join("Desktop"))),
-                    ("Documents", home.as_ref().map(|h| h.join("Documents"))),
-                    ("Downloads", home.as_ref().map(|h| h.join("Downloads"))),
-                    ("Pictures", home.as_ref().map(|h| h.join("Pictures"))),
-                    ("Computer", Some(PathBuf::from("/"))),
-                ];
-                for (label, path) in places {
-                    if let Some(path) = path
-                        && path.is_dir()
-                        && ui
-                            .add_sized(
-                                [ui.available_width(), 31.0],
-                                egui::Button::new((label, egui::Atom::grow()))
-                                    .selected(self.folder == path),
-                            )
-                            .clicked()
-                    {
-                        self.navigate(path);
+                    ui.set_width(155.0);
+                    ui.set_min_height(height);
+                    ui.label(
+                        egui::RichText::new("PLACES")
+                            .size(11.0)
+                            .strong()
+                            .color(PICKER_NAVY),
+                    );
+                    ui.add_space(8.0);
+                    let home = std::env::var_os("HOME").map(PathBuf::from);
+                    let places = [
+                        ("Home", home.clone()),
+                        ("Desktop", home.as_ref().map(|h| h.join("Desktop"))),
+                        ("Documents", home.as_ref().map(|h| h.join("Documents"))),
+                        ("Downloads", home.as_ref().map(|h| h.join("Downloads"))),
+                        ("Pictures", home.as_ref().map(|h| h.join("Pictures"))),
+                        ("Computer", Some(PathBuf::from("/"))),
+                    ];
+                    for (label, path) in places {
+                        if let Some(path) = path
+                            && path.is_dir()
+                            && ui
+                                .add_sized(
+                                    [ui.available_width(), 31.0],
+                                    egui::Button::new((label, egui::Atom::grow()))
+                                        .selected(self.folder == path),
+                                )
+                                .clicked()
+                        {
+                            self.navigate(path);
+                        }
                     }
-                }
-                ui.add_space(10.0);
-                ui.separator();
-                if ui
-                    .checkbox(&mut self.show_hidden, "Show hidden files")
-                    .changed()
-                {
-                    self.refresh();
-                }
+                    ui.add_space(10.0);
+                    ui.separator();
+                    if ui
+                        .checkbox(&mut self.show_hidden, "Show hidden files")
+                        .changed()
+                    {
+                        self.refresh();
+                    }
                 });
             });
     }
