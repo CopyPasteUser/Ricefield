@@ -98,9 +98,9 @@ jobs:
         run: |
           # Samba is needed only for this disposable integration test. Do not
           # block all Rust checks and native screenshots on its large downloads.
-          timeout 180s sudo env DEBIAN_FRONTEND=noninteractive apt-get \
-            -o Acquire::Retries=1 -o Acquire::http::Timeout=30 \
-            -o Acquire::https::Timeout=30 install -y --no-install-recommends samba smbclient
+          timeout 360s sudo env DEBIAN_FRONTEND=noninteractive apt-get \
+            -o Acquire::Retries=3 -o Acquire::http::Timeout=40 \
+            -o Acquire::https::Timeout=40 install -y --no-install-recommends samba smbclient
           RICEFIELD_RUST_SMB_CHECK=1 timeout -k 10s 6m bash scripts/test_smb_atomicity.sh
       - name: FileManager1 GUI and desktop measurements
         run: |
