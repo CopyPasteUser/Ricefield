@@ -472,7 +472,7 @@ impl Picker {
         ui.horizontal(|ui| {
             let parent = self.folder.parent().map(Path::to_path_buf);
             if ui
-                .add_enabled(parent.is_some(), egui::Button::new("↑  Up"))
+                .add_enabled(parent.is_some(), egui::Button::new("Up"))
                 .on_hover_text("Go to parent folder (Alt+Up)")
                 .clicked()
                 && let Some(path) = parent
@@ -491,7 +491,7 @@ impl Picker {
             {
                 self.navigate(PathBuf::from(&self.address));
             }
-            if ui.button("↻").on_hover_text("Refresh (F5)").clicked() {
+            if ui.button("Reload").on_hover_text("Refresh (F5)").clicked() {
                 self.refresh();
             }
         });
@@ -503,6 +503,7 @@ impl Picker {
             .stroke(egui::Stroke::new(1.0, PICKER_LINE))
             .inner_margin(egui::Margin::symmetric(10, 12))
             .show(ui, |ui| {
+                ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                 ui.set_width(155.0);
                 ui.set_min_height(height);
                 ui.label(
@@ -514,12 +515,12 @@ impl Picker {
                 ui.add_space(8.0);
                 let home = std::env::var_os("HOME").map(PathBuf::from);
                 let places = [
-                    ("⌂  Home", home.clone()),
-                    ("▣  Desktop", home.as_ref().map(|h| h.join("Desktop"))),
-                    ("▤  Documents", home.as_ref().map(|h| h.join("Documents"))),
-                    ("↓  Downloads", home.as_ref().map(|h| h.join("Downloads"))),
-                    ("▧  Pictures", home.as_ref().map(|h| h.join("Pictures"))),
-                    ("◫  Computer", Some(PathBuf::from("/"))),
+                    ("Home", home.clone()),
+                    ("Desktop", home.as_ref().map(|h| h.join("Desktop"))),
+                    ("Documents", home.as_ref().map(|h| h.join("Documents"))),
+                    ("Downloads", home.as_ref().map(|h| h.join("Downloads"))),
+                    ("Pictures", home.as_ref().map(|h| h.join("Pictures"))),
+                    ("Computer", Some(PathBuf::from("/"))),
                 ];
                 for (label, path) in places {
                     if let Some(path) = path
@@ -527,7 +528,8 @@ impl Picker {
                         && ui
                             .add_sized(
                                 [ui.available_width(), 31.0],
-                                egui::Button::new(label).selected(self.folder == path),
+                                egui::Button::new((label, egui::Atom::grow()))
+                                    .selected(self.folder == path),
                             )
                             .clicked()
                     {
@@ -542,6 +544,7 @@ impl Picker {
                 {
                     self.refresh();
                 }
+                });
             });
     }
 
@@ -590,13 +593,15 @@ impl Picker {
                         for index in rows {
                             let entry = &self.entries[index];
                             let marked = self.selected.contains(&entry.path);
-                            let symbol = if entry.directory { "📁" } else { "📄" };
                             let response = ui
                                 .add_sized(
                                     [ui.available_width(), 28.0],
                                     egui::Button::new(
-                                        egui::RichText::new(format!("{symbol}  {}", entry.name))
-                                            .size(13.0),
+                                        egui::RichText::new(entry.name.as_str()).size(13.0),
+                                    )
+                                    .right_text(
+                                        egui::RichText::new(if entry.directory { "Folder" } else { "File" })
+                                            .size(11.0).color(PICKER_MUTED),
                                     )
                                     .selected(marked)
                                     .truncate(),
@@ -781,6 +786,13 @@ impl Picker {
 impl eframe::App for Picker {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        // eframe's root Ui is transparent with some renderer/window themes.
+        // Paint the entire viewport so unoccupied strips never expose black.
+        ui.painter().rect_filled(
+            ui.max_rect(),
+            0.0,
+            egui::Color32::from_rgb(236, 242, 252),
+        );
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
@@ -811,7 +823,11 @@ impl eframe::App for Picker {
             };
             let height = (ui.available_height() - footer_reserve).max(152.0);
             ui.horizontal(|ui| {
-                self.paint_places(ui, height);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(183.0, height),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| self.paint_places(ui, height),
+                );
                 ui.add_space(3.0);
                 ui.vertical(|ui| {
                     ui.set_min_width(ui.available_width());
