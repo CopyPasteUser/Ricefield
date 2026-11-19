@@ -68,7 +68,7 @@ capture() {
   # Log a strictly synthetic fixture screenshot so a reviewer can inspect
   # native Xvfb pixels even when the artifact hand-off is not available.
   echo "PICKER_SCREENSHOT_$mode"_BEGIN
-  base64 -w 0 "$output"
+  base64 -w 76 "$output"
   echo
   echo "PICKER_SCREENSHOT_$mode"_END
   xdotool windowclose "$window"
