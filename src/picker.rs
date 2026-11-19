@@ -598,7 +598,8 @@ impl Picker {
                                         egui::RichText::new(format!("{symbol}  {}", entry.name))
                                             .size(13.0),
                                     )
-                                    .selected(marked),
+                                    .selected(marked)
+                                    .truncate(),
                                 )
                                 .on_hover_text(entry.name.as_str());
                             if response.double_clicked() {
