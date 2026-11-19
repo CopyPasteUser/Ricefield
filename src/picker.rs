@@ -494,7 +494,7 @@ impl Picker {
             .stroke(egui::Stroke::new(1.0, PICKER_LINE))
             .inner_margin(egui::Margin::symmetric(10, 12))
             .show(ui, |ui| {
-                ui.set_min_width(155.0);
+                ui.set_width(155.0);
                 ui.set_min_height(height);
                 ui.label(egui::RichText::new("PLACES")
                     .size(11.0).strong().color(PICKER_NAVY));
