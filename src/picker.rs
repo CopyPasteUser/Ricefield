@@ -420,6 +420,8 @@ const PICKER_BLUE: egui::Color32 = egui::Color32::from_rgb(30, 76, 158);
 const PICKER_NAVY: egui::Color32 = egui::Color32::from_rgb(22, 55, 118);
 const PICKER_LINE: egui::Color32 = egui::Color32::from_rgb(187, 204, 230);
 const PICKER_MUTED: egui::Color32 = egui::Color32::from_rgb(81, 101, 131);
+// egui::ScrollArea::show_rows adds item_spacing.y internally.
+const PICKER_ROW_HEIGHT: f32 = 28.0;
 
 fn picker_style(ctx: &egui::Context) {
     let mut style = (*ctx.style_of(egui::Theme::Light)).clone();
@@ -589,13 +591,13 @@ impl Picker {
                 egui::ScrollArea::vertical()
                     .max_height((height - 48.0).max(100.0))
                     .auto_shrink([false, false])
-                    .show_rows(ui, 30.0, self.entries.len(), |ui, rows| {
+                    .show_rows(ui, PICKER_ROW_HEIGHT, self.entries.len(), |ui, rows| {
                         for index in rows {
                             let entry = &self.entries[index];
                             let marked = self.selected.contains(&entry.path);
                             let response = ui
                                 .add_sized(
-                                    [ui.available_width(), 28.0],
+                                    [ui.available_width(), PICKER_ROW_HEIGHT],
                                     egui::Button::new(
                                         egui::RichText::new(entry.name.as_str()).size(13.0),
                                     )
